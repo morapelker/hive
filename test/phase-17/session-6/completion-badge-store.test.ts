@@ -93,7 +93,7 @@ describe('Session 6: Completion Badge Store', () => {
     test('null status clears the entry', () => {
       getState().setSessionStatus('s1', 'completed', { word: 'Forged', durationMs: 1000 })
       getState().setSessionStatus('s1', null)
-      expect(getState().sessionStatuses['s1']).toBeNull()
+      expect(getState().sessionStatuses['s1']).toBeUndefined()
     })
 
     test('existing status types still work with metadata param', () => {

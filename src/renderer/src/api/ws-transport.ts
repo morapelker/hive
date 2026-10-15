@@ -19,11 +19,31 @@ export interface WsTransportOptions {
 interface PendingRequest {
   readonly resolve: (value: unknown) => void
   readonly reject: (error: Error) => void
+  /** Socket the request was sent on, so only that socket's close rejects it. */
+  readonly socket: WebSocket
 }
+
+/** Longest reconnect delay; the exponential backoff stops growing here. */
+const MAX_RECONNECT_DELAY_MS = 10_000
+/** Upper bound of the random jitter added to every reconnect delay. */
+const MAX_RECONNECT_JITTER_MS = 250
 
 interface ActiveSubscription {
   readonly listeners: Set<ServerEventListener>
   readonly request: SubscriptionRequest
+}
+
+/** Counters for performance logging (see lib/perf-logging/renderer-perf-collector.ts). */
+export interface WsTransportStats {
+  readonly connected: boolean
+  readonly pendingRequests: number
+  readonly channels: number
+  readonly listeners: number
+  readonly reconnects: number
+  /** Since the previous `stats({ reset: true })`. */
+  readonly inboundMessages: number
+  readonly inboundBytes: number
+  readonly inboundByChannel: Record<string, { count: number; bytes: number }>
 }
 
 export class WsTransport {
@@ -36,7 +56,13 @@ export class WsTransport {
   private readonly webSocketTokenProvider?: () => Promise<string | null>
   private readonly reconnectDelayMs: number
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private reconnectAttempt = 0
   private closed = false
+  private everOpened = false
+  private reconnects = 0
+  private inboundMessages = 0
+  private inboundBytes = 0
+  private inboundByChannel = new Map<string, { count: number; bytes: number }>()
 
   constructor(
     private readonly wsBaseUrl: string,
@@ -54,7 +80,7 @@ export class WsTransport {
     const request: RpcRequest = { id, method, params }
 
     const response = new Promise<unknown>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject })
+      this.pending.set(id, { resolve, reject, socket })
     })
     socket.send(JSON.stringify(request))
     return response
@@ -80,7 +106,8 @@ export class WsTransport {
     subscription.listeners.add(listener)
 
     if (subscription.listeners.size === 1) this.sendSubscribe(subscription.request)
-    void this.connect().catch(() => undefined)
+    // A failed token exchange creates no socket, so nothing else would retry.
+    void this.connect().catch(() => this.scheduleReconnect())
 
     return () => {
       subscription?.listeners.delete(listener)
@@ -89,6 +116,32 @@ export class WsTransport {
         this.sendUnsubscribe(channel)
       }
     }
+  }
+
+  /** Counters for performance logging; `reset` starts a new window for the inbound totals. */
+  stats(options: { reset?: boolean } = {}): WsTransportStats {
+    let listeners = 0
+    for (const subscription of this.eventListeners.values()) {
+      listeners += subscription.listeners.size
+    }
+    const inboundByChannel: Record<string, { count: number; bytes: number }> = {}
+    for (const [channel, entry] of this.inboundByChannel) inboundByChannel[channel] = entry
+    const snapshot: WsTransportStats = {
+      connected: this.socket?.readyState === this.WebSocketCtor.OPEN,
+      pendingRequests: this.pending.size,
+      channels: this.eventListeners.size,
+      listeners,
+      reconnects: this.reconnects,
+      inboundMessages: this.inboundMessages,
+      inboundBytes: this.inboundBytes,
+      inboundByChannel
+    }
+    if (options.reset) {
+      this.inboundMessages = 0
+      this.inboundBytes = 0
+      this.inboundByChannel = new Map()
+    }
+    return snapshot
   }
 
   close(): void {
@@ -112,50 +165,66 @@ export class WsTransport {
     const openSocket = (webSocketUrl: string): Promise<WebSocket> =>
       new Promise<WebSocket>((resolve, reject) => {
         const socket = new this.WebSocketCtor(webSocketUrl)
-        let opened = false
+        let settled = false
         this.socket = socket
+        // Every handler below checks `this.socket === socket`: after a reconnect race the
+        // events of a superseded socket must not touch the shared state of the current one.
 
         socket.addEventListener('open', () => {
-          opened = true
+          if (this.socket !== socket) {
+            socket.close()
+            if (!settled) {
+              settled = true
+              reject(new Error('Hive WebSocket was superseded while connecting'))
+            }
+            return
+          }
+          settled = true
+          this.reconnectAttempt = 0
+          if (this.everOpened) this.reconnects += 1
+          this.everOpened = true
           this.connectPromise = null
           this.sendSubscriptions(socket)
           resolve(socket)
         })
 
         socket.addEventListener('message', (event) => {
+          if (this.socket !== socket) return
           this.handleMessage(event.data)
         })
 
         socket.addEventListener('close', () => {
-          if (this.socket === socket) this.socket = null
-          if (!opened && this.connectPromise) {
-            this.connectPromise = null
+          if (!settled) {
+            settled = true
             reject(new Error(`Hive WebSocket closed before connecting at ${webSocketUrl}`))
           }
+          this.rejectPending(new Error('Hive WebSocket connection closed'), socket)
+          if (this.socket !== socket) return
+          this.socket = null
           this.connectPromise = null
-          this.rejectPending(new Error('Hive WebSocket connection closed'))
           this.scheduleReconnect()
         })
 
         socket.addEventListener('error', () => {
           const error = new Error(`Failed to connect Hive WebSocket at ${this.wsBaseUrl}`)
-          if (this.connectPromise) {
-            this.connectPromise = null
+          if (!settled) {
+            settled = true
             reject(error)
           }
-          this.rejectPending(error)
+          this.rejectPending(error, socket)
         })
       })
 
     const webSocketUrl = this.createWebSocketUrl()
     const connectPromise =
       typeof webSocketUrl === 'string' ? openSocket(webSocketUrl) : webSocketUrl.then(openSocket)
-    this.connectPromise = connectPromise.catch((error) => {
-      this.connectPromise = null
+    const tracked: Promise<WebSocket> = connectPromise.catch((error) => {
+      if (this.connectPromise === tracked) this.connectPromise = null
       throw error
     })
+    this.connectPromise = tracked
 
-    return this.connectPromise
+    return tracked
   }
 
   private createWebSocketUrl(): string | Promise<string> {
@@ -171,7 +240,10 @@ export class WsTransport {
   }
 
   private handleMessage(raw: unknown): void {
-    const message = JSON.parse(String(raw)) as RpcResponse | ServerEvent
+    const text = String(raw)
+    const message = JSON.parse(text) as RpcResponse | ServerEvent
+    this.inboundMessages += 1
+    this.inboundBytes += text.length
     if ('id' in message) {
       const pending = this.pending.get(message.id)
       if (!pending) return
@@ -188,21 +260,47 @@ export class WsTransport {
       return
     }
 
+    const key = collapseChannel(message.channel)
+    const entry = this.inboundByChannel.get(key)
+    if (entry) {
+      entry.count += 1
+      entry.bytes += text.length
+    } else {
+      this.inboundByChannel.set(key, { count: 1, bytes: text.length })
+    }
     const subscription = this.eventListeners.get(message.channel)
     if (!subscription) return
     for (const listener of subscription.listeners) listener(message)
   }
 
-  private rejectPending(error: Error): void {
-    for (const pending of this.pending.values()) {
+  /** Rejects every pending request, or only those sent on `socket` when given. */
+  private rejectPending(error: Error, socket?: WebSocket): void {
+    for (const [id, pending] of this.pending) {
+      if (socket && pending.socket !== socket) continue
+      this.pending.delete(id)
       pending.reject(error)
     }
-    this.pending.clear()
+  }
+
+  /**
+   * Exponential backoff with jitter: a slow or restarting backend must not be hammered with
+   * a token exchange plus a socket every 250 ms. The counter resets once a socket opens.
+   */
+  private nextReconnectDelayMs(): number {
+    const backoff = Math.min(
+      this.reconnectDelayMs * 2 ** this.reconnectAttempt,
+      MAX_RECONNECT_DELAY_MS
+    )
+    // Jitter never exceeds the base delay so a zero base (tests) stays immediate.
+    const jitter = Math.random() * Math.min(this.reconnectDelayMs, MAX_RECONNECT_JITTER_MS)
+    return backoff + jitter
   }
 
   private scheduleReconnect(): void {
     if (this.closed || this.eventListeners.size === 0 || this.reconnectTimer) return
 
+    const delayMs = this.nextReconnectDelayMs()
+    this.reconnectAttempt += 1
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null
       if (this.closed || this.eventListeners.size === 0) return
@@ -210,7 +308,7 @@ export class WsTransport {
       void this.connect().catch(() => {
         this.scheduleReconnect()
       })
-    }, this.reconnectDelayMs)
+    }, delayMs)
   }
 
   private sendSubscriptions(socket: WebSocket): void {
@@ -237,3 +335,17 @@ const toSubscribeMessage = (request: SubscriptionRequest): WebSocketSubscribeMes
   type: 'subscribe',
   ...request
 })
+
+/** `session:<uuid>:stream` → `session:*:stream` so per-entity channels aggregate in stats. */
+const collapseChannel = (channel: string): string =>
+  channel
+    .split(':')
+    .map((part) =>
+      /^[0-9a-f-]{16,}$/i.test(part) ||
+      /^\d{4,}$/.test(part) ||
+      (part.includes('-') && /\d/.test(part) && part.length >= 12) ||
+      part.length > 40
+        ? '*'
+        : part
+    )
+    .join(':')

@@ -1,5 +1,18 @@
 import { makeDesktopBackendEventMessage } from '../../shared/desktop-command'
+import { perfLog } from '../services/perf-logging/perf-logger'
 import type { StartedDesktopBackend } from './backend-manager'
+
+// Performance logging: IPC events handed to the server child whose send callback has not
+// fired yet. Node queues these in memory without bound when the child is slow to read.
+let ipcInflight = 0
+let ipcInflightMax = 0
+let ipcSent = 0
+perfLog.registerGauge('backendIpc', () => {
+  const snapshot = { inflight: ipcInflight, inflightMax: ipcInflightMax, sent: ipcSent }
+  ipcInflightMax = ipcInflight
+  ipcSent = 0
+  return snapshot
+})
 
 interface DesktopBackendAuthSession {
   readonly accessToken: string
@@ -29,8 +42,12 @@ export const publishDesktopBackendEvent = async (
   // High volume is already bounded upstream by setImmediate coalescing.
   const child = backend.getChild()
   if (child?.connected && typeof child.send === 'function') {
+    ipcInflight += 1
+    ipcSent += 1
+    if (ipcInflight > ipcInflightMax) ipcInflightMax = ipcInflight
     return new Promise<boolean>((resolve) => {
       child.send(makeDesktopBackendEventMessage(channel, payload), (error) => {
+        ipcInflight = Math.max(0, ipcInflight - 1)
         resolve(!error)
       })
     })

@@ -185,7 +185,7 @@ describe('continueTicketSession', () => {
 
     expect(updateTicket).not.toHaveBeenCalled()
     expect(mocks.toast.error).toHaveBeenCalledWith('Failed to send continue')
-    expect(useWorktreeStatusStore.getState().sessionStatuses['session-1']).toBeNull()
+    expect(useWorktreeStatusStore.getState().sessionStatuses['session-1']).toBeUndefined()
   })
 
   it('refuses when the ticket has no linked session', async () => {

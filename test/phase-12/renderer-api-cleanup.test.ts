@@ -50,7 +50,10 @@ describe('renderer API cleanup', () => {
     const bootstrapEnd = source.indexOf('\nvoid bootstrap()', bootstrapStart)
     const bootstrapSource = source.slice(bootstrapStart, bootstrapEnd)
     const createClientIndex = bootstrapSource.indexOf('const client = await createHiveClient()')
-    const setClientIndex = bootstrapSource.indexOf('setRendererRpcClient(client)')
+    // Performance logging wraps the client so RPC round trips can be timed while enabled.
+    const setClientIndex = bootstrapSource.indexOf(
+      'setRendererRpcClient(instrumentRendererRpcClient(client))'
+    )
     const renderIndex = bootstrapSource.indexOf('await renderApp()')
 
     expect(bootstrapStart).toBeGreaterThan(-1)
@@ -1142,21 +1145,27 @@ describe('renderer API cleanup', () => {
     expect(source).not.toContain('app.getPath')
   })
 
-  it('keeps server-imported perf diagnostics off direct Electron imports', () => {
+  it('keeps server-imported performance logging off direct Electron imports', () => {
+    // The server child imports the logger; Electron-only gauges live in electron-main-perf.ts.
     const source = fs.readFileSync(
-      path.resolve(__dirname, '../../src/main/services/perf-diagnostics.ts'),
+      path.resolve(__dirname, '../../src/main/services/perf-logging/perf-logger.ts'),
       'utf-8'
     )
 
     expect(source).not.toContain("from 'electron'")
     expect(source).not.toContain("import('electron')")
-    expect(source).toContain("import { homedir } from 'os'")
-    expect(source).toContain('getElectronProcessCounts?:')
-    expect(source).toContain('collectors?.getElectronProcessCounts?.()')
-    expect(source).toContain("join(homeDir, '.hive', 'logs')")
+    expect(source).toContain("import { homedir } from 'node:os'")
+    expect(source).toContain("join(homedir(), '.hive', 'logs', 'perf')")
     expect(source).not.toContain('BrowserWindow')
     expect(source).not.toContain('webContents.getAllWebContents')
     expect(source).not.toContain('app.getPath')
+
+    const electronSide = fs.readFileSync(
+      path.resolve(__dirname, '../../src/main/services/perf-logging/electron-main-perf.ts'),
+      'utf-8'
+    )
+    expect(electronSide).toContain('app.getAppMetrics()')
+    expect(electronSide).toContain('webContents.getAllWebContents()')
   })
 
   it('keeps system setKeepAwake RPC fallback from importing the Electron power-save service', () => {
@@ -25687,12 +25696,14 @@ describe('renderer API cleanup', () => {
 
     expect(handlerStart).toBeGreaterThan(-1)
     expect(handlerEnd).toBeGreaterThan(handlerStart)
-    expect(source).toContain("import { perfDiagnosticsApi } from '@/api/perf-diagnostics-api'")
+    expect(source).toContain(
+      "import { perfDiagnosticsApi, type PerfLoggingStatus } from '@/api/perf-diagnostics-api'"
+    )
     expect(handlerSource).toContain('const newValue = !perfDiagnosticsEnabled')
     expect(handlerSource).toContain("updateSetting('perfDiagnosticsEnabled', newValue)")
-    expect(handlerSource).toContain('perfDiagnosticsApi.enable(newValue)')
+    expect(handlerSource).toContain('.enable(newValue)')
     expect(handlerSource).toContain(
-      "toast.success(newValue ? 'Performance diagnostics enabled' : 'Performance diagnostics disabled')"
+      "toast.success(newValue ? 'Performance logging enabled' : 'Performance logging disabled')"
     )
     expect(handlerSource).not.toContain('window.perfDiagnosticsOps')
   })

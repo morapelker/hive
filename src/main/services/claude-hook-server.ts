@@ -58,6 +58,22 @@ import {
 } from './codex-cli-hook-adapter'
 import { normalizeCodexModelSlug } from './codex-models'
 import { recordSessionFinalMessage } from './document-flow/session-final-message-recorder'
+import { perfLog } from './perf-logging/perf-logger'
+
+const HOOK_SLOW_MS = 250
+const hookStats = { inFlight: 0, count: 0, totalMs: 0, maxMs: 0 }
+perfLog.registerGauge('claudeHooks', () => {
+  const snapshot = {
+    inFlight: hookStats.inFlight,
+    count: hookStats.count,
+    avgMs: Math.round(hookStats.totalMs / Math.max(1, hookStats.count)),
+    maxMs: hookStats.maxMs
+  }
+  hookStats.count = 0
+  hookStats.totalMs = 0
+  hookStats.maxMs = 0
+  return snapshot
+})
 
 // Delay between replying to the ExitPlanMode PermissionRequest hook and
 // pressing "1" on the PTY: claude renders its plan dialog only after the hook
@@ -1029,6 +1045,18 @@ export async function getClaudeHookServer(): Promise<{ port: number }> {
   }
 
   server = http.createServer((req, res) => {
+    // Performance logging: the CLI blocks on these replies, so their latency is the
+    // CLI's own view of main-process lag.
+    const startedAt = Date.now()
+    hookStats.inFlight += 1
+    res.once('close', () => {
+      hookStats.inFlight = Math.max(0, hookStats.inFlight - 1)
+      const ms = Date.now() - startedAt
+      hookStats.count += 1
+      hookStats.totalMs += ms
+      if (ms > hookStats.maxMs) hookStats.maxMs = ms
+      if (ms >= HOOK_SLOW_MS) perfLog.slow('hook', ms, { url: req.url ?? null })
+    })
     void handleHook(req, res)
   })
 

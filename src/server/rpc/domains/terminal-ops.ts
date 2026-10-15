@@ -3,6 +3,7 @@ import { z } from 'zod'
 import type { EventBus } from '../../events/event-bus'
 import { getGhosttyTerminalConfig } from '../../../main/services/ghostty-config-store'
 import { createLogger } from '../../../main/services/logger'
+import { perfLog } from '../../../main/services/perf-logging/perf-logger'
 import { ptyService } from '../../../main/services/pty-service'
 import {
   isDesktopCommandResult,
@@ -1147,11 +1148,12 @@ const requestDesktopTerminalCreateClaudeCli = (
       resolve(value)
     }
     const timeout = setTimeout(() => {
+      logDesktopCommandTimeout(command, DESKTOP_TERMINAL_CREATE_TIMEOUT_MS)
       finish({
         success: false,
         error: `Timed out waiting for desktop command response: ${command}`
       })
-    }, 5_000)
+    }, DESKTOP_TERMINAL_CREATE_TIMEOUT_MS)
 
     const onMessage = (message: unknown): void => {
       if (!isDesktopCommandResult(message) || message.id !== id) return
@@ -1196,6 +1198,14 @@ const isTerminalAttachShellCommandResult = (
     value.runId === undefined ||
     value.runId === null ||
     typeof value.runId === 'string')
+
+// Claude CLI PTY bridges answer from the Electron main process, which can be
+// blocked for seconds under load; 5 s used to fail live sessions spuriously.
+const DESKTOP_TERMINAL_CREATE_TIMEOUT_MS = 30_000
+const DESKTOP_TERMINAL_IO_TIMEOUT_MS = 15_000
+
+const logDesktopCommandTimeout = (command: string, timeoutMs: number): void =>
+  perfLog.slow('desktop-command-timeout', timeoutMs, { command })
 
 // A detached start may wait up to DETACHED_READY_TIMEOUT_MS (5 s) for its host.
 const SHELL_COMMAND_DESKTOP_COMMAND_TIMEOUT_MS = 15_000
@@ -1317,8 +1327,9 @@ const requestDesktopTerminalGetLiveIds = (): Promise<TerminalLiveIdsResult> => {
       resolve(value)
     }
     const timeout = setTimeout(() => {
+      logDesktopCommandTimeout(command, DESKTOP_TERMINAL_IO_TIMEOUT_MS)
       finish({ terminalIds: [] })
-    }, 5_000)
+    }, DESKTOP_TERMINAL_IO_TIMEOUT_MS)
 
     const onMessage = (message: unknown): void => {
       if (!isDesktopCommandResult(message) || message.id !== id) return
@@ -1413,11 +1424,12 @@ const requestDesktopTerminalResize = (
       resolve(value)
     }
     const timeout = setTimeout(() => {
+      logDesktopCommandTimeout(command, DESKTOP_TERMINAL_IO_TIMEOUT_MS)
       finish({
         success: false,
         error: `Timed out waiting for desktop command response: ${command}`
       })
-    }, 5_000)
+    }, DESKTOP_TERMINAL_IO_TIMEOUT_MS)
 
     const onMessage = (message: unknown): void => {
       if (!isDesktopCommandResult(message) || message.id !== id) return
@@ -1464,11 +1476,12 @@ const requestDesktopTerminalDestroy = (terminalId: string): Promise<TerminalDest
       resolve(value)
     }
     const timeout = setTimeout(() => {
+      logDesktopCommandTimeout(command, DESKTOP_TERMINAL_IO_TIMEOUT_MS)
       finish({
         success: false,
         error: `Timed out waiting for desktop command response: ${command}`
       })
-    }, 5_000)
+    }, DESKTOP_TERMINAL_IO_TIMEOUT_MS)
 
     const onMessage = (message: unknown): void => {
       if (!isDesktopCommandResult(message) || message.id !== id) return
@@ -1514,11 +1527,12 @@ const requestDesktopTerminalWrite = (
       resolve(value)
     }
     const timeout = setTimeout(() => {
+      logDesktopCommandTimeout(command, DESKTOP_TERMINAL_IO_TIMEOUT_MS)
       finish({
         success: false,
         error: `Timed out waiting for desktop command response: ${command}`
       })
-    }, 5_000)
+    }, DESKTOP_TERMINAL_IO_TIMEOUT_MS)
 
     const onMessage = (message: unknown): void => {
       if (!isDesktopCommandResult(message) || message.id !== id) return

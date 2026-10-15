@@ -9,6 +9,7 @@ import { makeRpcRouter } from './rpc/router'
 import { attachWebSocketRpcServer } from './rpc/ws-server'
 import { resolveStaticFile, serveStaticFile } from './static'
 import { isDesktopBackendEventMessage } from '../shared/desktop-command'
+import { perfLog } from '../main/services/perf-logging/perf-logger'
 import { cleanupBranchWatchers } from '../main/services/branch-watcher'
 import { warmUpGhosttyConfig } from '../main/services/ghostty-config-store'
 import { setGitEventPublisher } from '../main/services/git-events'
@@ -49,6 +50,14 @@ export const startHiveServer = (
     // when the user explicitly requests a re-sync in Settings.
     warmUpGhosttyConfig()
     const eventBus = makeEventBus()
+    perfLog.registerGauge('eventBus', () => eventBus.stats())
+    perfLog.registerGauge('db.activeSessions', () => {
+      try {
+        return getDatabase().countActiveSessions()
+      } catch {
+        return -1
+      }
+    })
 
     if (desktopBackendEventForwarder) {
       process.off('message', desktopBackendEventForwarder)

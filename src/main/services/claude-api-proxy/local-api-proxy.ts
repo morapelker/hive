@@ -17,6 +17,7 @@ import https from 'https'
 import type { AddressInfo } from 'net'
 import { pipeline } from 'stream'
 import { fingerprintRequestCredential } from '../credential-fingerprint'
+import { perfLog } from '../perf-logging/perf-logger'
 
 export interface LocalApiProxyExchange {
   method: string
@@ -228,6 +229,36 @@ interface ResolvedUpstream {
   agent: http.Agent
 }
 
+const PROXY_SLOW_TTFB_MS = 10_000
+const PROXY_STALL_MS = 30_000
+
+// Performance logging: the proxy sits on the Electron main event loop between every Claude
+// CLI and the API, so its time-to-first-byte and stalls are the CLI's view of main-loop lag.
+const proxyStats = {
+  inFlight: 0,
+  inFlightMax: 0,
+  exchanges: 0,
+  ttfbTotalMs: 0,
+  ttfbMaxMs: 0,
+  stalls: 0
+}
+perfLog.registerGauge('claudeApiProxy', () => {
+  const snapshot = {
+    inFlight: proxyStats.inFlight,
+    inFlightMax: proxyStats.inFlightMax,
+    exchanges: proxyStats.exchanges,
+    ttfbAvgMs: Math.round(proxyStats.ttfbTotalMs / Math.max(1, proxyStats.exchanges)),
+    ttfbMaxMs: proxyStats.ttfbMaxMs,
+    stalls: proxyStats.stalls
+  }
+  proxyStats.inFlightMax = proxyStats.inFlight
+  proxyStats.exchanges = 0
+  proxyStats.ttfbTotalMs = 0
+  proxyStats.ttfbMaxMs = 0
+  proxyStats.stalls = 0
+  return snapshot
+})
+
 export async function startLocalApiProxy(options: LocalApiProxyOptions): Promise<LocalApiProxy> {
   const host = options.host ?? DEFAULT_HOST
   const log = options.log ?? noopLog
@@ -287,6 +318,28 @@ export async function startLocalApiProxy(options: LocalApiProxyOptions): Promise
     const startedAt = Date.now()
     const method = req.method ?? 'GET'
     const path = req.url ?? '/'
+    proxyStats.inFlight += 1
+    if (proxyStats.inFlight > proxyStats.inFlightMax) proxyStats.inFlightMax = proxyStats.inFlight
+    let stallTimer: NodeJS.Timeout | null = null
+    res.once('close', () => {
+      proxyStats.inFlight = Math.max(0, proxyStats.inFlight - 1)
+      if (stallTimer) clearTimeout(stallTimer)
+    })
+    const armStallTimer = (): void => {
+      if (!perfLog.isEnabled()) return
+      // One timer per response, refreshed per chunk: no per-token timer churn.
+      if (stallTimer) {
+        stallTimer.refresh()
+        return
+      }
+      stallTimer = setTimeout(() => {
+        stallTimer = null
+        if (res.writableFinished || res.destroyed) return
+        proxyStats.stalls += 1
+        perfLog.slow('proxy-stall', PROXY_STALL_MS, { path, sinceStartMs: Date.now() - startedAt })
+      }, PROXY_STALL_MS)
+      stallTimer.unref?.()
+    }
 
     if (!isLoopbackAddress(req.socket.remoteAddress)) {
       writeJsonResponse(res, 403, upstreamErrorBody('local proxy: loopback clients only'))
@@ -392,6 +445,13 @@ export async function startLocalApiProxy(options: LocalApiProxyOptions): Promise
       responded = true
       const status = upstreamRes.statusCode ?? 502
       const observedAt = Date.now()
+      const ttfbMs = observedAt - startedAt
+      proxyStats.exchanges += 1
+      proxyStats.ttfbTotalMs += ttfbMs
+      if (ttfbMs > proxyStats.ttfbMaxMs) proxyStats.ttfbMaxMs = ttfbMs
+      if (ttfbMs >= PROXY_SLOW_TTFB_MS) perfLog.slow('proxy-ttfb', ttfbMs, { path, status })
+      armStallTimer()
+      upstreamRes.on('data', armStallTimer)
 
       res.writeHead(status, upstreamRes.statusMessage, stripHopByHopHeaders(upstreamRes.headers))
       res.flushHeaders()

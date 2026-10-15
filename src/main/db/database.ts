@@ -25,6 +25,8 @@ import type {
   SessionFinalMessageUpsert
 } from '../services/document-flow/db-port'
 import Database from 'better-sqlite3'
+import { instrumentDatabase } from '../services/perf-logging/db-instrumentation'
+import { perfLog } from '../services/perf-logging/perf-logger'
 import { dirname, join } from 'path'
 import { existsSync, mkdirSync, statSync } from 'fs'
 import { randomUUID } from 'crypto'
@@ -369,6 +371,14 @@ export class DatabaseService implements DocumentFlowDb {
     this.db = new Database(this.dbPath)
     this.db.pragma('journal_mode = WAL')
     this.db.pragma('foreign_keys = ON')
+    instrumentDatabase(this.db)
+    perfLog.registerGauge('db.walBytes', () => {
+      try {
+        return existsSync(`${this.dbPath}-wal`) ? statSync(`${this.dbPath}-wal`).size : 0
+      } catch {
+        return -1
+      }
+    })
 
     this.runMigrations()
   }

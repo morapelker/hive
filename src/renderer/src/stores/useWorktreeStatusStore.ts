@@ -63,7 +63,10 @@ export interface SessionBackgroundWork {
 }
 
 interface WorktreeStatusState {
-  // sessionId → status info (null means no status / cleared)
+  // sessionId → status info. A cleared session is removed from the record
+  // (never written as null): every status event copies this record and every
+  // subscriber sees the copy, so stale keys cost on each event for the app's
+  // whole lifetime. `| null` remains only so legacy readers/tests type-check.
   sessionStatuses: Record<string, SessionStatusEntry | null>
   // sessionId → API-error classification from the session's last turn
   // (claude-cli StopFailure). Kept separate from sessionStatuses so the
@@ -129,6 +132,15 @@ interface WorktreeStatusState {
   isWorktreeBeingReviewed: (worktreeId: string) => boolean
 }
 
+function withoutSessions(
+  statuses: Record<string, SessionStatusEntry | null>,
+  sessionIds: string[]
+): Record<string, SessionStatusEntry | null> {
+  const next = { ...statuses }
+  for (const id of sessionIds) delete next[id]
+  return next
+}
+
 export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => ({
   sessionStatuses: {},
   sessionApiErrors: {},
@@ -158,11 +170,14 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
     }
   ) => {
     set((state) => {
-      const next: Partial<WorktreeStatusState> = {
-        sessionStatuses: {
+      const next: Partial<WorktreeStatusState> = {}
+      if (status) {
+        next.sessionStatuses = {
           ...state.sessionStatuses,
-          [sessionId]: status ? { status, timestamp: Date.now(), ...metadata } : null
+          [sessionId]: { status, timestamp: Date.now(), ...metadata }
         }
+      } else if (sessionId in state.sessionStatuses) {
+        next.sessionStatuses = withoutSessions(state.sessionStatuses, [sessionId])
       }
 
       // The session's API-error mark clears only when a new turn actually
@@ -200,7 +215,9 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
         }
       }
 
-      return next
+      // Nothing to publish (clearing an unknown session): hand back the same
+      // state so zustand skips the update and no subscriber re-renders.
+      return Object.keys(next).length === 0 ? state : next
     })
 
     // ── Kanban coordination: notify kanban store of relevant status changes ──
@@ -293,12 +310,11 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
     // Deliberately keeps sessionApiErrors: this is also the failure-rollback
     // path of modal relaunches, and a relaunch that never started a turn must
     // not strip the error mark.
-    set((state) => ({
-      sessionStatuses: {
-        ...state.sessionStatuses,
-        [sessionId]: null
-      }
-    }))
+    set((state) =>
+      sessionId in state.sessionStatuses
+        ? { sessionStatuses: withoutSessions(state.sessionStatuses, [sessionId]) }
+        : state
+    )
     // Mirror setSessionStatus(sessionId, null): the run is gone, so pending
     // unloaded-project reopen recoveries must not outlive it.
     notifyKanbanSessionSync(sessionId, { type: 'status_cleared' })
@@ -309,17 +325,17 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
     const sessionStore = useSessionStore.getState()
     const sessions = sessionStore.sessionsByWorktree.get(worktreeId) || []
 
-    const updates: Record<string, null> = {}
+    const toClear: string[] = []
     for (const s of sessions) {
       const st = sessionStatuses[s.id]?.status
       if (st === 'unread' || st === 'completed') {
-        updates[s.id] = null
+        toClear.push(s.id)
       }
     }
 
-    if (Object.keys(updates).length > 0) {
+    if (toClear.length > 0) {
       set((state) => ({
-        sessionStatuses: { ...state.sessionStatuses, ...updates }
+        sessionStatuses: withoutSessions(state.sessionStatuses, toClear)
       }))
     }
   },

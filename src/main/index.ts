@@ -1,5 +1,5 @@
 import { loadShellEnv } from './services/shell-env'
-import { app, shell, BrowserWindow, Menu, powerMonitor, webContents } from 'electron'
+import { app, shell, BrowserWindow, Menu, powerMonitor } from 'electron'
 import { join } from 'path'
 import { electronApp, is } from '@electron-toolkit/utils'
 import { getDatabase, closeDatabase } from './db'
@@ -59,7 +59,10 @@ import {
 import type { AgentSdkImplementer } from './services/agent-sdk-types'
 import { telemetryService } from './services/telemetry-service'
 import { discordService } from './services/discord-service'
-import { perfDiagnostics } from './services/perf-diagnostics'
+import {
+  configureElectronMainPerfLogging,
+  getElectronMainPerfLogger
+} from './services/perf-logging/electron-main-perf'
 import { configure as configureCodexDebugLogger } from './services/codex-debug-logger'
 import { ptyService } from './services/pty-service'
 import {
@@ -703,34 +706,19 @@ app
       forkOpenCodeSession(worktreePath, opencodeSessionId, messageId)
     )
 
-    // Wire up performance diagnostics collectors and auto-start if enabled.
-    perfDiagnostics.setCollectors({
-      getPtyCount: () => ptyService.getCount(),
-      getScriptStats: () => scriptRunner.getStats(),
-      getFileWatcherCount: () => getFileTreeWatcherCount(),
-      getWorktreeWatcherCount: () => -1,
-      getBranchWatcherCount: () => -1,
-      getActiveSessionCount: () => {
-        try {
-          return getDatabase().countActiveSessions()
-        } catch {
-          return -1
-        }
-      },
-      getElectronProcessCounts: () => ({
-        windows: BrowserWindow.getAllWindows().length,
-        webContents: webContents.getAllWebContents().length
-      })
-    })
-
-    // Auto-start perf diagnostics if setting is enabled.
+    // Performance logging (Settings → Advanced): the Electron main process samples itself
+    // alongside the server child. Auto-start when the persisted setting is on.
+    const mainPerfLogger = getElectronMainPerfLogger()
+    mainPerfLogger.registerGauge('main.ptys', () => ptyService.getCount())
+    mainPerfLogger.registerGauge('main.scripts', () => scriptRunner.getStats())
+    mainPerfLogger.registerGauge('main.fileTreeWatchers', () => getFileTreeWatcherCount())
     try {
       const raw = getDatabase().getSetting(APP_SETTINGS_DB_KEY)
       if (raw) {
         const settings = JSON.parse(raw) as { perfDiagnosticsEnabled?: boolean }
         if (settings.perfDiagnosticsEnabled) {
-          log.info('Auto-starting performance diagnostics (setting enabled)')
-          perfDiagnostics.start()
+          log.info('Auto-starting performance logging (setting enabled)')
+          configureElectronMainPerfLogging(true)
         }
       }
     } catch {
@@ -886,7 +874,7 @@ wireQuitCleanup({
     { name: 'destroyPetWindow', run: () => destroyPetWindow() },
     // Release the hotkey, the pill window and the speech engine worker
     { name: 'voiceDictation', run: () => disposeVoiceDictation() },
-    { name: 'perfDiagnostics', run: () => perfDiagnostics.cleanup() },
+    { name: 'perfLogging', run: () => getElectronMainPerfLogger().stop() },
     { name: 'updaterService', run: () => updaterService.cleanup() },
     // Terminal PTYs and Ghostty runtime
     { name: 'cleanupTerminals', run: () => cleanupTerminals() },

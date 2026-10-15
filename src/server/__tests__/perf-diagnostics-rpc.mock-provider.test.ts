@@ -1,8 +1,10 @@
 import { Effect } from 'effect'
 import { describe, expect, it, vi } from 'vitest'
-import type { PerfSnapshot } from '../../main/services/perf-diagnostics'
 import { makeEventBus } from '../events/event-bus'
-import type { PerfDiagnosticsOpsRpcService } from '../rpc/domains/perf-diagnostics-ops'
+import type {
+  PerfDiagnosticsOpsRpcService,
+  PerfLoggingStatus
+} from '../rpc/domains/perf-diagnostics-ops'
 import { makeRpcRouter } from '../rpc/router'
 
 describe('perf diagnostics ops RPC mocked provider', () => {
@@ -55,36 +57,20 @@ describe('perf diagnostics ops RPC mocked provider', () => {
   })
 
   it('routes perfDiagnosticsOps.getSnapshot to the injected provider service', async () => {
-    const snapshot: PerfSnapshot = {
-      perfVersion: 'v6',
-      timestamp: '2026-05-31T00:00:00.000Z',
-      uptimeMs: 1234,
-      cpu: { userMs: 1, systemMs: 2, percentSinceLastSample: 3 },
-      memory: {
-        rss: 4,
-        heapUsed: 5,
-        heapTotal: 6,
-        external: 7,
-        arrayBuffers: 8,
-        nativeEstimate: 9
+    const snapshot: PerfLoggingStatus = {
+      server: {
+        enabled: true,
+        role: 'server',
+        pid: 123,
+        logDir: '/tmp/perf',
+        filePath: '/tmp/perf/perf-server.jsonl',
+        startedAt: '2026-05-31T00:00:00.000Z',
+        samples: 4,
+        alerts: 0,
+        captures: []
       },
-      heap: {
-        sizeLimit: 10,
-        totalPhysical: 11,
-        mallocedMemory: 12,
-        numberOfGcContexts: 13
-      },
-      processes: {
-        ptyActive: 14,
-        scriptsActive: 15,
-        scriptsTotalOpened: 16,
-        scriptsTotalClosed: 17
-      },
-      watchers: { fileTree: 18, worktree: 19, branch: 20 },
-      sessions: { active: 21 },
-      handles: { active: 22, requests: 23, byType: { Socket: 2 } },
-      electron: { windows: 24, webContents: 25 },
-      eventLoopLagMs: 26
+      logDir: '/tmp/perf',
+      files: [{ name: 'perf-server.jsonl', bytes: 1024, modifiedAt: '2026-05-31T00:00:00.000Z' }]
     }
     const getSnapshot = vi.fn(() => Effect.succeed(snapshot))
     const service = { getSnapshot } as unknown as PerfDiagnosticsOpsRpcService

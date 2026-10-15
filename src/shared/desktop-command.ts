@@ -28,6 +28,7 @@ export type DesktopCommandName =
   | 'openInChrome'
   | 'updateMenuState'
   | 'setKeepAwake'
+  | 'perfLogging'
   | 'sleepNow'
   | 'setSessionQueuedState'
   | 'updaterCheckForUpdate'
@@ -147,6 +148,19 @@ export interface UpdateMenuStatePayload {
 
 export interface SetKeepAwakePayload {
   readonly active: boolean
+}
+
+/**
+ * Performance logging (Settings → Advanced) in the Electron main process: the server child
+ * owns the toggle and forwards it here so the main process samples itself too, and a manual
+ * capture also takes heap snapshots of every renderer through `webContents`.
+ */
+export type PerfLoggingPayload =
+  | { readonly action: 'configure'; readonly enabled: boolean }
+  | { readonly action: 'capture'; readonly reason: string }
+
+export interface PerfLoggingResult {
+  readonly files: string[]
 }
 
 export interface SetSessionQueuedStatePayload {
@@ -944,6 +958,7 @@ export type DesktopCommandRequest =
   | OpenInChromeDesktopCommandRequest
   | UpdateMenuStateDesktopCommandRequest
   | SetKeepAwakeDesktopCommandRequest
+  | PerfLoggingDesktopCommandRequest
   | SleepNowDesktopCommandRequest
   | SetSessionQueuedStateDesktopCommandRequest
   | UpdaterCheckForUpdateDesktopCommandRequest
@@ -1178,6 +1193,13 @@ export interface SetKeepAwakeDesktopCommandRequest {
   readonly id: string
   readonly command: 'setKeepAwake'
   readonly payload: SetKeepAwakePayload
+}
+
+export interface PerfLoggingDesktopCommandRequest {
+  readonly type: typeof DESKTOP_COMMAND_REQUEST_TYPE
+  readonly id: string
+  readonly command: 'perfLogging'
+  readonly payload: PerfLoggingPayload
 }
 
 export interface SleepNowDesktopCommandRequest {
@@ -1899,6 +1921,11 @@ export function makeDesktopCommandRequest(
 ): SetKeepAwakeDesktopCommandRequest
 export function makeDesktopCommandRequest(
   id: string,
+  command: 'perfLogging',
+  payload: PerfLoggingPayload
+): PerfLoggingDesktopCommandRequest
+export function makeDesktopCommandRequest(
+  id: string,
   command: 'sleepNow'
 ): SleepNowDesktopCommandRequest
 export function makeDesktopCommandRequest(
@@ -2344,6 +2371,7 @@ export function makeDesktopCommandRequest(
     | OpenInChromePayload
     | UpdateMenuStatePayload
     | SetKeepAwakePayload
+    | PerfLoggingPayload
     | SetSessionQueuedStatePayload
     | UpdaterCheckForUpdatePayload
     | UpdaterSetChannelPayload
@@ -2616,6 +2644,19 @@ export function makeDesktopCommandRequest(
       command,
       payload
     } as SetKeepAwakeDesktopCommandRequest
+  }
+
+  if (command === 'perfLogging') {
+    if (!payload) {
+      throw new Error('Missing perfLogging payload')
+    }
+
+    return {
+      type: DESKTOP_COMMAND_REQUEST_TYPE,
+      id,
+      command,
+      payload
+    } as PerfLoggingDesktopCommandRequest
   }
 
   if (command === 'setSessionQueuedState') {
@@ -3650,6 +3691,7 @@ export const isDesktopCommandRequest = (value: unknown): value is DesktopCommand
       (value.command === 'openInChrome' && isOpenInChromePayload(value.payload)) ||
       (value.command === 'updateMenuState' && isUpdateMenuStatePayload(value.payload)) ||
       (value.command === 'setKeepAwake' && isSetKeepAwakePayload(value.payload)) ||
+      (value.command === 'perfLogging' && isPerfLoggingPayload(value.payload)) ||
       value.command === 'sleepNow' ||
       (value.command === 'setSessionQueuedState' &&
         isSetSessionQueuedStatePayload(value.payload)) ||
@@ -3867,6 +3909,11 @@ const isUpdateMenuStatePayload = (value: unknown): value is UpdateMenuStatePaylo
 
 const isSetKeepAwakePayload = (value: unknown): value is SetKeepAwakePayload =>
   isRecord(value) && typeof value.active === 'boolean'
+
+const isPerfLoggingPayload = (value: unknown): value is PerfLoggingPayload =>
+  isRecord(value) &&
+  ((value.action === 'configure' && typeof value.enabled === 'boolean') ||
+    (value.action === 'capture' && typeof value.reason === 'string'))
 
 const isSetSessionQueuedStatePayload = (value: unknown): value is SetSessionQueuedStatePayload =>
   isRecord(value) && typeof value.sessionId === 'string' && typeof value.hasQueued === 'boolean'

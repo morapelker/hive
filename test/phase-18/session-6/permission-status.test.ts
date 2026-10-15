@@ -62,7 +62,7 @@ describe('Session 6: Permission Requested Status', () => {
     test('clearSessionStatus clears permission status', () => {
       getState().setSessionStatus('session-1', 'permission')
       getState().clearSessionStatus('session-1')
-      expect(getState().sessionStatuses['session-1']).toBeNull()
+      expect(getState().sessionStatuses['session-1']).toBeUndefined()
     })
 
     test('permission can be overwritten by working status', () => {

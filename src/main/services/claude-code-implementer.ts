@@ -942,7 +942,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
               })
             }
 
-            log.info('TOOL_LIFECYCLE: accumulate message', {
+            log.debug('TOOL_LIFECYCLE: accumulate message', {
               hiveSessionId: session.hiveSessionId,
               msgType,
               contentBlockTypes,
@@ -968,12 +968,16 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
                 is_error?: boolean
                 content?: string | { type: string; text?: string }[]
               }[]
-              // Find the last assistant message
-              const lastAssistant = [...session.messages]
-                .reverse()
-                .find((m) => (m as Record<string, unknown>).role === 'assistant') as
-                | Record<string, unknown>
-                | undefined
+              // Find the last assistant message without copying the array:
+              // this runs on every tool_result and histories get long.
+              let lastAssistant: Record<string, unknown> | undefined
+              for (let i = session.messages.length - 1; i >= 0; i--) {
+                const m = session.messages[i] as Record<string, unknown>
+                if (m.role === 'assistant') {
+                  lastAssistant = m
+                  break
+                }
+              }
               if (lastAssistant) {
                 const parts = lastAssistant.parts as Record<string, unknown>[] | undefined
                 if (Array.isArray(parts)) {
@@ -1005,7 +1009,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
                       tu.output = output
                       tu.error = isError ? output : undefined
                       tu.status = isError ? 'error' : 'success'
-                      log.info('TOOL_LIFECYCLE: merged tool_result into assistant tool_use', {
+                      log.debug('TOOL_LIFECYCLE: merged tool_result into assistant tool_use', {
                         toolId: tr.tool_use_id,
                         isError,
                         hasOutput: !!output
@@ -1423,24 +1427,10 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     // First: check in-memory cache
     const session = this.getSession(worktreePath, agentSessionId)
     if (session && session.messages.length > 0) {
-      log.info('TOOL_LIFECYCLE: getMessages returning in-memory', {
+      // Called on every renderer refresh; keep it cheap (no per-message breakdown).
+      log.debug('TOOL_LIFECYCLE: getMessages returning in-memory', {
         agentSessionId,
-        count: session.messages.length,
-        breakdown: session.messages.map((m) => {
-          const msg = m as Record<string, unknown>
-          const parts = msg.parts as Record<string, unknown>[] | undefined
-          return {
-            role: msg.role,
-            partsCount: parts?.length ?? 0,
-            types: parts?.map((p) => p.type) ?? [],
-            hasToolOutput:
-              parts?.some(
-                (p) =>
-                  p.type === 'tool_use' &&
-                  !!(p.toolUse as Record<string, unknown> | undefined)?.output
-              ) ?? false
-          }
-        })
+        count: session.messages.length
       })
       return session.messages
     }
@@ -3278,7 +3268,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
             if (b.type === 'tool_result') {
               const toolId = b.tool_use_id as string
               let isError = b.is_error as boolean | undefined
-              log.info('TOOL_LIFECYCLE: tool_result received', {
+              log.debug('TOOL_LIFECYCLE: tool_result received', {
                 hiveSessionId,
                 toolId,
                 isError: !!isError
@@ -3299,7 +3289,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
                 isError = false
                 output = STOPPED_TOOL_OUTPUT
               }
-              log.info('TOOL_LIFECYCLE: emitting tool_result to renderer', {
+              log.debug('TOOL_LIFECYCLE: emitting tool_result to renderer', {
                 hiveSessionId,
                 toolId,
                 isError: !!isError,

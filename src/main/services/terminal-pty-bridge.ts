@@ -603,6 +603,13 @@ function ensureClaudeCliStatusSubscription(): void {
       return
     }
 
+    // The turn ended without the plan being accepted (interrupt, exit, Stop
+    // hook): no follow-up can arrive, so stop polling the transcript.
+    if (payload.status === 'completed' || payload.status === 'unread') {
+      closeClaudePlanFollowupWatcher(payload.sessionId)
+      return
+    }
+
     if (
       payload.status === 'working' &&
       payload.metadata?.hookEventName === 'PostToolUse' &&

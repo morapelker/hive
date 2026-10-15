@@ -425,7 +425,7 @@ describe('sessionApiErrors — error mark lifecycle', () => {
 
       store.clearWorktreeUnread('wt-1')
 
-      expect(useWorktreeStatusStore.getState().sessionStatuses[SESSION_ID]).toBeNull()
+      expect(useWorktreeStatusStore.getState().sessionStatuses[SESSION_ID]).toBeUndefined()
       expect(useWorktreeStatusStore.getState().sessionApiErrors[SESSION_ID]).toBe('server_error')
     } finally {
       useSessionStore.setState({ sessionsByWorktree: new Map() })

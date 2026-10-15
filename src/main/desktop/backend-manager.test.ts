@@ -4,7 +4,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { app, clipboard, dialog, shell } from 'electron'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeDesktopCommandRequest, makeDesktopCommandResult } from '../../shared/desktop-command'
 
 const menuMocks = vi.hoisted(() => ({
@@ -249,6 +249,7 @@ import {
   waitForBackendReady
 } from './backend-manager'
 import { publishDesktopBackendEvent } from './backend-event-publisher'
+import { getElectronMainPerfLogger } from '../services/perf-logging/electron-main-perf'
 import { isClaudeCliPlanAutoApproveArmed } from '../services/claude-cli-plan-auto-approve'
 
 class FakeChildProcess extends EventEmitter {
@@ -4615,6 +4616,207 @@ describe('desktop backend manager shell command routing', () => {
         value: { terminalIds: ['pty-1', 'session-in-app', 'session-detached'] }
       }),
       expect.any(Function)
+    )
+  })
+})
+
+describe('desktop backend manager watchdog', () => {
+  const WATCHDOG_TICK_MS = 15_000
+  const PING_TIMEOUT_MS = 10_000
+  const STABLE_PERIOD_MS = 10 * 60_000
+
+  const readyResponse = (): Response => new Response('{}', { status: 200 })
+
+  const startWithChildren = async (
+    children: FakeChildProcess[],
+    fetchImpl: ReturnType<typeof vi.fn>,
+    options: { restartLimit?: number } = {}
+  ): Promise<{
+    backend: Awaited<ReturnType<typeof startDesktopBackend>>
+    logger: ReturnType<typeof makeLogger>
+    spawnProcess: ReturnType<typeof vi.fn>
+  }> => {
+    const queue = [...children]
+    const spawnProcess = vi.fn(() => queue.shift() as never)
+    const logger = makeLogger()
+    const backend = await startDesktopBackend(
+      {
+        executablePath: '/electron',
+        entryPath: '/app/server.js',
+        cwd: '/app',
+        baseDir: mkdtempSync(join(tmpdir(), 'hive-backend-manager-')),
+        port: 0,
+        ...options
+      },
+      { spawnProcess, fetch: fetchImpl as unknown as typeof fetch, logger }
+    )
+    return { backend, logger, spawnProcess }
+  }
+
+  beforeEach(() => {
+    // setImmediate stays real: the command tests above and the stop path rely on it.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+  })
+
+  afterEach(async () => {
+    await __resetDesktopBackendForTests()
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  it('marks the backend unresponsive after three failed pings and responsive again on recovery', async () => {
+    const child = new FakeChildProcess()
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(readyResponse())
+      .mockRejectedValueOnce(new Error('ECONNREFUSED'))
+      .mockRejectedValueOnce(new Error('ECONNREFUSED'))
+      .mockRejectedValueOnce(new Error('ECONNREFUSED'))
+      .mockRejectedValueOnce(new Error('ECONNREFUSED'))
+      .mockResolvedValue(readyResponse())
+    const mark = vi.spyOn(getElectronMainPerfLogger(), 'mark')
+    const { backend, logger } = await startWithChildren([child], fetchImpl)
+
+    expect(backend.getHealth?.()).toEqual({
+      responsive: true,
+      consecutiveFailures: 0,
+      lastCheckedAt: null
+    })
+
+    await vi.advanceTimersByTimeAsync(WATCHDOG_TICK_MS * 2)
+    expect(backend.getHealth?.()).toMatchObject({ responsive: true, consecutiveFailures: 2 })
+    expect(logger.warn).not.toHaveBeenCalledWith('Desktop backend unresponsive', expect.anything())
+
+    await vi.advanceTimersByTimeAsync(WATCHDOG_TICK_MS)
+    expect(backend.getHealth?.()).toMatchObject({ responsive: false, consecutiveFailures: 3 })
+    expect(fetchImpl).toHaveBeenLastCalledWith(
+      `${backend.config.httpBaseUrl}/.well-known/hive/environment`,
+      { signal: expect.any(AbortSignal) }
+    )
+    expect(logger.warn).toHaveBeenCalledWith('Desktop backend unresponsive', {
+      consecutiveFailures: 3,
+      lastError: 'ECONNREFUSED'
+    })
+    expect(mark).toHaveBeenCalledWith('backend-unresponsive', {
+      consecutiveFailures: 3,
+      lastError: 'ECONNREFUSED'
+    })
+
+    // A fourth failure stays silent: the warning is a transition, not a heartbeat.
+    await vi.advanceTimersByTimeAsync(WATCHDOG_TICK_MS)
+    expect(backend.getHealth?.()).toMatchObject({ responsive: false, consecutiveFailures: 4 })
+    expect(
+      logger.warn.mock.calls.filter(([message]) => message === 'Desktop backend unresponsive')
+    ).toHaveLength(1)
+
+    await vi.advanceTimersByTimeAsync(WATCHDOG_TICK_MS)
+    expect(backend.getHealth?.()).toMatchObject({ responsive: true, consecutiveFailures: 0 })
+    expect(backend.getHealth?.().lastCheckedAt).toEqual(expect.any(Number))
+    expect(logger.info).toHaveBeenCalledWith('Desktop backend responsive again')
+    expect(mark).toHaveBeenCalledWith('backend-responsive-again')
+  })
+
+  it('counts a ping that never answers as a failure once its timeout aborts it', async () => {
+    const child = new FakeChildProcess()
+    const hang = (_url: string, init?: RequestInit): Promise<Response> =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new Error('aborted')))
+      })
+    const fetchImpl = vi.fn().mockResolvedValueOnce(readyResponse()).mockImplementation(hang)
+    const { backend, logger } = await startWithChildren([child], fetchImpl)
+
+    // Pings hang for the full timeout, and never pile up while one is in flight.
+    await vi.advanceTimersByTimeAsync(WATCHDOG_TICK_MS)
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(PING_TIMEOUT_MS - 1)
+    expect(backend.getHealth?.()).toMatchObject({ consecutiveFailures: 0 })
+    await vi.advanceTimersByTimeAsync(1)
+    expect(backend.getHealth?.()).toMatchObject({ responsive: true, consecutiveFailures: 1 })
+
+    // Ticks keep their 15 s cadence; each ping fails 10 s after its tick.
+    await vi.advanceTimersByTimeAsync(WATCHDOG_TICK_MS * 2)
+    expect(backend.getHealth?.()).toMatchObject({ responsive: false, consecutiveFailures: 3 })
+    expect(logger.warn).toHaveBeenCalledWith('Desktop backend unresponsive', {
+      consecutiveFailures: 3,
+      lastError: `timeout after ${PING_TIMEOUT_MS}ms`
+    })
+  })
+
+  it('stops pinging once the child exits or the backend is stopped', async () => {
+    const first = new FakeChildProcess()
+    const second = new FakeChildProcess()
+    const fetchImpl = vi.fn(async () => readyResponse())
+    const { backend } = await startWithChildren([first, second], fetchImpl, { restartLimit: 1 })
+
+    first.emit('exit', 1, null)
+    await vi.advanceTimersByTimeAsync(500)
+    expect(backend.getChild()).toBe(second)
+    expect(backend.getHealth?.()).toEqual({
+      responsive: true,
+      consecutiveFailures: 0,
+      lastCheckedAt: null
+    })
+
+    const callsBefore = fetchImpl.mock.calls.length
+    await vi.advanceTimersByTimeAsync(WATCHDOG_TICK_MS)
+    // Only the replacement child's watchdog is alive.
+    expect(fetchImpl.mock.calls.length).toBe(callsBefore + 1)
+
+    await backend.stop()
+    await vi.advanceTimersByTimeAsync(WATCHDOG_TICK_MS * 4)
+    expect(fetchImpl.mock.calls.length).toBe(callsBefore + 1)
+  })
+
+  it('resets the restart budget once a child has stayed up for the stable period', async () => {
+    const children = [new FakeChildProcess(), new FakeChildProcess(), new FakeChildProcess()]
+    const fetchImpl = vi.fn(async () => readyResponse())
+    const { backend, logger, spawnProcess } = await startWithChildren(children, fetchImpl, {
+      restartLimit: 1
+    })
+
+    children[0].emit('exit', 1, null)
+    await vi.advanceTimersByTimeAsync(500)
+    expect(spawnProcess).toHaveBeenCalledTimes(2)
+    expect(backend.getChild()).toBe(children[1])
+
+    await vi.advanceTimersByTimeAsync(STABLE_PERIOD_MS)
+    expect(logger.info).toHaveBeenCalledWith('Desktop backend stable, restart budget reset', {
+      restartCount: 1
+    })
+
+    // Without the reset this second crash would have hit the limit of 1.
+    children[1].emit('exit', 1, null)
+    await vi.advanceTimersByTimeAsync(500)
+    expect(spawnProcess).toHaveBeenCalledTimes(3)
+    expect(backend.getChild()).toBe(children[2])
+    expect(logger.error).not.toHaveBeenCalled()
+  })
+
+  it('keeps the restart limit for a child that crashes before the stable period', async () => {
+    const children = [new FakeChildProcess(), new FakeChildProcess(), new FakeChildProcess()]
+    const fetchImpl = vi.fn(async () => readyResponse())
+    const { backend, logger, spawnProcess } = await startWithChildren(children, fetchImpl, {
+      restartLimit: 1
+    })
+
+    children[0].emit('exit', 1, null)
+    await vi.advanceTimersByTimeAsync(500)
+    expect(spawnProcess).toHaveBeenCalledTimes(2)
+
+    await vi.advanceTimersByTimeAsync(STABLE_PERIOD_MS - 1_000)
+    children[1].emit('exit', 1, null)
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(spawnProcess).toHaveBeenCalledTimes(2)
+    expect(backend.getChild()).toBeNull()
+    expect(logger.error).toHaveBeenCalledWith('Desktop backend restart limit reached', undefined, {
+      restartCount: 1
+    })
+
+    // The dead child's stable timer was cleared with it: no reset arrives later.
+    await vi.advanceTimersByTimeAsync(STABLE_PERIOD_MS)
+    expect(logger.info).not.toHaveBeenCalledWith(
+      'Desktop backend stable, restart budget reset',
+      expect.anything()
     )
   })
 })

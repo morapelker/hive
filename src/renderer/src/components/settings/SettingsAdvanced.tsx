@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { codexDebugLoggerApi } from '@/api/codex-debug-logger-api'
-import { perfDiagnosticsApi } from '@/api/perf-diagnostics-api'
+import { perfDiagnosticsApi, type PerfLoggingStatus } from '@/api/perf-diagnostics-api'
+import { projectApi } from '@/api/project-api'
 import { useSettingsStore } from '@/stores/useSettingsStore'
-import { Trash2, Plus } from 'lucide-react'
+import { Trash2, Plus, FolderOpen, Camera } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { toast } from '@/lib/toast'
@@ -32,12 +33,69 @@ export function SettingsAdvanced(): React.JSX.Element {
   } = useSettingsStore()
   const envVars = rawEnvVars ?? []
 
+  const [perfStatus, setPerfStatus] = useState<PerfLoggingStatus | null>(null)
+  const [capturing, setCapturing] = useState(false)
+
+  const refreshPerfStatus = useCallback((): void => {
+    perfDiagnosticsApi
+      .getStatus()
+      .then(setPerfStatus)
+      .catch(() => setPerfStatus(null))
+  }, [])
+
+  useEffect(() => {
+    refreshPerfStatus()
+  }, [refreshPerfStatus, perfDiagnosticsEnabled])
+
   const handlePerfDiagnosticsToggle = (): void => {
     const newValue = !perfDiagnosticsEnabled
     updateSetting('perfDiagnosticsEnabled', newValue)
-    perfDiagnosticsApi.enable(newValue)
-    toast.success(newValue ? 'Performance diagnostics enabled' : 'Performance diagnostics disabled')
+    perfDiagnosticsApi
+      .enable(newValue)
+      .then(() => {
+        toast.success(newValue ? 'Performance logging enabled' : 'Performance logging disabled')
+        refreshPerfStatus()
+      })
+      .catch((error: unknown) => {
+        updateSetting('perfDiagnosticsEnabled', !newValue)
+        toast.error(
+          `Could not ${newValue ? 'enable' : 'disable'} performance logging: ${error instanceof Error ? error.message : String(error)}`
+        )
+      })
   }
+
+  const handlePerfCapture = (): void => {
+    if (capturing) return
+    setCapturing(true)
+    perfDiagnosticsApi
+      .captureNow('manual')
+      .then((result) => {
+        toast.success(
+          result.files.length > 0
+            ? `Captured ${result.files.length} diagnostic file${result.files.length === 1 ? '' : 's'}`
+            : 'Capture finished (no files written)'
+        )
+        refreshPerfStatus()
+      })
+      .catch((error: unknown) => {
+        toast.error(
+          `Capture failed: ${error instanceof Error ? error.message : String(error)}`
+        )
+      })
+      .finally(() => setCapturing(false))
+  }
+
+  const handleOpenPerfLogs = (): void => {
+    const dir = perfStatus?.logDir
+    if (!dir) return
+    projectApi.openPath(dir).catch((error: unknown) => {
+      toast.error(
+        `Could not open logs folder: ${error instanceof Error ? error.message : String(error)}`
+      )
+    })
+  }
+
+  const perfLogBytes = (perfStatus?.files ?? []).reduce((sum, file) => sum + file.bytes, 0)
 
   const handleCodexJsonlLoggingToggle = (): void => {
     const newValue = !codexJsonlLoggingEnabled
@@ -98,19 +156,22 @@ export function SettingsAdvanced(): React.JSX.Element {
         <p className="text-sm text-muted-foreground">Advanced configuration options</p>
       </div>
 
-      {/* Performance Diagnostics toggle */}
+      {/* Performance logging */}
       <div className="flex items-center justify-between">
         <div>
-          <label className="text-sm font-medium">Performance Diagnostics</label>
+          <label className="text-sm font-medium">Performance logging</label>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Log CPU, memory, process, and handle metrics every 30s to
-            ~/.hive/logs/perf-diagnostics.jsonl
+            Every 10s, record event-loop stalls, slow RPCs and SQLite statements, memory, handles,
+            timers, renderer long tasks and store sizes for the app, backend and window to
+            ~/.hive/logs/perf/. Cheap enough to leave on. When the app starts lagging, press
+            Capture diagnostics before relaunching.
           </p>
         </div>
         <button
           role="switch"
           aria-checked={perfDiagnosticsEnabled}
           onClick={handlePerfDiagnosticsToggle}
+          data-testid="perf-logging-toggle"
           className={cn(
             'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors',
             perfDiagnosticsEnabled ? 'bg-primary' : 'bg-muted'
@@ -124,6 +185,38 @@ export function SettingsAdvanced(): React.JSX.Element {
           />
         </button>
       </div>
+
+      {perfDiagnosticsEnabled && (
+        <div className="flex items-center justify-between gap-3 pl-4">
+          <p className="text-xs text-muted-foreground" data-testid="perf-logging-status">
+            {perfStatus
+              ? `${perfStatus.server.enabled ? 'Recording' : 'Backend not recording'} · ${perfStatus.server.samples} samples · ${perfStatus.server.alerts} alerts · ${(perfStatus.files ?? []).length} files (${(perfLogBytes / (1024 * 1024)).toFixed(1)} MB)`
+              : 'Status unavailable'}
+          </p>
+          <div className="flex items-center gap-2 shrink-0">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handlePerfCapture}
+              disabled={capturing}
+              data-testid="perf-logging-capture"
+            >
+              <Camera className="h-3.5 w-3.5 mr-1" />
+              {capturing ? 'Capturing…' : 'Capture diagnostics'}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleOpenPerfLogs}
+              disabled={!perfStatus?.logDir}
+              data-testid="perf-logging-open-folder"
+            >
+              <FolderOpen className="h-3.5 w-3.5 mr-1" />
+              Open logs folder
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Codex JSONL Logging toggle */}
       <div className="flex items-center justify-between">

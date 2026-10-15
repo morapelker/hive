@@ -9,6 +9,10 @@ import {
 } from '@shared/rpc/protocol'
 import type { RpcRouter } from './router'
 import type { EventBus } from '../events/event-bus'
+import { perfLog } from '../../main/services/perf-logging/perf-logger'
+
+// Performance logging: frames written to every socket since the gauge last read them.
+const wsStats = { framesSent: 0, bytesSent: 0, writeReturnedFalse: 0 }
 
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 const MAX_MESSAGE_BYTES = 64 * 1024 * 1024
@@ -31,6 +35,22 @@ export const attachWebSocketRpcServer = (
   const path = typeof options === 'string' ? options : (options.path ?? '/ws')
   const authenticateToken = typeof options === 'string' ? undefined : options.authenticateToken
   const sockets = new Map<Duplex, () => void>()
+  // Performance logging: open sockets and how many bytes are waiting to drain to them. A
+  // growing backlog means a renderer cannot keep up with the events it is subscribed to.
+  perfLog.registerGauge('ws.loopback', () => {
+    let bufferedBytes = 0
+    let maxBufferedBytes = 0
+    for (const socket of sockets.keys()) {
+      const pending = socket.writableLength
+      bufferedBytes += pending
+      if (pending > maxBufferedBytes) maxBufferedBytes = pending
+    }
+    const snapshot = { sockets: sockets.size, bufferedBytes, maxBufferedBytes, ...wsStats }
+    wsStats.framesSent = 0
+    wsStats.bytesSent = 0
+    wsStats.writeReturnedFalse = 0
+    return snapshot
+  })
 
   server.on('upgrade', (request, socket) => {
     const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`)
@@ -76,6 +96,10 @@ export const attachWebSocketRpcServer = (
     }
 
     sockets.set(socket, cleanupSocket)
+    perfLog.mark('ws-connect', { listener: 'loopback' })
+    socket.once('close', () => {
+      perfLog.mark('ws-close', { listener: 'loopback' })
+    })
     let buffered: Buffer<ArrayBufferLike> = Buffer.alloc(0)
     let fragmentOpcode: number | null = null
     let fragmentParts: Buffer[] = []
@@ -144,7 +168,11 @@ export const attachWebSocketRpcServer = (
 
         void Effect.runPromise(router.handle(request)).then(
           (response) => {
-            if (!socket.destroyed) socket.write(createFrame(JSON.stringify(response), 0x1))
+            if (socket.destroyed) return
+            const text = JSON.stringify(response)
+            wsStats.framesSent += 1
+            wsStats.bytesSent += text.length
+            if (!socket.write(createFrame(text, 0x1))) wsStats.writeReturnedFalse += 1
           },
           (error) => {
             if (!socket.destroyed) {
@@ -213,9 +241,11 @@ const handleSubscriptionMessage = (
 }
 
 const sendServerEvent = (socket: Duplex, event: ServerEvent): void => {
-  if (!socket.destroyed) {
-    socket.write(createFrame(JSON.stringify(event), 0x1))
-  }
+  if (socket.destroyed) return
+  const text = JSON.stringify(event)
+  wsStats.framesSent += 1
+  wsStats.bytesSent += text.length
+  if (!socket.write(createFrame(text, 0x1))) wsStats.writeReturnedFalse += 1
 }
 
 const isWebSocketUpgrade = (request: IncomingMessage): boolean =>

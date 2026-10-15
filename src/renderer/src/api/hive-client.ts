@@ -1,5 +1,10 @@
 import { resolveBackendTarget, type BackendTarget } from './environment'
-import { WsTransport, type ServerEventListener, type WsTransportOptions } from './ws-transport'
+import {
+  WsTransport,
+  type ServerEventListener,
+  type WsTransportOptions,
+  type WsTransportStats
+} from './ws-transport'
 import type { SubscriptionRequest } from '@shared/rpc/protocol'
 
 export interface HiveClientOptions extends WsTransportOptions {
@@ -43,6 +48,11 @@ export class HiveClient {
     }
 
     return this.transport.subscribe(channel, maybeListener as ServerEventListener, paramsOrListener)
+  }
+
+  /** Transport counters for performance logging. */
+  stats(options: { reset?: boolean } = {}): WsTransportStats {
+    return this.transport.stats(options)
   }
 
   close(): void {

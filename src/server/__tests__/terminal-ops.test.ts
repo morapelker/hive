@@ -2,6 +2,7 @@ import { Effect } from 'effect'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ServerEvent } from '../../shared/rpc/protocol'
 import { makeEventBus } from '../events/event-bus'
+import { perfLog } from '../../main/services/perf-logging/perf-logger'
 import { makeLiveTerminalOpsRpcService } from '../rpc/domains/terminal-ops'
 
 const ptyServiceMocks = vi.hoisted(() => ({
@@ -176,6 +177,49 @@ describe('terminal ops RPC live service', () => {
         configurable: true,
         value: originalSend
       })
+    }
+  })
+
+  it('gives the desktop write bridge 15 s and records a perf record when it times out', async () => {
+    const originalSend = process.send
+    // A transport that accepts the request but never answers (busy Electron main).
+    const send = vi.fn((_message: unknown, callback?: (error: Error | null) => void) => {
+      callback?.(null)
+      return true
+    })
+    Object.defineProperty(process, 'send', { configurable: true, value: send })
+    const slow = vi.spyOn(perfLog, 'slow')
+    vi.useFakeTimers()
+
+    try {
+      ptyServiceMocks.has.mockReturnValue(false)
+      const service = makeLiveTerminalOpsRpcService(makeEventBus())
+      let settled = false
+      const result = Effect.runPromise(service.write('terminal-remote', 'x')).then(
+        () => {
+          settled = true
+        },
+        () => {
+          settled = true
+        }
+      )
+
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(send).toHaveBeenCalledTimes(1)
+      expect(settled).toBe(false)
+      expect(slow).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(10_000)
+      await result
+      expect(settled).toBe(true)
+      expect(slow).toHaveBeenCalledWith('desktop-command-timeout', 15_000, {
+        command: 'terminalWrite'
+      })
+      expect(ptyServiceMocks.write).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+      slow.mockRestore()
+      Object.defineProperty(process, 'send', { configurable: true, value: originalSend })
     }
   })
 })

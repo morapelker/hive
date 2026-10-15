@@ -69,7 +69,7 @@ describe('Session 7: Worktree Status Store Extensions', () => {
       const { setSessionStatus } = useWorktreeStatusStore.getState()
       setSessionStatus('session-1', 'working')
       setSessionStatus('session-1', null)
-      expect(useWorktreeStatusStore.getState().sessionStatuses['session-1']).toBeNull()
+      expect(useWorktreeStatusStore.getState().sessionStatuses['session-1']).toBeUndefined()
     })
   })
 

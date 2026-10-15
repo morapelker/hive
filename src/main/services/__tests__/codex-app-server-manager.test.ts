@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../logger', () => ({
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() })
@@ -12,6 +12,7 @@ import {
   type CodexProviderSession,
   type CodexSessionContext
 } from '../codex-app-server-manager'
+import { perfLog } from '../perf-logging/perf-logger'
 
 function createContext(overrides: Partial<CodexProviderSession> = {}): CodexSessionContext {
   return {
@@ -216,5 +217,57 @@ describe('CodexAppServerManager turn lifecycle guards', () => {
     expect(deltas).toHaveLength(1)
     expect(deltas[0].childThreadId).toBe('C')
     expect(context.session.status).toBe('running')
+  })
+})
+
+describe('CodexAppServerManager request timeouts', () => {
+  let manager: CodexAppServerManager
+  let context: CodexSessionContext
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    manager = new CodexAppServerManager()
+    context = createContext()
+    ;(manager as unknown as { writeMessage: () => void }).writeMessage = vi.fn()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  const settle = (promise: Promise<unknown>): { rejected: () => Error | null } => {
+    let error: Error | null = null
+    promise.catch((cause: Error) => {
+      error = cause
+    })
+    return { rejected: () => error }
+  }
+
+  it('gives thread/start a 60 s budget and records a perf record on timeout', async () => {
+    const slow = vi.spyOn(perfLog, 'slow')
+    const request = settle(manager.sendRequest(context, 'thread/start', {}))
+
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(request.rejected()).toBeNull()
+    expect(context.pending.size).toBe(1)
+    expect(context.pending.get('1')?.startedAt).toBeTypeOf('number')
+
+    await vi.advanceTimersByTimeAsync(40_000)
+    expect(request.rejected()?.message).toBe('Timed out waiting for thread/start.')
+    expect(context.pending.size).toBe(0)
+    expect(slow).toHaveBeenCalledWith('codex-rpc-timeout', 60_000, { method: 'thread/start' })
+  })
+
+  it('keeps 20 s for other methods and honours an explicit override', async () => {
+    const generic = settle(manager.sendRequest(context, 'turn/start', {}))
+    const explicit = settle(manager.sendRequest(context, 'thread/resume', {}, 1_000))
+
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(explicit.rejected()?.message).toBe('Timed out waiting for thread/resume.')
+    expect(generic.rejected()).toBeNull()
+
+    await vi.advanceTimersByTimeAsync(19_000)
+    expect(generic.rejected()?.message).toBe('Timed out waiting for turn/start.')
   })
 })

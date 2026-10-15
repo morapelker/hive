@@ -300,7 +300,7 @@ describe('pinned board ticket navigation', () => {
     expect(useKanbanStore.getState().isPinnedBoardActive).toBe(true)
     expect(useWorktreeStore.getState().selectedWorktreeId).toBe('wt-1')
     expect(useProjectStore.getState().selectedProjectId).toBe('proj-1')
-    expect(useWorktreeStatusStore.getState().sessionStatuses['session-1']).toBeNull()
+    expect(useWorktreeStatusStore.getState().sessionStatuses['session-1']).toBeUndefined()
   })
 
   test('middle-click on a pinned-board ticket keeps the pinned board active', () => {
@@ -311,7 +311,7 @@ describe('pinned board ticket navigation', () => {
     expect(useKanbanStore.getState().isPinnedBoardActive).toBe(true)
     expect(useWorktreeStore.getState().selectedWorktreeId).toBe('wt-1')
     expect(useProjectStore.getState().selectedProjectId).toBe('proj-1')
-    expect(useWorktreeStatusStore.getState().sessionStatuses['session-1']).toBeNull()
+    expect(useWorktreeStatusStore.getState().sessionStatuses['session-1']).toBeUndefined()
   })
 
   test('cmd-click outside pinned mode still closes the pinned board', () => {
@@ -322,7 +322,7 @@ describe('pinned board ticket navigation', () => {
     expect(useKanbanStore.getState().isPinnedBoardActive).toBe(false)
     expect(useWorktreeStore.getState().selectedWorktreeId).toBe('wt-1')
     expect(useProjectStore.getState().selectedProjectId).toBe('proj-1')
-    expect(useWorktreeStatusStore.getState().sessionStatuses['session-1']).toBeNull()
+    expect(useWorktreeStatusStore.getState().sessionStatuses['session-1']).toBeUndefined()
   })
 
   test('renders a goal mode badge and tooltip when the ticket is configured for goal mode', async () => {

@@ -98,7 +98,14 @@ export class LoggerService {
     return parts.join(' ') + '\n'
   }
 
+  private lastRotateCheckAt = 0
+
   private shouldRotate(): boolean {
+    // Two synchronous stat calls per log line add up on hot paths (streamed tokens, PTY
+    // chunks); the size can only cross the limit slowly, so check at most once a second.
+    const now = Date.now()
+    if (now - this.lastRotateCheckAt < 1_000) return false
+    this.lastRotateCheckAt = now
     try {
       if (!existsSync(this.currentLogFile)) return false
       const stats = statSync(this.currentLogFile)

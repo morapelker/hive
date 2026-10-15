@@ -57,12 +57,12 @@ describe('TerminalManager portal readiness', () => {
     })
   })
 
-  test('does not auto-create a sidebar terminal until a real portal target exists', async () => {
+  test('does not auto-create a terminal until a real portal target exists', async () => {
     const { rerender } = render(
       <TerminalManager
         selectedWorktreeId="wt-1"
         worktreePath="/tmp/project"
-        isVisible={false}
+        isVisible
         portalReady={false}
       />
     )
@@ -75,7 +75,38 @@ describe('TerminalManager portal readiness', () => {
       <TerminalManager
         selectedWorktreeId="wt-1"
         worktreePath="/tmp/project"
+        isVisible
+        portalReady
+      />
+    )
+
+    await waitFor(() => {
+      expect(useTerminalTabStore.getState().getTabs('wt-1')).toHaveLength(1)
+    })
+  })
+
+  // Sidebar mode used to create a tab (xterm + PTY) for every worktree the user
+  // visited while the panel was hidden; creation now waits for visibility in
+  // every position.
+  test('does not auto-create a sidebar terminal while the panel is hidden', async () => {
+    const { rerender } = render(
+      <TerminalManager
+        selectedWorktreeId="wt-1"
+        worktreePath="/tmp/project"
         isVisible={false}
+        portalReady
+      />
+    )
+
+    await waitFor(() => {
+      expect(useTerminalTabStore.getState().getTabs('wt-1')).toHaveLength(0)
+    })
+
+    rerender(
+      <TerminalManager
+        selectedWorktreeId="wt-1"
+        worktreePath="/tmp/project"
+        isVisible
         portalReady
       />
     )

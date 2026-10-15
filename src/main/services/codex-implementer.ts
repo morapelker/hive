@@ -16,6 +16,7 @@ import { mapCodexManagerEventToActivity } from './codex-activity-mapper'
 import { mapCodexEventToStreamEvents, contentStreamKindFromMethod } from './codex-event-mapper'
 import { asNumber, asObject, asString, toJsonSnapshot } from './codex-utils'
 import { logCodexLifecycleEvent } from './codex-debug-logger'
+import { perfLog } from './perf-logging/perf-logger'
 import { generateCodexSessionTitle } from './codex-session-title'
 import type { DatabaseService } from '../db/database'
 import type { SessionMessageCreate } from '../db/types'
@@ -89,6 +90,8 @@ export interface CodexSessionState {
   worktreePath: string
   status: 'connecting' | 'ready' | 'running' | 'error' | 'closed'
   messages: unknown[]
+  // Set on every in-memory mutation; persistCanonicalMessages skips the DB rewrite when unset/false.
+  messagesDirty?: boolean
   pendingHitlRequestIds?: Set<string>
   liveAssistantDraft?: CodexLiveAssistantDraft | null
   currentTurnId: string | null
@@ -616,6 +619,7 @@ export class CodexImplementer implements AgentSdkImplementer {
       worktreePath,
       status: this.mapProviderStatus(providerSession.status),
       messages: [],
+      messagesDirty: false,
       pendingHitlRequestIds: new Set(),
       liveAssistantDraft: null,
       currentTurnId: null,
@@ -691,6 +695,7 @@ export class CodexImplementer implements AgentSdkImplementer {
         worktreePath,
         status: this.mapProviderStatus(providerSession.status),
         messages: [],
+        messagesDirty: false,
         pendingHitlRequestIds: new Set(),
         liveAssistantDraft: null,
         currentTurnId: null,
@@ -886,6 +891,7 @@ export class CodexImplementer implements AgentSdkImplementer {
 
     // Inject synthetic user message so getMessages() returns it
     const syntheticTimestamp = new Date().toISOString()
+    session.messagesDirty = true
     session.messages.push({
       id: `user-${randomUUID()}`,
       role: 'user',
@@ -938,7 +944,7 @@ export class CodexImplementer implements AgentSdkImplementer {
           event.method.startsWith('thread/goal/') ||
           event.method.startsWith('turn/')
         ) {
-          log.info('[CODEX_STREAM_DEBUG] prompt listener dropped thread mismatch', {
+          log.debug('[CODEX_STREAM_DEBUG] prompt listener dropped thread mismatch', {
             method: event.method,
             eventThreadId: event.threadId,
             sessionThreadId: session.threadId,
@@ -972,7 +978,7 @@ export class CodexImplementer implements AgentSdkImplementer {
         const payload = asObject(event.payload)
         const deltaText =
           event.textDelta ?? asString(payload?.delta) ?? asString(payload?.text) ?? ''
-        log.info('[CODEX_STREAM_DEBUG] prompt listener mapped event', {
+        log.debug('[CODEX_STREAM_DEBUG] prompt listener mapped event', {
           method: event.method,
           eventId: event.id,
           threadId: event.threadId,
@@ -994,7 +1000,7 @@ export class CodexImplementer implements AgentSdkImplementer {
         const streamData = asObject(streamEvent.data)
         const part = asObject(streamData?.part)
         const state = asObject(part?.state)
-        log.info('[CODEX_STREAM_DEBUG] sending stream event to renderer', {
+        log.debug('[CODEX_STREAM_DEBUG] sending stream event to renderer', {
           sourceMethod: event.method,
           eventId: event.id,
           streamType: streamEvent.type,
@@ -1167,6 +1173,7 @@ export class CodexImplementer implements AgentSdkImplementer {
               })
             }
             if (assistantParts.length > 0) {
+              session.messagesDirty = true
               session.messages.push({
                 id: `assistant-${completedTurnId ?? randomUUID()}`,
                 role: 'assistant',
@@ -1338,6 +1345,7 @@ export class CodexImplementer implements AgentSdkImplementer {
       const nextAssistantMessageId = this.getNextCanonicalMessageId(session, turnId, 'assistant')
 
       const syntheticTimestamp = new Date().toISOString()
+      session.messagesDirty = true
       session.messages.push({
         id: insertedMessageId,
         role: 'user',
@@ -1429,6 +1437,7 @@ export class CodexImplementer implements AgentSdkImplementer {
           })
           if (parsed.length > 0) {
             session.messages = parsed
+            session.messagesDirty = true
             return [...parsed]
           }
         }
@@ -1447,6 +1456,7 @@ export class CodexImplementer implements AgentSdkImplementer {
         const parsed = this.parseThreadSnapshot(threadSnapshot)
         if (parsed.length > 0) {
           session.messages = parsed
+          session.messagesDirty = true
           this.persistCanonicalMessages(session)
           log.info('getMessages: warmed in-memory cache from thread/read', {
             agentSessionId,
@@ -1496,6 +1506,7 @@ export class CodexImplementer implements AgentSdkImplementer {
       }
 
       session.messages = parsed
+      session.messagesDirty = true
       this.flushPendingPersist(session)
       this.persistCanonicalMessages(session)
       this.dbService?.deleteSessionActivities(session.hiveSessionId)
@@ -2259,6 +2270,7 @@ export class CodexImplementer implements AgentSdkImplementer {
     const messageId = `codex-command-${randomUUID()}`
     const part = { type: 'text' as const, text, timestamp }
 
+    session.messagesDirty = true
     session.messages.push({
       id: messageId,
       role: 'assistant',
@@ -2280,6 +2292,7 @@ export class CodexImplementer implements AgentSdkImplementer {
 
   private persistCommandUserMessage(session: CodexSessionState, text: string): void {
     const timestamp = new Date().toISOString()
+    session.messagesDirty = true
     session.messages.push({
       id: `codex-command-user-${randomUUID()}`,
       role: 'user',
@@ -2449,6 +2462,8 @@ export class CodexImplementer implements AgentSdkImplementer {
 
   private persistCanonicalMessages(session: CodexSessionState): void {
     if (!this.dbService) return
+    // replaceSessionMessages rewrites every row, so only pay for it when something changed.
+    if (!session.messagesDirty) return
 
     try {
       const rows: Array<SessionMessageCreate & { created_at: string }> = session.messages.flatMap(
@@ -2470,25 +2485,30 @@ export class CodexImplementer implements AgentSdkImplementer {
             timestamp
           }
 
+          const canonicalJson = JSON.stringify(canonicalMessage)
+
           return [
             {
               session_id: session.hiveSessionId,
               role,
               content: textContent,
               opencode_message_id: canonicalMessage.id,
-              opencode_message_json: JSON.stringify(canonicalMessage),
+              opencode_message_json: canonicalJson,
               opencode_parts_json: JSON.stringify(parts),
-              opencode_timeline_json: JSON.stringify(canonicalMessage),
+              opencode_timeline_json: canonicalJson,
               created_at: timestamp
             }
           ]
         }
       )
 
+      const startedAt = performance.now()
       this.dbService.replaceSessionMessages(
         session.hiveSessionId,
         normalizeCodexMessageTimestamps(rows)
       )
+      perfLog.slow('codex-persist-messages', performance.now() - startedAt, { count: rows.length })
+      session.messagesDirty = false
     } catch (error) {
       log.warn('Failed to persist Codex canonical messages', {
         hiveSessionId: session.hiveSessionId,
@@ -2593,7 +2613,7 @@ export class CodexImplementer implements AgentSdkImplementer {
     ) {
       const payload = asObject(event.payload)
       const deltaText = event.textDelta ?? asString(payload?.delta) ?? asString(payload?.text) ?? ''
-      log.info('[CODEX_STREAM_DEBUG] global listener mapped autonomous event', {
+      log.debug('[CODEX_STREAM_DEBUG] global listener mapped autonomous event', {
         method: event.method,
         eventId: event.id,
         threadId: event.threadId,
@@ -2616,7 +2636,7 @@ export class CodexImplementer implements AgentSdkImplementer {
       const streamData = asObject(streamEvent.data)
       const part = asObject(streamData?.part)
       const state = asObject(part?.state)
-      log.info('[CODEX_STREAM_DEBUG] sending autonomous stream event to renderer', {
+      log.debug('[CODEX_STREAM_DEBUG] sending autonomous stream event to renderer', {
         sourceMethod: event.method,
         eventId: event.id,
         streamType: streamEvent.type,
@@ -2739,6 +2759,7 @@ export class CodexImplementer implements AgentSdkImplementer {
       parts: [],
       timestamp
     }
+    session.messagesDirty = true
     session.messages.push(message)
     return message
   }
@@ -2762,6 +2783,7 @@ export class CodexImplementer implements AgentSdkImplementer {
       const record = asObject(session.messages[existingIndex])
       if (record) {
         record.id = nextMessageId
+        session.messagesDirty = true
         session.currentAssistantMessageId = nextMessageId
         return record
       }
@@ -2779,6 +2801,7 @@ export class CodexImplementer implements AgentSdkImplementer {
   ): void {
     if (!text) return
 
+    session.messagesDirty = true
     const message = this.getOrCreateCanonicalAssistantMessage(session, turnId)
     const parts = Array.isArray(message.parts)
       ? (message.parts as Array<Record<string, unknown>>)
@@ -2807,6 +2830,7 @@ export class CodexImplementer implements AgentSdkImplementer {
   ): void {
     if (!tool.callID) return
 
+    session.messagesDirty = true
     const message = this.getOrCreateCanonicalAssistantMessage(session, turnId)
     const parts = Array.isArray(message.parts)
       ? (message.parts as Array<Record<string, unknown>>)
@@ -3032,6 +3056,7 @@ export class CodexImplementer implements AgentSdkImplementer {
     },
     turnId?: string
   ): Record<string, unknown> {
+    session.messagesDirty = true
     const message = this.getOrCreateCanonicalAssistantMessage(session, turnId)
     const parts = Array.isArray(message.parts)
       ? (message.parts as Array<Record<string, unknown>>)
@@ -3081,6 +3106,7 @@ export class CodexImplementer implements AgentSdkImplementer {
     turnId?: string
   ): void {
     if (!text) return
+    session.messagesDirty = true
     const subtask = this.getOrCreateCanonicalAssistantSubtask(
       session,
       {
@@ -3116,6 +3142,7 @@ export class CodexImplementer implements AgentSdkImplementer {
     turnId?: string
   ): void {
     if (!tool.callID) return
+    session.messagesDirty = true
     const subtask = this.getOrCreateCanonicalAssistantSubtask(
       session,
       {
@@ -3631,6 +3658,7 @@ export class CodexImplementer implements AgentSdkImplementer {
       const last = asObject(session.messages[session.messages.length - 1])
       if (last?.role === 'assistant') {
         session.messages.pop()
+        session.messagesDirty = true
       } else {
         break
       }
@@ -3641,6 +3669,7 @@ export class CodexImplementer implements AgentSdkImplementer {
       const last = asObject(session.messages[session.messages.length - 1])
       if (last?.role === 'user') {
         session.messages.pop()
+        session.messagesDirty = true
       }
     }
 
@@ -3685,6 +3714,7 @@ export class CodexImplementer implements AgentSdkImplementer {
         worktreePath,
         status: this.mapProviderStatus(providerSession.status),
         messages: [],
+        messagesDirty: false,
         pendingHitlRequestIds: new Set(),
         liveAssistantDraft: null,
         currentTurnId: null,

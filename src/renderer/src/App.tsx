@@ -14,10 +14,12 @@ import { reportActiveAccountsSnapshot } from '@/lib/hive-account-report'
 import { preloadHandoffModelCatalogs } from '@/lib/handoffSelection'
 import { initPlatform } from '@/lib/platform'
 import { useSettingsStore } from '@/stores/useSettingsStore'
+import { usePerfLoggingCollector } from '@/lib/perf-logging/usePerfLoggingCollector'
 import { useTipStore } from '@/stores/useTipStore'
 import { PetStatusBridge } from '@/components/pet/PetStatusBridge'
 
 function App(): React.JSX.Element {
+  usePerfLoggingCollector()
   const [ready, setReady] = useState(false)
   const didRefreshHiveOrg = useRef(false)
   const hiveAuthToken = useSettingsStore((state) => state.hiveAuthToken)

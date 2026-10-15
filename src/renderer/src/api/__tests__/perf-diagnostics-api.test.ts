@@ -57,4 +57,19 @@ describe('perfDiagnosticsApi', () => {
     await expect(perfDiagnosticsApi.getSnapshot()).resolves.toEqual(snapshot)
     expect(request).toHaveBeenCalledWith('perfDiagnosticsOps.getSnapshot', {})
   })
+
+  it('routes appendRecords and captureNow through the renderer RPC client', async () => {
+    const request = vi.fn().mockResolvedValue({ files: ['/tmp/heap.heapsnapshot'] })
+    setRendererRpcClient({ request, subscribe: vi.fn() })
+
+    await perfDiagnosticsApi.appendRecords('renderer', [{ kind: 'sample' }])
+    expect(request).toHaveBeenCalledWith('perfDiagnosticsOps.appendRecords', {
+      role: 'renderer',
+      records: [{ kind: 'sample' }]
+    })
+    await expect(perfDiagnosticsApi.captureNow('manual')).resolves.toEqual({
+      files: ['/tmp/heap.heapsnapshot']
+    })
+    expect(request).toHaveBeenCalledWith('perfDiagnosticsOps.captureNow', { reason: 'manual' })
+  })
 })

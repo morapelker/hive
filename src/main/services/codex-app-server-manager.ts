@@ -6,6 +6,7 @@ import readline from 'node:readline'
 import { Effect } from 'effect'
 
 import { createLogger } from './logger'
+import { perfLog } from './perf-logging/perf-logger'
 import { logCodexMessage, logCodexLifecycleEvent, resetSession } from './codex-debug-logger'
 import { resolveCodexBinaryPath, supportsCodexAppServer } from './codex-binary-resolver'
 import { getCodexCliEnv } from './codex-cli-env'
@@ -74,8 +75,19 @@ export interface JsonRpcNotification {
 
 // ── Pending request tracking ──────────────────────────────────────
 
+const DEFAULT_REQUEST_TIMEOUT_MS = 20_000
+
+// Thread start/resume spawn and warm the app-server; under machine lag they
+// routinely exceed the generic 20 s budget without being stuck.
+const REQUEST_TIMEOUTS_MS: Record<string, number> = {
+  'thread/start': 60_000,
+  'thread/resume': 60_000,
+  initialize: 30_000
+}
+
 export interface PendingRequest {
   method: string
+  startedAt: number
   timeout: ReturnType<typeof setTimeout>
   resolve: (value: unknown) => void
   reject: (error: Error) => void
@@ -1448,19 +1460,22 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     context: CodexSessionContext,
     method: string,
     params: unknown,
-    timeoutMs = 20_000
+    timeoutMs = REQUEST_TIMEOUTS_MS[method] ?? DEFAULT_REQUEST_TIMEOUT_MS
   ): Promise<TResponse> {
     const id = context.nextRequestId
     context.nextRequestId += 1
+    const startedAt = Date.now()
 
     return new Promise<TResponse>((resolve, reject) => {
       const timeout = setTimeout(() => {
         context.pending.delete(String(id))
+        perfLog.slow('codex-rpc-timeout', Date.now() - startedAt, { method })
         reject(new Error(`Timed out waiting for ${method}.`))
       }, timeoutMs)
 
       context.pending.set(String(id), {
         method,
+        startedAt,
         timeout,
         resolve: resolve as (value: unknown) => void,
         reject

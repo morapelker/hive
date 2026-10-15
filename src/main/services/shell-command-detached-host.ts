@@ -299,6 +299,8 @@ function createDetachedCore(sessionId: string, runDir: string, sink: RunHostSink
   let offset = 0
   let tick = 0
   let decoder = new StringDecoder('utf8')
+  // One scratch buffer per tail: pump() runs every tick for the life of the run.
+  const readBuffer = Buffer.allocUnsafe(READ_CHUNK_BYTES)
   let tailTimer: NodeJS.Timeout | null = null
   let lostTimer: NodeJS.Timeout | null = null
   let writeTimer: NodeJS.Timeout | null = null
@@ -334,19 +336,18 @@ function createDetachedCore(sessionId: string, runDir: string, sink: RunHostSink
         return
       }
     }
-    const buffer = Buffer.allocUnsafe(READ_CHUNK_BYTES)
     let read = 0
     while (read < maxBytes) {
       let n: number
       try {
-        n = readSync(logFd, buffer, 0, buffer.length, offset)
+        n = readSync(logFd, readBuffer, 0, readBuffer.length, offset)
       } catch {
         return
       }
       if (n <= 0) break
       offset += n
       read += n
-      const text = decoder.write(buffer.subarray(0, n))
+      const text = decoder.write(readBuffer.subarray(0, n))
       if (text !== '') sink.data(text)
     }
   }

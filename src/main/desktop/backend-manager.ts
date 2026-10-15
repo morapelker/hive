@@ -43,6 +43,10 @@ import { openInChrome } from '../services/open-in-chrome'
 import { createLogger } from '../services/logger'
 import { updateMenuState } from '../menu'
 import { setKeepAwake } from '../services/power-save-blocker'
+import {
+  getElectronMainPerfLogger,
+  handlePerfLoggingCommand
+} from '../services/perf-logging/electron-main-perf'
 import { sleepNow } from '../services/sleep-now'
 import { notificationService } from '../services/notification-service'
 import { updaterService } from '../services/updater'
@@ -105,12 +109,24 @@ export interface DesktopBackendBootstrap {
   readonly bootstrapToken: string
 }
 
+export interface DesktopBackendHealth {
+  /** False once the watchdog has seen BACKEND_UNRESPONSIVE_AFTER consecutive failed pings. */
+  readonly responsive: boolean
+  readonly consecutiveFailures: number
+  readonly lastCheckedAt: number | null
+}
+
 export interface StartedDesktopBackend {
   readonly config: DesktopBackendSpawnConfig
   readonly bootstrap: DesktopBackendBootstrap
   readonly stop: () => Promise<void>
   /** Current server child process, or null if not connected (restart-aware). */
   readonly getChild: () => ChildProcess | null
+  /**
+   * Watchdog view of the current child; a hung child is reported here, never restarted.
+   * Optional only so hand-built fakes elsewhere keep compiling.
+   */
+  readonly getHealth?: () => DesktopBackendHealth
 }
 
 export interface StartDesktopBackendInput {
@@ -132,6 +148,8 @@ interface BackendManagerDeps {
   readonly fetch?: typeof fetch
   readonly setTimeout?: typeof setTimeout
   readonly clearTimeout?: typeof clearTimeout
+  readonly setInterval?: typeof setInterval
+  readonly clearInterval?: typeof clearInterval
   readonly logger?: {
     readonly info: (message: string, data?: Record<string, unknown>) => void
     readonly warn: (message: string, data?: Record<string, unknown>) => void
@@ -143,6 +161,13 @@ const DEFAULT_READINESS_TIMEOUT_MS = 30_000
 const DEFAULT_READINESS_INTERVAL_MS = 100
 const DEFAULT_RESTART_LIMIT = 2
 const READINESS_PATH = '/.well-known/hive/environment'
+// A child that is alive but no longer answering HTTP (event loop saturated, DB lock, deadlock)
+// never fires 'exit'; the watchdog pings it so the perf log can date the hang.
+const WATCHDOG_INTERVAL_MS = 15_000
+const WATCHDOG_PING_TIMEOUT_MS = 10_000
+const BACKEND_UNRESPONSIVE_AFTER = 3
+// After this long alive, crashes no longer accumulate toward the restart limit.
+const RESTART_BUDGET_RESET_AFTER_MS = 10 * 60_000
 
 let openCodeConnectHandler:
   | ((worktreePath: string, hiveSessionId: string) => Promise<OpenCodeConnectResult>)
@@ -593,6 +618,59 @@ export const startDesktopBackend = async (
   let restartCount = 0
   let processRef: ChildProcess | null = null
   const spawnProcess = deps.spawnProcess ?? spawn
+  const fetchImpl = deps.fetch ?? fetch
+  const setTimeoutImpl = deps.setTimeout ?? setTimeout
+  const clearTimeoutImpl = deps.clearTimeout ?? clearTimeout
+  const setIntervalImpl = deps.setInterval ?? setInterval
+  const clearIntervalImpl = deps.clearInterval ?? clearInterval
+  const readinessUrl = `${config.httpBaseUrl}${READINESS_PATH}`
+
+  let health: DesktopBackendHealth = {
+    responsive: true,
+    consecutiveFailures: 0,
+    lastCheckedAt: null
+  }
+
+  const pingBackend = async (child: ChildProcess): Promise<void> => {
+    const controller = new AbortController()
+    const abortTimer = setTimeoutImpl(() => controller.abort(), WATCHDOG_PING_TIMEOUT_MS)
+    let error: string | null = null
+    try {
+      const response = await fetchImpl(readinessUrl, { signal: controller.signal })
+      if (!response.ok) error = `HTTP ${response.status}`
+      // Release the socket back to the pool: an unread body pins it until GC.
+      await response.body?.cancel().catch(() => undefined)
+    } catch (caught) {
+      error =
+        controller.signal.aborted
+          ? `timeout after ${WATCHDOG_PING_TIMEOUT_MS}ms`
+          : caught instanceof Error
+            ? caught.message
+            : String(caught)
+    } finally {
+      clearTimeoutImpl(abortTimer)
+    }
+
+    // A ping that outlived its child must not write into the next child's health.
+    if (processRef !== child) return
+    const wasResponsive = health.responsive
+    const consecutiveFailures = error ? health.consecutiveFailures + 1 : 0
+    const responsive = error
+      ? wasResponsive && consecutiveFailures < BACKEND_UNRESPONSIVE_AFTER
+      : true
+    health = { responsive, consecutiveFailures, lastCheckedAt: Date.now() }
+
+    if (wasResponsive && !responsive) {
+      log.warn('Desktop backend unresponsive', { consecutiveFailures, lastError: error })
+      getElectronMainPerfLogger().mark('backend-unresponsive', {
+        consecutiveFailures,
+        lastError: error
+      })
+    } else if (!wasResponsive && responsive) {
+      log.info('Desktop backend responsive again')
+      getElectronMainPerfLogger().mark('backend-responsive-again')
+    }
+  }
 
   const spawnBackend = (): ChildProcess => {
     log.info('Starting desktop backend', {
@@ -607,6 +685,25 @@ export const startDesktopBackend = async (
       stdio: ['ignore', 'pipe', 'pipe', 'ipc']
     })
 
+    health = { responsive: true, consecutiveFailures: 0, lastCheckedAt: null }
+    let pingInFlight = false
+    const watchdog = setIntervalImpl(() => {
+      // A ping still waiting on its 10 s timeout must not be stacked under the next tick.
+      if (pingInFlight || stopping || processRef !== child) return
+      pingInFlight = true
+      void pingBackend(child).finally(() => {
+        pingInFlight = false
+      })
+    }, WATCHDOG_INTERVAL_MS)
+    watchdog.unref?.()
+    const stableTimer = setTimeoutImpl(() => {
+      if (processRef === child && restartCount > 0) {
+        log.info('Desktop backend stable, restart budget reset', { restartCount })
+        restartCount = 0
+      }
+    }, RESTART_BUDGET_RESET_AFTER_MS)
+    stableTimer.unref?.()
+
     child.on('message', (message) => {
       void handleDesktopBackendCommand(child, message, log, { headless })
     })
@@ -617,12 +714,19 @@ export const startDesktopBackend = async (
       log.warn('Backend stderr', { text: String(chunk) })
     })
     child.once('exit', (code, signal) => {
+      clearIntervalImpl(watchdog)
+      clearTimeoutImpl(stableTimer)
       if (processRef === child) processRef = null
       if (stopping) return
 
       log.warn('Desktop backend exited unexpectedly', {
         code: code ?? null,
         signal: signal ?? null
+      })
+      getElectronMainPerfLogger().mark('backend-exit', {
+        code: code ?? null,
+        signal: signal ?? null,
+        restartCount
       })
       if (restartCount >= (input.restartLimit ?? DEFAULT_RESTART_LIMIT)) {
         log.error('Desktop backend restart limit reached', undefined, { restartCount })
@@ -631,7 +735,7 @@ export const startDesktopBackend = async (
 
       restartCount += 1
       const delayMs = Math.min(500 * 2 ** (restartCount - 1), 5_000)
-      ;(deps.setTimeout ?? setTimeout)(() => {
+      setTimeoutImpl(() => {
         if (!stopping && getCurrentBackend()) {
           processRef = spawnBackend()
         }
@@ -644,7 +748,7 @@ export const startDesktopBackend = async (
   processRef = spawnBackend()
   try {
     await waitForBackendReady(config.httpBaseUrl, {
-      fetchImpl: deps.fetch ?? fetch,
+      fetchImpl,
       timeoutMs: input.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS,
       intervalMs: input.readinessIntervalMs ?? DEFAULT_READINESS_INTERVAL_MS
     })
@@ -662,6 +766,7 @@ export const startDesktopBackend = async (
       bootstrapToken: config.bootstrapToken
     },
     getChild: () => processRef,
+    getHealth: () => health,
     stop: async () => {
       stopping = true
       const child = processRef
@@ -671,7 +776,7 @@ export const startDesktopBackend = async (
       await new Promise<void>((resolveStop) => {
         child.once('exit', () => resolveStop())
         child.kill('SIGTERM')
-        ;(deps.setTimeout ?? setTimeout)(() => {
+        setTimeoutImpl(() => {
           if (!child.killed) child.kill('SIGKILL')
           resolveStop()
         }, 2_000)
@@ -2324,6 +2429,27 @@ const handleDesktopBackendCommand = (
         log
       )
     }
+  }
+
+  if (message.command === 'perfLogging') {
+    return handlePerfLoggingCommand(message.payload)
+      .then((value) => {
+        sendDesktopBackendCommandResult(
+          child,
+          makeDesktopCommandResult(message.id, { ok: true, value }),
+          log
+        )
+      })
+      .catch((error: unknown) => {
+        sendDesktopBackendCommandResult(
+          child,
+          makeDesktopCommandResult(message.id, {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error)
+          }),
+          log
+        )
+      })
   }
 
   if (message.command === 'setKeepAwake') {
