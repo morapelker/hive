@@ -61,7 +61,8 @@ const API_METHODS = [
   'endMigrations',
   'delete',
   'logEvent',
-  'suggestVerifyCommand'
+  'suggestVerifyCommand',
+  'addMember'
 ]
 
 function makeService(overrides: Partial<DocumentFlowRpcService> = {}): DocumentFlowRpcService {
@@ -74,6 +75,7 @@ function makeService(overrides: Partial<DocumentFlowRpcService> = {}): DocumentF
     updateRun: () => Effect.succeed(run),
     updateItem: () => Effect.succeed(detail.items[0]),
     start: () => Effect.succeed(detail),
+    addMember: () => Effect.succeed(detail),
     claimRunner: () =>
       Effect.succeed({ owned: true, ownerClientId: 'c1', serverStartedAt: '2026-10-05' }),
     sessionTurn: () => Effect.succeed(null),
@@ -279,6 +281,41 @@ describe('documentFlow RPC handlers', () => {
       delete: ['run-1'],
       suggestVerifyCommand: ['project-1'],
       retryExtraction: [{ runId: 'run-1', generation: null }]
+    })
+  })
+
+  it('hands the add-member params to the service, and refuses a bad branch or extra fields', async () => {
+    const addMember = vi.fn(() => Effect.succeed(detail))
+    const service = makeService({ addMember })
+
+    await expect(
+      call(service, 'addMember', { runId: 'run-1', projectId: 'mobile', baseBranch: 'develop' })
+    ).resolves.toEqual(detail)
+    expect(addMember).toHaveBeenCalledWith({
+      runId: 'run-1',
+      projectId: 'mobile',
+      baseBranch: 'develop'
+    })
+    await call(service, 'addMember', { runId: 'run-1', projectId: 'mobile', baseBranch: null })
+    expect(addMember).toHaveBeenLastCalledWith({
+      runId: 'run-1',
+      projectId: 'mobile',
+      baseBranch: null
+    })
+    await call(service, 'addMember', { runId: 'run-1', projectId: 'mobile' })
+    expect(addMember).toHaveBeenLastCalledWith({ runId: 'run-1', projectId: 'mobile' })
+
+    await rejectsValidation(service, 'addMember', { runId: 'run-1' })
+    await rejectsValidation(service, 'addMember', { runId: 'run-1', projectId: '' })
+    await rejectsValidation(service, 'addMember', {
+      runId: 'run-1',
+      projectId: 'mobile',
+      baseBranch: '--upload-pack=x'
+    })
+    await rejectsValidation(service, 'addMember', {
+      runId: 'run-1',
+      projectId: 'mobile',
+      worktreeId: 'wt'
     })
   })
 

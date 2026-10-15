@@ -39,7 +39,8 @@ import {
   awaitsLaunch,
   integrationBranchHint,
   isTerminalItemStatus,
-  sanitizeDependencies
+  sanitizeDependencies,
+  ticketBranchHint
 } from '@shared/document-flow/planning'
 import { DOCUMENT_TEXT_LIMIT, preprocessDocument } from '@shared/document-flow/preprocess'
 import { buildLaunchPrompt, workspaceOfMembers } from '@shared/document-flow/prompts'
@@ -222,10 +223,10 @@ export interface DocumentFlowTicket {
   column: KanbanTicketColumn
 }
 
-/** What a run writes on a board ticket after creating it: the model badge. */
+/** What a run writes on a board ticket after creating it: the model badge, or its own description. */
 export type DocumentFlowTicketPatch = Pick<
   KanbanTicketUpdate,
-  'model_provider_id' | 'model_id' | 'model_variant'
+  'model_provider_id' | 'model_id' | 'model_variant' | 'description'
 >
 
 export interface DocumentFlowServiceDeps {
@@ -248,6 +249,26 @@ export interface DocumentFlowServiceDeps {
   ) => Promise<{ success: boolean; connection?: DocumentFlowConnection; error?: string }>
   /** The connection instance; null when it is gone. */
   getConnection: (connectionId: string) => DocumentFlowConnection | null
+  /**
+   * Links one more worktree into an existing instance (a repository added to a launched run):
+   * the instance's new member row, with the symlink name it got.
+   */
+  addConnectionMember: (
+    connectionId: string,
+    worktreeId: string
+  ) => Promise<{
+    success: boolean
+    member?: { project_id: string; worktree_id: string; symlink_name: string }
+    error?: string
+  }>
+  /**
+   * Makes `memberProjectId` a member of the connection project `projectId` (idempotent), so
+   * tickets launched from then on get a worktree in it. Not reachable over RPC.
+   */
+  addConnectionProjectMember?: (
+    projectId: string,
+    memberProjectId: string
+  ) => Promise<{ success: boolean; error?: string }>
   /** Names an instance after the run that made it; cosmetic, so optional and never fatal. */
   renameConnection?: (connectionId: string, name: string) => Promise<unknown>
   /** Creates the tickets on the project's board; the result lists them in draft order. */
@@ -1209,6 +1230,236 @@ export class DocumentFlowService {
    * in the app; `main`/`master` only stand in for a detached HEAD. Never a guess among the
    * project's other branches: those are worktree branches and earlier runs' tickets.
    */
+  // ── Members ───────────────────────────────────────────────────────────────
+
+  /**
+   * Connect one more repository to a launched connection run, as if it had been a member from
+   * the start: the project joins the connection project (so tickets launched from now on get a
+   * worktree in it), its integration worktree is cut from its base branch — the branch given,
+   * else the one the run's config names for it, else its current branch — under the run's
+   * branch name and linked into the integration instance, every ticket already on an instance
+   * of its own gets a worktree there cut from that new integration branch, and the run's
+   * ticket on the board is re-described. The run is marked in one write once the instance has
+   * the member, so a failure half-way leaves a worktree behind at worst, never a run that
+   * names a member its instance has not got.
+   */
+  async addMember(
+    runId: string,
+    params: { projectId: string; baseBranch?: string | null }
+  ): Promise<DocumentRunDetail> {
+    const run = this.requireRun(runId)
+    if (!isConnectionRun(run) || !run.integration_connection_id) {
+      throw invalidState(
+        hasIntegration(run)
+          ? 'Only a run on a connection project can take another repository.'
+          : 'The run has not been launched yet: add the repository to the connection project instead.'
+      )
+    }
+    if (!isActiveRunStatus(run.status)) {
+      throw invalidState('A finished run cannot take another repository.')
+    }
+    const project = this.deps.getProject(params.projectId)
+    if (!project) throw notFound('The project')
+    if (project.kind === 'connection' || project.id === run.project_id) {
+      throw invalidInput('A connection project cannot be added as a repository.')
+    }
+    const taken = run.members.find(
+      (member) => member.project_id === project.id || samePath(member.project_path, project.path)
+    )
+    if (taken) throw invalidInput(`${taken.project_name} is already a member of this run.`)
+    // Detached, like a launch: the worktree and connection writes must reach the client that
+    // asked for them, or its sidebar would never show the new worktree.
+    return this.detach(() => this.connectMember(run, project, params.baseBranch ?? null))
+  }
+
+  private async connectMember(
+    run: DocumentRun & { members: DocumentRunMember[] },
+    project: DocumentFlowProject,
+    requestedBranch: string | null
+  ): Promise<DocumentRunDetail> {
+    const connectionId = run.integration_connection_id
+    if (!connectionId) throw invalidState('This run has no integration instance.')
+    try {
+      const baseBranch =
+        requestedBranch?.trim() ||
+        run.config.memberBaseBranches[project.id] ||
+        (await this.defaultBaseBranch(project))
+      // Read-only, as at launch: the local branch as it is now.
+      const baseSha = await this.branchSha(project.path, baseBranch)
+      if (!baseSha) throw invalidState(`Branch "${baseBranch}" was not found in ${project.name}.`)
+
+      // The connection project first, idempotently: a ticket launched from now on builds its
+      // instance from the project's member list, and a retry after a later failure is a no-op.
+      if (this.deps.addConnectionProjectMember) {
+        const joined = await this.deps.addConnectionProjectMember(run.project_id, project.id)
+        if (!joined.success) {
+          throw new RpcRouteError(
+            'START_FAILED',
+            `${project.name} could not be added to the connection project: ${joined.error ?? 'unknown error'}`
+          )
+        }
+      }
+
+      const created = await this.deps.createWorktreeFromBranch({
+        projectId: project.id,
+        projectPath: project.path,
+        projectName: project.name,
+        branchName: baseBranch,
+        nameHint: integrationBranchHint(run.title),
+        // Same two load-bearing options as at launch: see createIntegrationWorktree.
+        autoPull: false,
+        baseRef: baseSha
+      })
+      if (!created.success || !created.worktree) {
+        throw new RpcRouteError(
+          'START_FAILED',
+          `The integration worktree of ${project.name} could not be created: ${created.error ?? 'unknown error'}`
+        )
+      }
+      const worktree = created.worktree
+      const linked = await this.deps.addConnectionMember(connectionId, worktree.id)
+      if (!linked.success || !linked.member) {
+        throw new RpcRouteError(
+          'START_FAILED',
+          `The integration worktree of ${project.name} could not be linked into the instance: ${linked.error ?? 'unknown error'}`
+        )
+      }
+      const member: DocumentRunMember = {
+        project_id: project.id,
+        project_name: project.name,
+        project_path: project.path,
+        symlink_name: linked.member.symlink_name,
+        base_branch: baseBranch,
+        base_sha: baseSha,
+        integration_branch: worktree.branch_name,
+        integration_worktree_id: worktree.id,
+        integration_worktree_path: worktree.path
+      }
+
+      // Several clients share one database: re-read, and append to what is there now.
+      const current = this.requireRun(run.id)
+      const members = [
+        ...(current.members ?? []).filter((candidate) => candidate.project_id !== project.id),
+        member
+      ]
+      let updated = this.saveRun(current, {
+        members,
+        base_branch: baseBranchLabel(members.map((candidate) => candidate.base_branch)),
+        integration_branch: sharedName(members.map((candidate) => candidate.integration_branch)),
+        config: {
+          ...current.config,
+          memberBaseBranches: { ...current.config.memberBaseBranches, [project.id]: baseBranch }
+        }
+      })
+      this.log(
+        updated,
+        'member_added',
+        `${project.name} joined the run: ${member.symlink_name} on ${member.integration_branch} (from ${baseBranch} at ${baseSha.slice(0, 8)})`,
+        {
+          data: {
+            project_id: project.id,
+            symlink_name: member.symlink_name,
+            integration_branch: member.integration_branch,
+            integration_worktree_id: worktree.id
+          }
+        }
+      )
+
+      // The run's ticket names every member's branches; cosmetic, so never fatal.
+      if (updated.ticket_id) {
+        const ticketId = updated.ticket_id
+        try {
+          await this.deps.updateTicket(updated.project_id, ticketId, {
+            description: this.runTicketDescription(updated)
+          })
+        } catch (error) {
+          log.warn('Could not re-describe the ticket of a document run', {
+            runId: run.id,
+            ticketId,
+            error: describeError(error)
+          })
+        }
+      }
+
+      await this.extendItemInstances(updated, member)
+      updated = this.requireRun(run.id)
+      return this.detail(updated, true)
+    } catch (error) {
+      const message = describeError(error)
+      this.log(run, 'member_add_failed', `${project.name} could not join the run: ${message}`, {
+        data: { project_id: project.id }
+      })
+      throw error instanceof RpcRouteError ? error : new RpcRouteError('START_FAILED', message)
+    }
+  }
+
+  /**
+   * Give every ticket that is on an instance of its own (launched, not finished) a worktree in
+   * the new member, cut from the member's integration branch and named after the ticket, as a
+   * launch would have. Per ticket: a failure is logged on the ticket and the rest go on — the
+   * merge treats a ticket without a worktree in a member as touching nothing there.
+   */
+  private async extendItemInstances(run: DocumentRun, member: DocumentRunMember): Promise<void> {
+    const items = this.db.getDocumentRunItems(run.id).filter(
+      (item) =>
+        item.selected &&
+        item.connection_id &&
+        item.members &&
+        !isTerminalItemStatus(item.status) &&
+        item.status !== 'launching' &&
+        !item.members.some((own) => own.project_id === member.project_id)
+    )
+    for (const item of items) {
+      const connectionId = item.connection_id as string
+      try {
+        const tip = await this.branchSha(member.project_path, member.integration_branch)
+        if (!tip) {
+          throw new Error(`Branch ${member.integration_branch} was not found in ${member.project_name}.`)
+        }
+        const created = await this.deps.createWorktreeFromBranch({
+          projectId: member.project_id,
+          projectPath: member.project_path,
+          projectName: member.project_name,
+          // Recorded against the member's base branch, as the runner records a launch.
+          branchName: member.base_branch,
+          nameHint: item.branch_name ?? ticketBranchHint(item.key, item.title),
+          autoPull: false,
+          baseRef: tip
+        })
+        if (!created.success || !created.worktree) {
+          throw new Error(created.error ?? 'The worktree could not be created.')
+        }
+        const linked = await this.deps.addConnectionMember(connectionId, created.worktree.id)
+        if (!linked.success || !linked.member) {
+          throw new Error(linked.error ?? 'The worktree could not be linked into the instance.')
+        }
+        const own: DocumentRunItemMember = {
+          project_id: member.project_id,
+          worktree_id: created.worktree.id,
+          branch_name: created.worktree.branch_name,
+          pre_merge_sha: null,
+          merge_sha: null
+        }
+        const fresh = this.db.getDocumentRunItem(item.id)
+        const members = [...(fresh?.members ?? item.members ?? []), own]
+        this.saveItem(run, item.id, { members })
+        this.log(
+          run,
+          'member_added',
+          `${item.key} got a worktree in ${member.project_name}: ${own.branch_name} (from ${member.integration_branch})`,
+          { itemId: item.id, data: { project_id: member.project_id, worktree_id: own.worktree_id } }
+        )
+      } catch (error) {
+        this.log(
+          run,
+          'member_add_failed',
+          `${item.key} got no worktree in ${member.project_name}: ${describeError(error)}`,
+          { itemId: item.id, data: { project_id: member.project_id } }
+        )
+      }
+    }
+  }
+
   private async defaultBaseBranch(project: DocumentFlowProject): Promise<string> {
     const current = await this.git.currentBranch(project.path)
     if (current) return current
@@ -3367,6 +3618,28 @@ export async function getDocumentFlowService(
     renameConnection: async (connectionId, name) => {
       const { renameConnectionOp } = await import('../connection-ops')
       return renameConnectionOp(db, connectionId, name)
+    },
+    addConnectionMember: async (connectionId, worktreeId) => {
+      const { addConnectionMemberOp } = await import('../connection-ops')
+      const result = await addConnectionMemberOp(db, connectionId, worktreeId)
+      return {
+        success: result.success,
+        ...(result.member
+          ? {
+              member: {
+                project_id: result.member.project_id,
+                worktree_id: result.member.worktree_id,
+                symlink_name: result.member.symlink_name
+              }
+            }
+          : {}),
+        ...(result.error ? { error: result.error } : {})
+      }
+    },
+    addConnectionProjectMember: async (projectId, memberProjectId) => {
+      const { addConnectionProjectMemberOp } = await import('../connection-ops')
+      const result = await addConnectionProjectMemberOp(db, projectId, memberProjectId)
+      return { success: result.success, ...(result.error ? { error: result.error } : {}) }
     },
     setWorktreeBaseBranch: (worktreeId, baseBranch) => {
       db.setWorktreeBaseBranch(worktreeId, baseBranch)

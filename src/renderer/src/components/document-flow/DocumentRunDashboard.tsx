@@ -11,6 +11,7 @@ import {
   MessageCircleQuestion,
   Pause,
   Play,
+  Plus,
   Square,
   Trash2,
   X
@@ -60,6 +61,7 @@ import {
   type DocumentRunDetail,
   type DocumentSourceFile
 } from '@shared/types/document-flow'
+import { AddRunMemberDialog } from './AddRunMemberDialog'
 import { TonePill } from './DocumentFlowBadges'
 import { NeedsYouSection, RunItemsTable } from './DocumentRunItems'
 import { RunActivityLog, RunReportSection } from './DocumentRunReport'
@@ -290,6 +292,7 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
   const openWizard = useDocumentFlowStore((s) => s.openWizard)
   const [confirm, setConfirm] = useState<ConfirmKind | null>(null)
   const [busy, setBusy] = useState<BusyKind | null>(null)
+  const [addingMember, setAddingMember] = useState(false)
   const [source, setSource] = useSourceFile(run)
   const documentMissing = source !== null && !source.exists
   // Archived with the merge of the run's ticket: no checkout is left to run a session in
@@ -494,21 +497,39 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
 
         {/* A connection run: the integration branch and its base in every member repository */}
         {memberLines.length > 0 && (
-          <ul
-            className="space-y-0.5 pl-[18px] text-[11px] text-muted-foreground"
-            data-testid="docflow-member-lines"
-          >
-            {memberLines.map((line) => (
-              <li
-                key={line.projectId}
-                className="truncate font-mono"
-                title={line.label}
-                data-testid={`docflow-member-line-${line.projectId}`}
+          <div className="pl-[18px]">
+            <ul
+              className="space-y-0.5 text-[11px] text-muted-foreground"
+              data-testid="docflow-member-lines"
+            >
+              {memberLines.map((line) => (
+                <li
+                  key={line.projectId}
+                  className="truncate font-mono"
+                  title={line.label}
+                  data-testid={`docflow-member-line-${line.projectId}`}
+                >
+                  {line.label}
+                </li>
+              ))}
+            </ul>
+            {/* A repository the project missed joins the run as if it had been there at launch */}
+            {connectionRun && active && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="mt-1 h-6 px-1.5 text-[11px] text-muted-foreground"
+                data-testid="docflow-add-member-btn"
+                disabled={busy !== null}
+                title="Connect another repository to this run: it gets an integration branch and every ticket gets a worktree in it"
+                onClick={() => setAddingMember(true)}
               >
-                {line.label}
-              </li>
-            ))}
-          </ul>
+                <Plus className="h-3 w-3" />
+                Add repository
+              </Button>
+            )}
+          </div>
         )}
 
         <div className="flex items-center gap-3">
@@ -766,6 +787,10 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
         <RunItemsTable run={run} items={items} />
         <RunActivityLog events={events} items={items} />
       </div>
+
+      {isConnectionRun(run) && (
+        <AddRunMemberDialog run={run} open={addingMember} onOpenChange={setAddingMember} />
+      )}
 
       <AlertDialog
         open={confirm !== null}

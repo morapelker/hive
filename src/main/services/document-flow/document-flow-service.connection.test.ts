@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { existsSync, realpathSync } from 'node:fs'
+import { existsSync, mkdirSync, realpathSync, symlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { integrationBranchHint } from '@shared/document-flow/planning'
@@ -333,6 +333,224 @@ describe('start on a connection project', () => {
       harness.service.updateRun(seeded.id, { config: { memberVerifyCommands: { [WEB.id]: '' } } })
         .config.memberVerifyCommands
     ).toEqual({ [WEB.id]: '', [API.id]: 'make' })
+  })
+})
+
+describe('addMember on a connection run', () => {
+  const MOBILE = { id: 'member-mobile', name: 'mobile' }
+  let mobile: TestRepo
+
+  beforeEach(() => {
+    mobile = createTestRepo()
+    harness.addProject(MOBILE, mobile)
+  })
+
+  afterEach(() => {
+    mobile.cleanup()
+  })
+
+  /** Register the instance `launchTicket` named for the ticket, so a member can be linked into it. */
+  function registerInstance(run: DocumentRun, key: string, paths: Record<string, string>): void {
+    const id = `connection-${key}`
+    const path = join(harness.scratch, 'connections', id)
+    mkdirSync(path, { recursive: true })
+    const members = run.members!.map((member) => {
+      symlinkSync(paths[member.project_id], join(path, member.symlink_name))
+      return {
+        project_id: member.project_id,
+        worktree_id: `wt-${member.project_name}-${key}`,
+        symlink_name: member.symlink_name
+      }
+    })
+    harness.connections.set(id, {
+      id,
+      name: id,
+      path,
+      status: 'active',
+      saved_project_id: TEST_CONNECTION_PROJECT_ID,
+      members
+    })
+  }
+
+  it('cuts the repository an integration worktree, links it into the instance and the project, and gives the tickets at work a worktree in it', async () => {
+    const run = await launchRun()
+    registerInstance(run, 'A1', launchTicket(run, 'A1'))
+    // A2 is merged already: nothing is added to it. A3 is not in the run.
+    registerInstance(run, 'A2', launchTicket(run, 'A2', { status: 'merged' }))
+    const before = harness.worktreeRequests.length
+
+    const detail = await harness.service.addMember(run.id, { projectId: MOBILE.id })
+
+    // The connection project first: a ticket launched from now on builds its instance from it.
+    expect(harness.projectMemberAdds).toEqual([
+      { projectId: TEST_CONNECTION_PROJECT_ID, memberProjectId: MOBILE.id }
+    ])
+    expect(
+      JSON.parse(harness.projects.get(TEST_CONNECTION_PROJECT_ID)!.member_project_ids!)
+    ).toEqual([WEB.id, API.id, MOBILE.id])
+
+    // Its integration worktree, cut like the others were at launch, then a worktree for A1 cut
+    // from that integration branch and named after the ticket.
+    expect(harness.worktreeRequests.slice(before)).toEqual([
+      {
+        projectId: MOBILE.id,
+        projectPath: mobile.projectPath,
+        projectName: 'mobile',
+        branchName: 'main',
+        nameHint: INTEGRATION,
+        autoPull: false,
+        baseRef: mobile.baseSha
+      },
+      {
+        projectId: MOBILE.id,
+        projectPath: mobile.projectPath,
+        projectName: 'mobile',
+        branchName: 'main',
+        nameHint: 'a1-task',
+        autoPull: false,
+        baseRef: mobile.baseSha
+      }
+    ])
+    expect(harness.connectionMemberAdds).toEqual([
+      { connectionId: 'connection-1', worktreeId: `wt-mobile-${INTEGRATION}` },
+      { connectionId: 'connection-A1', worktreeId: 'wt-mobile-a1-task' }
+    ])
+
+    const worktree = harness.worktrees.get(`wt-mobile-${INTEGRATION}`)!
+    expect(detail.run.members).toHaveLength(3)
+    expect(detail.run.members![2]).toEqual({
+      project_id: MOBILE.id,
+      project_name: 'mobile',
+      project_path: mobile.projectPath,
+      symlink_name: 'mobile',
+      base_branch: 'main',
+      base_sha: mobile.baseSha,
+      integration_branch: INTEGRATION,
+      integration_worktree_id: worktree.id,
+      integration_worktree_path: worktree.path
+    })
+    expect(detail.run).toMatchObject({
+      status: 'running',
+      base_branch: 'main',
+      integration_branch: INTEGRATION,
+      integration_connection_id: 'connection-1'
+    })
+    expect(detail.run.config.memberBaseBranches[MOBILE.id]).toBe('main')
+    // Linked into the instance directory under the member's name, on its integration branch.
+    const connection = harness.connections.get('connection-1')!
+    expect(realpathSync(join(connection.path, 'mobile'))).toBe(worktree.path)
+    expect(mobile.git(worktree.path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(INTEGRATION)
+
+    // A1's instance has the member now; A2's (merged) is left alone.
+    const a1 = itemByKey(run.id, 'A1')
+    expect(a1.members).toHaveLength(3)
+    expect(a1.members![2]).toEqual({
+      project_id: MOBILE.id,
+      worktree_id: 'wt-mobile-a1-task',
+      branch_name: 'a1-task',
+      pre_merge_sha: null,
+      merge_sha: null
+    })
+    expect(realpathSync(join(harness.connections.get('connection-A1')!.path, 'mobile'))).toBe(
+      harness.worktrees.get('wt-mobile-a1-task')!.path
+    )
+    expect(itemByKey(run.id, 'A2').members).toHaveLength(2)
+    expect(existsSync(join(harness.connections.get('connection-A2')!.path, 'mobile'))).toBe(false)
+
+    // The run's ticket names the new member's branches too.
+    expect(harness.ticketUpdates).toContainEqual({
+      projectId: TEST_CONNECTION_PROJECT_ID,
+      ticketId: run.ticket_id,
+      patch: { description: expect.stringContaining(`mobile: ${INTEGRATION} (from main)`) }
+    })
+    const events = harness.db.listDocumentRunEvents(run.id).filter((e) => e.type === 'member_added')
+    expect(events.map((event) => event.item_id)).toEqual([null, a1.id])
+    expect(events[0].message).toContain('mobile joined the run')
+  })
+
+  it('cuts from the branch given, and remembers it as the member base branch', async () => {
+    const run = await launchRun()
+    const developSha = mobile.commit(mobile.projectPath, 'develop', { 'dev.txt': 'dev\n' })
+    mobile.git(mobile.projectPath, 'branch', 'develop')
+    mobile.git(mobile.projectPath, 'reset', '--hard', mobile.baseSha)
+
+    const detail = await harness.service.addMember(run.id, {
+      projectId: MOBILE.id,
+      baseBranch: 'develop'
+    })
+
+    expect(harness.worktreeRequests.at(-1)).toMatchObject({
+      projectId: MOBILE.id,
+      branchName: 'develop',
+      baseRef: developSha
+    })
+    expect(detail.run.members![2]).toMatchObject({ base_branch: 'develop', base_sha: developSha })
+    expect(detail.run.base_branch).toBe('main + develop')
+    expect(detail.run.config.memberBaseBranches[MOBILE.id]).toBe('develop')
+  })
+
+  it('refuses a repository that is already in, a connection project, an unknown branch, and a run that is not at work', async () => {
+    const run = await launchRun()
+
+    await expect(harness.service.addMember(run.id, { projectId: WEB.id })).rejects.toThrow(
+      'web is already a member of this run.'
+    )
+    await expect(
+      harness.service.addMember(run.id, { projectId: TEST_CONNECTION_PROJECT_ID })
+    ).rejects.toThrow('A connection project cannot be added as a repository.')
+    await expect(harness.service.addMember(run.id, { projectId: 'nope' })).rejects.toThrow(
+      'The project was not found.'
+    )
+    await expect(
+      harness.service.addMember(run.id, { projectId: MOBILE.id, baseBranch: 'release' })
+    ).rejects.toThrow('Branch "release" was not found in mobile.')
+    expect(eventTypes(run.id)).toContain('member_add_failed')
+    expect(currentRun(run.id).members).toHaveLength(2)
+
+    const preview = seedPreview()
+    await expect(harness.service.addMember(preview.id, { projectId: MOBILE.id })).rejects.toThrow(
+      'The run has not been launched yet'
+    )
+    harness.db.updateDocumentRun(run.id, { status: 'completed' })
+    await expect(harness.service.addMember(run.id, { projectId: MOBILE.id })).rejects.toThrow(
+      'A finished run cannot take another repository.'
+    )
+    expect(harness.worktreeRequests.filter((r) => r.projectId === MOBILE.id)).toEqual([])
+  })
+
+  it('does not mark the run when the worktree cannot be linked into the instance', async () => {
+    const run = await launchRun()
+    harness.overrides.addConnectionMember = async () => ({ success: false, error: 'disk full' })
+
+    await expect(harness.service.addMember(run.id, { projectId: MOBILE.id })).rejects.toThrow(
+      'The integration worktree of mobile could not be linked into the instance: disk full'
+    )
+
+    const current = currentRun(run.id)
+    expect(current.members).toHaveLength(2)
+    expect(current.config.memberBaseBranches[MOBILE.id]).toBeUndefined()
+    expect(eventTypes(run.id)).toContain('member_add_failed')
+    // The project did join: a retry starts from there.
+    expect(harness.projectMemberAdds).toHaveLength(1)
+  })
+
+  it('goes on with the other tickets when one cannot take the member, and says so on that ticket', async () => {
+    const run = await launchRun()
+    registerInstance(run, 'A1', launchTicket(run, 'A1'))
+    // A2 names an instance that no longer exists.
+    launchTicket(run, 'A2')
+
+    const detail = await harness.service.addMember(run.id, { projectId: MOBILE.id })
+
+    expect(detail.run.members).toHaveLength(3)
+    expect(itemByKey(run.id, 'A1').members).toHaveLength(3)
+    expect(itemByKey(run.id, 'A2').members).toHaveLength(2)
+    const failed = harness.db
+      .listDocumentRunEvents(run.id)
+      .filter((event) => event.type === 'member_add_failed')
+    expect(failed).toHaveLength(1)
+    expect(failed[0]).toMatchObject({ item_id: itemByKey(run.id, 'A2').id })
+    expect(failed[0].message).toContain('A2 got no worktree in mobile')
   })
 })
 

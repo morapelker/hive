@@ -75,6 +75,15 @@ interface DocumentFlowState {
   ) => Promise<DocumentRunItem>
   /** Launch a previewed run and remember its settings as the next run's defaults. */
   startRun: (runId: string) => Promise<DocumentRunDetail>
+  /**
+   * Connect one more repository to a launched connection run (see `documentFlowApi.addMember`),
+   * then install the new integration worktree's dependencies like a launch does.
+   */
+  addRunMember: (
+    runId: string,
+    projectId: string,
+    baseBranch?: string | null
+  ) => Promise<DocumentRunDetail>
   pauseRun: (runId: string) => Promise<void>
   resumeRun: (runId: string) => Promise<void>
   /** Change how many tickets may hold a slot. The limit gates launches; nothing running stops. */
@@ -325,6 +334,12 @@ export const useDocumentFlowStore = create<DocumentFlowState>()(
             ...rememberedVerifyCommands(detail.run)
           }
         })
+        return detail
+      },
+
+      addRunMember: async (runId, projectId, baseBranch = null) => {
+        const detail = await documentFlowApi.addMember({ runId, projectId, baseBranch })
+        get().applyDetail(detail)
         return detail
       },
 

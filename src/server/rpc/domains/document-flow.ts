@@ -52,6 +52,14 @@ export interface DocumentFlowClassifyParams {
   finalMessage?: string | null
 }
 
+export interface DocumentFlowAddMemberParams {
+  runId: string
+  /** A git project to connect to the run; it joins the connection project too. */
+  projectId: string
+  /** The branch its integration branch is cut from; null/absent = the run's pick, else its current branch. */
+  baseBranch?: string | null
+}
+
 export interface DocumentFlowLogEventParams {
   runId: string
   itemId?: string | null
@@ -75,6 +83,7 @@ export interface DocumentFlowRpcService {
     patch: DocumentRunItemPatch
   ) => Rpc<DocumentRunItem>
   readonly start: (runId: string, defaultSdk?: HandoffAgentSdk) => Rpc<DocumentRunDetail>
+  readonly addMember: (params: DocumentFlowAddMemberParams) => Rpc<DocumentRunDetail>
   readonly claimRunner: (runId: string, clientId: string) => Rpc<DocumentRunnerClaim>
   readonly sessionTurn: (sessionId: string) => Rpc<SessionFinalMessage | null>
   readonly classify: (params: DocumentFlowClassifyParams) => Rpc<DocumentRunVerdict>
@@ -222,6 +231,13 @@ const startParamsSchema = z
   })
   .strict()
 const runItemParamsSchema = z.object({ runId: idSchema, itemId: idSchema }).strict()
+const addMemberParamsSchema = z
+  .object({
+    runId: idSchema,
+    projectId: idSchema,
+    baseBranch: branchNameSchema.nullable().optional()
+  })
+  .strict() satisfies z.ZodType<DocumentFlowAddMemberParams>
 const projectIdParamsSchema = z.object({ projectId: idSchema }).strict()
 const createRunParamsSchema = z
   .object({
@@ -293,6 +309,7 @@ export const makeLiveDocumentFlowRpcService = (eventBus?: EventBus): DocumentFlo
     updateItem: (runId, itemId, patch) =>
       call((service) => service.updateItem(runId, itemId, patch)),
     start: (runId, defaultSdk) => call((service) => service.start(runId, defaultSdk)),
+    addMember: ({ runId, ...params }) => call((service) => service.addMember(runId, params)),
     claimRunner: (runId, clientId) => call((service) => service.claimRunner(runId, clientId)),
     sessionTurn: (sessionId) => call((service) => service.sessionTurn(sessionId)),
     classify: (params) => call((service) => service.classify(params)),
@@ -357,6 +374,10 @@ export const makeDocumentFlowRpcHandlers = (
     [
       'documentFlow.start',
       handle(startParamsSchema, ({ runId, defaultSdk }) => service.start(runId, defaultSdk))
+    ],
+    [
+      'documentFlow.addMember',
+      handle(addMemberParamsSchema, (params) => service.addMember(params))
     ],
     [
       'documentFlow.claimRunner',

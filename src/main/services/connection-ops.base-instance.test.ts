@@ -17,6 +17,7 @@ import type { Project, Worktree } from '../db/types'
 import {
   BASE_INSTANCE_LOCKED_ERROR,
   addConnectionMemberOp,
+  addConnectionProjectMemberOp,
   createConnectionOp,
   deleteBaseInstanceForProjectOp,
   deleteConnectionOp,
@@ -398,6 +399,53 @@ describeIf('connection project base instance — edge cases', () => {
     expect((await deleteConnectionOp(db, baseId)).success).toBe(true)
 
     db.close()
+  })
+
+  it('addConnectionProjectMemberOp links a third project into the project, lists it and rebuilds the base', async () => {
+    stubHome()
+    const db = makeDb()
+    const { projectA, projectB, defaultA, defaultB, saved } = await seedSavedProject(db)
+    const project = saved.project!
+    const projectC = seedProject(db, 'projc')
+    const defaultC = seedWorktree(db, projectC, 'main', true)
+    const baseBefore = db.getBaseConnectionForProject(project.id)!
+
+    const result = await addConnectionProjectMemberOp(db, project.id, projectC.id)
+
+    expect(result.success).toBe(true)
+    expect(JSON.parse(db.getProject(project.id)!.member_project_ids!)).toEqual([
+      projectA.id,
+      projectB.id,
+      projectC.id
+    ])
+    // The project directory links the new member's root next to the others.
+    expect(symlinkExists(join(project.path, 'proja'))).toBe(true)
+    expect(symlinkExists(join(project.path, 'projc'))).toBe(true)
+    expect(existsSync(join(project.path, 'AGENTS.md'))).toBe(true)
+    // The base instance now spans the three default worktrees; the stale one was demoted.
+    const base = db.getBaseConnectionForProject(project.id)!
+    expect(base.id).not.toBe(baseBefore.id)
+    expect(base.members.map((m) => m.worktree_id).sort()).toEqual(
+      [defaultA.id, defaultB.id, defaultC.id].sort()
+    )
+    expect(db.getConnection(baseBefore.id)?.is_base).toBe(0)
+
+    // Idempotent, and refuses what is not a git project.
+    const again = await addConnectionProjectMemberOp(db, project.id, projectC.id)
+    expect(again.success).toBe(true)
+    expect(JSON.parse(db.getProject(project.id)!.member_project_ids!)).toHaveLength(3)
+    expect(await addConnectionProjectMemberOp(db, project.id, project.id)).toMatchObject({
+      success: false,
+      error: expect.stringContaining('connection project')
+    })
+    expect(await addConnectionProjectMemberOp(db, projectC.id, projectC.id)).toMatchObject({
+      success: false,
+      error: 'Not a connection project'
+    })
+    expect(await addConnectionProjectMemberOp(db, project.id, 'missing')).toMatchObject({
+      success: false,
+      error: 'Member project not found'
+    })
   })
 
   it('deleteBaseInstanceForProjectOp demotes instead of leaving a locked row when deletion fails', async () => {

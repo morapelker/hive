@@ -1999,6 +1999,22 @@ export class DatabaseService implements DocumentFlowDb {
     return this.getProject(id)
   }
 
+  /**
+   * Replace the member project ids of a connection project (`projects.member_project_ids`),
+   * in the given order. Null for a project that is not a connection project.
+   */
+  updateConnectionProjectMembers(id: string, memberProjectIds: string[]): Project | null {
+    const db = this.getDb()
+    const existing = this.getProject(id)
+    if (!existing || existing.kind !== 'connection') return null
+    db.prepare('UPDATE projects SET member_project_ids = ? WHERE id = ?').run(
+      JSON.stringify(memberProjectIds),
+      id
+    )
+    emitDbChanged({ entity: 'project', op: 'update', id, projectId: id })
+    return this.getProject(id)
+  }
+
   updateProjectKanbanStorageMode(id: string, mode: KanbanStorageMode): Project | null {
     const db = this.getDb()
     if (!this.getProject(id)) return null

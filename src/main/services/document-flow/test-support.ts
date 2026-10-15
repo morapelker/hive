@@ -399,6 +399,15 @@ export interface ServiceHarness {
   /** Every instance the fake `createConnection` made (a directory of symlinks under `scratch`). */
   connections: Map<string, FakeConnection>
   connectionRequests: { worktreeIds: string[]; savedProjectId: string }[]
+  /** Every worktree the fake `addConnectionMember` linked into an instance, in order. */
+  connectionMemberAdds: { connectionId: string; worktreeId: string }[]
+  /** Every member the fake `addConnectionProjectMember` gave a connection project, in order. */
+  projectMemberAdds: { projectId: string; memberProjectId: string }[]
+  /**
+   * Register one more git project backed by `repo`, so worktree requests for it are honoured.
+   * Not a member of the connection project until the service makes it one.
+   */
+  addProject: (project: { id: string; name: string }, repo: TestRepo) => DocumentFlowProject
   connectionRenames: { connectionId: string; name: string }[]
   ticketBatches: { projectId: string; drafts: KanbanTicketBatchCreateItem[] }[]
   ticketLinks: { projectId: string; dependent: string; blocker: string }[]
@@ -430,6 +439,8 @@ type OverridableDeps = Required<
     | 'createWorktreeFromBranch'
     | 'createConnection'
     | 'getConnection'
+    | 'addConnectionMember'
+    | 'addConnectionProjectMember'
     | 'renameConnection'
     | 'createTickets'
     | 'addTicketDependency'
@@ -469,6 +480,8 @@ export function createServiceHarness(
   const worktreeRequests: CreateFromBranchParams[] = []
   const connections = new Map<string, FakeConnection>()
   const connectionRequests: ServiceHarness['connectionRequests'] = []
+  const connectionMemberAdds: ServiceHarness['connectionMemberAdds'] = []
+  const projectMemberAdds: ServiceHarness['projectMemberAdds'] = []
   const connectionRenames: ServiceHarness['connectionRenames'] = []
   const ticketBatches: ServiceHarness['ticketBatches'] = []
   const ticketLinks: ServiceHarness['ticketLinks'] = []
@@ -582,6 +595,39 @@ export function createServiceHarness(
       const connection = connections.get(connectionId)
       return connection ? structuredClone(connection) : null
     },
+    addConnectionMember: async (connectionId, worktreeId) => {
+      connectionMemberAdds.push({ connectionId, worktreeId })
+      const connection = connections.get(connectionId)
+      if (!connection) return { success: false, error: 'Connection not found' }
+      const worktree = worktrees.get(worktreeId)
+      if (!worktree) return { success: false, error: 'Worktree not found' }
+      const project = worktree.project_id ? projects.get(worktree.project_id) : null
+      if (!project) return { success: false, error: 'Project not found' }
+      const base = project.name.toLowerCase().replace(/[^a-z0-9-]/g, '-')
+      let symlinkName = base
+      for (let n = 2; connection.members.some((member) => member.symlink_name === symlinkName); n++) {
+        symlinkName = `${base}-${n}`
+      }
+      symlinkSync(worktree.path, join(connection.path, symlinkName))
+      const member = { project_id: project.id, worktree_id: worktreeId, symlink_name: symlinkName }
+      connection.members.push(member)
+      return { success: true, member: { ...member } }
+    },
+    addConnectionProjectMember: async (projectId, memberProjectId) => {
+      projectMemberAdds.push({ projectId, memberProjectId })
+      const project = projects.get(projectId)
+      if (!project || project.kind !== 'connection') {
+        return { success: false, error: 'Connection project not found' }
+      }
+      const ids: string[] = JSON.parse(project.member_project_ids ?? '[]')
+      if (!ids.includes(memberProjectId)) {
+        projects.set(projectId, {
+          ...project,
+          member_project_ids: JSON.stringify([...ids, memberProjectId])
+        })
+      }
+      return { success: true }
+    },
     renameConnection: async (connectionId, name) => {
       connectionRenames.push({ connectionId, name })
       const connection = connections.get(connectionId)
@@ -650,6 +696,10 @@ export function createServiceHarness(
       (overrides.createWorktreeFromBranch ?? fakes.createWorktreeFromBranch)(...args),
     createConnection: (...args) => (overrides.createConnection ?? fakes.createConnection)(...args),
     getConnection: (...args) => (overrides.getConnection ?? fakes.getConnection)(...args),
+    addConnectionMember: (...args) =>
+      (overrides.addConnectionMember ?? fakes.addConnectionMember)(...args),
+    addConnectionProjectMember: (...args) =>
+      (overrides.addConnectionProjectMember ?? fakes.addConnectionProjectMember)(...args),
     renameConnection: (...args) => (overrides.renameConnection ?? fakes.renameConnection)(...args),
     createTickets: (...args) => (overrides.createTickets ?? fakes.createTickets)(...args),
     addTicketDependency: (...args) =>
@@ -683,6 +733,14 @@ export function createServiceHarness(
     worktreeRequests,
     connections,
     connectionRequests,
+    connectionMemberAdds,
+    projectMemberAdds,
+    addProject: (project, projectRepo) => {
+      const row: DocumentFlowProject = { ...project, path: projectRepo.projectPath, kind: 'git' }
+      projects.set(project.id, row)
+      repos.set(projectRepo.projectPath, projectRepo)
+      return row
+    },
     connectionRenames,
     ticketBatches,
     ticketLinks,

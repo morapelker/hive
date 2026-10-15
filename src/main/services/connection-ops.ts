@@ -734,6 +734,80 @@ export async function saveConnectionAsProjectOp(
   }
 }
 
+/**
+ * Add a git project to a connection project (`projects.member_project_ids`): links the member's
+ * root into the project directory under a free symlink name, as `saveConnectionAsProjectOp`
+ * does, re-generates the directory's AGENTS.md and rebuilds the project's base instance over
+ * the new member set. Idempotent for a project that is already a member.
+ */
+export async function addConnectionProjectMemberOp(
+  db: DatabaseService,
+  projectId: string,
+  memberProjectId: string
+): Promise<{ success: boolean; project?: Project; error?: string }> {
+  log.info('Adding member to connection project', { projectId, memberProjectId })
+  try {
+    const project = db.getProject(projectId)
+    if (!project) return { success: false, error: 'Connection project not found' }
+    if (project.kind !== 'connection') {
+      return { success: false, error: 'Not a connection project' }
+    }
+    const member = db.getProject(memberProjectId)
+    if (!member) return { success: false, error: 'Member project not found' }
+    if (member.kind === 'connection') {
+      return { success: false, error: 'A connection project cannot be a member of another' }
+    }
+    const memberIds = parseMemberProjectIds(project.member_project_ids)
+    if (memberIds.includes(memberProjectId)) return { success: true, project }
+
+    // The project directory links every member root; the new one gets a free name.
+    const existingNames: string[] = []
+    const agentsMdMembers: {
+      symlinkName: string
+      projectName: string
+      branchName: string
+      worktreePath: string
+    }[] = []
+    for (const id of [...memberIds, memberProjectId]) {
+      const memberProject = db.getProject(id)
+      if (!memberProject) continue
+      const symlinkName = deriveSymlinkName(memberProject.name, existingNames)
+      existingNames.push(symlinkName)
+      if (id === memberProjectId) createSymlink(memberProject.path, join(project.path, symlinkName))
+      const defaultWorktree = db.getWorktreesByProject(id).find((w) => w.is_default)
+      agentsMdMembers.push({
+        symlinkName,
+        projectName: memberProject.name,
+        branchName: defaultWorktree?.branch_name || 'default',
+        worktreePath: memberProject.path
+      })
+    }
+    try {
+      generateConnectionInstructions(project.path, agentsMdMembers)
+    } catch (error) {
+      log.warn('Could not regenerate the connection project instructions', {
+        projectId,
+        error: error instanceof Error ? error.message : String(error)
+      })
+    }
+
+    const updated = db.updateConnectionProjectMembers(projectId, [...memberIds, memberProjectId])
+    if (!updated) return { success: false, error: 'Connection project not found' }
+    // The base instance spans the member default worktrees: rebuilt over the new set. Never
+    // fatal — the next connection listing heals a missing base.
+    await ensureBaseInstanceForConnectionProjectOp(db, updated)
+    log.info('Member added to connection project', { projectId, memberProjectId })
+    return { success: true, project: updated }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    log.error(
+      'Add member to connection project failed',
+      error instanceof Error ? error : new Error(message)
+    )
+    return { success: false, error: message }
+  }
+}
+
 // ── Connection project base instances ─────────────────────────────────
 
 /** Parse projects.member_project_ids (JSON id array) defensively. */

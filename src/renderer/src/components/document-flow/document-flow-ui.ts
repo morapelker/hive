@@ -21,6 +21,7 @@ import {
   type DocumentRunGeneration,
   type DocumentRunItem,
   type DocumentRunItemStatus,
+  type DocumentRunMember,
   type DocumentRunStatus,
   type DocumentVerificationMethod
 } from '@shared/types/document-flow'
@@ -571,6 +572,33 @@ export function describeMemberVerifyCommands(
   return members
     .map((member) => `${member.name}: ${memberVerifyCommand(config, member.id) || 'none'}`)
     .join(' · ')
+}
+
+/** A git project a launched connection run could still take. */
+export interface RunMemberCandidate {
+  id: string
+  name: string
+  path: string
+}
+
+/**
+ * The repositories a launched connection run could still take ("Add repository" on its
+ * dashboard): every git project of the app that is not one of the run's members, by id or by
+ * path, in sidebar order.
+ */
+export function runMemberCandidates(
+  projects: readonly { id: string; name: string; path: string; kind?: string | null }[],
+  members: readonly Pick<DocumentRunMember, 'project_id' | 'project_path'>[]
+): RunMemberCandidate[] {
+  return projects
+    .filter(
+      (project) =>
+        project.kind !== 'connection' &&
+        !members.some(
+          (member) => member.project_id === project.id || member.project_path === project.path
+        )
+    )
+    .map(({ id, name, path }) => ({ id, name, path }))
 }
 
 /**

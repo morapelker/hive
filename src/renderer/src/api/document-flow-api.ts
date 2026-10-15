@@ -78,6 +78,17 @@ export const documentFlowApi = {
   start: (runId: string, defaultSdk?: HandoffAgentSdk): Promise<DocumentRunDetail> =>
     request('start', { runId, defaultSdk }),
 
+  /**
+   * Connect one more repository to a launched connection run: it joins the connection project,
+   * gets an integration worktree linked into the run's instance, and a worktree in every
+   * ticket instance already at work. `baseBranch` null = the run's pick, else its current branch.
+   */
+  addMember: (params: {
+    runId: string
+    projectId: string
+    baseBranch?: string | null
+  }): Promise<DocumentRunDetail> => request('addMember', params),
+
   /** Take (or renew) the single-owner lease on driving the run. */
   claimRunner: (runId: string, clientId: string): Promise<DocumentRunnerClaim> =>
     request('claimRunner', { runId, clientId }),

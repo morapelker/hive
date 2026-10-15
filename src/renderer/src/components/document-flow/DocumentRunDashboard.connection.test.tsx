@@ -26,8 +26,10 @@ const api = vi.hoisted(() => ({
   updateItem: vi.fn(),
   cancel: vi.fn(),
   finalize: vi.fn(),
-  delete: vi.fn()
+  delete: vi.fn(),
+  addMember: vi.fn()
 }))
+const gitApi = vi.hoisted(() => ({ listBranchesWithStatus: vi.fn() }))
 const migrations = vi.hoisted(() => ({
   migrationsRefusal: vi.fn(),
   startRunMigrations: vi.fn(),
@@ -36,6 +38,7 @@ const migrations = vi.hoisted(() => ({
 
 vi.mock('@/api/document-flow-api', () => ({ documentFlowApi: api }))
 vi.mock('@/api/project-api', () => ({ projectApi: { openPath: vi.fn() } }))
+vi.mock('@/api/git-api', () => ({ gitApi }))
 // The gate itself has its own tests (lib/document-flow/migrations); here what it is asked.
 vi.mock('@/lib/document-flow/migrations', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/document-flow/migrations')>()),
@@ -214,8 +217,34 @@ const click = async (testId: string): Promise<void> => {
   })
 }
 
+/** The git projects of the app: the two members, and one the connection project missed. */
+const GIT_PROJECTS = [
+  { id: 'web', name: 'Web', path: '/repo/web', kind: 'git' },
+  { id: 'api', name: 'API', path: '/repo/api', kind: 'git' },
+  { id: 'mobile', name: 'Mobile', path: '/repo/mobile', kind: 'git' }
+] as const
+
+const MOBILE_MEMBER: DocumentRunMember = {
+  project_id: 'mobile',
+  project_name: 'Mobile',
+  project_path: '/repo/mobile',
+  symlink_name: 'mobile',
+  base_branch: 'develop',
+  base_sha: 'ccccccc3333333',
+  integration_branch: 'doc-checkout',
+  integration_worktree_id: 'wt-mobile-int',
+  integration_worktree_path: '/worktrees/mobile--doc-checkout'
+}
+
 beforeEach(() => {
   api.get.mockImplementation(async (runId: string) => storedDetail(runId) ?? null)
+  gitApi.listBranchesWithStatus.mockResolvedValue({
+    success: true,
+    branches: [
+      { name: 'main', isRemote: false, isCheckedOut: true, worktreePath: '/repo/mobile' },
+      { name: 'develop', isRemote: false, isCheckedOut: false }
+    ]
+  })
   api.sourceFile.mockImplementation(async (runId: string) => ({
     path: storedDetail(runId).run.source_path,
     exists: true
@@ -233,6 +262,111 @@ afterEach(async () => {
   useWorktreeStore.setState(initialWorktreeState, true)
   useSessionStore.setState(initialSessionState, true)
   useConnectionStore.setState(initialConnectionState, true)
+})
+
+describe('DocumentRunDashboard — add a repository to the run', () => {
+  const change = async (testId: string, value: string): Promise<void> => {
+    await act(async () => {
+      fireEvent.change(screen.getByTestId(testId), { target: { value } })
+    })
+  }
+
+  it('offers "Add repository" on a run at work, listing the git projects that are not members', async () => {
+    useProjectStore.setState({ projects: [CONNECTION_PROJECT, ...GIT_PROJECTS] } as never)
+    await renderDashboard(makeDetail(LAUNCHED, [launchedItem('A1')]))
+
+    await click('docflow-add-member-btn')
+
+    const dialog = screen.getByTestId('docflow-add-member-dialog')
+    const options = within(dialog)
+      .getAllByRole('option')
+      .filter((option) => option.closest('select')?.id === 'docflow-add-member-project')
+    expect(options.map((option) => option.textContent)).toEqual(['Mobile'])
+    // The repository's branches, with its current branch as the default.
+    expect(gitApi.listBranchesWithStatus).toHaveBeenCalledWith('/repo/mobile')
+    const branch = screen.getByTestId('docflow-add-member-branch') as HTMLSelectElement
+    expect([...branch.options].map((option) => option.textContent)).toEqual([
+      'Current branch (main)',
+      'develop',
+      'main'
+    ])
+  })
+
+  it('sends the pick to the server, shows the new member and reports it', async () => {
+    useProjectStore.setState({ projects: [CONNECTION_PROJECT, ...GIT_PROJECTS] } as never)
+    const detail = makeDetail(LAUNCHED, [launchedItem('A1')])
+    api.addMember.mockResolvedValue({
+      ...detail,
+      run: {
+        ...detail.run,
+        base_branch: 'main + master + develop',
+        members: [...MEMBERS, MOBILE_MEMBER]
+      }
+    })
+    await renderDashboard(detail)
+
+    await click('docflow-add-member-btn')
+    await change('docflow-add-member-branch', 'develop')
+    await click('docflow-add-member-submit')
+
+    expect(api.addMember).toHaveBeenCalledWith({
+      runId: detail.run.id,
+      projectId: 'mobile',
+      baseBranch: 'develop'
+    })
+    expect(toast.success).toHaveBeenCalledWith('Mobile joined the run on doc-checkout')
+    expect(screen.queryByTestId('docflow-add-member-dialog')).toBeNull()
+    expect(within(screen.getByTestId('docflow-member-lines')).getAllByRole('listitem')).toHaveLength(3)
+    expect(screen.getByTestId('docflow-member-line-mobile')).toHaveTextContent(
+      'Mobile · doc-checkout (from develop)'
+    )
+    expect(screen.getByTestId('docflow-base-branch-line')).toHaveTextContent(
+      /^from main \+ master \+ develop$/
+    )
+  })
+
+  it('sends no branch when the current one is kept, and keeps the dialog open on a refusal', async () => {
+    useProjectStore.setState({ projects: [CONNECTION_PROJECT, ...GIT_PROJECTS] } as never)
+    api.addMember.mockRejectedValue(new Error('Branch "main" was not found in Mobile.'))
+    await renderDashboard(makeDetail(LAUNCHED, [launchedItem('A1')]))
+
+    await click('docflow-add-member-btn')
+    await click('docflow-add-member-submit')
+
+    expect(api.addMember).toHaveBeenCalledWith({
+      runId: 'run-1',
+      projectId: 'mobile',
+      baseBranch: null
+    })
+    expect(toast.error).toHaveBeenCalledWith(
+      'Could not add Mobile: Branch "main" was not found in Mobile.'
+    )
+    expect(screen.getByTestId('docflow-add-member-dialog')).toBeInTheDocument()
+    // Behind the open dialog, so hidden to assistive technology
+    expect(
+      within(screen.getByTestId('docflow-member-lines')).getAllByRole('listitem', { hidden: true })
+    ).toHaveLength(2)
+  })
+
+  it('says so when every repository is a member already, and hides the button once the run ended', async () => {
+    useProjectStore.setState({ projects: [CONNECTION_PROJECT, ...GIT_PROJECTS.slice(0, 2)] } as never)
+    await renderDashboard(makeDetail(LAUNCHED, [launchedItem('A1')]))
+
+    await click('docflow-add-member-btn')
+    expect(screen.getByTestId('docflow-add-member-none')).toBeInTheDocument()
+    expect(screen.getByTestId('docflow-add-member-submit')).toBeDisabled()
+    await click('docflow-add-member-cancel')
+    expect(screen.queryByTestId('docflow-add-member-dialog')).toBeNull()
+
+    cleanup()
+    await renderDashboard(
+      makeDetail(
+        { ...LAUNCHED, status: 'completed', report: connectionReport() },
+        [launchedItem('A1', { status: 'merged' })]
+      )
+    )
+    expect(screen.queryByTestId('docflow-add-member-btn')).toBeNull()
+  })
 })
 
 describe('DocumentRunDashboard — connection run header', () => {
