@@ -38,8 +38,10 @@ export const DOCUMENT_RUN_STATUSES = [
  * - `preview`: tickets extracted; the user reviews and edits them
  * - `running`: launched; the orchestrator drives it
  * - `paused`: launched, but the orchestrator takes no new action (sessions keep running)
- * - `completed`: every selected ticket is merged into the integration branch
- * - `completed_with_issues`: finished with skipped / cancelled tickets
+ * - `completed`: every selected ticket is merged into the integration branch, or skipped
+ *   (a deliberate choice, not an issue)
+ * - `completed_with_issues`: finished with tickets left unmerged for another reason
+ *   (flagged, cancelled, a merge that never landed)
  * - `cancelled`: stopped by the user; branches and worktrees are kept
  */
 export type DocumentRunStatus = (typeof DOCUMENT_RUN_STATUSES)[number]

@@ -101,6 +101,18 @@ describe('when a run ends', () => {
     expect(columnOf(runId)).toBe('review')
   })
 
+  it('completes a run whose only unmerged tickets were skipped: skipping is not an issue', async () => {
+    const runId = seedLaunched({
+      items: [
+        { key: 'A1', status: 'merged' },
+        { key: 'A2', status: 'skipped' }
+      ]
+    })
+
+    expect((await harness.service.finalize(runId)).run.status).toBe('completed')
+    expect(columnOf(runId)).toBe('review')
+  })
+
   it('moves it for a run that finished with issues too', async () => {
     const runId = seedLaunched({
       items: [

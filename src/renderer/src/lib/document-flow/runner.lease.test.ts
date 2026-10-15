@@ -247,11 +247,29 @@ describe('DocumentFlowRunner: driving a run', () => {
       ])
     })
 
-    it('reports a run that finished with skipped tickets as finished with issues', async () => {
+    it('reports a run that finished with skipped tickets as completed: skipping is deliberate', async () => {
       const world = createWorld({
         items: [
           { key: 'A', status: 'merged' },
           { key: 'B', status: 'skipped' }
+        ]
+      })
+      start(world)
+
+      await advance(30_000)
+
+      expect(world.api.finalize).toHaveBeenCalledTimes(1)
+      expect(world.detail().run.status).toBe('completed')
+      expect(world.notices).toEqual([
+        { level: 'success', message: 'Document run finished: 1 merged, 1 skipped' }
+      ])
+    })
+
+    it('reports a run that left a ticket cancelled as finished with issues', async () => {
+      const world = createWorld({
+        items: [
+          { key: 'A', status: 'merged' },
+          { key: 'B', status: 'cancelled' }
         ]
       })
       start(world)

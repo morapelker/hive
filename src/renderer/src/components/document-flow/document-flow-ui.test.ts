@@ -516,6 +516,24 @@ describe('runBoardCardState', () => {
     ).toBe('Ready to merge into the base branch')
   })
 
+  it('treats a completed run with skipped tickets as completed, not as one with issues', () => {
+    const state = runBoardCardState(
+      makeDetail({ status: 'completed', base_branch: 'main' }, [
+        { key: 'A1', status: 'merged' },
+        { key: 'A2', status: 'skipped' }
+      ]),
+      'review'
+    )
+
+    expect(state).toMatchObject({
+      phase: 'completed',
+      merged: 1,
+      total: 2,
+      waitingOnUser: false,
+      label: 'Ready to merge into main'
+    })
+  })
+
   it('counts what a run with issues left unmerged, without asking for the user', () => {
     const state = runBoardCardState(
       makeDetail({ status: 'completed_with_issues' }, [

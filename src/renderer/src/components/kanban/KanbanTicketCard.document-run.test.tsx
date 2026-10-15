@@ -295,6 +295,29 @@ describe('the card of a document run ticket', () => {
     expect(card().className).not.toContain('ticket-elite-gold')
   })
 
+  it('wears the finished silver trim, not the red perimeter, over a run with a skipped ticket', () => {
+    seedRuns(
+      makeDetail({ id: 'run-live', status: 'completed' }, [
+        { key: 'A1', status: 'merged' },
+        { key: 'A2', status: 'skipped' }
+      ])
+    )
+    render(<KanbanTicketCard ticket={makeTicket({ column: 'review' })} />)
+
+    expect(screen.getByTestId('kanban-docflow-run-run-live')).toHaveAttribute(
+      'data-phase',
+      'completed'
+    )
+    expect(screen.getByTestId('kanban-docflow-run-footer-run-live')).not.toHaveTextContent('Error')
+    expect(within(card()).getByTestId('ticket-elite-dragon')).toHaveAttribute(
+      'data-look',
+      'silver-complete'
+    )
+    expect(card().className).toContain('ticket-elite-silver')
+    expect(card().className).not.toContain('!border-red-500/70')
+    expect(card().className).toContain('[--ticket-state-tone:#10b981]')
+  })
+
   it('says a paused run is paused', () => {
     seedRuns(
       makeDetail({ id: 'run-live', status: 'paused' }, [

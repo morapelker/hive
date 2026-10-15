@@ -2640,11 +2640,15 @@ export class DocumentFlowService {
     }
     // A merge still under way lands (or fails) first, so the report cannot miss it.
     await this.mergesInFlight.get(runId)?.catch(() => undefined)
-    await this.adoptLandedMerges(run)
+    const unconfirmed = await this.adoptLandedMerges(run)
     const items = this.db.getDocumentRunItems(run.id).filter((item) => item.selected)
     const merged = items.filter((item) => item.status === 'merged')
     const report = await this.buildReport(run, items)
-    const status = merged.length === items.length ? 'completed' : 'completed_with_issues'
+    // A skipped ticket is a deliberate choice (the user's, or an agent that found nothing to
+    // do), not an issue: the run completed unless something else was left unmerged, or a
+    // merge landed without its checks being confirmed.
+    const settled = items.every((item) => item.status === 'merged' || item.status === 'skipped')
+    const status = settled && unconfirmed === 0 ? 'completed' : 'completed_with_issues'
     const updated = this.saveRun(run, { status, report, finished_at: this.now().toISOString() })
     this.log(
       updated,
@@ -2658,12 +2662,14 @@ export class DocumentFlowService {
   /**
    * The report describes the branch, not the bookkeeping: a ticket whose merge commit is on the
    * integration branch is merged, even if the run ended (finished early, checks never confirmed,
-   * a rollback that failed) before its row said so.
+   * a rollback that failed) before its row said so. Returns how many were adopted this way.
    */
-  private async adoptLandedMerges(run: DocumentRun): Promise<void> {
+  private async adoptLandedMerges(run: DocumentRun): Promise<number> {
+    let adopted = 0
     for (const item of this.db.getDocumentRunItems(run.id)) {
       if (!item.selected || item.status === 'merged' || !item.merge_sha) continue
       if (!(await this.mergeLanded(run, item))) continue
+      adopted++
       const note = 'Merged, but its checks were not confirmed before the run ended.'
       this.saveItem(run, item.id, {
         status: 'merged',
@@ -2675,6 +2681,7 @@ export class DocumentFlowService {
         data: { from: item.status, mergeSha: item.merge_sha, unconfirmed: true }
       })
     }
+    return adopted
   }
 
   /**

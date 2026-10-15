@@ -2109,10 +2109,11 @@ export class DocumentFlowRunner {
         }
         const selected = detail.items.filter((item) => item.selected)
         const merged = selected.filter((item) => item.status === 'merged').length
+        const skipped = selected.filter((item) => item.status === 'skipped').length
         if (detail.run.status === 'completed') {
           this.ports.notify({
             level: 'success',
-            message: `Document run finished: ${merged} merged`
+            message: `Document run finished: ${merged} merged${skipped > 0 ? `, ${skipped} skipped` : ''}`
           })
         } else {
           this.ports.notify({

@@ -1438,6 +1438,7 @@ describe('finalize', () => {
       status_detail:
         'Merged, but its checks were not confirmed before the run ended. Checks still fail; the merge could not be rolled back.'
     })
+    // The skip is fine; the merges nobody confirmed are the issue.
     expect(detail.run.status).toBe('completed_with_issues')
   })
 

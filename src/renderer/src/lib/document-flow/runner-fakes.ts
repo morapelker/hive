@@ -493,12 +493,13 @@ export function createWorld(options: WorldOptions = {}) {
     }),
     finalize: vi.fn(async (_runId: string) => {
       const current = detail()
-      const allMerged = current.items
+      // The service's rule: a skipped ticket is not an issue.
+      const settled = current.items
         .filter((candidate) => candidate.selected)
-        .every((candidate) => candidate.status === 'merged')
+        .every((candidate) => candidate.status === 'merged' || candidate.status === 'skipped')
       const finished: DocumentRunDetail = {
         ...current,
-        run: { ...current.run, status: allMerged ? 'completed' : 'completed_with_issues' }
+        run: { ...current.run, status: settled ? 'completed' : 'completed_with_issues' }
       }
       return finished
     }),
