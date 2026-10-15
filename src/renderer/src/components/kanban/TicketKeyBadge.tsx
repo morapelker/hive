@@ -1,13 +1,12 @@
 import { CornerDownRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { TICKET_KEY_COLOR_CLASS, ticketKeyColorStyle } from '@/lib/ticket-key-color'
-import { ticketKeyVisible } from '@/lib/ticket-key-display'
+import { parentTicketKeyVisible, ticketKeyVisible, visibleTicketKeysOf } from '@/lib/ticket-key-display'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { isDocumentRunTicket } from '@shared/document-flow/run-ticket'
-import { ticketKeyOf } from '@shared/ticket-key'
 import type { KanbanTicket } from '../../../../main/db/types'
 
-export { ticketKeyVisible }
+export { parentTicketKeyVisible, ticketKeyVisible }
 
 /**
  * The Jira-like ticket key (`TD-12`) as a small identifier chip.
@@ -15,8 +14,9 @@ export { ticketKeyVisible }
  * Reads as an identifier rather than prose: monospace, tabular digits, uppercase, muted on a
  * faint tinted background. Renders nothing when the ticket has no key — markdown-backed cards
  * and rows from older builds or peers carry null prefix/number — so every surface can mount it
- * unconditionally. The "Ticket IDs" setting narrows it further: never, or only on orchestrator
- * (Implement document) run tickets and their children.
+ * unconditionally. The "Ticket IDs" setting narrows it further: never, or orchestrator tickets
+ * only — an (Implement document) run ticket shows its own key and each of its children shows
+ * only the run's key it belongs to, not its own.
  *
  * A run's key is painted in a colour hashed from the key (lib/ticket-key-color.ts): the run's
  * own chip and the "parent ›" segment on each of its children share it, so one glance tells
@@ -55,10 +55,11 @@ export function TicketKeyBadge({
   showParent = true
 }: TicketKeyBadgeProps): React.JSX.Element | null {
   const display = useSettingsStore((s) => s.ticketKeyDisplay)
-  const key = ticketKeyOf(ticket)
-  if (!key || !ticketKeyVisible(display, ticket)) return null
+  const segments = visibleTicketKeysOf(ticket, display)
+  const key = segments.key
+  const parentKey = showParent ? segments.parentKey : null
+  if (!key && !parentKey) return null
 
-  const parentKey = showParent ? ticket.parent_ticket_key : null
   const isRun = isDocumentRunTicket(ticket)
 
   return (
@@ -77,19 +78,23 @@ export function TicketKeyBadge({
             <CornerDownRight className="h-2.5 w-2.5 shrink-0" strokeWidth={2.5} aria-hidden />
             {parentKey}
           </span>
-          <span aria-hidden className="px-0.5 text-muted-foreground/40">
-            ›
-          </span>
+          {key && (
+            <span aria-hidden className="px-0.5 text-muted-foreground/40">
+              ›
+            </span>
+          )}
         </>
       )}
-      <span
-        data-testid="ticket-key"
-        title={isRun ? `Orchestrator ${key}` : `Ticket ${key}`}
-        className={cn(isRun && coloredSegmentClass)}
-        style={isRun ? ticketKeyColorStyle(key) : undefined}
-      >
-        {key}
-      </span>
+      {key && (
+        <span
+          data-testid="ticket-key"
+          title={isRun ? `Orchestrator ${key}` : `Ticket ${key}`}
+          className={cn(isRun && coloredSegmentClass)}
+          style={isRun ? ticketKeyColorStyle(key) : undefined}
+        >
+          {key}
+        </span>
+      )}
     </span>
   )
 }

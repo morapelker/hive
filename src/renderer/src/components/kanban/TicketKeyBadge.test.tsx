@@ -2,7 +2,12 @@ import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { ticketKeyColor } from '@/lib/ticket-key-color'
-import { TicketKeyBadge, ticketKeyVisible, type TicketKeyBadgeTicket } from './TicketKeyBadge'
+import {
+  TicketKeyBadge,
+  parentTicketKeyVisible,
+  ticketKeyVisible,
+  type TicketKeyBadgeTicket
+} from './TicketKeyBadge'
 
 const plain = (over: Partial<TicketKeyBadgeTicket> = {}): TicketKeyBadgeTicket => ({
   ticket_prefix: 'TD',
@@ -111,7 +116,7 @@ describe('TicketKeyBadge', () => {
       expect(container.querySelectorAll('[data-testid=ticket-key-badge]')).toHaveLength(0)
     })
 
-    it('orchestrator: keeps the key on a run ticket and its children, drops it elsewhere', () => {
+    it('orchestrator: a run keeps its key, a child shows only the run it belongs to, others nothing', () => {
       useSettingsStore.setState({ ticketKeyDisplay: 'orchestrator' })
       render(
         <>
@@ -120,19 +125,44 @@ describe('TicketKeyBadge', () => {
           <TicketKeyBadge ticket={child()} />
         </>
       )
-      expect(screen.getAllByTestId('ticket-key').map((el) => el.textContent)).toEqual([
-        'TD-7',
-        'TD-12'
-      ])
-      expect(screen.getByTestId('ticket-parent-key')).toHaveTextContent('TD-7')
+      // Only the run's own key is rendered as a ticket key; the child's TD-12 is not.
+      expect(screen.getAllByTestId('ticket-key').map((el) => el.textContent)).toEqual(['TD-7'])
+      expect(screen.getAllByTestId('ticket-key-badge')).toHaveLength(2)
+
+      const childBadge = screen.getAllByTestId('ticket-key-badge')[1]
+      const parent = screen.getByTestId('ticket-parent-key')
+      expect(childBadge).toContainElement(parent)
+      expect(parent).toHaveTextContent('TD-7')
+      expect(parent).toHaveAttribute('title', 'Part of orchestrator TD-7')
+      expect(childBadge).not.toHaveTextContent('TD-12')
+      expect(childBadge).not.toHaveTextContent('›')
+      expect(parent.style.getPropertyValue('--ticket-key-light')).toBe(ticketKeyColor('TD-7').light)
     })
 
-    it('ticketKeyVisible follows the three modes', () => {
+    it('orchestrator: a child with showParent off renders nothing at all', () => {
+      useSettingsStore.setState({ ticketKeyDisplay: 'orchestrator' })
+      const { container } = render(<TicketKeyBadge ticket={child()} showParent={false} />)
+      expect(container.firstChild).toBeNull()
+    })
+
+    it('orchestrator: a keyless child still names the run it belongs to', () => {
+      useSettingsStore.setState({ ticketKeyDisplay: 'orchestrator' })
+      render(<TicketKeyBadge ticket={child({ ticket_number: null })} />)
+      expect(screen.getByTestId('ticket-parent-key')).toHaveTextContent('TD-7')
+      expect(screen.queryByTestId('ticket-key')).toBeNull()
+    })
+
+    it('the own-key and parent-key rules follow the three modes', () => {
       expect(ticketKeyVisible('always', plain())).toBe(true)
       expect(ticketKeyVisible('never', run())).toBe(false)
       expect(ticketKeyVisible('orchestrator', plain())).toBe(false)
       expect(ticketKeyVisible('orchestrator', run())).toBe(true)
-      expect(ticketKeyVisible('orchestrator', child())).toBe(true)
+      expect(ticketKeyVisible('orchestrator', child())).toBe(false)
+
+      expect(parentTicketKeyVisible('always', child())).toBe(true)
+      expect(parentTicketKeyVisible('orchestrator', child())).toBe(true)
+      expect(parentTicketKeyVisible('never', child())).toBe(false)
+      expect(parentTicketKeyVisible('orchestrator', plain())).toBe(false)
     })
   })
 

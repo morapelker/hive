@@ -16,9 +16,8 @@ import {
 interface MoveToProjectModalProps {
   /** Project the ticket currently belongs to (excluded from the list). */
   currentProjectId: string
+  /** The ticket's title, with whatever key the "Ticket IDs" setting shows (visibleTicketTitle). */
   ticketTitle: string
-  /** The ticket's `TD-12` key; null for markdown cards and rows without one. */
-  ticketKey?: string | null
   open: boolean
   onOpenChange: (open: boolean) => void
   onSelect: (project: Project) => void
@@ -27,7 +26,6 @@ interface MoveToProjectModalProps {
 export function MoveToProjectModal({
   currentProjectId,
   ticketTitle,
-  ticketKey = null,
   open,
   onOpenChange,
   onSelect
@@ -70,7 +68,7 @@ export function MoveToProjectModal({
         <DialogHeader>
           <DialogTitle>Move to project</DialogTitle>
           <DialogDescription className="truncate">
-            Move &ldquo;{ticketKey ? `${ticketKey} · ${ticketTitle}` : ticketTitle}&rdquo; to
+            Move &ldquo;{ticketTitle}&rdquo; to
             another project.
           </DialogDescription>
         </DialogHeader>

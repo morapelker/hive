@@ -529,8 +529,8 @@ export function SettingsGeneral(): React.JSX.Element {
         <label className="text-sm font-medium">Ticket IDs</label>
         <p className="text-xs text-muted-foreground">
           Show the ticket ID (TD-12) on kanban cards and in ticket dialogs. Orchestrator tickets
-          only keeps it on Implement-document runs and their tickets, where the ID says which run
-          a ticket belongs to.
+          only shows the ID of Implement-document runs; each of a run&rsquo;s tickets then shows
+          the run&rsquo;s ID it belongs to instead of its own.
         </p>
         <div className="flex gap-2" role="radiogroup" data-testid="ticket-key-display">
           {TICKET_KEY_DISPLAY_OPTIONS.map((option) => {
