@@ -26,8 +26,14 @@ export interface DocumentRunPRTarget {
   /** The member repository, named on the card and in notifications; null for a git run. */
   projectName: string | null
   projectPath: string | null
-  /** Without a remote prefix, e.g. `main`. */
+  /** Without a remote prefix, e.g. `main`: what `gh pr create --base` takes. */
   baseBranch: string
+  /**
+   * The commit the integration branch was cut from. The "anything to PR?" check counts from
+   * it: the bare base name may not resolve locally (a base that exists only as
+   * `origin/<base>` counts as 0 commits ahead, not as an error).
+   */
+  baseSha: string | null
   branchName: string
 }
 
@@ -51,6 +57,7 @@ function memberTarget(member: DocumentRunMember): DocumentRunPRTarget {
     projectName: member.project_name,
     projectPath: member.project_path,
     baseBranch: stripRemote(member.base_branch),
+    baseSha: member.base_sha,
     branchName: member.integration_branch
   }
 }
@@ -80,6 +87,7 @@ export function documentRunPRTargets(
       projectName: null,
       projectPath: projects.find((project) => project.id === run.project_id)?.path ?? null,
       baseBranch: stripRemote(run.base_branch),
+      baseSha: run.base_sha,
       branchName: run.integration_branch
     }
   ]
@@ -119,12 +127,15 @@ async function createTargetPR(
     }
 
     // Nothing merged into the integration branch yet: say so instead of letting `gh` fail
-    // after the content was generated.
+    // after the content was generated. Counted from the base commit, which always resolves;
+    // without one the check is skipped rather than trusting a count the base name may fake.
     let commitsAhead: number | null = null
-    try {
-      commitsAhead = (await gitApi.getRangeDiff(target.worktreePath, target.baseBranch)).commitCount
-    } catch {
-      commitsAhead = null
+    if (target.baseSha) {
+      try {
+        commitsAhead = (await gitApi.getRangeDiff(target.worktreePath, target.baseSha)).commitCount
+      } catch {
+        commitsAhead = null
+      }
     }
     if (commitsAhead === 0) {
       const error = `nothing to PR — no commits ahead of ${target.baseBranch}`

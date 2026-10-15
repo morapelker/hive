@@ -107,6 +107,7 @@ describe('documentRunPRTargets', () => {
         projectName: null,
         projectPath: '/repo/shop',
         baseBranch: 'main',
+        baseSha: '1111111aaaaaaa',
         branchName: 'doc-checkout-redesign'
       }
     ])
@@ -145,6 +146,12 @@ describe('createDocumentRunPRs', () => {
     expect(results).toEqual([
       expect.objectContaining({ ok: true, prNumber: 12, prUrl: 'https://github.com/acme/shop/pull/12' })
     ])
+    // "Anything to PR?" is counted from the base commit: the bare base name may not resolve
+    // locally, and an unresolvable ref counts as 0 rather than failing.
+    expect(gitApi.getRangeDiff).toHaveBeenCalledWith(
+      '/worktrees/shop--doc-checkout-redesign',
+      '1111111aaaaaaa'
+    )
     // One notification card, started as loading and driven to the pipeline's result.
     const notifications = usePRNotificationStore.getState().notifications
     expect(notifications).toHaveLength(1)
@@ -232,6 +239,16 @@ describe('createDocumentRunPRs', () => {
       ['Web', false, 'gh: boom'],
       ['API', true, 3]
     ])
+  })
+
+  it('skips the "anything to PR?" check when the base commit is unknown', async () => {
+    useProjectStore.setState({ projects: [{ id: 'project-1', path: '/repo/shop' } as never] })
+    gitApi.getRangeDiff.mockResolvedValue({ commitCount: 0 })
+
+    await createDocumentRunPRs({ ...gitRun(), base_sha: null })
+
+    expect(gitApi.getRangeDiff).not.toHaveBeenCalled()
+    expect(pipeline.runCreatePRPipeline).toHaveBeenCalledTimes(1)
   })
 
   it('does nothing for a run that was not launched', async () => {
