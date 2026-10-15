@@ -118,7 +118,7 @@ import { useImagePaste } from '@/hooks/useImagePaste'
 import { useTicketRemoteLaunch } from '@/hooks/useTicketRemoteLaunch'
 import { buildHandoffPrompt, type HandoffSelectionOverride } from '@/lib/handoffSelection'
 import { canonicalizeTicketTitle, extractPlanTitle } from '@shared/types/branch-utils'
-import { ticketTitleWithKey } from '@shared/ticket-key'
+import { visibleTicketTitle } from '@/lib/ticket-key-display'
 import type { RemoteLaunchClientInfo } from '@shared/types/remote-launch'
 import { ShortcutHint } from '@/components/ui/shortcut-hint'
 import { submitShortcutLabel } from '@/lib/shortcut-labels'
@@ -1120,7 +1120,7 @@ function KanbanTicketModalContent({
               sessionId={ticket.current_session_id!}
               worktreePath={worktreePath!}
               opencodeSessionId={opcSessionId!}
-              title={ticketTitleWithKey(ticket)}
+              title={visibleTicketTitle(ticket)}
               headerAction={
                 <div className="flex items-center gap-2">
                   <TicketRunButton

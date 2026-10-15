@@ -10,7 +10,7 @@ import {
 } from '@/lib/ticket-launch'
 import { canonicalizeModelSlug, canonicalizeTicketTitle } from '@shared/types/branch-utils'
 import { FALLBACK_MODELS } from '@shared/model-resolution'
-import { ticketTitleWithKey } from '@shared/ticket-key'
+import { visibleTicketTitle } from '@/lib/ticket-key-display'
 import { dbApi } from '@/api/db-api'
 
 type LaunchMode = 'build' | 'plan' | 'super-plan' | 'super-build'
@@ -222,7 +222,7 @@ export async function runMultiModelLaunch(plan: MultiModelLaunchPlan): Promise<v
       .getState()
       .tickets?.get(plan.projectId)
       ?.find((t) => t.id === plan.ticket.id)
-    const label = liveTicket ? ticketTitleWithKey(liveTicket) : plan.ticket.title
+    const label = liveTicket ? visibleTicketTitle(liveTicket) : plan.ticket.title
     console.error(`Multi-model launch failed for "${label}"`, err)
     toast.error(`Failed to launch "${label}": ${errorMessage(err)}`)
   }

@@ -54,7 +54,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip
 import { NoteEditorModal } from './NoteEditorModal'
 import { MoveToProjectModal } from './MoveToProjectModal'
 import { cn, parseColorQuad } from '@/lib/utils'
-import { ticketKeyOf } from '@shared/ticket-key'
+import { visibleTicketKeyOf } from '@/lib/ticket-key-display'
 import { isTicketLinkedToSidebarTarget } from '@/lib/sidebar-hover-highlight'
 import { extractSnippet, normalizeSearchText, stripMarkdown } from '@/lib/board-search'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
@@ -2788,7 +2788,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         <MoveToProjectModal
           currentProjectId={ticket.project_id}
           ticketTitle={ticket.title}
-          ticketKey={ticketKeyOf(ticket)}
+          ticketKey={visibleTicketKeyOf(ticket)}
           open={showMoveToProject}
           onOpenChange={setShowMoveToProject}
           onSelect={handleMoveToProject}

@@ -62,6 +62,9 @@ export type FollowUpTriggerColumn = 'review' | 'done'
  * instance), or the worktree/instance the session was actually sent on.
  */
 export type AutoPinMode = 'off' | 'root-branch' | 'current-branch'
+
+/** When the Jira-like ticket key is shown. */
+export type TicketKeyDisplay = 'always' | 'orchestrator' | 'never'
 export const AUTO_PIN_MODES: readonly AutoPinMode[] = ['off', 'root-branch', 'current-branch']
 export function isAutoPinMode(value: unknown): value is AutoPinMode {
   return (AUTO_PIN_MODES as readonly unknown[]).includes(value)
@@ -201,6 +204,10 @@ export interface AppSettings {
   // Model icons
   showModelIcons: boolean
 
+  // Ticket keys (TD-12) on cards and in ticket dialogs: always, only on orchestrator
+  // (Implement document) run tickets and their children, or never.
+  ticketKeyDisplay: TicketKeyDisplay
+
   // Model provider
   showModelProvider: boolean
 
@@ -314,6 +321,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   customChromeCommand: '',
   modelVariantDefaults: {},
   showModelIcons: false,
+  ticketKeyDisplay: 'always',
   showModelProvider: false,
   usageIndicatorMode: 'current-agent',
   usageIndicatorProviders: [],
@@ -551,6 +559,7 @@ function extractSettings(state: SettingsState): AppSettings {
     customChromeCommand: state.customChromeCommand,
     modelVariantDefaults: state.modelVariantDefaults,
     showModelIcons: state.showModelIcons,
+    ticketKeyDisplay: state.ticketKeyDisplay,
     showModelProvider: state.showModelProvider,
     usageIndicatorMode: state.usageIndicatorMode,
     usageIndicatorProviders: state.usageIndicatorProviders,
@@ -967,6 +976,7 @@ export const useSettingsStore = create<SettingsState>()(
         customChromeCommand: state.customChromeCommand,
         modelVariantDefaults: state.modelVariantDefaults,
         showModelIcons: state.showModelIcons,
+        ticketKeyDisplay: state.ticketKeyDisplay,
         showModelProvider: state.showModelProvider,
         usageIndicatorMode: state.usageIndicatorMode,
         usageIndicatorProviders: state.usageIndicatorProviders,

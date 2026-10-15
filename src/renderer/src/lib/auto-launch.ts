@@ -3,7 +3,7 @@ import { toast } from '@/lib/toast'
 import { launchTicketWithModel, type LaunchModelConfig } from '@/lib/ticket-launch'
 import { runMultiModelLaunch } from '@/lib/multi-model-launch'
 import type { HandoffAgentSdk } from '@shared/types/agent-sdk'
-import { ticketTitleWithKey } from '@shared/ticket-key'
+import { visibleTicketTitle } from '@/lib/ticket-key-display'
 
 type AutoLaunchMode = 'build' | 'plan' | 'super-plan' | 'super-build'
 
@@ -15,6 +15,9 @@ interface AutoLaunchTicket {
   /** Present when a full KanbanTicket is passed: the toast names the ticket by its key. */
   ticket_prefix?: string | null
   ticket_number?: number | null
+  parent_ticket_key?: string | null
+  external_provider?: string | null
+  external_id?: string | null
 }
 
 /** One provider/model entry in a (multi-model) pending launch config. */
@@ -152,10 +155,13 @@ export async function autoLaunchTicket(ticket: AutoLaunchTicket): Promise<void> 
 
   if (result.success) {
     toast.success(
-      `Auto-launched: ${ticketTitleWithKey({
+      `Auto-launched: ${visibleTicketTitle({
         title: ticket.title,
         ticket_prefix: ticket.ticket_prefix ?? null,
-        ticket_number: ticket.ticket_number ?? null
+        ticket_number: ticket.ticket_number ?? null,
+        parent_ticket_key: ticket.parent_ticket_key ?? null,
+        external_provider: ticket.external_provider ?? null,
+        external_id: ticket.external_id ?? null
       })}`
     )
     return

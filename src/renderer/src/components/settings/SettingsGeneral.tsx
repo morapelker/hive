@@ -12,7 +12,18 @@ import openaiIcon from '@/assets/model-icons/openai.svg'
 import { isAgentSdkAvailable } from '@/lib/agent-sdk-availability'
 import { isForceBoardMode } from '@/api/hive-enterprise/client'
 import { resolveAutoPinMode } from '@/lib/auto-pin'
-import type { AutoPinMode } from '@/stores/useSettingsStore'
+import type { AutoPinMode, TicketKeyDisplay } from '@/stores/useSettingsStore'
+
+const TICKET_KEY_DISPLAY_OPTIONS: { value: TicketKeyDisplay; label: string; testId: string }[] =
+  [
+    { value: 'always', label: 'Always', testId: 'ticket-key-display-always' },
+    {
+      value: 'orchestrator',
+      label: 'Orchestrator tickets only',
+      testId: 'ticket-key-display-orchestrator'
+    },
+    { value: 'never', label: 'Never', testId: 'ticket-key-display-never' }
+  ]
 
 const AUTO_PIN_MODE_OPTIONS: { value: AutoPinMode; label: string; testId: string }[] = [
   { value: 'off', label: 'Off', testId: 'auto-pin-mode-off' },
@@ -37,6 +48,7 @@ export function SettingsGeneral(): React.JSX.Element {
     tipsEnabled,
     breedType,
     showModelIcons,
+    ticketKeyDisplay,
     showModelProvider,
     usageIndicatorMode,
     usageIndicatorProviders,
@@ -510,6 +522,38 @@ export function SettingsGeneral(): React.JSX.Element {
             )}
           />
         </button>
+      </div>
+
+      {/* Ticket keys */}
+      <div className="space-y-2">
+        <label className="text-sm font-medium">Ticket IDs</label>
+        <p className="text-xs text-muted-foreground">
+          Show the ticket ID (TD-12) on kanban cards and in ticket dialogs. Orchestrator tickets
+          only keeps it on Implement-document runs and their tickets, where the ID says which run
+          a ticket belongs to.
+        </p>
+        <div className="flex gap-2" role="radiogroup" data-testid="ticket-key-display">
+          {TICKET_KEY_DISPLAY_OPTIONS.map((option) => {
+            const selected = ticketKeyDisplay === option.value
+            return (
+              <button
+                key={option.value}
+                role="radio"
+                aria-checked={selected}
+                onClick={() => updateSetting('ticketKeyDisplay', option.value)}
+                className={cn(
+                  'px-3 py-1.5 rounded-md text-[13px] border transition-colors',
+                  selected
+                    ? 'bg-primary text-primary-foreground border-primary'
+                    : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
+                )}
+                data-testid={option.testId}
+              >
+                {option.label}
+              </button>
+            )
+          })}
+        </div>
       </div>
 
       {/* Show model provider */}
