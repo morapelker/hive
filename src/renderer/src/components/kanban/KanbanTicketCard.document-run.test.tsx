@@ -245,6 +245,31 @@ describe('the card of a document run ticket', () => {
     )
   })
 
+  it('wears an "At cap" tag once every parallel slot is held, and nothing about the cap before', () => {
+    const items = [
+      { key: 'A1', status: 'running' },
+      { key: 'A2', status: 'checking' },
+      { key: 'A3', status: 'pending' }
+    ] as const
+    const config = (maxParallel: number) => ({ ...makeDetail().run.config, maxParallel })
+
+    seedRuns(makeDetail({ id: 'run-live', status: 'running', config: config(2) }, [...items]))
+    const { unmount } = render(<KanbanTicketCard ticket={makeTicket()} />)
+    const tag = screen.getByTestId('kanban-docflow-run-at-cap-run-live')
+    expect(tag).toHaveTextContent('At cap')
+    expect(tag.className).toContain('--elite-gold')
+    // The count of those at work stays as it is: the tag is the only mention of the cap
+    expect(screen.getByTestId('kanban-docflow-run-running-run-live')).toHaveTextContent(
+      /^1 working$/
+    )
+    unmount()
+
+    seedRuns(makeDetail({ id: 'run-live', status: 'running', config: config(3) }, [...items]))
+    render(<KanbanTicketCard ticket={makeTicket()} />)
+    expect(screen.queryByTestId('kanban-docflow-run-at-cap-run-live')).toBeNull()
+    expect(card()).not.toHaveTextContent('At cap')
+  })
+
   it('wears the dragon frame, gold only while at work In Progress', () => {
     seedRuns(makeDetail({ id: 'run-live', status: 'running' }, [{ key: 'A1', status: 'running' }]))
     const { rerender } = render(<KanbanTicketCard ticket={makeTicket()} />)
@@ -274,9 +299,7 @@ describe('the card of a document run ticket', () => {
   })
 
   it('names the document in its footer, and says Error over the red perimeter of a run with issues', () => {
-    seedRuns(
-      makeDetail({ id: 'run-live', status: 'completed' }, [{ key: 'A1', status: 'merged' }])
-    )
+    seedRuns(makeDetail({ id: 'run-live', status: 'completed' }, [{ key: 'A1', status: 'merged' }]))
     const { rerender } = render(
       <KanbanTicketCard
         ticket={makeTicket({ column: 'review', external_url: '/docs/billing-v2.md' })}
@@ -619,10 +642,7 @@ describe('the card of a document run ticket', () => {
       seedRuns(makeDetail({ id: 'run-live', status: 'extracting' }, []))
       render(<KanbanTicketCard ticket={todoTicket()} />)
 
-      expect(within(card()).getByTestId('ticket-elite-dragon')).toHaveAttribute(
-        'data-look',
-        'blue'
-      )
+      expect(within(card()).getByTestId('ticket-elite-dragon')).toHaveAttribute('data-look', 'blue')
       expect(card()).toHaveAttribute('draggable', 'false')
       expect(card().className).toContain('ticket-elite-silver')
       expect(card().className).toContain('[--ticket-state-tone:#3b82f6]')
@@ -1102,4 +1122,3 @@ describe('the PR button of a document run ticket', () => {
     await waitFor(() => expect(runPRs.createDocumentRunPRs).toHaveBeenCalledTimes(1))
   })
 })
-

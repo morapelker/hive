@@ -532,6 +532,14 @@
   background: var(--card);
 }
 
+/* The gold of the elite frame below, for cues that share its meaning (the run's "At cap" tag) */
+:root {
+  --elite-gold: #966918;
+}
+.dark {
+  --elite-gold: #d4ad62;
+}
+
 /* Orchestrator ticket: the elite dragon frame. A metallic trim runs around the card (the border
    itself is transparent; the gradient shows through it) and a 2px stripe at the left carries the
    run's state. Gold while the run is at work; silver when idle, paused or complete. On error the

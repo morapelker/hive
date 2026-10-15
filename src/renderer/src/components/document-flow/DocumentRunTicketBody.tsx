@@ -5,7 +5,8 @@ import {
   FileText,
   Loader2,
   MessageCircleQuestion,
-  Pause
+  Pause,
+  Zap
 } from 'lucide-react'
 import { ticketPillBaseClass, ticketPillClass } from '@/components/kanban/pill'
 import { cn } from '@/lib/utils'
@@ -95,6 +96,22 @@ export function DocumentRunTicketBody({
           <FileText className="h-2.5 w-2.5" />
           Document run
         </span>
+        {/* Every parallel slot is held: the tag, in the gold of the frame, is the only place
+            the card mentions the cap. Only a run at work can be at it, so it never meets the
+            "Needs you" of a paused run. */}
+        {state?.atCap && (
+          <span
+            className={cn(
+              ticketPillBaseClass,
+              'ml-auto shrink-0 border-(--elite-gold)/40 bg-(--elite-gold)/10 text-(--elite-gold)'
+            )}
+            title="Every parallel slot is taken; the next ticket starts when one frees up"
+            data-testid={`kanban-docflow-run-at-cap-${runId}`}
+          >
+            <Zap className="h-2.5 w-2.5 shrink-0" fill="currentColor" strokeWidth={0} />
+            At cap
+          </span>
+        )}
         {/* A run at work says so in its label; a paused one's label is taken by "Paused" */}
         {state?.waitingOnUser && state.paused && (
           <span

@@ -12,6 +12,7 @@ import {
   awaitsLaunch,
   countOccupiedSlots,
   countRunningAgents,
+  freeSlotCount,
   integrationBranchHint,
   isDependencySatisfied,
   isItemWaitingOnUser,
@@ -196,6 +197,32 @@ describe('launchableItems', () => {
     expect(keys(launchableItems(items, -3))).toEqual(['A'])
     expect(keys(launchableItems(items, 2.9))).toEqual(['A', 'B'])
     expect(launchableItems([], 4)).toEqual([])
+  })
+})
+
+describe('freeSlotCount', () => {
+  it('counts the slots left under the cap, the way launching does', () => {
+    const items = [
+      item('A', 'running'),
+      item('B', 'checking'),
+      item('C', 'needs_input'),
+      item('D', 'merging'),
+      item('E', 'merged'),
+      item('F', 'running', { selected: false })
+    ]
+    // A ticket being checked, or waiting for an answer, keeps its session and its slot; a
+    // merge is the orchestrator's own step and holds none.
+    expect(freeSlotCount(items, 4)).toBe(1)
+    expect(freeSlotCount(items, 3)).toBe(0)
+    // More slots held than allowed is still zero free, never negative.
+    expect(freeSlotCount(items, 2)).toBe(0)
+    expect(freeSlotCount([], 4)).toBe(4)
+  })
+
+  it('always allows one slot, and whole slots only', () => {
+    expect(freeSlotCount([], 0)).toBe(1)
+    expect(freeSlotCount([], -3)).toBe(1)
+    expect(freeSlotCount([item('A', 'running')], 1.9)).toBe(0)
   })
 
   it('launches nothing while more slots are held than the limit allows', () => {

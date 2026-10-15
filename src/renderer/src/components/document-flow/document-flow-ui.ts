@@ -4,6 +4,7 @@ import {
   awaitsLaunch,
   WAITING_FOR_WORK_PREFIX,
   countRunningAgents,
+  freeSlotCount,
   isItemWaitingOnUser,
   isRunWaitingOnUser,
   isTerminalItemStatus,
@@ -385,6 +386,12 @@ export interface RunBoardCardState {
   waitingOnUser: boolean
   paused: boolean
   /**
+   * While the run is on: every parallel slot (`config.maxParallel`) is held, so the next
+   * ticket waits for one to free up. The card wears an "At cap" tag; below the cap it says
+   * nothing about the cap at all.
+   */
+  atCap: boolean
+  /**
    * "3 working", "2 waiting for answer", "Paused", "Paused · 1 working" while sessions
    * finish their turn; once the
    * run ended, what is left to do: "Ready to merge into main", "2 not merged", "Cancelled";
@@ -449,6 +456,9 @@ export function runBoardCardState(
     waiting,
     waitingOnUser: waiting > 0,
     paused: phase === 'paused',
+    // Slots, not sessions at work: a ticket being checked, or waiting for an answer, holds
+    // its slot too, and the launcher counts the same way
+    atCap: phase === 'running' && freeSlotCount(items, run.config.maxParallel) === 0,
     label: labels[phase]
   }
 }

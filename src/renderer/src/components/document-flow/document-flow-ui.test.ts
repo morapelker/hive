@@ -437,8 +437,56 @@ describe('runBoardCardState', () => {
       waiting: 0,
       waitingOnUser: false,
       paused: false,
+      // Three of the default four slots are held (checking holds one too)
+      atCap: false,
       label: '2 working'
     })
+  })
+
+  it('is at its cap once every parallel slot is held, counting slots the way launching does', () => {
+    const held = [
+      { key: 'A1', status: 'running' },
+      { key: 'A2', status: 'launching' },
+      { key: 'A3', status: 'checking' },
+      { key: 'A4', status: 'pending' }
+    ] as const
+    const atCap = runBoardCardState(
+      makeDetail({ status: 'running', config: { ...makeRun().config, maxParallel: 3 } }, [...held])
+    )
+    expect(atCap.atCap).toBe(true)
+    // The label does not mention the cap: the tag does
+    expect(atCap.label).toBe('2 working')
+
+    // One slot free
+    expect(
+      runBoardCardState(
+        makeDetail({ status: 'running', config: { ...makeRun().config, maxParallel: 4 } }, [
+          ...held
+        ])
+      ).atCap
+    ).toBe(false)
+    // A merge is the orchestrator's own step: the ticket holds no slot while it is merged
+    expect(
+      runBoardCardState(
+        makeDetail({ status: 'running', config: { ...makeRun().config, maxParallel: 3 } }, [
+          { key: 'A1', status: 'running' },
+          { key: 'A2', status: 'running' },
+          { key: 'A3', status: 'merging' }
+        ])
+      ).atCap
+    ).toBe(false)
+  })
+
+  it('is never at its cap unless it is running: a paused run launches nothing anyway', () => {
+    const full = [
+      { key: 'A1', status: 'running' },
+      { key: 'A2', status: 'running' }
+    ] as const
+    const config = { ...makeRun().config, maxParallel: 2 }
+    expect(runBoardCardState(makeDetail({ status: 'paused', config }, [...full])).atCap).toBe(false)
+    expect(runBoardCardState(makeDetail({ status: 'completed', config }, [...full])).atCap).toBe(
+      false
+    )
   })
 
   it('falls back to the file name of an untitled run', () => {

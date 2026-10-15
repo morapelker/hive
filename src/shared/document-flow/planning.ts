@@ -43,6 +43,15 @@ export function countOccupiedSlots(items: readonly DocumentRunItem[]): number {
 }
 
 /**
+ * The run's parallel slots nobody holds: `maxParallel` (whole slots, at least one) less the
+ * occupied ones, never negative. Zero means the run is at its cap: nothing more launches until
+ * a slot frees up.
+ */
+export function freeSlotCount(items: readonly DocumentRunItem[], maxParallel: number): number {
+  return Math.max(0, Math.max(1, Math.floor(maxParallel)) - countOccupiedSlots(items))
+}
+
+/**
  * Pending items that may launch now, in document order, limited to the free slots:
  * every dependency satisfied, and fewer than `maxParallel` items with a live agent.
  * The limit only gates launches: with more slots held than it allows, nothing launches
@@ -52,7 +61,7 @@ export function launchableItems<T extends DocumentRunItem>(
   items: readonly T[],
   maxParallel: number
 ): T[] {
-  const freeSlots = Math.max(0, Math.max(1, Math.floor(maxParallel)) - countOccupiedSlots(items))
+  const freeSlots = freeSlotCount(items, maxParallel)
   if (freeSlots === 0) return []
   return items
     .filter(
