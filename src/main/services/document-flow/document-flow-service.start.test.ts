@@ -134,8 +134,8 @@ describe('start', () => {
       integration_branch: 'doc-factory-area-changes-round-2',
       integration_worktree_id: 'wt-doc-factory-area-changes-round-2',
       integration_worktree_path: join(repo.root, 'worktrees', 'doc-factory-area-changes-round-2'),
-      // Created after the three task tickets.
-      ticket_id: 'ticket-4',
+      // Created before the three task tickets: the parent gets the lower key.
+      ticket_id: 'ticket-1',
       error: null
     })
     expect(detail.run.started_at).toBeTruthy()
@@ -157,8 +157,8 @@ describe('start', () => {
       'dependency_warning',
       'base_resolved',
       'integration_created',
-      'tickets_created',
       'run_ticket_created',
+      'tickets_created',
       'started'
     ])
   })
@@ -294,7 +294,7 @@ describe('start', () => {
 
     await harness.service.start(run.id, 'codex')
 
-    expect(harness.ticketBatches[0].drafts[0].description).toBe(
+    expect(harness.ticketBatches[1].drafts[0].description).toBe(
       brief('A1', 'Report', 'request_user_input')
     )
   })
@@ -310,7 +310,7 @@ describe('start', () => {
 
     await harness.service.start(run.id)
 
-    const [{ drafts }] = harness.ticketBatches
+    const [, { drafts }] = harness.ticketBatches
     expect(drafts[0].description).toBe(
       buildLaunchPrompt({
         key: 'A1',
@@ -353,7 +353,7 @@ describe('start', () => {
 
     const detail = await harness.service.start(run.id)
 
-    const [{ drafts }] = harness.ticketBatches
+    const [, { drafts }] = harness.ticketBatches
     expect(drafts[0].description).toBe(brief('A1', 'Report'))
     for (const paragraph of [
       VERIFICATION_LEAD_PARAGRAPH,
@@ -425,9 +425,9 @@ describe('start', () => {
 
     const detail = await harness.service.start(run.id)
 
-    // The task tickets, then the run's own ticket.
+    // The run's own ticket, then the task tickets, each a child of the run's.
     expect(harness.ticketBatches).toHaveLength(2)
-    const [{ projectId, drafts }] = harness.ticketBatches
+    const [, { projectId, drafts }] = harness.ticketBatches
     expect(projectId).toBe(TEST_PROJECT_ID)
     expect(drafts).toEqual([
       {
@@ -448,6 +448,7 @@ describe('start', () => {
           }
         ],
         depends_on: [],
+        parent_ticket_id: 'ticket-1',
         // No launch config of its own: the run default.
         model_provider_id: 'anthropic',
         model_id: 'sonnet',
@@ -468,6 +469,7 @@ describe('start', () => {
           }
         ],
         depends_on: ['A1'],
+        parent_ticket_id: 'ticket-1',
         model_provider_id: 'anthropic',
         model_id: 'opus',
         model_variant: 'ultracode'
@@ -487,15 +489,16 @@ describe('start', () => {
           }
         ],
         // A3 is deselected: it gets no ticket, so nothing can depend on one.
-        depends_on: ['A2']
+        depends_on: ['A2'],
+        parent_ticket_id: 'ticket-1'
         // Its launch config names no model: the ticket carries none.
       }
     ])
     expect(Object.fromEntries(detail.items.map((item) => [item.key, item.ticket_id]))).toEqual({
-      A1: 'ticket-1',
-      A2: 'ticket-2',
+      A1: 'ticket-2',
+      A2: 'ticket-3',
       A3: null,
-      A4: 'ticket-3'
+      A4: 'ticket-4'
     })
   })
 
@@ -556,7 +559,7 @@ describe('start', () => {
 
       const detail = await harness.service.start(run.id)
 
-      const [, { projectId, drafts }] = harness.ticketBatches
+      const [{ projectId, drafts }] = harness.ticketBatches
       expect(projectId).toBe(TEST_PROJECT_ID)
       expect(drafts).toEqual([
         {
@@ -574,10 +577,17 @@ describe('start', () => {
           external_url: '/specs/factory.html'
         }
       ])
-      expect(detail.run.ticket_id).toBe('ticket-4')
-      expect(harness.boardTickets.get('ticket-4')).toMatchObject({ column: 'in_progress' })
+      expect(detail.run.ticket_id).toBe('ticket-1')
+      expect(harness.boardTickets.get('ticket-1')).toMatchObject({ column: 'in_progress' })
       // None of the run's items claims it.
-      expect(detail.items.map((item) => item.ticket_id)).not.toContain('ticket-4')
+      expect(detail.items.map((item) => item.ticket_id)).not.toContain('ticket-1')
+      // The task tickets were created as its children: there was nothing to link afterwards.
+      expect(harness.ticketBatches[1].drafts.map((draft) => draft.parent_ticket_id)).toEqual([
+        'ticket-1',
+        'ticket-1',
+        'ticket-1'
+      ])
+      expect(harness.ticketUpdates).toEqual([])
     })
 
     it('is not created again by a start that continues after a failure', async () => {
@@ -596,10 +606,11 @@ describe('start', () => {
 
     it('fails the start when the board cannot create it, and creates it on the next one', async () => {
       const { run } = seedPreview()
-      let calls = 0
+      // The override stands in for the harness's board, so it keeps its own record of the batches.
+      const batches: { draft_key: string; parent_ticket_id?: string | null }[][] = []
       harness.overrides.createTickets = async (_projectId, drafts) => {
-        calls++
-        if (calls === 2) return { tickets: [] }
+        batches.push(drafts)
+        if (batches.length === 1) return { tickets: [] }
         return { tickets: drafts.map((draft) => ({ id: `ticket-${draft.draft_key}` })) }
       }
 
@@ -610,12 +621,22 @@ describe('start', () => {
         status: 'preview',
         ticket_id: null
       })
+      // The run's ticket comes first, so no task ticket was created ahead of the failure.
+      expect(batches).toHaveLength(1)
+      expect(harness.db.getDocumentRunItems(run.id).every((item) => item.ticket_id === null)).toBe(
+        true
+      )
 
       const detail = await harness.service.start(run.id)
 
       expect(detail.run).toMatchObject({ status: 'running', ticket_id: `ticket-run-${run.id}` })
-      // The task tickets of the first attempt were kept: only the run's ticket was missing.
-      expect(calls).toBe(3)
+      // The retry creates the run's ticket, then the task tickets as its children.
+      expect(batches).toHaveLength(3)
+      expect(batches.at(-1)?.map((draft) => draft.parent_ticket_id)).toEqual([
+        `ticket-run-${run.id}`,
+        `ticket-run-${run.id}`,
+        `ticket-run-${run.id}`
+      ])
     })
   })
 
@@ -670,7 +691,7 @@ describe('start', () => {
 
       await harness.service.start(run.id)
 
-      const [{ drafts }] = harness.ticketBatches
+      const [, { drafts }] = harness.ticketBatches
       expect(drafts.map((draft) => [draft.draft_key, draft.depends_on])).toEqual([
         // A1 is not in this batch, so the batch cannot reference it…
         ['A2', []],
@@ -678,7 +699,7 @@ describe('start', () => {
       ])
       // …and the dependency is added between the two tickets afterwards.
       expect(harness.ticketLinks).toEqual([
-        { projectId: TEST_PROJECT_ID, dependent: 'ticket-1', blocker: 'existing-a1' }
+        { projectId: TEST_PROJECT_ID, dependent: 'ticket-2', blocker: 'existing-a1' }
       ])
       expect(harness.db.getDocumentRunItem(items[0].id)?.ticket_id).toBe('existing-a1')
     })
@@ -731,7 +752,8 @@ describe('start', () => {
 
     expect(detail.run).toMatchObject({ status: 'running', base_sha: repo.baseSha })
     expect(detail.run.integration_worktree_id).toBeTruthy()
-    expect(detail.items[0].ticket_id).toBe('ticket-1')
+    expect(detail.run.ticket_id).toBe('ticket-1')
+    expect(detail.items[0].ticket_id).toBe('ticket-2')
   })
 
   it.each([

@@ -10,6 +10,7 @@ import {
 } from '@/lib/ticket-launch'
 import { canonicalizeModelSlug, canonicalizeTicketTitle } from '@shared/types/branch-utils'
 import { FALLBACK_MODELS } from '@shared/model-resolution'
+import { ticketTitleWithKey } from '@shared/ticket-key'
 import { dbApi } from '@/api/db-api'
 
 type LaunchMode = 'build' | 'plan' | 'super-plan' | 'super-build'
@@ -216,7 +217,13 @@ export async function runMultiModelLaunch(plan: MultiModelLaunchPlan): Promise<v
       if (provider) useUsageStore.getState().fetchUsageForProvider(provider)
     }
   } catch (err) {
-    console.error(`Multi-model launch failed for "${plan.ticket.title}"`, err)
-    toast.error(`Failed to launch "${plan.ticket.title}": ${errorMessage(err)}`)
+    // The plan only carries id + title; the board's live row has the ticket key for the toast.
+    const liveTicket = useKanbanStore
+      .getState()
+      .tickets?.get(plan.projectId)
+      ?.find((t) => t.id === plan.ticket.id)
+    const label = liveTicket ? ticketTitleWithKey(liveTicket) : plan.ticket.title
+    console.error(`Multi-model launch failed for "${label}"`, err)
+    toast.error(`Failed to launch "${label}": ${errorMessage(err)}`)
   }
 }

@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import type { KanbanTicket, KanbanTicketColumn } from '../../../../main/db/types'
+import { TicketKeyBadge } from './TicketKeyBadge'
 
 // ── Stable empty array to avoid infinite re-renders with Zustand ────
 const EMPTY_TICKETS: KanbanTicket[] = []
@@ -243,8 +244,9 @@ export function TicketPickerModal({
                     </div>
 
                     {/* Ticket info */}
-                    <div className="flex-1 min-w-0">
-                      <span className="text-sm truncate block">{ticket.title}</span>
+                    <div className="flex flex-1 min-w-0 items-center gap-1.5">
+                      <TicketKeyBadge ticket={ticket} showParent={false} />
+                      <span className="text-sm truncate">{ticket.title}</span>
                     </div>
 
                     {/* Column badge */}

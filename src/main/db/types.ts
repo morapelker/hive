@@ -574,6 +574,22 @@ export interface KanbanTicket {
   model_id: string | null
   model_variant: string | null
   variant_group_id: string | null
+  /**
+   * The Jira-like key `TD-12` is `ticket_prefix` + `ticket_number` (shared/ticket-key.ts).
+   * `ticket_number` is allocated from one machine-wide sequence when the row is inserted and
+   * never reused; `ticket_prefix` is the organisation prefix stored in settings at that time
+   * (stamped later when a ticket was created before the first sign-in). Both null on
+   * markdown-backed boards, which have no ticket rows.
+   */
+  ticket_prefix: string | null
+  ticket_number: number | null
+  /**
+   * The orchestrator ("Implement document" run) ticket this ticket belongs to: set on the
+   * run's task tickets and fix tickets, null otherwise. A plain id (the parent may be gone).
+   */
+  parent_ticket_id: string | null
+  /** The parent's key as read with the row (a join), null when unknown or the parent is gone. */
+  parent_ticket_key: string | null
 }
 
 export interface KanbanTicketCreate {
@@ -600,6 +616,7 @@ export interface KanbanTicketCreate {
   model_id?: string | null
   model_variant?: string | null
   variant_group_id?: string | null
+  parent_ticket_id?: string | null
 }
 
 export interface KanbanTicketUpdate {
@@ -627,6 +644,7 @@ export interface KanbanTicketUpdate {
   model_id?: string | null
   model_variant?: string | null
   variant_group_id?: string | null
+  parent_ticket_id?: string | null
 }
 
 // Favorite ticket templates (global, cross-project; may contain {{placeholder.x}} tokens)
@@ -697,6 +715,7 @@ export interface KanbanTicketBatchCreateItem {
   model_id?: string | null
   model_variant?: string | null
   variant_group_id?: string | null
+  parent_ticket_id?: string | null
   depends_on?: string[]
 }
 

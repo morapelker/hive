@@ -172,7 +172,11 @@ describe('rpc router', () => {
       model_provider_id: null,
       model_id: null,
       model_variant: null,
-      variant_group_id: null
+      variant_group_id: null,
+      ticket_prefix: null,
+      ticket_number: null,
+      parent_ticket_id: null,
+      parent_ticket_key: null
     }
     const calls: unknown[] = []
     const router = makeRpcRouter({
@@ -286,7 +290,11 @@ describe('rpc router', () => {
       model_provider_id: 'anthropic',
       model_id: 'claude-opus-4-6',
       model_variant: 'thinking',
-      variant_group_id: 'group-1'
+      variant_group_id: 'group-1',
+      ticket_prefix: null,
+      ticket_number: null,
+      parent_ticket_id: null,
+      parent_ticket_key: null
     }
     const calls: unknown[] = []
     const router = makeRpcRouter({
@@ -373,7 +381,11 @@ describe('rpc router', () => {
       model_provider_id: 'anthropic',
       model_id: 'claude-opus-4-6',
       model_variant: 'thinking',
-      variant_group_id: 'group-1'
+      variant_group_id: 'group-1',
+      ticket_prefix: null,
+      ticket_number: null,
+      parent_ticket_id: null,
+      parent_ticket_key: null
     }
     const calls: unknown[] = []
     const router = makeRpcRouter({
@@ -504,7 +516,11 @@ describe('rpc router', () => {
       model_provider_id: null,
       model_id: null,
       model_variant: null,
-      variant_group_id: null
+      variant_group_id: null,
+      ticket_prefix: null,
+      ticket_number: null,
+      parent_ticket_id: null,
+      parent_ticket_key: null
     }
     const secondTicket = {
       ...firstTicket,
@@ -643,7 +659,11 @@ describe('rpc router', () => {
       model_provider_id: null,
       model_id: null,
       model_variant: null,
-      variant_group_id: null
+      variant_group_id: null,
+      ticket_prefix: null,
+      ticket_number: null,
+      parent_ticket_id: null,
+      parent_ticket_key: null
     }
     const calls: Array<{ projectId: string; id: string }> = []
     const router = makeRpcRouter({
@@ -749,7 +769,11 @@ describe('rpc router', () => {
       model_provider_id: null,
       model_id: null,
       model_variant: null,
-      variant_group_id: null
+      variant_group_id: null,
+      ticket_prefix: null,
+      ticket_number: null,
+      parent_ticket_id: null,
+      parent_ticket_key: null
     }
     const calls: Array<{ projectId: string; includeArchived: boolean | undefined }> = []
     const router = makeRpcRouter({
@@ -856,7 +880,11 @@ describe('rpc router', () => {
       model_provider_id: null,
       model_id: null,
       model_variant: null,
-      variant_group_id: null
+      variant_group_id: null,
+      ticket_prefix: null,
+      ticket_number: null,
+      parent_ticket_id: null,
+      parent_ticket_key: null
     }
     const calls: Array<{ projectId: string; id: string; data: unknown }> = []
     const router = makeRpcRouter({
@@ -976,7 +1004,11 @@ describe('rpc router', () => {
       model_provider_id: 'anthropic',
       model_id: 'claude-opus-4-6',
       model_variant: 'thinking',
-      variant_group_id: 'group-1'
+      variant_group_id: 'group-1',
+      ticket_prefix: null,
+      ticket_number: null,
+      parent_ticket_id: null,
+      parent_ticket_key: null
     }
     const ticketWithoutModel = {
       ...ticketWithModel,
@@ -1160,7 +1192,11 @@ describe('rpc router', () => {
       model_provider_id: null,
       model_id: null,
       model_variant: null,
-      variant_group_id: null
+      variant_group_id: null,
+      ticket_prefix: null,
+      ticket_number: null,
+      parent_ticket_id: null,
+      parent_ticket_key: null
     }
     const calls: Array<{ projectId: string; id: string }> = []
     const router = makeRpcRouter({
@@ -1338,7 +1374,11 @@ describe('rpc router', () => {
       model_provider_id: null,
       model_id: null,
       model_variant: null,
-      variant_group_id: null
+      variant_group_id: null,
+      ticket_prefix: null,
+      ticket_number: null,
+      parent_ticket_id: null,
+      parent_ticket_key: null
     }
     const calls: Array<{ projectId: string; ticketId: string }> = []
     const router = makeRpcRouter({
@@ -1445,7 +1485,11 @@ describe('rpc router', () => {
       model_provider_id: null,
       model_id: null,
       model_variant: null,
-      variant_group_id: null
+      variant_group_id: null,
+      ticket_prefix: null,
+      ticket_number: null,
+      parent_ticket_id: null,
+      parent_ticket_key: null
     }
     const calls: Array<{ projectId: string; id: string; column: string; sortOrder: number }> = []
     const router = makeRpcRouter({
@@ -1545,7 +1589,19 @@ describe('rpc router', () => {
       pending_launch_config: null,
       goal_mode: false,
       goal_success_criteria: null,
-      note: null
+      note: null,
+      created_from_session: false,
+      auto_approve_plan: false,
+      unread: false,
+      awaiting_completion: false,
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      variant_group_id: null,
+      ticket_prefix: null,
+      ticket_number: null,
+      parent_ticket_id: null,
+      parent_ticket_key: null
     }
     const calls: Array<{ projectId: string; id: string; targetProjectId: string }> = []
     const router = makeRpcRouter({
@@ -1728,7 +1784,11 @@ describe('rpc router', () => {
       model_provider_id: null,
       model_id: null,
       model_variant: null,
-      variant_group_id: null
+      variant_group_id: null,
+      ticket_prefix: null,
+      ticket_number: null,
+      parent_ticket_id: null,
+      parent_ticket_key: null
     }
     const calls: string[] = []
     const router = makeRpcRouter({
@@ -1837,7 +1897,11 @@ describe('rpc router', () => {
       model_provider_id: null,
       model_id: null,
       model_variant: null,
-      variant_group_id: null
+      variant_group_id: null,
+      ticket_prefix: null,
+      ticket_number: null,
+      parent_ticket_id: null,
+      parent_ticket_key: null
     }
     const calls: Array<{ projectId: string; id: string; tokens: number }> = []
     const router = makeRpcRouter({
@@ -2611,7 +2675,11 @@ describe('rpc router', () => {
       model_provider_id: null,
       model_id: null,
       model_variant: null,
-      variant_group_id: null
+      variant_group_id: null,
+      ticket_prefix: null,
+      ticket_number: null,
+      parent_ticket_id: null,
+      parent_ticket_key: null
     }
     const calls: string[] = []
     const router = makeRpcRouter({
@@ -2731,7 +2799,11 @@ describe('rpc router', () => {
       model_provider_id: null,
       model_id: null,
       model_variant: null,
-      variant_group_id: null
+      variant_group_id: null,
+      ticket_prefix: null,
+      ticket_number: null,
+      parent_ticket_id: null,
+      parent_ticket_key: null
     }
     const calls: Array<{ projectId: string; ticketId: string }> = []
     const router = makeRpcRouter({

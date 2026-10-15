@@ -410,6 +410,7 @@ describe('DocumentFlowRunner on a connection project', () => {
     it('starts the fix session on the integration instance, briefed with the members and the failing one', async () => {
       const world = createWorld({
         connection: true,
+        run: { ticket_id: 'run-ticket' },
         config: {
           memberVerifyCommands: { [WEB_PROJECT]: 'pnpm check', [API_PROJECT]: 'make test' }
         },
@@ -432,7 +433,10 @@ describe('DocumentFlowRunner on a connection project', () => {
         workspace: WORKSPACE,
         failedMember: { symlinkName: 'api', projectName: 'Api' }
       })
-      expect(world.ports.createTicket).toHaveBeenCalledWith(PROJECT_ID, fixTicket)
+      expect(world.ports.createTicket).toHaveBeenCalledWith(PROJECT_ID, {
+        parent_ticket_id: 'run-ticket',
+        ...fixTicket
+      })
       expect(fixTicket.description).toContain('run inside that directory')
       expect(world.launches).toHaveLength(1)
       expect(world.launches[0]).toMatchObject({

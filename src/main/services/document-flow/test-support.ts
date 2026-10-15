@@ -414,7 +414,7 @@ export interface ServiceHarness {
   /** The board: every created ticket that was not deleted, with the column it sits in. */
   boardTickets: Map<string, { id: string; projectId: string; column: KanbanTicketColumn }>
   ticketMoves: { projectId: string; ticketId: string; column: KanbanTicketColumn }[]
-  /** Every model badge the service re-stamped on a board ticket, in order. */
+  /** Every model badge or parent link the service wrote on a board ticket, in order. */
   ticketUpdates: { projectId: string; ticketId: string; patch: DocumentFlowTicketPatch }[]
   deletedTickets: string[]
   /** Worktree id → base branch, as the service re-pointed them. */

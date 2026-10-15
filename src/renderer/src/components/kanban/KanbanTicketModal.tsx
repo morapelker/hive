@@ -97,6 +97,7 @@ import {
 } from '@/hooks/useTicketRunScript'
 import { TicketRunButton } from './TicketRunButton'
 import { TicketModelBadge } from './TicketModelBadge'
+import { TicketKeyBadge } from './TicketKeyBadge'
 import { useQuestionStore, type QuestionRequest } from '@/stores/useQuestionStore'
 import { QuestionPrompt } from '@/components/sessions/QuestionPrompt'
 import { isCliQuestionResolutionEntry } from '@/lib/session-status-guards'
@@ -117,6 +118,7 @@ import { useImagePaste } from '@/hooks/useImagePaste'
 import { useTicketRemoteLaunch } from '@/hooks/useTicketRemoteLaunch'
 import { buildHandoffPrompt, type HandoffSelectionOverride } from '@/lib/handoffSelection'
 import { canonicalizeTicketTitle, extractPlanTitle } from '@shared/types/branch-utils'
+import { ticketTitleWithKey } from '@shared/ticket-key'
 import type { RemoteLaunchClientInfo } from '@shared/types/remote-launch'
 import { ShortcutHint } from '@/components/ui/shortcut-hint'
 import { submitShortcutLabel } from '@/lib/shortcut-labels'
@@ -1057,6 +1059,7 @@ function KanbanTicketModalContent({
           {usesTerminalPane && ticket.current_session_id ? (
             <div className="flex flex-col h-full bg-background flex-1 min-w-0">
               <div className="shrink-0 px-4 py-3 border-b border-border/60 flex items-center gap-2">
+                <TicketKeyBadge ticket={ticket} variant="modal" />
                 <span className="text-sm font-medium text-foreground truncate">{ticket.title}</span>
                 <div className="ml-auto shrink-0 flex items-center gap-2">
                   <TicketRunButton
@@ -1117,7 +1120,7 @@ function KanbanTicketModalContent({
               sessionId={ticket.current_session_id!}
               worktreePath={worktreePath!}
               opencodeSessionId={opcSessionId!}
-              title={ticket.title}
+              title={ticketTitleWithKey(ticket)}
               headerAction={
                 <div className="flex items-center gap-2">
                   <TicketRunButton
@@ -1154,7 +1157,9 @@ function KanbanTicketModalContent({
             {/* Shared ticket context header for non-edit modes */}
             {modalMode !== 'edit' && (
               <div className="space-y-2 pb-3 border-b border-border/40">
-                <div className="flex items-center gap-2">
+                <div className="flex items-start gap-2">
+                  {/* Aligned with the title's first line, which may wrap */}
+                  <TicketKeyBadge ticket={ticket} variant="modal" className="mt-[2px]" />
                   <h2 className="text-base font-semibold text-foreground leading-tight min-w-0 flex-1">
                     {ticket.title}
                   </h2>
@@ -1505,6 +1510,7 @@ function EditModeContent({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <DialogTitle>Edit Ticket</DialogTitle>
+            <TicketKeyBadge ticket={ticket} variant="modal" />
             {/* A run's ticket keeps its document's file path in external_url; it is opened from
                 the run dashboard and the card menu, never as a web link. */}
             {ticket.external_provider && ticket.external_url && !isDocumentRunTicket(ticket) && (
@@ -1634,6 +1640,7 @@ function EditModeContent({
                       ) : (
                         <Lock className="h-3 w-3 text-amber-500" />
                       )}
+                      <TicketKeyBadge ticket={blocker} showParent={false} />
                       <span className="text-sm truncate">{blocker.title}</span>
                     </div>
                     <button
@@ -1663,6 +1670,7 @@ function EditModeContent({
                     key={`${dep.project_id}:${dep.id}`}
                     className="flex items-center gap-2 px-2 py-1 rounded-md bg-muted/30"
                   >
+                    <TicketKeyBadge ticket={dep} showParent={false} />
                     <span className="text-sm truncate">{dep.title}</span>
                   </div>
                 ))}
@@ -2841,6 +2849,7 @@ function PlanReviewModeContent({
       <DialogHeader>
         <div className="flex items-center justify-between">
           <DialogTitle className="flex items-center gap-2">
+            <TicketKeyBadge ticket={ticket} variant="modal" />
             {!dualPane && ticket.title}
             <span className="inline-flex items-center rounded-full bg-violet-500/10 border border-violet-500/30 px-2 py-0.5 text-[11px] font-medium text-violet-500">
               Plan ready
@@ -3389,7 +3398,10 @@ function ReviewModeContent({
     <div ref={dropZoneRef} className="relative contents">
       <DialogHeader>
         <div className="flex items-center justify-between">
-          <DialogTitle>{dualPane ? 'Review' : ticket.title}</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            <TicketKeyBadge ticket={ticket} variant="modal" />
+            {dualPane ? 'Review' : ticket.title}
+          </DialogTitle>
           <div className="flex items-center gap-2">
             {lifecycle.hasAttachedPR && lifecycle.attachedPR && (
               <button
@@ -3721,6 +3733,7 @@ function ErrorModeContent({
       <DialogHeader>
         <div className="flex items-center justify-between">
           <DialogTitle className="flex items-center gap-2">
+            <TicketKeyBadge ticket={ticket} variant="modal" />
             {!dualPane && ticket.title}
             <span className="inline-flex items-center gap-1 rounded-full bg-red-500/10 border border-red-500/30 px-2 py-0.5 text-[11px] font-medium text-red-500">
               <AlertCircle className="h-3 w-3" />
@@ -3907,7 +3920,8 @@ function QuestionModeContent({
             <JumpToSessionButton ticket={ticket} onClose={onClose} />
           </div>
         </div>
-        <DialogDescription>
+        <DialogDescription className="flex items-center gap-2">
+          <TicketKeyBadge ticket={ticket} variant="modal" />
           {dualPane ? 'An agent question needs your attention.' : ticket.title}
         </DialogDescription>
       </DialogHeader>

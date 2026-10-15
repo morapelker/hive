@@ -44,7 +44,11 @@ const baseTicket: KanbanTicket = {
   model_provider_id: null,
   model_id: null,
   model_variant: null,
-  variant_group_id: null
+  variant_group_id: null,
+  ticket_prefix: null,
+  ticket_number: null,
+  parent_ticket_id: null,
+  parent_ticket_key: null
 }
 
 const HIGHLIGHT_ATTR = 'data-sidebar-hover-highlight'

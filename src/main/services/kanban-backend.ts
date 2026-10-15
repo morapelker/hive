@@ -1610,13 +1610,19 @@ class MarkdownKanbanBackend implements KanbanBackend {
       goal_mode: asBoolean(frontmatter.goal_mode) ?? false,
       goal_success_criteria: nullableString(frontmatter.goal_success_criteria),
       note: runtime.note,
+      created_from_session: false,
       auto_approve_plan: runtime.auto_approve_plan,
       unread: runtime.unread,
       awaiting_completion: runtime.awaiting_completion,
       model_provider_id: runtime.model_provider_id,
       model_id: runtime.model_id,
       model_variant: runtime.model_variant,
-      variant_group_id: runtime.variant_group_id
+      variant_group_id: runtime.variant_group_id,
+      // Markdown cards have no ticket row, so no key and no orchestrator link.
+      ticket_prefix: null,
+      ticket_number: null,
+      parent_ticket_id: null,
+      parent_ticket_key: null
     }
 
     return { ticket, filePath, frontmatter }

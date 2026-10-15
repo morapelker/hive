@@ -115,10 +115,16 @@ function ticket(overrides: Partial<KanbanTicket> = {}): KanbanTicket {
     note: null,
     created_from_session: false,
     auto_approve_plan: false,
+    unread: false,
+    awaiting_completion: false,
     model_provider_id: null,
     model_id: null,
     model_variant: null,
     variant_group_id: null,
+    ticket_prefix: null,
+    ticket_number: null,
+    parent_ticket_id: null,
+    parent_ticket_key: null,
     ...overrides
   }
 }

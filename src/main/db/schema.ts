@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 56
+export const CURRENT_SCHEMA_VERSION = 57
 
 /**
  * "Implement document" flow (v55). `document_runs` is one spec document turned into tickets
@@ -999,6 +999,17 @@ DROP TABLE IF EXISTS diff_comments;`
          -- document_runs.integration_connection_path, document_runs.members,
          -- document_run_items.connection_id and document_run_items.members is handled
          -- idempotently by safeAddColumn() in database.ts to avoid "duplicate column" errors.`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 57,
+    name: 'add_kanban_ticket_keys',
+    // Jira-like ticket keys (TD-12): kanban_tickets.ticket_prefix / ticket_number /
+    // parent_ticket_id, the ticket_counters sequence table and the one-time backfill of
+    // existing rows. All of it lives in ensureTicketKeys() in database.ts (safeAddColumn,
+    // CREATE IF NOT EXISTS, idempotent backfill) because it must also repair a database an
+    // older build wrote to after this migration ran.
+    up: `-- NOTE: handled idempotently by ensureTicketKeys() in database.ts.`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]

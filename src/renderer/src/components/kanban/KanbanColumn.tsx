@@ -67,6 +67,7 @@ import { remoteLaunchApi } from '@/api/remote-launch-api'
 import { useRemoteLaunchStore } from '@/stores/useRemoteLaunchStore'
 import { parseRemoteLaunch } from '@shared/types/remote-launch'
 import { isShellCommandSession } from '@shared/types/agent-sdk'
+import { ticketTitleWithKey } from '@shared/ticket-key'
 import { isShellCommandTicket, startShellCommandTicket } from '@/lib/shell-command-ticket'
 import { terminalApi } from '@/api/terminal-api'
 
@@ -100,7 +101,7 @@ function MarkdownInvalidCardPlaceholder({ placeholder }: { placeholder: Markdown
       const ticket = await useKanbanStore
         .getState()
         .convertMarkdownPlaceholder(placeholder.projectId, placeholder.filePath)
-      toast.success(`Converted "${ticket.title}" to a kanban card`)
+      toast.success(`Converted "${ticketTitleWithKey(ticket)}" to a kanban card`)
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : 'Failed to convert markdown file to kanban card'

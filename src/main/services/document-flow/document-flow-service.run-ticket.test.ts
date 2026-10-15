@@ -432,6 +432,81 @@ describe('reconcileRunTickets', () => {
   })
 })
 
+describe("the run's tickets point at the run ticket", () => {
+  const linkOf = (ticketId: string, parentId: string) => ({
+    projectId: TEST_PROJECT_ID,
+    ticketId,
+    patch: { parent_ticket_id: parentId }
+  })
+
+  it('links the task and fix tickets of a run that gets its ticket late, in item order', async () => {
+    const runId = seedLaunched({
+      status: 'completed',
+      ticket: null,
+      items: [
+        { key: 'A1', status: 'merged', ticket_id: 'task-a1', fix_ticket_id: 'fix-a1' },
+        { key: 'A2', status: 'merged', ticket_id: 'task-a2' },
+        // Never launched: nothing on the board to link.
+        { key: 'A3', status: 'skipped' }
+      ]
+    })
+
+    await harness.service.reconcileRunTickets()
+    await settle()
+
+    const parentId = harness.db.getDocumentRun(runId)?.ticket_id
+    expect(parentId).toBeTruthy()
+    expect(harness.ticketUpdates).toEqual([
+      linkOf('task-a1', parentId!),
+      linkOf('fix-a1', parentId!),
+      linkOf('task-a2', parentId!)
+    ])
+    // The run's ticket is nobody's child, least of all its own.
+    expect(harness.ticketUpdates.map((update) => update.ticketId)).not.toContain(parentId)
+  })
+
+  it('links outside the calling request, and keeps the run ticket when a link fails', async () => {
+    const runId = seedLaunched({
+      status: 'completed',
+      ticket: null,
+      items: [
+        { key: 'A1', status: 'merged', ticket_id: 'task-a1' },
+        { key: 'A2', status: 'merged', ticket_id: 'task-a2' }
+      ]
+    })
+    const contexts: unknown[] = []
+    harness.overrides.detach = (task) => rpcRequestContext.exit(task)
+    harness.overrides.updateTicket = async (_projectId, ticketId) => {
+      contexts.push(getRpcRequestContext())
+      if (ticketId === 'task-a1') throw new Error('database is locked')
+    }
+
+    await rpcRequestContext.run({ clientId: 'client-1', principal: null }, () =>
+      harness.service.reconcileRunTickets()
+    )
+    await settle()
+
+    expect(contexts).toEqual([undefined, undefined])
+    expect(harness.db.getDocumentRun(runId)?.ticket_id).toBeTruthy()
+  })
+
+  it('creates the task tickets of a launch as children of the run ticket, so links nothing', async () => {
+    const { run } = seedRun(harness, { items: [{ key: 'A1' }, { key: 'A2' }] })
+
+    const detail = await harness.service.start(run.id)
+    await settle()
+
+    const parentId = detail.run.ticket_id
+    expect(parentId).toBeTruthy()
+    // The run's ticket first, then the tasks pointing at it.
+    expect(
+      harness.ticketBatches.map(({ drafts }) => drafts.map((d) => d.parent_ticket_id))
+    ).toEqual([[undefined], [parentId, parentId]])
+    expect(detail.items.map((item) => item.ticket_id)).not.toContain(parentId)
+    expect(harness.ticketUpdates).toEqual([])
+  })
+})
+
 describe('sourceFile', () => {
   it('reports the document the run was made from, and whether it is still on disk', async () => {
     const path = join(harness.scratch, 'spec.html')

@@ -1,7 +1,9 @@
 import { memo } from 'react'
 import { X, KanbanSquare } from 'lucide-react'
 import { useKanbanStore } from '@/stores/useKanbanStore'
+import { TicketKeyBadge } from '../kanban/TicketKeyBadge'
 import type { TicketAttachment } from './AttachmentPreview'
+import type { KanbanTicket } from '../../../../main/db/types'
 
 // ── Column labels for ticket attachment cards ───────────────────────
 const COLUMN_LABELS: Record<string, string> = {
@@ -25,16 +27,17 @@ export const TicketAttachments = memo(function TicketAttachments({
   return (
     <div className="flex flex-wrap gap-2 mb-2" data-testid="ticket-attachments">
       {ticketAttachments.map((t) => {
-        // Look up the ticket's current column from the kanban store (read-only)
+        // Look up the live ticket in the kanban store (read-only) for its column and key;
+        // the attachment itself only carries the title captured when it was attached.
         const allTickets = useKanbanStore.getState().tickets
-        let columnLabel = ''
+        let liveTicket: KanbanTicket | undefined
         for (const tickets of allTickets.values()) {
-          const found = tickets.find((kt) => kt.id === t.ticketId)
-          if (found) {
-            columnLabel = COLUMN_LABELS[found.column] ?? found.column
-            break
-          }
+          liveTicket = tickets.find((kt) => kt.id === t.ticketId)
+          if (liveTicket) break
         }
+        const columnLabel = liveTicket
+          ? (COLUMN_LABELS[liveTicket.column] ?? liveTicket.column)
+          : ''
 
         return (
           <div
@@ -44,6 +47,7 @@ export const TicketAttachments = memo(function TicketAttachments({
           >
             <div className="flex items-center gap-2">
               <KanbanSquare className="h-3.5 w-3.5 shrink-0 text-blue-400" />
+              {liveTicket && <TicketKeyBadge ticket={liveTicket} showParent={false} />}
               <span className="font-medium text-foreground truncate">{t.title}</span>
               <button
                 onClick={() => onRemove(t.id)}

@@ -233,7 +233,8 @@ const kanbanTicketCreateSchema = z
     model_provider_id: z.string().nullable().optional(),
     model_id: z.string().nullable().optional(),
     model_variant: z.string().nullable().optional(),
-    variant_group_id: z.string().nullable().optional()
+    variant_group_id: z.string().nullable().optional(),
+    parent_ticket_id: z.string().nullable().optional()
   })
   .strict() satisfies z.ZodType<KanbanTicketCreate>
 
@@ -299,7 +300,8 @@ const kanbanTicketUpdateSchema = z
     model_provider_id: z.string().nullable().optional(),
     model_id: z.string().nullable().optional(),
     model_variant: z.string().nullable().optional(),
-    variant_group_id: z.string().nullable().optional()
+    variant_group_id: z.string().nullable().optional(),
+    parent_ticket_id: z.string().nullable().optional()
   })
   .strict() satisfies z.ZodType<KanbanTicketUpdate>
 const ticketIdProjectParamsSchema = z

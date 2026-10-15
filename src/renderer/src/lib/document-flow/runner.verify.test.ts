@@ -83,7 +83,10 @@ describe('DocumentFlowRunner: verifying a merge', () => {
   })
 
   it('has a fix session repair failing checks in the integration worktree, then verifies again', async () => {
-    const world = verifyingWorld({ items: [readyItem('A', { title: 'Cart totals' })] })
+    const world = verifyingWorld({
+      run: { ticket_id: 'run-ticket' },
+      items: [readyItem('A', { title: 'Cart totals' })]
+    })
     world.api.verify.mockResolvedValueOnce(failed())
     start(world)
 
@@ -98,7 +101,11 @@ describe('DocumentFlowRunner: verifying a merge', () => {
       verifyOutput: 'src/cart.ts(12,3): error TS2304',
       attempt: 1
     })
-    expect(world.ports.createTicket).toHaveBeenCalledWith(PROJECT_ID, fixTicket)
+    // A child of the run's board ticket: its key shows the run's.
+    expect(world.ports.createTicket).toHaveBeenCalledWith(PROJECT_ID, {
+      parent_ticket_id: 'run-ticket',
+      ...fixTicket
+    })
     expect(world.launches).toHaveLength(1)
     expect(world.launches[0]).toMatchObject({
       ticketId: 'fix-ticket-1',

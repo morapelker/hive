@@ -3,6 +3,7 @@ import { toast } from '@/lib/toast'
 import { launchTicketWithModel, type LaunchModelConfig } from '@/lib/ticket-launch'
 import { runMultiModelLaunch } from '@/lib/multi-model-launch'
 import type { HandoffAgentSdk } from '@shared/types/agent-sdk'
+import { ticketTitleWithKey } from '@shared/ticket-key'
 
 type AutoLaunchMode = 'build' | 'plan' | 'super-plan' | 'super-build'
 
@@ -11,6 +12,9 @@ interface AutoLaunchTicket {
   project_id: string
   title: string
   pending_launch_config: string | null
+  /** Present when a full KanbanTicket is passed: the toast names the ticket by its key. */
+  ticket_prefix?: string | null
+  ticket_number?: number | null
 }
 
 /** One provider/model entry in a (multi-model) pending launch config. */
@@ -147,7 +151,13 @@ export async function autoLaunchTicket(ticket: AutoLaunchTicket): Promise<void> 
   })
 
   if (result.success) {
-    toast.success(`Auto-launched: ${ticket.title}`)
+    toast.success(
+      `Auto-launched: ${ticketTitleWithKey({
+        title: ticket.title,
+        ticket_prefix: ticket.ticket_prefix ?? null,
+        ticket_number: ticket.ticket_number ?? null
+      })}`
+    )
     return
   }
 

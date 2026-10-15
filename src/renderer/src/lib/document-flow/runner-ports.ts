@@ -112,7 +112,7 @@ export interface RunnerPorts {
   reloadTickets(projectId: string): Promise<void>
   createTicket(
     projectId: string,
-    draft: { title: string; description: string }
+    draft: { title: string; description: string; parent_ticket_id?: string | null }
   ): Promise<RunnerTicket>
   moveTicket(
     projectId: string,
@@ -346,7 +346,8 @@ export function createLiveRunnerPorts(): RunnerPorts {
         project_id: projectId,
         title: draft.title,
         description: draft.description,
-        column: 'todo'
+        column: 'todo',
+        parent_ticket_id: draft.parent_ticket_id ?? null
       }),
     moveTicket: (projectId, ticketId, column, options) => {
       const store = useKanbanStore.getState()

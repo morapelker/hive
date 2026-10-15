@@ -47,12 +47,14 @@ import { EliteDragonIcon, type EliteDragonLook } from './EliteDragonIcon'
 import { HighlightedText } from './HighlightedText'
 import { ticketPillBaseClass, ticketPillClass } from './pill'
 import { TicketModelBadge } from './TicketModelBadge'
+import { TicketKeyBadge } from './TicketKeyBadge'
 import { UpdateStatusModal } from './UpdateStatusModal'
 import { RemoteTerminalDialog } from './RemoteTerminalDialog'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { NoteEditorModal } from './NoteEditorModal'
 import { MoveToProjectModal } from './MoveToProjectModal'
 import { cn, parseColorQuad } from '@/lib/utils'
+import { ticketKeyOf } from '@shared/ticket-key'
 import { isTicketLinkedToSidebarTarget } from '@/lib/sidebar-hover-highlight'
 import { extractSnippet, normalizeSearchText, stripMarkdown } from '@/lib/board-search'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
@@ -1694,15 +1696,21 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   <TerminalIcon className="h-2.5 w-2.5" strokeWidth={2.5} />
                 </span>
               )}
-              <p
-                className={cn(
-                  'text-[13px] leading-[1.4] text-foreground min-w-0 flex-1 break-words',
-                  // Unread (just landed in review): bold until opened
-                  ticket.unread ? 'font-bold' : 'font-medium'
-                )}
-              >
-                <HighlightedText text={ticket.title} normQuery={normQuery} />
-              </p>
+              <div className="min-w-0 flex-1">
+                {/* The key gets its own line above the title: inline, a child's "parent › own"
+                    chip would squeeze the title into a narrow column. A peer's ticket carries
+                    the peer's key as-is. */}
+                <TicketKeyBadge ticket={ticket} className="mb-0.5" />
+                <p
+                  className={cn(
+                    'text-[13px] leading-[1.4] text-foreground break-words',
+                    // Unread (just landed in review): bold until opened
+                    ticket.unread ? 'font-bold' : 'font-medium'
+                  )}
+                >
+                  <HighlightedText text={ticket.title} normQuery={normQuery} />
+                </p>
+              </div>
               <div className="flex items-center gap-1.5 shrink-0">
                 <span
                   data-testid="ticket-transition-age"
@@ -2780,6 +2788,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         <MoveToProjectModal
           currentProjectId={ticket.project_id}
           ticketTitle={ticket.title}
+          ticketKey={ticketKeyOf(ticket)}
           open={showMoveToProject}
           onOpenChange={setShowMoveToProject}
           onSelect={handleMoveToProject}

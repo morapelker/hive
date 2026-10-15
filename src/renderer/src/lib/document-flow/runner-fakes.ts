@@ -548,7 +548,10 @@ export function createWorld(options: WorldOptions = {}) {
     getTicket: (_projectId: string, ticketId: string) => tickets.get(ticketId) ?? null,
     reloadTickets: vi.fn(async (_projectId: string) => {}),
     createTicket: vi.fn(
-      async (projectId: string, draft: { title: string; description: string }) => {
+      async (
+        projectId: string,
+        draft: { title: string; description: string; parent_ticket_id?: string | null }
+      ) => {
         counter += 1
         const ticket: RunnerTicket = {
           id: `fix-ticket-${counter}`,

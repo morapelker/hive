@@ -52,6 +52,10 @@ function makeTicket(overrides: Partial<KanbanTicket> = {}): KanbanTicket {
     external_url: null,
     github_pr_number: null,
     github_pr_url: null,
+    sync_task_id: null,
+    sync_task_title: null,
+    sync_task_status: null,
+    sync_task_org_id: null,
     mark: null,
     total_tokens: 0,
     pending_launch_config: null,
@@ -66,6 +70,10 @@ function makeTicket(overrides: Partial<KanbanTicket> = {}): KanbanTicket {
     model_id: null,
     model_variant: null,
     variant_group_id: null,
+    ticket_prefix: null,
+    ticket_number: null,
+    parent_ticket_id: null,
+    parent_ticket_key: null,
     ...overrides
   }
 }

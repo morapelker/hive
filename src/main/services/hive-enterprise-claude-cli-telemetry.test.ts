@@ -102,6 +102,7 @@ function fakeProvider(): DevSessionProvider & { enqueue: ReturnType<typeof vi.fn
     token: 'token-1',
     context: {
       userId: 'alice_user',
+      email: null,
       orgId: 'acme_org',
       orgName: 'Acme',
       apiUrl: null,

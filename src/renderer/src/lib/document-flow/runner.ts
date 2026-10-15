@@ -1962,9 +1962,10 @@ export class DocumentFlowRunner {
 
     let ticket: RunnerTicket
     try {
-      ticket = await this.ports.createTicket(
-        run.project_id,
-        buildFixTicket({
+      ticket = await this.ports.createTicket(run.project_id, {
+        // A child of the run's ticket on the board (its key shows the parent's).
+        parent_ticket_id: run.ticket_id,
+        ...buildFixTicket({
           documentTitle: run.title,
           key: item.key,
           title: item.title,
@@ -1985,7 +1986,7 @@ export class DocumentFlowRunner {
               }
             : {})
         })
-      )
+      })
     } catch (error) {
       if (this.ports.isTransportError(error)) throw error
       return this.giveUp(op, `Could not create the fix ticket: ${describeError(error)}.`)

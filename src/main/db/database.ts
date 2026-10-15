@@ -1,6 +1,7 @@
 import { deleteAttachment } from '../services/attachment-storage'
 import type { AgentSdk } from '@shared/types/agent-sdk'
 import { parseProjectShellCommands } from '@shared/lib/shell-commands'
+import { formatTicketKey, TICKET_KEY_PREFIX_SETTING } from '@shared/ticket-key'
 import {
   DEFAULT_DOCUMENT_RUN_CONFIG,
   SESSION_TURN_STATES,
@@ -26,6 +27,16 @@ import type {
 } from '../services/document-flow/db-port'
 import Database from 'better-sqlite3'
 import { instrumentDatabase } from '../services/perf-logging/db-instrumentation'
+
+/**
+ * Every ticket read joins the parent orchestrator ticket for its key (`parent_ticket_key`);
+ * the alias is `kt`, so WHERE clauses must qualify their columns.
+ */
+const KANBAN_TICKET_SELECT = `SELECT kt.*, p.ticket_prefix AS parent_ticket_prefix, p.ticket_number AS parent_ticket_number
+  FROM kanban_tickets kt
+  LEFT JOIN kanban_tickets p ON p.id = kt.parent_ticket_id`
+/** The one row of `ticket_counters` behind the machine-wide ticket sequence. */
+const TICKET_COUNTER_SCOPE = 'kanban_tickets'
 import { perfLog } from '../services/perf-logging/perf-logger'
 import { dirname, join } from 'path'
 import { existsSync, mkdirSync, statSync } from 'fs'
@@ -513,7 +524,14 @@ export class DatabaseService implements DocumentFlowDb {
       model_provider_id: (row.model_provider_id as string) ?? null,
       model_id: (row.model_id as string) ?? null,
       model_variant: (row.model_variant as string) ?? null,
-      variant_group_id: (row.variant_group_id as string) ?? null
+      variant_group_id: (row.variant_group_id as string) ?? null,
+      ticket_prefix: (row.ticket_prefix as string) ?? null,
+      ticket_number: (row.ticket_number as number) ?? null,
+      parent_ticket_id: (row.parent_ticket_id as string) ?? null,
+      parent_ticket_key: formatTicketKey(
+        (row.parent_ticket_prefix as string) ?? null,
+        (row.parent_ticket_number as number) ?? null
+      )
     }
   }
 
@@ -704,6 +722,8 @@ export class DatabaseService implements DocumentFlowDb {
     this.ensureConnectionTables()
     this.ensureVoiceHistoryTable()
     this.ensureDocumentFlowTables()
+    // After the document-flow tables: the key backfill reads document_runs / document_run_items.
+    this.ensureTicketKeys()
   }
 
   /** Idempotently ensure the voice dictation history table exists (repair for the v48 migration). */
@@ -3605,7 +3625,23 @@ export class DatabaseService implements DocumentFlowDb {
 
   // Kanban ticket operations
 
+  /**
+   * Inserts the ticket and allocates its running number in one immediate transaction: the
+   * `ticket_counters` upsert is a single statement serialised by SQLite's write lock, so two
+   * processes creating tickets at once never share a number, and a rolled-back insert does
+   * not leave a gap behind (numbers are never reused, gaps from deletes are fine). The prefix
+   * is whatever the settings table holds at that moment, null before the first sign-in
+   * (stamped later by ensureTicketKeyPrefix).
+   */
   createKanbanTicket(data: KanbanTicketCreate): KanbanTicket {
+    const ticket = this.transaction(() => this.insertKanbanTicket(data))
+    if (this.kanbanBatchDepth === 0) {
+      emitDbChanged({ entity: 'ticket', op: 'create', id: ticket.id, projectId: data.project_id })
+    }
+    return ticket
+  }
+
+  private insertKanbanTicket(data: KanbanTicketCreate): KanbanTicket {
     const db = this.getDb()
     const now = new Date().toISOString()
 
@@ -3640,10 +3676,21 @@ export class DatabaseService implements DocumentFlowDb {
     const modelId = data.model_id ?? null
     const modelVariant = data.model_variant ?? null
     const variantGroupId = data.variant_group_id ?? null
+    const parentTicketId = data.parent_ticket_id ?? null
+
+    const ticketNumber = this.allocateTicketNumber()
+    const ticketPrefix = this.getTicketKeyPrefix()
+    const parent = parentTicketId
+      ? (db
+          .prepare('SELECT ticket_prefix, ticket_number FROM kanban_tickets WHERE id = ?')
+          .get(parentTicketId) as
+          | { ticket_prefix: string | null; ticket_number: number | null }
+          | undefined)
+      : undefined
 
     db.prepare(
-      `INSERT INTO kanban_tickets (id, project_id, title, description, attachments, "column", sort_order, current_session_id, worktree_id, mode, plan_ready, external_provider, external_id, external_url, github_pr_number, github_pr_url, mark, created_from_session, note, model_provider_id, model_id, model_variant, variant_group_id, created_at, updated_at, column_changed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO kanban_tickets (id, project_id, title, description, attachments, "column", sort_order, current_session_id, worktree_id, mode, plan_ready, external_provider, external_id, external_url, github_pr_number, github_pr_url, mark, created_from_session, note, model_provider_id, model_id, model_variant, variant_group_id, ticket_prefix, ticket_number, parent_ticket_id, created_at, updated_at, column_changed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       id,
       data.project_id,
@@ -3668,6 +3715,9 @@ export class DatabaseService implements DocumentFlowDb {
       modelId,
       modelVariant,
       variantGroupId,
+      ticketPrefix,
+      ticketNumber,
+      parentTicketId,
       now,
       now,
       now
@@ -3697,10 +3747,224 @@ export class DatabaseService implements DocumentFlowDb {
       model_id: modelId,
       model_variant: modelVariant,
       variant_group_id: variantGroupId,
+      ticket_prefix: ticketPrefix,
+      ticket_number: ticketNumber,
+      parent_ticket_id: parentTicketId,
+      parent_ticket_prefix: parent?.ticket_prefix ?? null,
+      parent_ticket_number: parent?.ticket_number ?? null,
       total_tokens: 0,
       created_at: now,
       updated_at: now,
       column_changed_at: now
+    })
+  }
+
+  // ── Ticket keys (TD-12): prefix, running number, parent link ─────────────
+
+  /** The next running number: one upsert, atomic under the write lock, never reused. */
+  private allocateTicketNumber(): number {
+    const row = this.getDb()
+      .prepare(
+        `INSERT INTO ticket_counters (scope, last) VALUES (?, 1)
+         ON CONFLICT(scope) DO UPDATE SET last = last + 1
+         RETURNING last`
+      )
+      .get(TICKET_COUNTER_SCOPE) as { last: number }
+    return row.last
+  }
+
+  /** The organisation prefix stored for this database, null before the first sign-in. */
+  getTicketKeyPrefix(): string | null {
+    return this.getSetting(TICKET_KEY_PREFIX_SETTING)
+  }
+
+  /**
+   * Records the prefix derived from the signed-in session, once: the first organisation to
+   * sign in on this machine names the keys and a later one does not rename them (the local
+   * boards are shared across organisations). Then stamps the prefix on every ticket that has
+   * none (created before the first sign-in, or by an older build) and tells the boards.
+   * Idempotent and cheap on every later call. Returns the prefix in force.
+   */
+  ensureTicketKeyPrefix(prefix: string): string {
+    const db = this.getDb()
+    const affected = this.transaction(() => {
+      const existing = this.getSetting(TICKET_KEY_PREFIX_SETTING)
+      const effective = existing ?? prefix
+      if (!existing) this.setSetting(TICKET_KEY_PREFIX_SETTING, effective)
+      const projects = db
+        .prepare('SELECT DISTINCT project_id FROM kanban_tickets WHERE ticket_prefix IS NULL')
+        .all() as { project_id: string }[]
+      if (projects.length > 0) {
+        db.prepare('UPDATE kanban_tickets SET ticket_prefix = ? WHERE ticket_prefix IS NULL').run(
+          effective
+        )
+      }
+      return { effective, projectIds: projects.map((row) => row.project_id) }
+    })
+    for (const projectId of affected.projectIds) {
+      emitDbChanged({ entity: 'ticket', op: 'batch', id: null, projectId })
+    }
+    return affected.effective
+  }
+
+  /**
+   * Idempotent repair for the key columns (v62) and the one-time backfill of existing rows.
+   * Runs on every init in every process: a second process that starts at the same time waits
+   * on the write lock and then finds nothing left to number.
+   */
+  private ensureTicketKeys(): void {
+    const db = this.getDb()
+    this.safeAddColumn('kanban_tickets', 'ticket_prefix', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('kanban_tickets', 'ticket_number', 'INTEGER DEFAULT NULL')
+    this.safeAddColumn('kanban_tickets', 'parent_ticket_id', 'TEXT DEFAULT NULL')
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS ticket_counters (
+        scope TEXT PRIMARY KEY,
+        last INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_kanban_tickets_number ON kanban_tickets(ticket_number);
+      CREATE INDEX IF NOT EXISTS idx_kanban_tickets_parent ON kanban_tickets(parent_ticket_id);
+      CREATE INDEX IF NOT EXISTS idx_document_run_items_ticket ON document_run_items(ticket_id);
+      CREATE INDEX IF NOT EXISTS idx_document_run_items_fix_ticket ON document_run_items(fix_ticket_id);
+    `)
+    try {
+      this.backfillTicketKeys()
+    } catch (err) {
+      console.error(
+        '[db] Ticket key backfill failed:',
+        err instanceof Error ? err.message : String(err)
+      )
+    }
+  }
+
+  /**
+   * Numbers every ticket that has no number yet and links orchestrator children to their
+   * run's ticket. Order: creation order, except that the tickets of one document run stay
+   * together at the position of the run's earliest ticket — the run's own ticket first, then
+   * its task tickets by document position, then fix tickets — because a launch used to create
+   * the children before the parent (and runs from before v57 got their parent much later).
+   * Already-numbered rows are untouched, so the sequence continues after the current maximum.
+   */
+  backfillTicketKeys(): number {
+    const db = this.getDb()
+    const pending = db
+      .prepare('SELECT 1 FROM kanban_tickets WHERE ticket_number IS NULL LIMIT 1')
+      .get()
+    const unlinked = db
+      .prepare(
+        `SELECT 1 FROM document_run_items i
+         JOIN document_runs r ON r.id = i.run_id
+         JOIN kanban_tickets t ON t.id = i.ticket_id OR t.id = i.fix_ticket_id
+         WHERE r.ticket_id IS NOT NULL AND t.parent_ticket_id IS NULL AND t.id <> r.ticket_id
+         LIMIT 1`
+      )
+      .get()
+    if (!pending && !unlinked) return 0
+
+    return this.transaction(() => {
+      // Parent links first: a child created by an older build has none.
+      db.prepare(
+        `UPDATE kanban_tickets SET parent_ticket_id = (
+           SELECT r.ticket_id FROM document_run_items i
+           JOIN document_runs r ON r.id = i.run_id
+           WHERE (i.ticket_id = kanban_tickets.id OR i.fix_ticket_id = kanban_tickets.id)
+             AND r.ticket_id IS NOT NULL AND r.ticket_id <> kanban_tickets.id
+           ORDER BY i.position LIMIT 1
+         )
+         WHERE parent_ticket_id IS NULL AND EXISTS (
+           SELECT 1 FROM document_run_items i
+           JOIN document_runs r ON r.id = i.run_id
+           WHERE (i.ticket_id = kanban_tickets.id OR i.fix_ticket_id = kanban_tickets.id)
+             AND r.ticket_id IS NOT NULL AND r.ticket_id <> kanban_tickets.id
+         )`
+      ).run()
+
+      const rows = db
+        .prepare(
+          'SELECT id, created_at, rowid AS rid FROM kanban_tickets WHERE ticket_number IS NULL'
+        )
+        .all() as { id: string; created_at: string; rid: number }[]
+      if (rows.length === 0) return 0
+
+      type Membership = { run_id: string; rank: number; pos: number }
+      const membership = new Map<string, Membership>()
+      const memberRows = db
+        .prepare(
+          `SELECT r.ticket_id AS ticket_id, r.id AS run_id, 0 AS rank, 0 AS pos
+             FROM document_runs r WHERE r.ticket_id IS NOT NULL
+           UNION ALL
+           SELECT i.ticket_id, i.run_id, 1, i.position
+             FROM document_run_items i WHERE i.ticket_id IS NOT NULL
+           UNION ALL
+           SELECT i.fix_ticket_id, i.run_id, 2, i.position
+             FROM document_run_items i WHERE i.fix_ticket_id IS NOT NULL
+           ORDER BY rank, pos`
+        )
+        .all() as { ticket_id: string; run_id: string; rank: number; pos: number }[]
+      for (const member of memberRows) {
+        if (!membership.has(member.ticket_id)) {
+          membership.set(member.ticket_id, {
+            run_id: member.run_id,
+            rank: member.rank,
+            pos: member.pos
+          })
+        }
+      }
+      // A run's tickets sit where its earliest (unnumbered) ticket was created.
+      const anchors = new Map<string, string>()
+      for (const row of rows) {
+        const member = membership.get(row.id)
+        if (!member) continue
+        const anchor = anchors.get(member.run_id)
+        if (!anchor || row.created_at < anchor) anchors.set(member.run_id, row.created_at)
+      }
+      const sortKey = (row: { id: string; created_at: string; rid: number }) => {
+        const member = membership.get(row.id)
+        return {
+          anchor: member ? (anchors.get(member.run_id) ?? row.created_at) : row.created_at,
+          group: member ? member.run_id : row.id,
+          rank: member?.rank ?? 0,
+          pos: member?.pos ?? 0,
+          created_at: row.created_at,
+          rid: row.rid
+        }
+      }
+      const compare = (a: string | number, b: string | number): number =>
+        a < b ? -1 : a > b ? 1 : 0
+      const ordered = rows
+        .map((row) => ({ row, key: sortKey(row) }))
+        .sort(
+          (a, b) =>
+            compare(a.key.anchor, b.key.anchor) ||
+            compare(a.key.group, b.key.group) ||
+            compare(a.key.rank, b.key.rank) ||
+            compare(a.key.pos, b.key.pos) ||
+            compare(a.key.created_at, b.key.created_at) ||
+            compare(a.key.rid, b.key.rid)
+        )
+
+      // Continue after the counter, not just the highest surviving number: the highest
+      // tickets may have been deleted and their keys must not come back on other tickets.
+      const { max } = db
+        .prepare('SELECT COALESCE(MAX(ticket_number), 0) AS max FROM kanban_tickets')
+        .get() as { max: number }
+      const counter = db
+        .prepare('SELECT last FROM ticket_counters WHERE scope = ?')
+        .get(TICKET_COUNTER_SCOPE) as { last: number } | undefined
+      const prefix = this.getTicketKeyPrefix()
+      const assign = db.prepare(
+        'UPDATE kanban_tickets SET ticket_number = ?, ticket_prefix = COALESCE(ticket_prefix, ?) WHERE id = ?'
+      )
+      let next = Math.max(max, counter?.last ?? 0)
+      for (const { row } of ordered) {
+        next += 1
+        assign.run(next, prefix, row.id)
+      }
+      db.prepare(
+        `INSERT INTO ticket_counters (scope, last) VALUES (?, ?)
+         ON CONFLICT(scope) DO UPDATE SET last = MAX(last, excluded.last)`
+      ).run(TICKET_COUNTER_SCOPE, next)
+      return ordered.length
     })
   }
 
@@ -3733,7 +3997,8 @@ export class DatabaseService implements DocumentFlowDb {
           model_provider_id: draft.model_provider_id,
           model_id: draft.model_id,
           model_variant: draft.model_variant,
-          variant_group_id: draft.variant_group_id
+          variant_group_id: draft.variant_group_id,
+          parent_ticket_id: draft.parent_ticket_id
         })
         createdTickets.push(ticket)
         createdByDraftKey.set(draft.draft_key, ticket)
@@ -3769,7 +4034,7 @@ export class DatabaseService implements DocumentFlowDb {
 
   getKanbanTicket(id: string): KanbanTicket | null {
     const db = this.getDb()
-    const row = db.prepare('SELECT * FROM kanban_tickets WHERE id = ?').get(id) as
+    const row = db.prepare(`${KANBAN_TICKET_SELECT} WHERE kt.id = ?`).get(id) as
       | Record<string, unknown>
       | undefined
     return row ? this.mapKanbanTicketRow(row) : null
@@ -3783,7 +4048,7 @@ export class DatabaseService implements DocumentFlowDb {
     const db = this.getDb()
     const row = db
       .prepare(
-        'SELECT * FROM kanban_tickets WHERE external_provider = ? AND external_id = ? AND project_id = ?'
+        `${KANBAN_TICKET_SELECT} WHERE kt.external_provider = ? AND kt.external_id = ? AND kt.project_id = ?`
       )
       .get(externalProvider, externalId, projectId) as Record<string, unknown> | undefined
     return row ? this.mapKanbanTicketRow(row) : null
@@ -3792,8 +4057,8 @@ export class DatabaseService implements DocumentFlowDb {
   getKanbanTicketsByProject(projectId: string, includeArchived: boolean = false): KanbanTicket[] {
     const db = this.getDb()
     const query = includeArchived
-      ? 'SELECT * FROM kanban_tickets WHERE project_id = ? ORDER BY "column" ASC, sort_order ASC'
-      : 'SELECT * FROM kanban_tickets WHERE project_id = ? AND archived_at IS NULL ORDER BY "column" ASC, sort_order ASC'
+      ? `${KANBAN_TICKET_SELECT} WHERE kt.project_id = ? ORDER BY kt."column" ASC, kt.sort_order ASC`
+      : `${KANBAN_TICKET_SELECT} WHERE kt.project_id = ? AND kt.archived_at IS NULL ORDER BY kt."column" ASC, kt.sort_order ASC`
     const rows = db.prepare(query).all(projectId) as Record<string, unknown>[]
     return rows.map((row) => this.mapKanbanTicketRow(row))
   }
@@ -3951,6 +4216,10 @@ export class DatabaseService implements DocumentFlowDb {
     if (data.variant_group_id !== undefined) {
       updates.push('variant_group_id = ?')
       values.push(data.variant_group_id)
+    }
+    if (data.parent_ticket_id !== undefined) {
+      updates.push('parent_ticket_id = ?')
+      values.push(data.parent_ticket_id)
     }
 
     if (updates.length === 1) return existing // Only updated_at, nothing meaningful changed
@@ -4192,7 +4461,7 @@ export class DatabaseService implements DocumentFlowDb {
   getKanbanTicketsBySession(sessionId: string): KanbanTicket[] {
     const db = this.getDb()
     const rows = db
-      .prepare('SELECT * FROM kanban_tickets WHERE current_session_id = ? ORDER BY sort_order ASC')
+      .prepare(`${KANBAN_TICKET_SELECT} WHERE kt.current_session_id = ? ORDER BY kt.sort_order ASC`)
       .all(sessionId) as Record<string, unknown>[]
     return rows.map((row) => this.mapKanbanTicketRow(row))
   }
@@ -4303,7 +4572,7 @@ export class DatabaseService implements DocumentFlowDb {
     const db = this.getDb()
     const rows = db
       .prepare(
-        `SELECT kt.* FROM kanban_tickets kt
+        `${KANBAN_TICKET_SELECT}
          JOIN ticket_dependencies td ON td.blocker_id = kt.id
          WHERE td.dependent_id = ?`
       )
@@ -4315,7 +4584,7 @@ export class DatabaseService implements DocumentFlowDb {
     const db = this.getDb()
     const rows = db
       .prepare(
-        `SELECT kt.* FROM kanban_tickets kt
+        `${KANBAN_TICKET_SELECT}
          JOIN ticket_dependencies td ON td.dependent_id = kt.id
          WHERE td.blocker_id = ?`
       )
@@ -4547,10 +4816,16 @@ export class DatabaseService implements DocumentFlowDb {
       .all() as { name: string; tbl_name: string }[]
   }
 
-  // Transaction wrapper
+  /**
+   * Transaction wrapper: BEGIN IMMEDIATE, so the write lock is taken up front. Several
+   * processes (this one, the server child, other app instances) write to one WAL database;
+   * a deferred transaction that reads first and writes after another process committed fails
+   * at once with SQLITE_BUSY_SNAPSHOT, whereas an immediate one waits for busy_timeout. Nested
+   * calls become savepoints of the outer transaction.
+   */
   transaction<T>(fn: () => T): T {
     const db = this.getDb()
-    return db.transaction(fn)()
+    return db.transaction(fn).immediate()
   }
 }
 

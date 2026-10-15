@@ -218,8 +218,8 @@ describe('start on a connection project', () => {
     expect(eventTypes(run.id)).toEqual([
       'base_resolved',
       'integration_created',
-      'tickets_created',
       'run_ticket_created',
+      'tickets_created',
       'started'
     ])
     expect(harness.db.listDocumentRunEvents(run.id)[1].message).toBe(
@@ -252,8 +252,10 @@ describe('start on a connection project', () => {
   it('briefs every ticket about the connection directory and gives the run a ticket without a worktree', async () => {
     const run = await launchRun()
 
-    const [tickets, runTicket] = harness.ticketBatches
+    // The run's ticket first, then the tasks as its children.
+    const [runTicket, tickets] = harness.ticketBatches
     expect(tickets.drafts.map((draft) => draft.draft_key)).toEqual(['A1', 'A2'])
+    expect(tickets.drafts.map((draft) => draft.parent_ticket_id)).toEqual(['ticket-1', 'ticket-1'])
     const paragraph = connectionWorkspaceParagraph([
       { symlinkName: 'web', projectName: 'web' },
       { symlinkName: 'api', projectName: 'api' }
@@ -270,7 +272,7 @@ describe('start on a connection project', () => {
     expect(runTicket.drafts[0].description).toBe(
       `Document run of /specs/factory.html. Its integration instance at ${run.integration_connection_path} collects the merged work of the run's tickets, one branch per member repository — web: ${INTEGRATION} (from main), api: ${INTEGRATION} (from main); move this ticket to Done to merge each into its base branch.`
     )
-    expect(run.ticket_id).toBe('ticket-3')
+    expect(run.ticket_id).toBe('ticket-1')
   })
 
   it('does not mark the run when the instance cannot be created, and a retry starts over', async () => {
@@ -590,6 +592,19 @@ describe('reconcileRunTickets on a connection run', () => {
       worktree_id: null,
       column: 'in_progress'
     })
+    // The task tickets are pointed at the new run ticket.
+    expect(harness.ticketUpdates).toEqual([
+      {
+        projectId: TEST_CONNECTION_PROJECT_ID,
+        ticketId: 'ticket-2',
+        patch: { parent_ticket_id: 'ticket-4' }
+      },
+      {
+        projectId: TEST_CONNECTION_PROJECT_ID,
+        ticketId: 'ticket-3',
+        patch: { parent_ticket_id: 'ticket-4' }
+      }
+    ])
     expect(harness.baseBranchWrites).toEqual([
       { worktreeId: 'wt-web-A1', baseBranch: 'main' },
       { worktreeId: 'wt-api-A1', baseBranch: 'main' }

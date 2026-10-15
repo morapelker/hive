@@ -233,12 +233,19 @@ export interface DocumentFlowTicket {
 }
 
 /**
- * What a run writes on a board ticket after creating it: the model badge on a task ticket; on
- * the run's own ticket, the title once extracted and the integration worktree at launch.
+ * What a run writes on a board ticket after creating it: the model badge and the parent link on
+ * a task ticket; on the run's own ticket, its description, the title once extracted and the
+ * integration worktree at launch.
  */
 export type DocumentFlowTicketPatch = Pick<
   KanbanTicketUpdate,
-  'model_provider_id' | 'model_id' | 'model_variant' | 'title' | 'description' | 'worktree_id'
+  | 'model_provider_id'
+  | 'model_id'
+  | 'model_variant'
+  | 'title'
+  | 'description'
+  | 'worktree_id'
+  | 'parent_ticket_id'
 >
 
 export interface DocumentFlowServiceDeps {
@@ -1080,8 +1087,10 @@ export class DocumentFlowService {
             ? await this.createIntegrationInstance(run, target)
             : await this.createIntegrationWorktree(run, target.project)
       }
-      await this.createTickets(run, defaultSdk)
+      // The run's own ticket first: it gets the lower key (TD-12) and the task tickets are
+      // created with it as their parent.
       run = await this.ensureRunTicket(run, 'in_progress')
+      await this.createTickets(run, defaultSdk)
       run = this.saveRun(run, {
         status: 'running',
         started_at: run.started_at ?? this.now().toISOString(),
@@ -1586,6 +1595,7 @@ export class DocumentFlowService {
         ],
         // A batch can only link its own drafts; the rest is linked below.
         depends_on: item.depends_on.filter((key) => pendingKeys.has(key)),
+        parent_ticket_id: run.ticket_id,
         ...(model
           ? {
               model_provider_id: model.providerID,
@@ -1691,6 +1701,7 @@ export class DocumentFlowService {
           })
         })
       }
+      this.linkChildTickets(updated)
       return updated
     })
   }
@@ -1735,6 +1746,32 @@ export class DocumentFlowService {
         runId: run.id,
         ticketId,
         error: describeError(error)
+      })
+    }
+  }
+
+  /**
+   * Points the run's existing task and fix tickets at the run's ticket (their parent key on
+   * the board). A launch creates the parent before the children, so this only has work for a
+   * run that got its ticket late (reconcile of a run from before run tickets existed).
+   * Cosmetic, so detached and never fatal.
+   */
+  private linkChildTickets(run: DocumentRun): void {
+    const parentId = run.ticket_id
+    if (!parentId) return
+    const children = this.db
+      .getDocumentRunItems(run.id)
+      .flatMap((item) => [item.ticket_id, item.fix_ticket_id])
+      .filter((id): id is string => !!id && id !== parentId)
+    for (const ticketId of children) {
+      void this.detach(() =>
+        this.deps.updateTicket(run.project_id, ticketId, { parent_ticket_id: parentId })
+      ).catch((error: unknown) => {
+        log.warn('Could not link a ticket to the run ticket', {
+          runId: run.id,
+          ticketId,
+          error: describeError(error)
+        })
       })
     }
   }

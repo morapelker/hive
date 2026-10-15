@@ -65,6 +65,7 @@ import { gitApi } from '@/api/git-api'
 import { remoteLaunchApi } from '@/api/remote-launch-api'
 import { startHivePromptTelemetry } from '@/lib/hive-enterprise-telemetry'
 import type { KanbanTicket, Session } from '../../../../main/db/types'
+import { TicketKeyBadge } from './TicketKeyBadge'
 import { canonicalizeTicketTitle } from '@shared/types/branch-utils'
 import { isAgentCli, supportsGoalMode } from '@shared/types/agent-sdk'
 import { createPlanFile, exceedsGoalPromptLimit, planFilePrompt } from '@/lib/goal-plan-file'
@@ -2296,6 +2297,7 @@ export function WorktreePickerModal({
                 : isConnectionProjectMode
                   ? 'Pick a workspace for'
                   : 'Pick a worktree for'}{' '}
+            <TicketKeyBadge ticket={ticket} variant="modal" className="mr-1.5 align-[-1px]" />
             <span className="font-medium text-foreground">{ticket.title}</span>
           </DialogDescription>
           {/* Build/Plan chip toggle — below description to avoid overlapping the X close button */}
