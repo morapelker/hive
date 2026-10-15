@@ -571,6 +571,8 @@ export class DocumentFlowService {
   private readonly mergesInFlight = new Map<string, Promise<unknown>>()
   /** One writer at a time for a run's own board ticket: a launch and the startup repair. */
   private readonly runTicketLocks = new KeyedMutex()
+  /** One repository joins a run at a time: two windows adding the same one must not both cut it a worktree. */
+  private readonly memberLocks = new KeyedMutex()
 
   constructor(private readonly deps: DocumentFlowServiceDeps) {
     this.db = deps.db
@@ -1283,6 +1285,23 @@ export class DocumentFlowService {
     runId: string,
     params: { projectId: string; baseBranch?: string | null }
   ): Promise<DocumentRunDetail> {
+    // Refused up front so the caller hears it at once; checked again under the run's member
+    // lock, since another window may have added the same repository meanwhile.
+    const { run, project } = this.validateNewMember(runId, params.projectId)
+    // Detached, like a launch: the worktree and connection writes must reach the client that
+    // asked for them, or its sidebar would never show the new worktree.
+    return this.detach(() =>
+      this.memberLocks.run(run.id, () =>
+        this.connectMember(runId, project.id, params.baseBranch ?? null)
+      )
+    )
+  }
+
+  /** The run and the project as they are now, if the project can join the run. */
+  private validateNewMember(
+    runId: string,
+    projectId: string
+  ): { run: DocumentRun & { members: DocumentRunMember[] }; project: DocumentFlowProject } {
     const run = this.requireRun(runId)
     if (!isConnectionRun(run) || !run.integration_connection_id) {
       throw invalidState(
@@ -1294,7 +1313,7 @@ export class DocumentFlowService {
     if (!isActiveRunStatus(run.status)) {
       throw invalidState('A finished run cannot take another repository.')
     }
-    const project = this.deps.getProject(params.projectId)
+    const project = this.deps.getProject(projectId)
     if (!project) throw notFound('The project')
     if (project.kind === 'connection' || project.id === run.project_id) {
       throw invalidInput('A connection project cannot be added as a repository.')
@@ -1303,18 +1322,17 @@ export class DocumentFlowService {
       (member) => member.project_id === project.id || samePath(member.project_path, project.path)
     )
     if (taken) throw invalidInput(`${taken.project_name} is already a member of this run.`)
-    // Detached, like a launch: the worktree and connection writes must reach the client that
-    // asked for them, or its sidebar would never show the new worktree.
-    return this.detach(() => this.connectMember(run, project, params.baseBranch ?? null))
+    return { run, project }
   }
 
   private async connectMember(
-    run: DocumentRun & { members: DocumentRunMember[] },
-    project: DocumentFlowProject,
+    runId: string,
+    projectId: string,
     requestedBranch: string | null
   ): Promise<DocumentRunDetail> {
-    const connectionId = run.integration_connection_id
-    if (!connectionId) throw invalidState('This run has no integration instance.')
+    // Under the lock: the run as it is after any addition that was ahead of this one.
+    const { run, project } = this.validateNewMember(runId, projectId)
+    const connectionId = run.integration_connection_id as string
     try {
       const baseBranch =
         requestedBranch?.trim() ||
@@ -1372,23 +1390,8 @@ export class DocumentFlowService {
         integration_worktree_path: worktree.path
       }
 
-      // Several clients share one database: re-read, and append to what is there now.
-      const current = this.requireRun(run.id)
-      const members = [
-        ...(current.members ?? []).filter((candidate) => candidate.project_id !== project.id),
-        member
-      ]
-      let updated = this.saveRun(current, {
-        members,
-        base_branch: baseBranchLabel(members.map((candidate) => candidate.base_branch)),
-        integration_branch: sharedName(members.map((candidate) => candidate.integration_branch)),
-        config: {
-          ...current.config,
-          memberBaseBranches: { ...current.config.memberBaseBranches, [project.id]: baseBranch }
-        }
-      })
       this.log(
-        updated,
+        run,
         'member_added',
         `${project.name} joined the run: ${member.symlink_name} on ${member.integration_branch} (from ${baseBranch} at ${baseSha.slice(0, 8)})`,
         {
@@ -1400,6 +1403,26 @@ export class DocumentFlowService {
           }
         }
       )
+      // The tickets at work first, then the run: the orchestrator reads the run's members, so
+      // it must never see the new one while a ticket's instance has yet to take it. (A ticket
+      // merged in between merges nothing in the new member, which is what it touched there.)
+      await this.extendItemInstances(run, member)
+
+      // Several clients share one database: re-read, and append to what is there now.
+      const current = this.requireRun(run.id)
+      const members = [
+        ...(current.members ?? []).filter((candidate) => candidate.project_id !== project.id),
+        member
+      ]
+      const updated = this.saveRun(current, {
+        members,
+        base_branch: baseBranchLabel(members.map((candidate) => candidate.base_branch)),
+        integration_branch: sharedName(members.map((candidate) => candidate.integration_branch)),
+        config: {
+          ...current.config,
+          memberBaseBranches: { ...current.config.memberBaseBranches, [project.id]: baseBranch }
+        }
+      })
 
       // The run's ticket names every member's branches; cosmetic, so never fatal.
       if (updated.ticket_id) {
@@ -1417,8 +1440,6 @@ export class DocumentFlowService {
         }
       }
 
-      await this.extendItemInstances(updated, member)
-      updated = this.requireRun(run.id)
       return this.detail(updated, true)
     } catch (error) {
       const message = describeError(error)
@@ -1432,8 +1453,10 @@ export class DocumentFlowService {
   /**
    * Give every ticket that is on an instance of its own (launched, not finished) a worktree in
    * the new member, cut from the member's integration branch and named after the ticket, as a
-   * launch would have. Per ticket: a failure is logged on the ticket and the rest go on — the
-   * merge treats a ticket without a worktree in a member as touching nothing there.
+   * launch would have. Per ticket: a failure is logged on the ticket and the rest go on. A
+   * ticket still launching finishes with the members its launch started from. Either way the
+   * ticket merges nothing in the new member (`mergeContexts` skips a member it has no worktree
+   * in), so no ticket is left unmergeable.
    */
   private async extendItemInstances(run: DocumentRun, member: DocumentRunMember): Promise<void> {
     const items = this.db.getDocumentRunItems(run.id).filter(
@@ -3471,21 +3494,28 @@ export class DocumentFlowService {
       if (!ticketBranch) throw new Error(`${item.key} has no branch to merge.`)
       return [{ ...checkout, ticketBranch, ticketPath: worktree?.path ?? null, itemMember: null }]
     }
-    return run.members.map((member): MergeContext => {
+    // A member the ticket has no worktree in is one it touched nothing in: a repository added
+    // to the run after the ticket launched, or one its instance could not take. Nothing to merge
+    // there — as `memberComposites` and `repointTaskWorktrees` already read it.
+    const contexts = run.members.flatMap((member): MergeContext[] => {
       const own = item.members?.find((candidate) => candidate.project_id === member.project_id)
-      if (!own) throw new Error(`${item.key} has no worktree in ${member.project_name} to merge.`)
+      if (!own) return []
       const worktree = this.deps.getWorktree(own.worktree_id)
       const ticketBranch = own.branch_name || worktree?.branch_name
       if (!ticketBranch) {
         throw new Error(`${item.key} has no branch to merge in ${member.project_name}.`)
       }
-      return {
-        ...this.memberCheckout(run, member),
-        ticketBranch,
-        ticketPath: worktree?.path ?? null,
-        itemMember: own
-      }
+      return [
+        {
+          ...this.memberCheckout(run, member),
+          ticketBranch,
+          ticketPath: worktree?.path ?? null,
+          itemMember: own
+        }
+      ]
     })
+    if (contexts.length === 0) throw new Error(`${item.key} has no worktree in any member to merge.`)
+    return contexts
   }
 
   /** The item's merge commit in this checkout's repository; null when it has none recorded. */

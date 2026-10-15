@@ -518,6 +518,25 @@ describe('addMember on a connection run', () => {
     expect(harness.worktreeRequests.filter((r) => r.projectId === MOBILE.id)).toEqual([])
   })
 
+  it('lets one of two concurrent additions of the same repository in, and refuses the other', async () => {
+    const run = await launchRun()
+
+    const results = await Promise.allSettled([
+      harness.service.addMember(run.id, { projectId: MOBILE.id }),
+      harness.service.addMember(run.id, { projectId: MOBILE.id })
+    ])
+
+    expect(results.map((result) => result.status)).toEqual(['fulfilled', 'rejected'])
+    expect((results[1] as PromiseRejectedResult).reason.message).toBe(
+      'mobile is already a member of this run.'
+    )
+    // One integration worktree, linked once.
+    expect(harness.worktreeRequests.filter((r) => r.projectId === MOBILE.id)).toHaveLength(1)
+    expect(harness.connectionMemberAdds).toHaveLength(1)
+    expect(harness.connections.get('connection-1')!.members).toHaveLength(3)
+    expect(currentRun(run.id).members).toHaveLength(3)
+  })
+
   it('does not mark the run when the worktree cannot be linked into the instance', async () => {
     const run = await launchRun()
     harness.overrides.addConnectionMember = async () => ({ success: false, error: 'disk full' })
@@ -799,19 +818,26 @@ describe('merge on a connection run', () => {
     })
   })
 
-  it('refuses a ticket that lacks a worktree in a member', async () => {
+  it('merges only the members a ticket has a worktree in, and refuses one that has none', async () => {
     const run = await launchRun()
-    launchTicket(run, 'A1')
+    const paths = launchTicket(run, 'A1')
     const item = itemByKey(run.id, 'A1')
+    // A member added to the run after the ticket launched: the ticket has no worktree there.
     harness.db.updateDocumentRunItem(item.id, { members: item.members!.slice(0, 1) })
+    web.commit(paths[WEB.id], 'A1 web', { 'src/a1.ts': 'export const a1 = 1\n' })
+    const apiHead = headOf(run, API.id)
 
+    const check = await harness.service.prepareMerge(run.id, item.id)
+    expect(check).toMatchObject({ state: 'clean', commitsAhead: 1 })
+    expect(check.members!.map((member) => member.project_id)).toEqual([WEB.id])
+    expect(await harness.service.merge(run.id, item.id)).toMatchObject({ success: true })
+    expect(headOf(run, API.id)).toBe(apiHead)
+    expect(itemByKey(run.id, 'A1').members!.map((member) => member.project_id)).toEqual([WEB.id])
+
+    harness.db.updateDocumentRunItem(item.id, { members: [] })
     expect(await harness.service.prepareMerge(run.id, item.id)).toMatchObject({
       state: 'error',
-      error: 'A1 has no worktree in api to merge.'
-    })
-    expect(await harness.service.merge(run.id, item.id)).toEqual({
-      success: false,
-      error: 'A1 has no worktree in api to merge.'
+      error: 'A1 has no worktree in any member to merge.'
     })
   })
 
