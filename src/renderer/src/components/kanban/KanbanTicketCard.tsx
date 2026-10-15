@@ -925,6 +925,11 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       //                        the connection in the sidebar for its own
       //                        branches again
       //
+      // The ticket of a document run (an orchestrator) runs on the run's
+      // integration checkout — its integration worktree on a git project, its
+      // integration instance on a connection project — and is treated as a
+      // worktree / connection ticket on that target.
+      //
       // Tickets whose worktree/connection is gone (never launched, archived)
       // fall back to the base target either way: the project's default
       // worktree, or a connection project's base instance.
@@ -936,13 +941,36 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
           const isConnectionProjectTicket = project.kind === 'connection'
           const selectionOptions = isPinnedMode ? { preservePinnedBoard: true } : undefined
 
-          const findAttachedWorktree = () =>
-            ticket.worktree_id
+          // The run's integration checkout, once the run is in the flow store.
+          // The ticket row carries the integration worktree id itself, but
+          // never the integration instance, so the run is the source of both.
+          const runIntegration = (): {
+            worktreeId: string | null
+            connectionId: string | null
+          } | null => {
+            const run = documentRunId
+              ? useDocumentFlowStore.getState().runsById[documentRunId]?.run
+              : null
+            if (!run) return null
+            return {
+              worktreeId: run.integration_worktree_id,
+              connectionId: run.integration_connection_id
+            }
+          }
+          const attachedWorktreeId = (): string | null =>
+            ticket.worktree_id ?? runIntegration()?.worktreeId ?? null
+          const knownConnectionId = (): string | null =>
+            connectionId ?? connectionSession?.connectionId ?? runIntegration()?.connectionId ?? null
+
+          const findAttachedWorktree = () => {
+            const worktreeId = attachedWorktreeId()
+            return worktreeId
               ? (useWorktreeStore
                   .getState()
                   .worktreesByProject.get(ticket.project_id)
-                  ?.find((w) => w.id === ticket.worktree_id) ?? null)
+                  ?.find((w) => w.id === worktreeId) ?? null)
               : null
+          }
 
           // Worktree ticket: the attached worktree, or the project's default one
           const selectTicketWorktree = (): boolean => {
@@ -992,22 +1020,27 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
           const worktreesLoaded = useWorktreeStore
             .getState()
             .worktreesByProject.has(ticket.project_id)
-          if (!ticket.worktree_id || worktreesLoaded) {
+          const runLoaded = !documentRunId || runIntegration() !== null
+          if (runLoaded && (!attachedWorktreeId() || worktreesLoaded)) {
             // A live attached worktree makes this a worktree ticket, even on
             // a connection board — that is where it runs
             if (findAttachedWorktree()) {
               selectTicketWorktree()
               return
             }
-            const liveConnectionId = connectionId ?? connectionSession?.connectionId ?? null
+            const liveConnectionId = knownConnectionId()
             if (liveConnectionId && selectTicketConnection(liveConnectionId)) return
           }
 
           // Slow path — load what is missing (a pinned board for a project
-          // that was never selected, a connection whose sessions were never
-          // opened, connections not loaded yet) and decide again
+          // that was never selected, a run the flow store has not fetched, a
+          // connection whose sessions were never opened, connections not
+          // loaded yet) and decide again
           void (async () => {
-            if (ticket.worktree_id && !worktreesLoaded) {
+            if (documentRunId && !runLoaded) {
+              await useDocumentFlowStore.getState().refreshRun(documentRunId)
+            }
+            if (attachedWorktreeId() && !worktreesLoaded) {
               await useWorktreeStore.getState().loadWorktrees(ticket.project_id)
               if (findAttachedWorktree()) {
                 selectTicketWorktree()
@@ -1017,8 +1050,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             if (!useConnectionStore.getState().loaded) {
               await useConnectionStore.getState().loadConnections()
             }
-            const liveConnectionId =
-              connectionId ?? connectionSession?.connectionId ?? (await resolveSessionConnectionId())
+            const liveConnectionId = knownConnectionId() ?? (await resolveSessionConnectionId())
             if (liveConnectionId && selectTicketConnection(liveConnectionId)) return
             if (isConnectionProjectTicket) {
               selectBaseInstance()
