@@ -204,7 +204,14 @@ export function emitArchivePrompts(assessments: MemberAssessment[]): void {
   }
 }
 
-async function pushAttachedPRUpdates(assessment: MemberAssessment, prefix: string): Promise<void> {
+/**
+ * Push the branch of a worktree that already has a PR, telling the user whether the PR got
+ * new commits or was up to date already. One notification card, kept on failure.
+ */
+export async function pushAttachedPRUpdates(
+  assessment: Pick<MemberAssessment, 'worktreeId' | 'worktreePath' | 'branchName' | 'attachedPR'>,
+  prefix: string
+): Promise<void> {
   const { show, update } = usePRNotificationStore.getState()
   const pr = assessment.attachedPR
   if (!pr) return

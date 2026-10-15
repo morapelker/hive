@@ -134,6 +134,8 @@ import { canToggleAutoApprovePlan } from '@/lib/plan-auto-approve'
 import { isAgentCli } from '@shared/types/agent-sdk'
 import { documentRunIdOf } from '@shared/document-flow/run-ticket'
 import { DocumentRunTicketBody } from '@/components/document-flow/DocumentRunTicketBody'
+import { DocumentRunPRActions } from '@/components/document-flow/DocumentRunPRActions'
+import { useDocumentRunPRs } from '@/components/document-flow/useDocumentRunPRs'
 import {
   documentRunTicketToneClass,
   useDocumentRunTicket
@@ -230,6 +232,8 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   const isDocumentRunTicket = documentRunId !== null
   const documentRunView = useDocumentRunTicket(documentRunId, ticket.column)
   const documentRunToneClass = documentRunView ? documentRunTicketToneClass(documentRunView) : null
+  // The PRs from the run's integration branch(es) into their base; nothing for a remote ticket
+  const documentRunPRs = useDocumentRunPRs(remoteOrigin ? '' : (documentRunId ?? ''), ticket)
   // The document the run was made from: on the ticket row itself (so it is known even once the
   // run record is gone), else from the run for tickets created before it was stored there.
   const runSourcePath = useDocumentFlowStore((s) =>
@@ -787,8 +791,12 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
 
   const isCreatingPR = useGitStore(
     useCallback(
-      (s) => ticket.worktree_id ? s.creatingPRByWorktreeId.get(ticket.worktree_id) === true : false,
-      [ticket.worktree_id]
+      // A run's ticket shows its PR progress in its own PR row
+      (s) =>
+        ticket.worktree_id && !isDocumentRunTicket
+          ? s.creatingPRByWorktreeId.get(ticket.worktree_id) === true
+          : false,
+      [ticket.worktree_id, isDocumentRunTicket]
     )
   )
 
@@ -1727,6 +1735,10 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                 error={isError || isEliteError}
               />
             )}
+            {/* Document run: its PRs (one per repository) and the button that makes them */}
+            {documentRunId && documentRunView && !remoteOrigin && (
+              <DocumentRunPRActions runId={documentRunId} prs={documentRunPRs} />
+            )}
 
             {/* Description match snippet (board search) */}
             {descriptionSnippet && (
@@ -1930,8 +1942,8 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   </Tooltip>
                 )}
 
-                {/* PR badge */}
-                {ticket.github_pr_number && ticket.github_pr_url && (
+                {/* PR badge (a run's ticket lists its PRs in its own row below) */}
+                {!isDocumentRunTicket && ticket.github_pr_number && ticket.github_pr_url && (
                   <button
                     onClick={(e) => {
                       e.stopPropagation()
@@ -2301,6 +2313,21 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             >
               <ExternalLink className="h-3.5 w-3.5" />
               Open document
+            </ContextMenuItem>
+          )}
+          {documentRunId && documentRunPRs.targets.length > 0 && (
+            <ContextMenuItem
+              data-testid="ctx-create-run-prs"
+              disabled={documentRunPRs.creating}
+              onClick={() => void documentRunPRs.create()}
+              className="gap-2"
+            >
+              <GitPullRequest className="h-3.5 w-3.5" />
+              {documentRunPRs.creating
+                ? documentRunPRs.targets.length > 1
+                  ? 'Creating PRs…'
+                  : 'Creating PR…'
+                : documentRunPRs.label}
             </ContextMenuItem>
           )}
 

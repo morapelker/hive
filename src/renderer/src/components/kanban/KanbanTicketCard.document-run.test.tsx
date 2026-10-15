@@ -9,24 +9,33 @@ import { KanbanTicketCard } from './KanbanTicketCard'
 import { makeDetail } from '@/components/document-flow/test-fixtures'
 import { toast } from '@/lib/toast'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
+import { useGitStore } from '@/stores/useGitStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useQuestionStore, type QuestionRequest } from '@/stores/useQuestionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { WAITING_PREFIX } from '@shared/document-flow/planning'
-import type { DocumentRunDetail } from '@shared/types/document-flow'
+import type { DocumentRunDetail, DocumentRunMember } from '@shared/types/document-flow'
 import type { KanbanTicket } from '../../../../main/db/types'
 
 const api = vi.hoisted(() => ({ get: vi.fn() }))
 const projectApi = vi.hoisted(() => ({ openPath: vi.fn() }))
+const systemApi = vi.hoisted(() => ({ openInChrome: vi.fn() }))
+const runPRs = vi.hoisted(() => ({ createDocumentRunPRs: vi.fn() }))
 
 vi.mock('@/api/document-flow-api', () => ({ documentFlowApi: api }))
 vi.mock('@/api/project-api', () => ({ projectApi }))
+vi.mock('@/api/system-api', () => ({ systemApi }))
+vi.mock('@/lib/document-flow/run-prs', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/document-flow/run-prs')>()),
+  createDocumentRunPRs: runPRs.createDocumentRunPRs
+}))
 
 vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() }
 }))
 
 const initialFlowState = useDocumentFlowStore.getState()
+const initialGitState = useGitStore.getState()
 const initialKanbanState = useKanbanStore.getState()
 const initialQuestionState = useQuestionStore.getState()
 const initialWorktreeStatusState = useWorktreeStatusStore.getState()
@@ -138,6 +147,7 @@ beforeEach(() => {
     async (runId: string) => useDocumentFlowStore.getState().runsById[runId] ?? null
   )
   projectApi.openPath.mockResolvedValue('')
+  runPRs.createDocumentRunPRs.mockResolvedValue([])
 })
 
 afterEach(async () => {
@@ -145,6 +155,7 @@ afterEach(async () => {
   cleanup()
   vi.resetAllMocks()
   useDocumentFlowStore.setState(initialFlowState, true)
+  useGitStore.setState(initialGitState, true)
   useKanbanStore.setState(initialKanbanState, true)
   useQuestionStore.setState(initialQuestionState, true)
   useWorktreeStatusStore.setState(initialWorktreeStatusState, true)
@@ -801,3 +812,173 @@ describe('an ordinary ticket', () => {
     })
   })
 })
+
+// A launched git run: one integration branch, cut from main
+const launchedGitRun = (): DocumentRunDetail =>
+  makeDetail(
+    {
+      id: 'run-live',
+      status: 'completed',
+      base_branch: 'main',
+      base_sha: '1111111aaaaaaa',
+      integration_branch: 'doc-checkout-redesign',
+      integration_worktree_id: 'wt-integration',
+      integration_worktree_path: '/worktrees/shop--doc-checkout-redesign'
+    },
+    [{ key: 'A1', status: 'merged' }]
+  )
+
+const MEMBERS: DocumentRunMember[] = [
+  {
+    project_id: 'web',
+    project_name: 'Web',
+    project_path: '/repo/web',
+    symlink_name: 'web',
+    base_branch: 'main',
+    base_sha: 'aaaaaaa1111111',
+    integration_branch: 'doc-checkout',
+    integration_worktree_id: 'wt-web-int',
+    integration_worktree_path: '/worktrees/web--doc-checkout'
+  },
+  {
+    project_id: 'api',
+    project_name: 'API',
+    project_path: '/repo/api',
+    symlink_name: 'api',
+    base_branch: 'master',
+    base_sha: 'bbbbbbb2222222',
+    integration_branch: 'doc-checkout',
+    integration_worktree_id: 'wt-api-int',
+    integration_worktree_path: '/worktrees/api--doc-checkout'
+  }
+]
+
+// A launched connection run: an integration branch in each of two member repositories
+const launchedConnectionRun = (): DocumentRunDetail =>
+  makeDetail(
+    {
+      id: 'run-live',
+      status: 'completed',
+      base_branch: 'main + master',
+      integration_branch: 'doc-checkout',
+      integration_connection_id: 'conn-int',
+      integration_connection_path: '/connections/doc-checkout',
+      members: MEMBERS
+    },
+    [{ key: 'A1', status: 'merged' }]
+  )
+
+describe('the PR button of a document run ticket', () => {
+  const prRow = (): HTMLElement => screen.getByTestId('kanban-docflow-run-prs-run-live')
+  const prButton = (): HTMLElement => screen.getByTestId('kanban-docflow-run-pr-button-run-live')
+
+  it('offers nothing before the run is launched: there is no integration branch yet', () => {
+    seedRuns(makeDetail({ id: 'run-live', status: 'preview' }))
+    render(<KanbanTicketCard ticket={makeTicket({ worktree_id: null, column: 'todo' })} />)
+
+    expect(screen.queryByTestId('kanban-docflow-run-prs-run-live')).toBeNull()
+  })
+
+  it('creates a PR from the integration branch of a git run, without opening the run', async () => {
+    seedRuns(launchedGitRun())
+    render(<KanbanTicketCard ticket={makeTicket({ column: 'review' })} />)
+
+    expect(prButton()).toHaveTextContent(/^Create PR$/)
+    expect(prButton()).toBeEnabled()
+    fireEvent.click(prButton())
+
+    await waitFor(() => expect(runPRs.createDocumentRunPRs).toHaveBeenCalledTimes(1))
+    expect(runPRs.createDocumentRunPRs).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'run-live', integration_worktree_id: 'wt-integration' })
+    )
+    // The click stays on the button: the card did not open the dashboard.
+    expect(useDocumentFlowStore.getState().dashboardRunId).toBeNull()
+  })
+
+  it('creates one PR per member of a connection run', async () => {
+    seedRuns(launchedConnectionRun())
+    render(<KanbanTicketCard ticket={makeTicket({ worktree_id: null, column: 'review' })} />)
+
+    expect(prButton()).toHaveTextContent(/^Create PRs$/)
+    fireEvent.click(prButton())
+
+    await waitFor(() => expect(runPRs.createDocumentRunPRs).toHaveBeenCalledTimes(1))
+    expect(runPRs.createDocumentRunPRs).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'run-live', members: MEMBERS })
+    )
+  })
+
+  it('lists the PRs the integration branches have, named after their repositories, and opens them', () => {
+    seedRuns(launchedConnectionRun())
+    useGitStore.getState().setAttachedPR('wt-web-int', {
+      number: 12,
+      url: 'https://github.com/acme/web/pull/12'
+    })
+    render(<KanbanTicketCard ticket={makeTicket({ worktree_id: null, column: 'review' })} />)
+
+    const webLink = screen.getByTestId('kanban-docflow-run-pr-link-run-live-wt-web-int')
+    expect(webLink).toHaveTextContent(/^Web #12$/)
+    expect(screen.queryByTestId('kanban-docflow-run-pr-link-run-live-wt-api-int')).toBeNull()
+    // One member still has no PR: the button still creates.
+    expect(prButton()).toHaveTextContent(/^Create PRs$/)
+
+    fireEvent.click(webLink)
+    expect(systemApi.openInChrome).toHaveBeenCalledWith('https://github.com/acme/web/pull/12')
+    expect(useDocumentFlowStore.getState().dashboardRunId).toBeNull()
+
+    act(() => {
+      useGitStore.getState().setAttachedPR('wt-api-int', {
+        number: 3,
+        url: 'https://github.com/acme/api/pull/3'
+      })
+    })
+    expect(screen.getByTestId('kanban-docflow-run-pr-link-run-live-wt-api-int')).toHaveTextContent(
+      /^API #3$/
+    )
+    // Every branch has its PR: the button pushes updates to them instead.
+    expect(prButton()).toHaveTextContent(/^Update PRs$/)
+  })
+
+  it("shows a git run's PR from its ticket, once, in the PR row rather than the pill row", () => {
+    seedRuns(launchedGitRun())
+    render(
+      <KanbanTicketCard
+        ticket={makeTicket({
+          column: 'review',
+          github_pr_number: 7,
+          github_pr_url: 'https://github.com/acme/shop/pull/7'
+        })}
+      />
+    )
+
+    const link = screen.getByTestId('kanban-docflow-run-pr-link-run-live-wt-integration')
+    expect(link).toHaveTextContent(/^#7$/)
+    expect(within(card()).getAllByTitle('Open PR #7 in browser')).toHaveLength(1)
+    expect(prButton()).toHaveTextContent(/^Update PR$/)
+  })
+
+  it('waits while a PR is on its way', () => {
+    seedRuns(launchedGitRun())
+    useGitStore.getState().setCreatingPR('wt-integration', true)
+    render(<KanbanTicketCard ticket={makeTicket({ column: 'review' })} />)
+
+    expect(prButton()).toBeDisabled()
+    expect(prButton()).toHaveTextContent(/^Creating PR…$/)
+    // The row owns the progress: no second "Creating PR" pill in the pill row.
+    expect(within(prRow()).getByText('Creating PR…')).toBeInTheDocument()
+    expect(within(card()).queryByText('Creating PR...')).toBeNull()
+  })
+
+  it('is also in the context menu', async () => {
+    seedRuns(launchedConnectionRun())
+    render(<KanbanTicketCard ticket={makeTicket({ worktree_id: null, column: 'review' })} />)
+
+    fireEvent.contextMenu(card())
+    const item = await screen.findByTestId('ctx-create-run-prs')
+    expect(item).toHaveTextContent(/^Create PRs$/)
+    fireEvent.click(item)
+
+    await waitFor(() => expect(runPRs.createDocumentRunPRs).toHaveBeenCalledTimes(1))
+  })
+})
+
