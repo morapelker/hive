@@ -268,10 +268,39 @@ export function useClaudeCliStatusListener(): void {
       }
     )
 
+    // A fresh claude-cli spawn that never got going: the CLI is sitting on its
+    // folder-trust dialog, or no SessionStart hook arrived in the launch
+    // window. The ticket shows a "Not started" badge until a hook proves the
+    // session running (or the PTY goes away), and the user is told once.
+    const unsubscribeLaunch = terminalApi.onClaudeCliLaunch(({ sessionId, state }) => {
+      const store = useWorktreeStatusStore.getState()
+      if (state === 'clear') {
+        store.setSessionLaunchState(sessionId, null)
+        return
+      }
+      if (store.launchStateBySession[sessionId] === state) return
+      store.setSessionLaunchState(sessionId, state)
+      const sessionName = useSessionStore.getState().getSessionById(sessionId)?.name
+      const where = sessionName ? ` in "${sessionName}"` : ''
+      if (state === 'awaiting_trust') {
+        toast.warning(`Claude has not started${where}: it is waiting on its folder-trust prompt`, {
+          description:
+            'Open the session and answer "Yes, I trust this folder" — the ticket\'s prompt is sent only after that.',
+          duration: 10000
+        })
+      } else {
+        toast.warning(`Claude has not started${where}`, {
+          description: 'No session start was reported. Open the session to see what it is waiting on.',
+          duration: 10000
+        })
+      }
+    })
+
     return () => {
       unsubscribe()
       unsubscribeBackgroundWork()
       unsubscribeApiError()
+      unsubscribeLaunch()
     }
   }, [])
 }

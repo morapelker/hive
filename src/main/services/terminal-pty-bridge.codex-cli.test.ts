@@ -102,7 +102,8 @@ vi.mock('./claude-cli-plan-handoff', () => ({
 }))
 
 vi.mock('./claude-trust', () => ({
-  ensureProjectTrustCheck: mocks.ensureProjectTrustCheck
+  ensureProjectTrustCheck: mocks.ensureProjectTrustCheck,
+  reassertSessionFolderTrust: vi.fn(async () => ({ wasMissing: false }))
 }))
 
 // Keep the real writeClaudeCliPrompt (bracketed paste) but stub the timer-based

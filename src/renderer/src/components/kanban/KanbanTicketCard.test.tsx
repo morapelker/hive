@@ -398,3 +398,38 @@ describe('KanbanTicketCard background work badges', () => {
     expect(screen.queryByTestId('kanban-ticket-running-subagents')).toBeNull()
   })
 })
+
+describe('KanbanTicketCard launch stall', () => {
+  afterEach(() => {
+    cleanup()
+    useWorktreeStatusStore.setState({ launchStateBySession: {} })
+  })
+
+  it('shows a "Not started" badge while the linked claude session waits on its trust prompt', () => {
+    useWorktreeStatusStore.setState({ launchStateBySession: { 'session-1': 'awaiting_trust' } })
+
+    render(
+      <KanbanTicketCard
+        ticket={{ ...baseTicket, column: 'in_progress', current_session_id: 'session-1' }}
+      />
+    )
+
+    const badge = screen.getByTestId('kanban-ticket-not-started-badge')
+    expect(badge).toHaveTextContent('Not started · trust prompt')
+    expect(badge.getAttribute('title')).toContain('folder-trust prompt')
+  })
+
+  it('shows a plain "Not started" badge when no session start was reported', () => {
+    useWorktreeStatusStore.setState({ launchStateBySession: { 'session-1': 'not_started' } })
+
+    render(<KanbanTicketCard ticket={{ ...baseTicket, current_session_id: 'session-1' }} />)
+
+    expect(screen.getByTestId('kanban-ticket-not-started-badge')).toHaveTextContent('Not started')
+  })
+
+  it('renders no badge once the mark is dropped', () => {
+    render(<KanbanTicketCard ticket={{ ...baseTicket, current_session_id: 'session-1' }} />)
+
+    expect(screen.queryByTestId('kanban-ticket-not-started-badge')).toBeNull()
+  })
+})

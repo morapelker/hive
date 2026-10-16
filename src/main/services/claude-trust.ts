@@ -4,6 +4,7 @@ import { homedir } from 'os'
 import { join } from 'path'
 import type { Project } from '../db/types'
 import { atomicWriteJson } from './atomic-json'
+import { withClaudeConfigLock } from './claude-config-lock'
 import { getUserEnvironmentVariables } from './env-vars'
 import { createLogger } from './logger'
 
@@ -29,6 +30,9 @@ export function resolveClaudeConfigPath(env: Record<string, string | undefined>)
 // can't interleave and drop each other's writes.
 let writeChain: Promise<unknown> = Promise.resolve()
 
+/** Read-back attempts after a write before giving up on confirming it landed. */
+const VERIFY_ATTEMPTS = 3
+
 /**
  * Ensure `projects[folderPath].hasTrustDialogAccepted === true` in the claude
  * CLI config at `configPath`, creating the file or the entry as needed while
@@ -50,56 +54,157 @@ export async function ensureFoldersTrustedInClaudeConfig(
   configPath: string,
   folderPaths: string[]
 ): Promise<boolean> {
-  const run = writeChain.then(() => ensureFoldersTrusted(configPath, folderPaths))
+  return (await trustFoldersInClaudeConfig(configPath, folderPaths)).ok
+}
+
+export interface TrustFoldersResult {
+  /** False when the config could not be read or the write could not be confirmed. */
+  ok: boolean
+  /** Folders that were not trusted before this call and have been written now. */
+  newlyTrusted: string[]
+}
+
+/**
+ * Like `ensureFoldersTrustedInClaudeConfig`, and also reports which folders
+ * had to be written. Callers use that to tell a routine pre-flight from a
+ * repair: an entry that has to be written again for a folder that was trusted
+ * at launch time was lost to a concurrent writer.
+ */
+export async function trustFoldersInClaudeConfig(
+  configPath: string,
+  folderPaths: string[]
+): Promise<TrustFoldersResult> {
+  const run = writeChain.then(() =>
+    withClaudeConfigLock(configPath, () => ensureFoldersTrusted(configPath, folderPaths))
+  )
   writeChain = run.catch(() => undefined)
   return run
 }
 
-async function ensureFoldersTrusted(configPath: string, folderPaths: string[]): Promise<boolean> {
-  let config: Record<string, unknown> = {}
-  if (existsSync(configPath)) {
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(await readFile(configPath, 'utf-8'))
-    } catch (error) {
-      log.warn('Claude config exists but is unparseable; leaving it untouched', {
-        configPath,
-        error: error instanceof Error ? error.message : String(error)
-      })
-      return false
-    }
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-      log.warn('Claude config is not a JSON object; leaving it untouched', { configPath })
-      return false
-    }
-    config = parsed as Record<string, unknown>
-  }
+type ConfigRead =
+  | { kind: 'ok'; config: Record<string, unknown> }
+  | { kind: 'unreadable' }
 
-  const projects =
-    typeof config.projects === 'object' &&
+async function readClaudeConfig(configPath: string): Promise<ConfigRead> {
+  if (!existsSync(configPath)) return { kind: 'ok', config: {} }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(await readFile(configPath, 'utf-8'))
+  } catch (error) {
+    log.warn('Claude config exists but is unparseable; leaving it untouched', {
+      configPath,
+      error: error instanceof Error ? error.message : String(error)
+    })
+    return { kind: 'unreadable' }
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    log.warn('Claude config is not a JSON object; leaving it untouched', { configPath })
+    return { kind: 'unreadable' }
+  }
+  return { kind: 'ok', config: parsed as Record<string, unknown> }
+}
+
+function projectsOf(config: Record<string, unknown>): Record<string, unknown> {
+  return typeof config.projects === 'object' &&
     config.projects !== null &&
     !Array.isArray(config.projects)
-      ? (config.projects as Record<string, unknown>)
-      : {}
+    ? (config.projects as Record<string, unknown>)
+    : {}
+}
 
+function isFolderTrusted(config: Record<string, unknown>, folderPath: string): boolean {
+  const entry = projectsOf(config)[folderPath]
+  return (
+    typeof entry === 'object' &&
+    entry !== null &&
+    (entry as Record<string, unknown>).hasTrustDialogAccepted === true
+  )
+}
+
+async function ensureFoldersTrusted(
+  configPath: string,
+  folderPaths: string[]
+): Promise<TrustFoldersResult> {
+  const folders = [...new Set(folderPaths)]
   const newlyTrusted: string[] = []
-  for (const folderPath of new Set(folderPaths)) {
-    const entry =
-      typeof projects[folderPath] === 'object' && projects[folderPath] !== null
-        ? (projects[folderPath] as Record<string, unknown>)
-        : {}
-    if (entry.hasTrustDialogAccepted === true) continue
-    projects[folderPath] = { ...entry, hasTrustDialogAccepted: true }
-    newlyTrusted.push(folderPath)
-  }
-  if (newlyTrusted.length === 0) {
-    return true
-  }
+  // Write, then read back. The lock keeps cooperating writers out, but a
+  // process that writes from a stale in-memory copy without taking it can
+  // still land its write on top of ours; a missing entry on read-back is
+  // exactly that, and the write is simply repeated.
+  for (let attempt = 1; attempt <= VERIFY_ATTEMPTS; attempt++) {
+    const read = await readClaudeConfig(configPath)
+    if (read.kind !== 'ok') return { ok: false, newlyTrusted }
+    const config = read.config
+    const projects = projectsOf(config)
+    const missing = folders.filter((folderPath) => !isFolderTrusted(config, folderPath))
+    if (missing.length === 0) return { ok: true, newlyTrusted }
 
-  config.projects = projects
-  await atomicWriteJson(configPath, config, { pretty: true })
-  log.info('Marked folders trusted in claude config', { configPath, folderPaths: newlyTrusted })
-  return true
+    for (const folderPath of missing) {
+      const entry =
+        typeof projects[folderPath] === 'object' && projects[folderPath] !== null
+          ? (projects[folderPath] as Record<string, unknown>)
+          : {}
+      projects[folderPath] = { ...entry, hasTrustDialogAccepted: true }
+      if (!newlyTrusted.includes(folderPath)) newlyTrusted.push(folderPath)
+    }
+    config.projects = projects
+    await atomicWriteJson(configPath, config, { pretty: true })
+    log.info('Marked folders trusted in claude config', {
+      configPath,
+      folderPaths: missing,
+      ...(attempt > 1 ? { attempt } : {})
+    })
+
+    const verify = await readClaudeConfig(configPath)
+    if (verify.kind !== 'ok') return { ok: false, newlyTrusted }
+    const lost = folders.filter((folderPath) => !isFolderTrusted(verify.config, folderPath))
+    if (lost.length === 0) return { ok: true, newlyTrusted }
+    log.warn('Trust entries missing right after the write (concurrent writer); retrying', {
+      configPath,
+      folderPaths: lost,
+      attempt
+    })
+  }
+  log.warn('Could not confirm trust entries in claude config', { configPath, folderPaths: folders })
+  return { ok: false, newlyTrusted }
+}
+
+/**
+ * Called when a spawned CLI is seen sitting on its folder-trust dialog, i.e.
+ * the pre-flight's entry did not reach the CLI. Writes the session folder's
+ * entry again (a `true` here means it had indeed gone missing) so the next
+ * launch, or a relaunch of this one, does not stall again. Never throws.
+ */
+export async function reassertSessionFolderTrust(
+  db: Pick<TrustCheckDb, 'getSetting'>,
+  folderPath: string,
+  opts?: { configPath?: string }
+): Promise<{ wasMissing: boolean }> {
+  try {
+    const configPath =
+      opts?.configPath ??
+      resolveClaudeConfigPath({ ...process.env, ...getUserEnvironmentVariables(db) })
+    const result = await trustFoldersInClaudeConfig(configPath, [folderPath])
+    const wasMissing = result.newlyTrusted.includes(folderPath)
+    if (wasMissing) {
+      log.warn('Trust entry was missing while the CLI showed its trust dialog; written again', {
+        configPath,
+        folderPath
+      })
+    } else {
+      log.warn(
+        'CLI shows its trust dialog although the folder is trusted in the config it should read',
+        { configPath, folderPath }
+      )
+    }
+    return { wasMissing }
+  } catch (error) {
+    log.warn('Failed to re-assert folder trust', {
+      folderPath,
+      error: error instanceof Error ? error.message : String(error)
+    })
+    return { wasMissing: false }
+  }
 }
 
 /**

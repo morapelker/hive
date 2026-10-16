@@ -78,7 +78,10 @@ vi.mock('./claude-cli-plan-handoff', () => ({
   externalizeGoalHandoffPlan: vi.fn((prompt: string) => prompt)
 }))
 
-vi.mock('./claude-trust', () => ({ ensureProjectTrustCheck: vi.fn(async () => {}) }))
+vi.mock('./claude-trust', () => ({
+  ensureProjectTrustCheck: vi.fn(async () => {}),
+  reassertSessionFolderTrust: vi.fn(async () => ({ wasMissing: false }))
+}))
 
 vi.mock('./claude-cli-pty-prompt', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./claude-cli-pty-prompt')>()),

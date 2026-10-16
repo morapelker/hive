@@ -652,6 +652,20 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     )
   )
 
+  // ── Launch that never got going (claude-cli) ──
+  // The CLI is sitting on its folder-trust dialog, or never reported a
+  // SessionStart: nothing has run, whatever the column says. Dropped by the
+  // store once a hook arrives or the PTY goes away.
+  const launchStall = useWorktreeStatusStore(
+    useCallback(
+      (state) => {
+        if (!ticket.current_session_id) return null
+        return state.launchStateBySession[ticket.current_session_id] ?? null
+      },
+      [ticket.current_session_id]
+    )
+  )
+
   // The run index knows shell-command sessions even when they are not loaded into the
   // session store (closed tab, other worktree).
   const isShellCommandRunKnown = useShellCommandRunStore(
@@ -1793,7 +1807,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             )}
 
             {/* Badges + progress row */}
-            {(hasAttachments || hasNote || worktreeName || queuedBranchLabel || projectTag || connectionName || ticket.plan_ready || isError || isInMergeQueue || rightAlignedSlot || isArchived || isBlocked || blockingDiagnostic || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram || ticket.goal_mode || ticket.auto_approve_plan || activeRemoteLaunch || showModelBadge || backgroundWork) && (
+            {(hasAttachments || hasNote || worktreeName || queuedBranchLabel || projectTag || connectionName || ticket.plan_ready || isError || launchStall || isInMergeQueue || rightAlignedSlot || isArchived || isBlocked || blockingDiagnostic || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram || ticket.goal_mode || ticket.auto_approve_plan || activeRemoteLaunch || showModelBadge || backgroundWork) && (
               <div className="mt-1.5 flex flex-wrap items-center gap-1">
                 {/* Archived badge */}
                 {isArchived && (
@@ -2048,6 +2062,21 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                 )}
 
                 {/* Error badge + Continue nudge for the linked session */}
+                {/* claude-cli spawn that never got going: nothing has run yet */}
+                {launchStall && (
+                  <span
+                    data-testid="kanban-ticket-not-started-badge"
+                    title={
+                      launchStall === 'awaiting_trust'
+                        ? 'Claude has not started: it is waiting on its folder-trust prompt. Open the session and answer "Yes, I trust this folder".'
+                        : 'Claude has not started: no session start was reported. Open the session to see what it is waiting on.'
+                    }
+                    className={cn(ticketPillBaseClass, 'border-amber-500/30 bg-amber-500/10 text-amber-500')}
+                  >
+                    <Hourglass className="h-2.5 w-2.5" />
+                    {launchStall === 'awaiting_trust' ? 'Not started · trust prompt' : 'Not started'}
+                  </span>
+                )}
                 {isError && (
                   <>
                     <span

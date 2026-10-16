@@ -24,13 +24,23 @@ import {
   type ClaudeCliApiErrorPayload
 } from '@shared/types/claude-cli-api-error'
 import {
+  CLAUDE_CLI_LAUNCH_CHANNEL,
+  isClaudeCliLaunchPayload,
+  type ClaudeCliLaunchPayload
+} from '@shared/types/claude-cli-launch'
+import {
   SHELL_COMMAND_STATUS_CHANNEL,
   isShellCommandStatusPayload,
   type ShellCommandStatusPayload
 } from '@shared/shell-command-events'
 import type { ShellCommandRunState } from '@shared/lib/shell-commands'
 
-export type { ClaudeCliBackgroundWorkPayload, ClaudeCliApiErrorPayload, ShellCommandStatusPayload }
+export type {
+  ClaudeCliBackgroundWorkPayload,
+  ClaudeCliApiErrorPayload,
+  ClaudeCliLaunchPayload,
+  ShellCommandStatusPayload
+}
 
 export type ClaudeCliSessionStatusType =
   | 'working'
@@ -249,6 +259,11 @@ export const terminalApi = {
   ): (() => void) => {
     return getRendererRpcClient().subscribe(CLAUDE_CLI_API_ERROR_CHANNEL, (event: ServerEvent) => {
       if (isClaudeCliApiErrorPayload(event.payload)) callback(event.payload)
+    })
+  },
+  onClaudeCliLaunch: (callback: (payload: ClaudeCliLaunchPayload) => void): (() => void) => {
+    return getRendererRpcClient().subscribe(CLAUDE_CLI_LAUNCH_CHANNEL, (event: ServerEvent) => {
+      if (isClaudeCliLaunchPayload(event.payload)) callback(event.payload)
     })
   },
   onShellCommandStatus: (callback: (payload: ShellCommandStatusPayload) => void): (() => void) => {

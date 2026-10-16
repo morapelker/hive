@@ -8,12 +8,15 @@ const mocks = vi.hoisted(() => {
   const exitCallbacks = new Map<string, (code: number | null) => void>()
   const dataCallbacks = new Map<string, (data: string) => void>()
   const claudeSessionWatchCallbacks = new Map<string, (claudeSessionId: string) => boolean | void>()
+  const hookSubscribers = new Set<(event: unknown) => void>()
 
   return {
     handlers,
     exitCallbacks,
     dataCallbacks,
     claudeSessionWatchCallbacks,
+    hookSubscribers,
+    reassertSessionFolderTrust: vi.fn(async () => ({ wasMissing: true })),
     publishDesktopBackendEvent: vi.fn(),
     getDatabase: vi.fn(),
     getClaudeHookServer: vi.fn(),
@@ -102,7 +105,8 @@ vi.mock('./claude-cli-plan-handoff', () => ({
 }))
 
 vi.mock('./claude-trust', () => ({
-  ensureProjectTrustCheck: mocks.ensureProjectTrustCheck
+  ensureProjectTrustCheck: mocks.ensureProjectTrustCheck,
+  reassertSessionFolderTrust: mocks.reassertSessionFolderTrust
 }))
 
 // Keep the real writeClaudeCliPrompt (bracketed paste) but stub the timer-based
@@ -127,7 +131,11 @@ vi.mock('./claude-hook-server', () => ({
   getLastClaudeCliStatus: mocks.getLastClaudeCliStatus,
   publishClaudeCliStatus: mocks.publishClaudeCliStatus,
   resetClaudeCliBackgroundWork: mocks.resetClaudeCliBackgroundWork,
-  subscribeClaudeCliStatus: mocks.subscribeClaudeCliStatus
+  subscribeClaudeCliStatus: mocks.subscribeClaudeCliStatus,
+  subscribeCliHookEvents: vi.fn((subscriber: (event: unknown) => void) => {
+    mocks.hookSubscribers.add(subscriber)
+    return () => mocks.hookSubscribers.delete(subscriber)
+  })
 }))
 
 vi.mock('../desktop/backend-event-publisher', () => ({
@@ -843,5 +851,107 @@ describe('Claude CLI terminal hook status wiring', () => {
     exitCallback?.(0)
 
     expect(mocks.publishClaudeCliStatus).not.toHaveBeenCalled()
+  })
+})
+
+describe('Claude CLI launch watch (trust dialog / no SessionStart)', () => {
+  const TRUST_DIALOG =
+    '\x1b[2GQuick\x1b[8Gsafety\x1b[15Gcheck:\x1b[22GIs\x1b[25Gthis\x1b[30Ga\x1b[32Gproject\r\r\n' +
+    '\x1b[2G❯\x1b[4GNo,\x1b[8Gexit\r\r\n\x1b[4GYes,\x1b[9GI\x1b[11Gtrust\x1b[17Gthis\x1b[22Gfolder'
+
+  beforeEach(() => {
+    mocks.handlers.clear()
+    mocks.exitCallbacks.clear()
+    mocks.dataCallbacks.clear()
+    mocks.claudeSessionWatchCallbacks.clear()
+    mocks.hookSubscribers.clear()
+    vi.clearAllMocks()
+    __resetRuntimeRegistryForTests()
+
+    setupDb()
+    mocks.ptyService.has.mockReturnValue(false)
+    mocks.getClaudeHookServer.mockResolvedValue({ port: 45678 })
+    mocks.buildClaudeCliHookSettings.mockReturnValue('{"hooks":{"mock":true}}')
+    mocks.publishDesktopBackendEvent.mockResolvedValue(true)
+  })
+
+  afterEach(() => {
+    cleanupTerminals()
+  })
+
+  const launchEvents = (): unknown[] =>
+    mocks.publishDesktopBackendEvent.mock.calls
+      .filter(([channel]) => channel === 'claude-cli:launch')
+      .map(([, payload]) => payload)
+
+  it('flags a fresh spawn sitting on the trust dialog and re-asserts the folder trust', async () => {
+    await createClaudeCliTerminal('hive-session-1', { pendingPrompt: 'Implement the plan' })
+
+    mocks.dataCallbacks.get('hive-session-1')?.(TRUST_DIALOG)
+    await waitImmediate()
+
+    expect(launchEvents()).toEqual([
+      { sessionId: 'hive-session-1', state: 'awaiting_trust', detail: 'trust_dialog' }
+    ])
+    // The CLI's cwd is what it keys trust by; that is the entry written again.
+    expect(mocks.reassertSessionFolderTrust).toHaveBeenCalledWith(
+      mocks.getDatabase.mock.results.at(-1)!.value,
+      '/repo/worktree'
+    )
+  })
+
+  it('clears the mark as soon as any hook of the session arrives', async () => {
+    await createClaudeCliTerminal('hive-session-1', { pendingPrompt: 'Implement the plan' })
+    mocks.dataCallbacks.get('hive-session-1')?.(TRUST_DIALOG)
+
+    for (const subscriber of mocks.hookSubscribers) {
+      subscriber({
+        sessionId: 'hive-session-1',
+        cli: 'claude',
+        hook: { hook_event_name: 'SessionStart' }
+      })
+    }
+
+    expect(launchEvents()).toEqual([
+      { sessionId: 'hive-session-1', state: 'awaiting_trust', detail: 'trust_dialog' },
+      { sessionId: 'hive-session-1', state: 'clear', detail: 'hook:SessionStart' }
+    ])
+  })
+
+  it('clears the mark when the PTY exits', async () => {
+    await createClaudeCliTerminal('hive-session-1', { pendingPrompt: 'Implement the plan' })
+    mocks.dataCallbacks.get('hive-session-1')?.(TRUST_DIALOG)
+
+    mocks.exitCallbacks.get('hive-session-1')?.(0)
+
+    expect(launchEvents()).toEqual([
+      { sessionId: 'hive-session-1', state: 'awaiting_trust', detail: 'trust_dialog' },
+      { sessionId: 'hive-session-1', state: 'clear', detail: 'pty_exit' }
+    ])
+  })
+
+  it('does not watch a view mounted onto an already-running PTY', async () => {
+    mocks.ptyService.has.mockReturnValue(true)
+    await createClaudeCliTerminal('hive-session-1', {})
+
+    mocks.dataCallbacks.get('hive-session-1')?.(TRUST_DIALOG)
+
+    expect(launchEvents()).toEqual([])
+    expect(mocks.reassertSessionFolderTrust).not.toHaveBeenCalled()
+  })
+
+  it('stays quiet for a spawn whose output never shows the dialog', async () => {
+    await createClaudeCliTerminal('hive-session-1', { pendingPrompt: 'Implement the plan' })
+
+    mocks.dataCallbacks.get('hive-session-1')?.('Welcome to Claude Code!\r\n')
+    for (const subscriber of mocks.hookSubscribers) {
+      subscriber({
+        sessionId: 'hive-session-1',
+        cli: 'claude',
+        hook: { hook_event_name: 'SessionStart' }
+      })
+    }
+
+    expect(launchEvents()).toEqual([])
   })
 })

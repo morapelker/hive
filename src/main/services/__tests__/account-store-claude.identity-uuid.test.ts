@@ -44,6 +44,11 @@ vi.mock('../atomic-json', () => ({
   atomicWriteJson: vi.fn()
 }))
 
+// The real lock would mkdir next to the real ~/.claude.json; run the body directly.
+vi.mock('../claude-config-lock', () => ({
+  withClaudeConfigLock: (_path: string, fn: () => Promise<unknown>) => fn()
+}))
+
 vi.mock('../logger', () => ({
   createLogger: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() })
 }))

@@ -28,7 +28,14 @@ import {
 import { setClaudeCliPlanAutoApprove } from './claude-cli-plan-auto-approve'
 import { logClaudeBinaryVersion, resolveClaudeBinaryPath } from './claude-binary-resolver'
 import { buildClaudeCliPtySpawn } from './claude-cli-spawner'
-import { ensureProjectTrustCheck } from './claude-trust'
+import { ensureProjectTrustCheck, reassertSessionFolderTrust } from './claude-trust'
+import {
+  armClaudeCliLaunchWatch,
+  clearAllClaudeCliLaunchWatches,
+  clearClaudeCliLaunchWatch,
+  noteClaudeCliLaunchHook,
+  observeClaudeCliLaunchOutput
+} from './claude-cli-launch-watch'
 import { getCustomProviderById } from './custom-providers'
 import type { CustomProviderModel } from '@shared/types/custom-provider'
 import { externalizeGoalHandoffPlan } from './claude-cli-plan-handoff'
@@ -93,6 +100,19 @@ const claudeCliTranscriptSources = new Map<
 >()
 const claudeCliLastStatus = new Map<string, ClaudeCliStatusPayload>()
 let unsubscribeClaudeCliStatus: (() => void) | null = null
+let unsubscribeClaudeHookEvents: (() => void) | null = null
+
+/**
+ * Any hook of a claude session proves its REPL is running: it ends the launch
+ * watch armed at spawn (trust dialog / no SessionStart detection).
+ */
+function ensureClaudeHookSubscription(): void {
+  if (unsubscribeClaudeHookEvents) return
+  unsubscribeClaudeHookEvents = subscribeCliHookEvents((event) => {
+    if (event.cli !== 'claude' || !claudeCliSessions.has(event.sessionId)) return
+    noteClaudeCliLaunchHook(event.sessionId, event.hook.hook_event_name)
+  })
+}
 
 // ── Codex CLI (TUI) sessions ──────────────────────────────────────────
 // Codex sessions share every generic CLI path above (status subscription,
@@ -696,6 +716,7 @@ export function destroyNodePtyTerminal(terminalId: string): void {
   closeClaudePlanFollowupWatcher(terminalId)
   clearClaudeCliInteractions(terminalId)
   clearClaudeCliSubagentTracking(terminalId)
+  clearClaudeCliLaunchWatch(terminalId, 'destroyed')
   resetClaudeCliBackgroundWork(terminalId)
   claudeCliSessions.delete(terminalId)
   claudeCliWorktreeBasenames.delete(terminalId)
@@ -726,6 +747,7 @@ function attachNodePtyListeners(terminalId: string): void {
         handleCodexTitle(terminalId, title)
       }
     } else if (claudeCliSessions.has(terminalId)) {
+      observeClaudeCliLaunchOutput(terminalId, data)
       const title = processClaudeCliPtyData(terminalId, data, {
         worktreeBasename: claudeCliWorktreeBasenames.get(terminalId)
       })
@@ -772,6 +794,7 @@ function attachNodePtyListeners(terminalId: string): void {
     if (claudeCliSessions.has(terminalId)) {
       clearClaudeCliInteractions(terminalId)
       clearClaudeCliSubagentTracking(terminalId)
+      clearClaudeCliLaunchWatch(terminalId, 'pty_exit')
       // The CLI process just died, taking its background shells/monitors with
       // it (survivors are orphans reported only to a future session).
       resetClaudeCliBackgroundWork(terminalId)
@@ -1096,6 +1119,22 @@ export async function createClaudeCliTerminal(
       codexCliSessions.add(sessionId)
       if (!alreadyExists) codexRunState.set(sessionId, null)
       ensureCodexHookSubscription()
+    } else {
+      ensureClaudeHookSubscription()
+      if (!alreadyExists) {
+        // A fresh claude process must report in with a SessionStart within
+        // seconds. Until it does, its output is scanned for the folder-trust
+        // dialog (which blocks the REPL — and the argv prompt — before any
+        // hook can fire) so the ticket shows "not started" instead of looking
+        // launched. Seeing the dialog also means the pre-flight's trust entry
+        // never reached the CLI: write it again so the next launch works.
+        const cwd = worktreePath
+        armClaudeCliLaunchWatch(sessionId, {
+          onTrustDialog: () => {
+            void reassertSessionFolderTrust(db, cwd)
+          }
+        })
+      }
     }
     // A restarted session must never inherit a stale interaction latch. Only
     // on a true (re)spawn: a reused live PTY is still blocked on whatever its
@@ -1172,6 +1211,9 @@ export function cleanupTerminals(): Promise<void> {
   clearAllClaudeCliInteractions()
   clearAllClaudeCliSubagentTracking()
   clearAllClaudeCliBackgroundWork()
+  clearAllClaudeCliLaunchWatches()
+  unsubscribeClaudeHookEvents?.()
+  unsubscribeClaudeHookEvents = null
   resetAllClaudeCliModelWatchers()
   for (const sessionId of [...codexCliSessions]) resetCodexSessionState(sessionId)
   for (const [, watcher] of codexWatchers) watcher.close()

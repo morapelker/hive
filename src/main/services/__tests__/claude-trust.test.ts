@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, rm, writeFile } from 'fs/promises'
+import { existsSync } from 'fs'
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'fs/promises'
 import { homedir, tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -12,7 +13,9 @@ import {
   ensureFolderTrustedInClaudeConfig,
   ensureFoldersTrustedInClaudeConfig,
   ensureProjectTrustCheck,
-  resolveClaudeConfigPath
+  reassertSessionFolderTrust,
+  resolveClaudeConfigPath,
+  trustFoldersInClaudeConfig
 } from '../claude-trust'
 
 let dir: string
@@ -352,5 +355,80 @@ describe('resolveClaudeConfigPath', () => {
   it('falls back to ~/.claude.json when unset or empty', () => {
     expect(resolveClaudeConfigPath({})).toBe(join(homedir(), '.claude.json'))
     expect(resolveClaudeConfigPath({ CLAUDE_CONFIG_DIR: '' })).toBe(join(homedir(), '.claude.json'))
+  })
+})
+
+describe('trustFoldersInClaudeConfig', () => {
+  it('reports which folders had to be written', async () => {
+    await writeFile(
+      configPath,
+      JSON.stringify({ projects: { '/already': { hasTrustDialogAccepted: true } } })
+    )
+
+    const first = await trustFoldersInClaudeConfig(configPath, ['/already', '/fresh'])
+    expect(first).toEqual({ ok: true, newlyTrusted: ['/fresh'] })
+
+    const second = await trustFoldersInClaudeConfig(configPath, ['/already', '/fresh'])
+    expect(second).toEqual({ ok: true, newlyTrusted: [] })
+  })
+
+  it('waits for a live lock on the config and leaves no lock behind', async () => {
+    const lockPath = `${configPath}.lock`
+    await mkdir(lockPath)
+
+    let settled = false
+    const pending = trustFoldersInClaudeConfig(configPath, ['/repo/root']).then((result) => {
+      settled = true
+      return result
+    })
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    expect(settled).toBe(false)
+    expect(existsSync(configPath)).toBe(false)
+
+    await rm(lockPath, { recursive: true })
+    await expect(pending).resolves.toEqual({ ok: true, newlyTrusted: ['/repo/root'] })
+    expect(await readConfig()).toEqual({
+      projects: { '/repo/root': { hasTrustDialogAccepted: true } }
+    })
+    expect(existsSync(lockPath)).toBe(false)
+  })
+
+  it('takes over a stale lock left by a dead process', async () => {
+    const lockPath = `${configPath}.lock`
+    await mkdir(lockPath)
+    const old = new Date(Date.now() - 60_000)
+    await utimes(lockPath, old, old)
+
+    await expect(trustFoldersInClaudeConfig(configPath, ['/repo/root'])).resolves.toEqual({
+      ok: true,
+      newlyTrusted: ['/repo/root']
+    })
+    expect(existsSync(lockPath)).toBe(false)
+  })
+})
+
+describe('reassertSessionFolderTrust', () => {
+  const db = { getSetting: () => null }
+
+  it('reports a missing entry (lost to a concurrent writer) and writes it back', async () => {
+    await writeFile(configPath, JSON.stringify({ projects: {} }))
+
+    await expect(
+      reassertSessionFolderTrust(db, '/repo/worktree', { configPath })
+    ).resolves.toEqual({ wasMissing: true })
+    expect(await readConfig()).toEqual({
+      projects: { '/repo/worktree': { hasTrustDialogAccepted: true } }
+    })
+  })
+
+  it('reports an entry that was there all along', async () => {
+    await writeFile(
+      configPath,
+      JSON.stringify({ projects: { '/repo/worktree': { hasTrustDialogAccepted: true } } })
+    )
+
+    await expect(
+      reassertSessionFolderTrust(db, '/repo/worktree', { configPath })
+    ).resolves.toEqual({ wasMissing: false })
   })
 })

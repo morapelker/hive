@@ -6,9 +6,13 @@ import { notifyKanbanSessionSync } from './store-coordination'
 import { dbApi } from '@/api/db-api'
 import { higherPriority, type SessionStatusType } from '@shared/types/session-status'
 import type { ClaudeCliCompletion } from '@shared/types/claude-cli-stop-completion'
+import type { ClaudeCliLaunchState } from '@shared/types/claude-cli-launch'
 
 // Re-exported from the shared definition so existing importers keep working.
 export type { SessionStatusType }
+
+/** A launch that has not produced a running session (the 'clear' state removes the entry). */
+export type ClaudeCliLaunchStallState = Exclude<ClaudeCliLaunchState, 'clear'>
 
 // Last userExplicitSendTimes value already attributed to a session_working
 // notification, per session. Each send stamp may mark at most one working
@@ -77,6 +81,11 @@ interface WorktreeStatusState {
   // clearSessionApiError), and a fresh launch re-keys current_session_id so
   // stale entries are never rendered.
   sessionApiErrors: Record<string, string>
+  // sessionId → launch stall of a freshly spawned claude-cli session: the CLI
+  // is sitting on its folder-trust dialog, or no SessionStart hook arrived in
+  // the launch window — either way nothing has run yet and the linked ticket
+  // must say so. Dropped when a hook arrives or the PTY goes away.
+  launchStateBySession: Record<string, ClaudeCliLaunchStallState>
   // sessionId → live background subagent/shell/monitor counts, reported by both
   // the claude-cli hook path and the Claude SDK path (entries are dropped when
   // all counts reach zero)
@@ -114,6 +123,7 @@ interface WorktreeStatusState {
   ) => void
   setSessionApiError: (sessionId: string, error: string) => void
   clearSessionApiError: (sessionId: string) => void
+  setSessionLaunchState: (sessionId: string, state: ClaudeCliLaunchStallState | null) => void
   setSessionBackgroundWork: (sessionId: string, work: SessionBackgroundWork) => void
   clearSessionStatus: (sessionId: string) => void
   clearWorktreeUnread: (worktreeId: string) => void
@@ -144,6 +154,7 @@ function withoutSessions(
 export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => ({
   sessionStatuses: {},
   sessionApiErrors: {},
+  launchStateBySession: {},
   backgroundWorkBySession: {},
   lastMessageTimeByWorktree: {},
   reviewSessionByWorktree: {},
@@ -303,6 +314,18 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
     set((state) => {
       const { [sessionId]: _dropped, ...rest } = state.sessionApiErrors
       return { sessionApiErrors: rest }
+    })
+  },
+
+  setSessionLaunchState: (sessionId: string, launchState: ClaudeCliLaunchStallState | null) => {
+    set((state) => {
+      if (launchState === null) {
+        if (!(sessionId in state.launchStateBySession)) return {}
+        const { [sessionId]: _dropped, ...rest } = state.launchStateBySession
+        return { launchStateBySession: rest }
+      }
+      if (state.launchStateBySession[sessionId] === launchState) return {}
+      return { launchStateBySession: { ...state.launchStateBySession, [sessionId]: launchState } }
     })
   },
 

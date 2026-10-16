@@ -16,6 +16,7 @@ import { homedir } from 'os'
 import { join } from 'path'
 import { keychainDelete, keychainListAccounts, keychainRead, keychainWrite } from './keychain'
 import { atomicWriteJson, readJsonFile } from './atomic-json'
+import { withClaudeConfigLock } from './claude-config-lock'
 import { createLogger } from './logger'
 import { fingerprintSecret } from './credential-fingerprint'
 
@@ -666,51 +667,57 @@ export async function switchClaudeAccount(num: string, email: string): Promise<v
   await writeLiveBlob(target.raw)
 
   // 3) Merge oauthAccount identity fields into the identity file, preserving
-  //    everything else. Never clobber a file we couldn't parse.
+  //    everything else. Never clobber a file we couldn't parse. The file is
+  //    also where the claude CLI keeps folder trust and the trust pre-flight
+  //    writes it concurrently, so the read-modify-write runs under the shared
+  //    config lock; otherwise a trust entry written between our read and our
+  //    write would be dropped.
   const path = claudeJsonPath()
-  let identity: Record<string, unknown> = {}
-  if (existsSync(path)) {
-    const raw = await readFile(path, 'utf-8')
-    try {
-      identity = JSON.parse(raw) as Record<string, unknown>
-    } catch (error) {
-      throw new Error(
-        `${path}: invalid JSON, refusing to overwrite (${error instanceof Error ? error.message : String(error)})`
-      )
-    }
-  }
-
   let uuid = seq.accounts[num]?.uuid ?? ''
-  const oauthAccount: Record<string, unknown> =
-    identity.oauthAccount && typeof identity.oauthAccount === 'object'
-      ? { ...(identity.oauthAccount as Record<string, unknown>) }
-      : {}
-  const switchingToLive = currentLiveEmail !== null && currentLiveEmail === email.toLowerCase()
-  oauthAccount.emailAddress = email
-  if (uuid !== '') {
-    oauthAccount.accountUuid = uuid
-  } else if (
-    switchingToLive &&
-    typeof oauthAccount.accountUuid === 'string' &&
-    oauthAccount.accountUuid
-  ) {
-    // The index never learned this account's uuid but the CLI did (it fetched
-    // its profile): remember it, so attribution by uuid works from now on.
-    uuid = oauthAccount.accountUuid
-    const entry = seq.accounts[num]
-    if (entry) seq.accounts[num] = { ...entry, uuid }
-  } else {
-    // The index doesn't know this account's uuid (a legacy entry). Never leave
-    // the OUTGOING account's identity behind: the CLI stamps every request's
-    // metadata with `accountUuid`, so a stale value credits this account's
-    // usage to the previous one. Dropping the profile stamp too makes the CLI
-    // re-fetch its profile (and write the real uuid) on its next launch.
-    delete oauthAccount.accountUuid
-    delete oauthAccount.organizationUuid
-    delete oauthAccount.profileFetchedAt
-  }
-  identity.oauthAccount = oauthAccount
-  await atomicWriteJson(path, identity, { pretty: true })
+  await withClaudeConfigLock(path, async () => {
+    let identity: Record<string, unknown> = {}
+    if (existsSync(path)) {
+      const raw = await readFile(path, 'utf-8')
+      try {
+        identity = JSON.parse(raw) as Record<string, unknown>
+      } catch (error) {
+        throw new Error(
+          `${path}: invalid JSON, refusing to overwrite (${error instanceof Error ? error.message : String(error)})`
+        )
+      }
+    }
+
+    const oauthAccount: Record<string, unknown> =
+      identity.oauthAccount && typeof identity.oauthAccount === 'object'
+        ? { ...(identity.oauthAccount as Record<string, unknown>) }
+        : {}
+    const switchingToLive = currentLiveEmail !== null && currentLiveEmail === email.toLowerCase()
+    oauthAccount.emailAddress = email
+    if (uuid !== '') {
+      oauthAccount.accountUuid = uuid
+    } else if (
+      switchingToLive &&
+      typeof oauthAccount.accountUuid === 'string' &&
+      oauthAccount.accountUuid
+    ) {
+      // The index never learned this account's uuid but the CLI did (it fetched
+      // its profile): remember it, so attribution by uuid works from now on.
+      uuid = oauthAccount.accountUuid
+      const entry = seq.accounts[num]
+      if (entry) seq.accounts[num] = { ...entry, uuid }
+    } else {
+      // The index doesn't know this account's uuid (a legacy entry). Never leave
+      // the OUTGOING account's identity behind: the CLI stamps every request's
+      // metadata with `accountUuid`, so a stale value credits this account's
+      // usage to the previous one. Dropping the profile stamp too makes the CLI
+      // re-fetch its profile (and write the real uuid) on its next launch.
+      delete oauthAccount.accountUuid
+      delete oauthAccount.organizationUuid
+      delete oauthAccount.profileFetchedAt
+    }
+    identity.oauthAccount = oauthAccount
+    await atomicWriteJson(path, identity, { pretty: true })
+  })
 
   // 4) Update the active account number.
   seq.activeAccountNumber = Number.parseInt(num, 10)

@@ -5,8 +5,12 @@ const mocks = vi.hoisted(() => ({
   onClaudeCliStatus: vi.fn(),
   onClaudeCliBackgroundWork: vi.fn().mockReturnValue(() => {}),
   onClaudeCliApiError: vi.fn().mockReturnValue(() => {}),
+  onClaudeCliLaunch: vi.fn().mockReturnValue(() => {}),
   toastError: vi.fn(),
+  toastWarning: vi.fn(),
   setSessionApiError: vi.fn(),
+  setSessionLaunchState: vi.fn(),
+  launchStateBySession: {} as Record<string, string>,
   setSessionBackgroundWork: vi.fn(),
   setClaudeCliPlanAutoApprove: vi.fn().mockResolvedValue({ success: true }),
   setSessionStatus: vi.fn(),
@@ -42,6 +46,8 @@ vi.mock('@/stores/useWorktreeStatusStore', () => ({
       sessionStatuses: mocks.sessionStatuses,
       setSessionStatus: mocks.setSessionStatus,
       setSessionApiError: mocks.setSessionApiError,
+      setSessionLaunchState: mocks.setSessionLaunchState,
+      launchStateBySession: mocks.launchStateBySession,
       setSessionBackgroundWork: mocks.setSessionBackgroundWork
     })
   }
@@ -82,13 +88,15 @@ vi.mock('@/api/terminal-api', () => ({
     onClaudeCliStatus: mocks.onClaudeCliStatus,
     onClaudeCliBackgroundWork: mocks.onClaudeCliBackgroundWork,
     onClaudeCliApiError: mocks.onClaudeCliApiError,
+    onClaudeCliLaunch: mocks.onClaudeCliLaunch,
     setClaudeCliPlanAutoApprove: mocks.setClaudeCliPlanAutoApprove
   }
 }))
 
 vi.mock('@/lib/toast', () => ({
   toast: {
-    error: mocks.toastError
+    error: mocks.toastError,
+    warning: mocks.toastWarning
   }
 }))
 
@@ -151,7 +159,12 @@ describe('useClaudeCliStatusListener', () => {
     unsubscribe.mockClear()
     mocks.onClaudeCliApiError.mockReset()
     mocks.onClaudeCliApiError.mockReturnValue(() => {})
+    mocks.onClaudeCliLaunch.mockReset()
+    mocks.onClaudeCliLaunch.mockReturnValue(() => {})
     mocks.toastError.mockClear()
+    mocks.toastWarning.mockClear()
+    mocks.setSessionLaunchState.mockClear()
+    mocks.launchStateBySession = {}
     mocks.setClaudeCliPlanAutoApprove.mockClear()
     mocks.setSessionStatus.mockClear()
     mocks.setPendingPlan.mockClear()
@@ -1016,5 +1029,73 @@ describe('useClaudeCliStatusListener — completion detection stamping', () => {
       hookEventName: 'UserPromptSubmit',
       hookPath: 'start'
     })
+  })
+})
+
+describe('useClaudeCliStatusListener launch stalls', () => {
+  type LaunchPayload = { sessionId: string; state: 'awaiting_trust' | 'not_started' | 'clear'; detail?: string }
+  let subscribedLaunch: ((payload: LaunchPayload) => void) | null
+
+  beforeEach(() => {
+    subscribedLaunch = null
+    mocks.sessionById.clear()
+    mocks.toastWarning.mockClear()
+    mocks.setSessionLaunchState.mockClear()
+    mocks.launchStateBySession = {}
+    mocks.onClaudeCliLaunch.mockReset()
+    mocks.onClaudeCliLaunch.mockImplementation((callback: (payload: LaunchPayload) => void) => {
+      subscribedLaunch = callback
+      return () => {}
+    })
+  })
+
+  it('marks the session as waiting on the trust prompt and warns the user once', () => {
+    mocks.sessionById.set('hive-session-1', {
+      id: 'hive-session-1',
+      agent_sdk: 'claude-code-cli',
+      name: 'Project scaffold'
+    })
+    renderHook(() => useClaudeCliStatusListener())
+
+    subscribedLaunch?.({ sessionId: 'hive-session-1', state: 'awaiting_trust', detail: 'trust_dialog' })
+
+    expect(mocks.setSessionLaunchState).toHaveBeenCalledWith('hive-session-1', 'awaiting_trust')
+    expect(mocks.toastWarning).toHaveBeenCalledTimes(1)
+    expect(mocks.toastWarning.mock.calls[0][0]).toBe(
+      'Claude has not started in "Project scaffold": it is waiting on its folder-trust prompt'
+    )
+
+    // A repeat of the same state (a re-publish) is not a second toast.
+    mocks.launchStateBySession = { 'hive-session-1': 'awaiting_trust' }
+    subscribedLaunch?.({ sessionId: 'hive-session-1', state: 'awaiting_trust', detail: 'trust_dialog' })
+    expect(mocks.toastWarning).toHaveBeenCalledTimes(1)
+  })
+
+  it('marks a silent launch as not started', () => {
+    renderHook(() => useClaudeCliStatusListener())
+
+    subscribedLaunch?.({ sessionId: 'hive-session-1', state: 'not_started', detail: 'no_session_start' })
+
+    expect(mocks.setSessionLaunchState).toHaveBeenCalledWith('hive-session-1', 'not_started')
+    expect(mocks.toastWarning.mock.calls[0][0]).toBe('Claude has not started')
+  })
+
+  it('drops the mark on clear without a toast', () => {
+    renderHook(() => useClaudeCliStatusListener())
+
+    subscribedLaunch?.({ sessionId: 'hive-session-1', state: 'clear', detail: 'hook:SessionStart' })
+
+    expect(mocks.setSessionLaunchState).toHaveBeenCalledWith('hive-session-1', null)
+    expect(mocks.toastWarning).not.toHaveBeenCalled()
+  })
+
+  it('unsubscribes from launch events on unmount', () => {
+    const unsubscribeLaunch = vi.fn()
+    mocks.onClaudeCliLaunch.mockReturnValue(unsubscribeLaunch)
+
+    const { unmount } = renderHook(() => useClaudeCliStatusListener())
+    unmount()
+
+    expect(unsubscribeLaunch).toHaveBeenCalledTimes(1)
   })
 })
