@@ -59,6 +59,7 @@ import {
 import { normalizeCodexModelSlug } from './codex-models'
 import { recordSessionFinalMessage } from './document-flow/session-final-message-recorder'
 import { perfLog } from './perf-logging/perf-logger'
+import { evaluateProcessKillCommand, getProtectedProcesses } from './claude-cli-process-kill-guard'
 
 const HOOK_SLOW_MS = 250
 const hookStats = { inFlight: 0, count: 0, totalMs: 0, maxMs: 0 }
@@ -104,6 +105,8 @@ export interface ParsedClaudeHook {
   tool_input?: {
     plan?: unknown
     questions?: unknown
+    /** Bash / Monitor: the shell command about to run (PreToolUse `guard` hook). */
+    command?: unknown
     /** Bash: true when the command was launched as a background shell. */
     run_in_background?: unknown
     /** TaskStop: the background task id being stopped. */
@@ -226,6 +229,15 @@ export function buildClaudeCliHookSettings(port: number, hiveSessionId: string):
           // while a human answers via Telegram isn't cancelled early. Harmless
           // when not held — it's a ceiling, not a delay.
           hooks: [{ type: 'http', url: hookUrl(port, hiveSessionId, 'tool'), timeout: 600 }]
+        },
+        {
+          // Process-kill guard: a `pkill -f chrome` / `killall Electron` from
+          // the agent takes this app (and every other Electron app, and the
+          // user's browser) down with it. The guard route answers with a
+          // deny decision when the command would reach any of them. It is a
+          // hook, not a permission rule, so it holds in bypass mode too.
+          matcher: 'Bash|Monitor',
+          hooks: [{ type: 'http', url: hookUrl(port, hiveSessionId, 'guard') }]
         }
       ],
       PostToolUse: [
@@ -958,6 +970,45 @@ function processCliHook(
   return owned
 }
 
+/**
+ * PreToolUse `Bash|Monitor` hook: denies a shell command that would signal
+ * processes that are not the agent's to stop (this app, other Electron apps,
+ * the user's browser, other sessions; see claude-cli-process-kill-guard).
+ * Anything else, and any other event posted here, gets an empty reply.
+ */
+function respondProcessKillGuard(
+  route: HookRoute,
+  body: ParsedClaudeHook,
+  res: http.ServerResponse
+): void {
+  const command = body.tool_input?.command
+  const denial =
+    body.hook_event_name === 'PreToolUse' && typeof command === 'string'
+      ? evaluateProcessKillCommand(command, getProtectedProcesses())
+      : null
+  res.writeHead(200, { 'content-type': 'application/json' })
+  if (!denial) {
+    res.end('{}')
+    return
+  }
+  log.warn('Blocked a process-wide kill from a CLI session', {
+    sessionId: route.sessionId,
+    toolName: body.tool_name,
+    agentId: body.agent_id,
+    offender: denial.offender,
+    victim: denial.victim?.label ?? 'every process'
+  })
+  res.end(
+    JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: denial.reason
+      }
+    })
+  )
+}
+
 async function handleHook(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const remoteAddress = req.socket.remoteAddress
   if (remoteAddress !== host) {
@@ -980,6 +1031,12 @@ async function handleHook(req: http.IncomingMessage, res: http.ServerResponse): 
   try {
     const rawBody = await readRequestBody(req)
     const parsedBody = JSON.parse(rawBody || '{}') as ParsedClaudeHook
+    if (route?.cli === 'claude' && route.hookPath === 'guard') {
+      // A pure decision: the guard never touches session status, the ledger
+      // or the transports, so it is answered here and goes no further.
+      respondProcessKillGuard(route, parsedBody, res)
+      return
+    }
     if (route?.cli === 'codex') {
       const codexBody = parsedBody as CodexCliHookBody
       handleCodexCliModelHook(route.sessionId, codexBody)

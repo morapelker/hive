@@ -33,6 +33,7 @@ import {
   type WorktreeBranchRenamedEvent
 } from '../../shared/worktree-events'
 import { emitWorktreeBranchRenamed } from './worktree-events'
+import { evaluateProcessKillCommand, getProtectedProcesses } from './claude-cli-process-kill-guard'
 import {
   ABORT_REPLY_FLUSH_MS,
   STOPPED_TOOL_OUTPUT,
@@ -2337,6 +2338,22 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       if (toolName === 'AskUserQuestion') {
         // Continue to existing AskUserQuestion handling below...
       } else {
+        // Process-kill guard (same rule the CLI sessions get through the
+        // PreToolUse hook): a `pkill -f chrome` / `killall Electron` would
+        // take this app and every other Electron app down with it.
+        if ((toolName === 'Bash' || toolName === 'Monitor') && typeof input.command === 'string') {
+          const denial = evaluateProcessKillCommand(input.command, getProtectedProcesses())
+          if (denial) {
+            log.warn('Blocked a process-wide kill from an SDK session', {
+              toolName,
+              offender: denial.offender,
+              victim: denial.victim?.label ?? 'every process',
+              sessionId: session.hiveSessionId
+            })
+            return { behavior: 'deny' as const, message: denial.reason }
+          }
+        }
+
         // For all other tools, evaluate against command filter
         const commandStr = this.commandFilterService.formatCommandString(toolName, input)
         log.info('SECURITY CHECK: Evaluating tool use', {

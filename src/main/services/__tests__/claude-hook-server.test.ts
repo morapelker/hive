@@ -59,7 +59,7 @@ import {
 async function postHook(
   port: number,
   sessionId: string,
-  path: 'session' | 'start' | 'stop' | 'tool' | 'permission' | 'subagent',
+  path: 'session' | 'start' | 'stop' | 'tool' | 'permission' | 'subagent' | 'guard',
   body: Record<string, unknown> | string
 ): Promise<{ status: number; text: string }> {
   const response = await fetch(`http://127.0.0.1:${port}/hook/${sessionId}/${path}`, {
@@ -247,6 +247,15 @@ describe('buildClaudeCliHookSettings', () => {
                 type: 'http',
                 url: 'http://127.0.0.1:34819/hook/hive-session-1/tool',
                 timeout: 600
+              }
+            ]
+          },
+          {
+            matcher: 'Bash|Monitor',
+            hooks: [
+              {
+                type: 'http',
+                url: 'http://127.0.0.1:34819/hook/hive-session-1/guard'
               }
             ]
           }
@@ -1512,5 +1521,72 @@ describe('Stop completion classification (HTTP round-trip)', () => {
     await vi.waitFor(() => expect(statusPublishes()).toHaveLength(2))
     expect(statusPublishes()[1]).toMatchObject({ status: 'completed' })
     expect(statusPublishes()[1].metadata).not.toHaveProperty('completion')
+  })
+})
+
+describe('process-kill guard route', () => {
+  it('registers a PreToolUse Bash|Monitor hook pointing at the guard route', () => {
+    const settings = JSON.parse(buildClaudeCliHookSettings(4321, 'hive-guard')) as {
+      hooks: { PreToolUse: Array<{ matcher: string; hooks: Array<{ type: string; url: string }> }> }
+    }
+    const guard = settings.hooks.PreToolUse.find((entry) => entry.matcher === 'Bash|Monitor')
+    expect(guard?.hooks).toEqual([
+      { type: 'http', url: 'http://127.0.0.1:4321/hook/hive-guard/guard' }
+    ])
+    // The plan/question hook is still there, untouched.
+    expect(
+      settings.hooks.PreToolUse.some((entry) => entry.matcher === 'ExitPlanMode|AskUserQuestion')
+    ).toBe(true)
+  })
+
+  it('denies a name-based kill that would reach this app or other Electron apps', async () => {
+    const { port } = await getClaudeHookServer()
+    const response = await postHook(port, 'hive-guard', 'guard', {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Bash',
+      tool_input: { command: 'pkill -f electron', description: 'stop the dev app' }
+    })
+    expect(response.status).toBe(200)
+    const body = JSON.parse(response.text) as {
+      hookSpecificOutput: {
+        hookEventName: string
+        permissionDecision: string
+        permissionDecisionReason: string
+      }
+    }
+    expect(body.hookSpecificOutput.hookEventName).toBe('PreToolUse')
+    expect(body.hookSpecificOutput.permissionDecision).toBe('deny')
+    expect(body.hookSpecificOutput.permissionDecisionReason).toContain('pkill -f electron')
+    expect(body.hookSpecificOutput.permissionDecisionReason).toContain('kill <pid>')
+    // A pure decision: nothing is published to the session status pipeline.
+    expect(backendManagerMocks.publishDesktopBackendEvent).not.toHaveBeenCalled()
+  })
+
+  it('answers {} for a scoped kill, a Monitor command, and any other event', async () => {
+    const { port } = await getClaudeHookServer()
+    const scoped = await postHook(port, 'hive-guard', 'guard', {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Bash',
+      tool_input: { command: "pkill -f 'user-data-dir=/tmp/my-profile'; lsof -ti :3000 | xargs kill" }
+    })
+    expect(scoped.text).toBe('{}')
+
+    const monitor = await postHook(port, 'hive-guard', 'guard', {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Monitor',
+      tool_input: { command: 'until grep -q done /tmp/x.log; do sleep 2; done' }
+    })
+    expect(monitor.text).toBe('{}')
+
+    const post = await postHook(port, 'hive-guard', 'guard', {
+      hook_event_name: 'PostToolUse',
+      tool_name: 'Bash',
+      tool_input: { command: 'pkill -f electron' }
+    })
+    expect(post.text).toBe('{}')
+
+    const malformed = await postHook(port, 'hive-guard', 'guard', 'not json')
+    expect(malformed.status).toBe(200)
+    expect(malformed.text).toBe('{}')
   })
 })
