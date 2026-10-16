@@ -38,6 +38,7 @@ import {
   formatRunProgress,
   isLaunchedRunStatus,
   isRequeueableItem,
+  isQueuedForRunMerge,
   isResolvingRunConflicts,
   isUnlaunchedCardPhase,
   isRunDeletable,
@@ -374,6 +375,71 @@ describe('isResolvingRunConflicts', () => {
     expect(isResolvingRunConflicts(runs, { ticketId: 'ticket-x' })).toBe(false)
     expect(isResolvingRunConflicts(runs, { ticketId: null, sessionId: null })).toBe(false)
     expect(isResolvingRunConflicts({}, { ticketId: 'ticket-a1' })).toBe(false)
+  })
+})
+
+describe('isQueuedForRunMerge', () => {
+  it('is true for a ready item while another item occupies the integration worktree', () => {
+    for (const status of ['merging', 'verifying', 'fixing'] as const) {
+      const runs = {
+        'run-1': makeDetail({ id: 'run-1' }, [
+          { key: 'A1', status, ticket_id: 'ticket-a1' },
+          { key: 'A2', status: 'ready', ticket_id: 'ticket-a2' }
+        ])
+      }
+      expect(isQueuedForRunMerge(runs, 'ticket-a2')).toBe(true)
+      expect(isQueuedForRunMerge(runs, 'ticket-a1')).toBe(false)
+    }
+  })
+
+  it('is true for a ready item while another item holds the lane resolving its conflicts', () => {
+    const runs = {
+      'run-1': makeDetail({ id: 'run-1' }, [
+        { key: 'A1', status: 'resolving_conflicts', conflict_attempts: 1, ticket_id: 'ticket-a1' },
+        { key: 'A2', status: 'ready', ticket_id: 'ticket-a2' }
+      ])
+    }
+    expect(isQueuedForRunMerge(runs, 'ticket-a2')).toBe(true)
+  })
+
+  it('is false for the lane owner itself once it is ready again: it merges next', () => {
+    const runs = {
+      'run-1': makeDetail({ id: 'run-1' }, [
+        { key: 'A1', status: 'ready', conflict_attempts: 1, ticket_id: 'ticket-a1' },
+        { key: 'A2', status: 'ready', ticket_id: 'ticket-a2' }
+      ])
+    }
+    expect(isQueuedForRunMerge(runs, 'ticket-a1')).toBe(false)
+    expect(isQueuedForRunMerge(runs, 'ticket-a2')).toBe(true)
+  })
+
+  it('is false when nothing holds the lane, for items not ready, and for unknown tickets', () => {
+    const runs = {
+      'run-1': makeDetail({ id: 'run-1' }, [
+        { key: 'A1', status: 'running', ticket_id: 'ticket-a1' },
+        { key: 'A2', status: 'ready', ticket_id: 'ticket-a2' },
+        { key: 'A3', status: 'merged', ticket_id: 'ticket-a3' }
+      ])
+    }
+    expect(isQueuedForRunMerge(runs, 'ticket-a2')).toBe(false)
+    expect(isQueuedForRunMerge(runs, 'ticket-a1')).toBe(false)
+    expect(isQueuedForRunMerge(runs, 'ticket-a3')).toBe(false)
+    expect(isQueuedForRunMerge(runs, 'ticket-x')).toBe(false)
+    expect(isQueuedForRunMerge(runs, null)).toBe(false)
+    expect(isQueuedForRunMerge({}, 'ticket-a2')).toBe(false)
+  })
+
+  it('ignores a merge in flight in a different run, and a deselected ready item', () => {
+    const runs = {
+      'run-1': makeDetail({ id: 'run-1' }, [{ key: 'A1', status: 'merging', ticket_id: 'ticket-a1' }]),
+      'run-2': makeDetail({ id: 'run-2' }, [
+        { key: 'B1', status: 'ready', ticket_id: 'ticket-b1' },
+        { key: 'B2', status: 'ready', selected: false, ticket_id: 'ticket-b2' },
+        { key: 'B3', status: 'merging', selected: false, ticket_id: 'ticket-b3' }
+      ])
+    }
+    expect(isQueuedForRunMerge(runs, 'ticket-b1')).toBe(false)
+    expect(isQueuedForRunMerge(runs, 'ticket-b2')).toBe(false)
   })
 })
 

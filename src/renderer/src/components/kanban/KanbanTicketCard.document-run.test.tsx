@@ -6,6 +6,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { KanbanTicketCard } from './KanbanTicketCard'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { makeDetail } from '@/components/document-flow/test-fixtures'
 import { toast } from '@/lib/toast'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
@@ -1088,5 +1089,64 @@ describe('the PRs of a document run ticket', () => {
     expect(runPRs.createDocumentRunPRs).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'run-live', members: MEMBERS })
     )
+  })
+})
+
+describe('the card of a task ticket of a document run', () => {
+  // A plain board ticket (no document-run external ref) that one of the run's items points at.
+  const taskTicket = (overrides: Partial<KanbanTicket> = {}): KanbanTicket =>
+    makeTicket({
+      id: 'ticket-a2',
+      title: 'Cart totals',
+      column: 'review',
+      worktree_id: 'wt-a2',
+      external_provider: null,
+      external_id: null,
+      ...overrides
+    })
+
+  it('says "In merge queue" in Review while the run merges another ticket first', () => {
+    seedRuns(
+      makeDetail({ id: 'run-live', status: 'running' }, [
+        { key: 'A1', status: 'merging', ticket_id: 'ticket-a1' },
+        { key: 'A2', status: 'ready', ticket_id: 'ticket-a2' }
+      ])
+    )
+    render(
+      <TooltipProvider>
+        <KanbanTicketCard ticket={taskTicket()} />
+      </TooltipProvider>
+    )
+
+    expect(screen.getByTestId('kanban-ticket-merge-queue')).toHaveTextContent('In merge queue')
+  })
+
+  it('says nothing about the queue when its merge is up next, or outside Review', () => {
+    seedRuns(
+      makeDetail({ id: 'run-live', status: 'running' }, [
+        { key: 'A1', status: 'running', ticket_id: 'ticket-a1' },
+        { key: 'A2', status: 'ready', ticket_id: 'ticket-a2' }
+      ])
+    )
+    const { unmount } = render(
+      <TooltipProvider>
+        <KanbanTicketCard ticket={taskTicket()} />
+      </TooltipProvider>
+    )
+    expect(screen.queryByTestId('kanban-ticket-merge-queue')).toBeNull()
+    unmount()
+
+    seedRuns(
+      makeDetail({ id: 'run-live', status: 'running' }, [
+        { key: 'A1', status: 'merging', ticket_id: 'ticket-a1' },
+        { key: 'A2', status: 'ready', ticket_id: 'ticket-a2' }
+      ])
+    )
+    render(
+      <TooltipProvider>
+        <KanbanTicketCard ticket={taskTicket({ column: 'in_progress' })} />
+      </TooltipProvider>
+    )
+    expect(screen.queryByTestId('kanban-ticket-merge-queue')).toBeNull()
   })
 })

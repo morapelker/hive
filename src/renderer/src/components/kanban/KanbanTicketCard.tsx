@@ -9,6 +9,7 @@ import {
   Copy,
   ArchiveRestore,
   GitBranch,
+  GitMerge,
   ExternalLink,
   X,
   FileText,
@@ -148,7 +149,7 @@ import {
 } from '@/components/document-flow/document-flow-ui'
 import { isActiveRunStatus } from '@/components/document-flow/document-flow-ui'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
-import { isResolvingRunConflicts } from '@/components/document-flow/document-flow-ui'
+import { isQueuedForRunMerge, isResolvingRunConflicts } from '@/components/document-flow/document-flow-ui'
 import { projectApi } from '@/api/project-api'
 import { terminalApi } from '@/api/terminal-api'
 import {
@@ -721,6 +722,14 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       ticketId: ticket.id,
       sessionId: ticket.current_session_id
     })
+  )
+
+  // A document run's task ticket judged done, in Review, whose merge waits its turn: another
+  // item of the run is being merged in (or resolves its conflicts) first.
+  const isInMergeQueue = useDocumentFlowStore((s) =>
+    ticket.column === 'review' && !isDocumentRunTicket
+      ? isQueuedForRunMerge(s.runsById, ticket.id)
+      : false
   )
 
   // The Claude CLI session stopped without a completion message (background
@@ -1784,7 +1793,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             )}
 
             {/* Badges + progress row */}
-            {(hasAttachments || hasNote || worktreeName || queuedBranchLabel || projectTag || connectionName || ticket.plan_ready || isError || rightAlignedSlot || isArchived || isBlocked || blockingDiagnostic || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram || ticket.goal_mode || ticket.auto_approve_plan || activeRemoteLaunch || showModelBadge || backgroundWork) && (
+            {(hasAttachments || hasNote || worktreeName || queuedBranchLabel || projectTag || connectionName || ticket.plan_ready || isError || isInMergeQueue || rightAlignedSlot || isArchived || isBlocked || blockingDiagnostic || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram || ticket.goal_mode || ticket.auto_approve_plan || activeRemoteLaunch || showModelBadge || backgroundWork) && (
               <div className="mt-1.5 flex flex-wrap items-center gap-1">
                 {/* Archived badge */}
                 {isArchived && (
@@ -1833,6 +1842,23 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                     <GitBranch className="h-2.5 w-2.5" />
                     {queuedBranchLabel}
                   </span>
+                )}
+                {/* Document run task judged done, waiting for the run's serial merge lane */}
+                {isInMergeQueue && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span
+                        data-testid="kanban-ticket-merge-queue"
+                        className={cn(ticketPillBaseClass, 'border-blue-500/30 bg-blue-500/10 text-blue-500 cursor-help')}
+                      >
+                        <GitMerge className="h-2.5 w-2.5" />
+                        In merge queue
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      Ready to merge. The orchestrator is merging another ticket of the run first.
+                    </TooltipContent>
+                  </Tooltip>
                 )}
                 {/* Running subagents in the linked claude-cli session */}
                 {backgroundWork && backgroundWork.runningSubagents > 0 && (

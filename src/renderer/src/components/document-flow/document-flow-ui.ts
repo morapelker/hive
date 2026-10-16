@@ -6,8 +6,10 @@ import {
   countRunningAgents,
   freeSlotCount,
   isItemWaitingOnUser,
+  isMergeInFlight,
   isRunWaitingOnUser,
   isTerminalItemStatus,
+  mergeLaneOwner,
   summarizeItems,
   unmetDependencies,
   type DocumentRunItemSummary
@@ -258,6 +260,27 @@ export function isResolvingRunConflicts(
             item.session_id === ref.sessionId))
     )
   )
+}
+
+/**
+ * The ticket's run item is judged done and waits for the serial merge, but the merge lane is
+ * taken: another item is being merged (merging, verifying, fixing), or holds the lane while it
+ * resolves its conflicts. The ticket's card reads "In merge queue" until the lane frees up. Not
+ * while the item is the lane's own owner, nor when nothing holds the lane (the orchestrator
+ * merges it right away).
+ */
+export function isQueuedForRunMerge(
+  runsById: Record<string, DocumentRunDetail>,
+  ticketId: string | null | undefined
+): boolean {
+  if (!ticketId) return false
+  return Object.values(runsById).some((detail) => {
+    const item = detail.items.find((candidate) => candidate.ticket_id === ticketId)
+    if (!item || !item.selected || item.status !== 'ready') return false
+    if (isMergeInFlight(detail.items)) return true
+    const owner = mergeLaneOwner(detail.items)
+    return owner !== null && owner.id !== item.id
+  })
 }
 
 /** Retry / "mark done" apply to items that are waiting on the user and are not mid-merge. */
