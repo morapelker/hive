@@ -164,6 +164,7 @@ import {
   handleClaudeCliTerminalInput
 } from './terminal-pty-bridge'
 import { externalizeGoalHandoffPlan } from './claude-cli-plan-handoff'
+import { CLAUDE_CLI_LAUNCH_TIMEOUT_MS } from './claude-cli-launch-watch'
 import { reassertClaudeCliPromptSubmit } from './claude-cli-pty-prompt'
 import { __resetRuntimeRegistryForTests } from '../effect/_shared/runtime'
 
@@ -868,7 +869,9 @@ describe('Claude CLI launch watch (trust dialog / no SessionStart)', () => {
     vi.clearAllMocks()
     __resetRuntimeRegistryForTests()
 
-    setupDb()
+    // A brand-new session: no claude transcript to resume. The watch is only
+    // for those — see the resume cases at the end of this block.
+    setupDb(makeSession({ claude_session_id: null }))
     mocks.ptyService.has.mockReturnValue(false)
     mocks.getClaudeHookServer.mockResolvedValue({ port: 45678 })
     mocks.buildClaudeCliHookSettings.mockReturnValue('{"hooks":{"mock":true}}')
@@ -953,5 +956,86 @@ describe('Claude CLI launch watch (trust dialog / no SessionStart)', () => {
     }
 
     expect(launchEvents()).toEqual([])
+  })
+
+  it('does not watch a promptless --resume spawn of a session that already ran', async () => {
+    // Opening a ticket onto a dead PTY (or the ended-overlay Restart) respawns
+    // with the stored claude session id and no argv prompt. That is not a
+    // launch: no "Not started" timer, and no trust-dialog scan over the
+    // replayed transcript either.
+    setupDb(makeSession({ claude_session_id: 'claude-session-1' }))
+    await createClaudeCliTerminal('hive-session-1', {})
+
+    const [, options] = mocks.ptyService.create.mock.calls.at(-1)! as unknown as [
+      string,
+      { args: string[] }
+    ]
+    expect(options.args).toContain('--resume')
+
+    mocks.dataCallbacks.get('hive-session-1')?.(TRUST_DIALOG)
+    await waitImmediate()
+    expect(launchEvents()).toEqual([])
+    expect(mocks.reassertSessionFolderTrust).not.toHaveBeenCalled()
+  })
+
+  it('a resumed session never gets a not_started mark, even with no hook for a long time', async () => {
+    vi.useFakeTimers()
+    try {
+      setupDb(makeSession({ claude_session_id: 'claude-session-1' }))
+      await createClaudeCliTerminal('hive-session-1', {})
+
+      await vi.advanceTimersByTimeAsync(CLAUDE_CLI_LAUNCH_TIMEOUT_MS * 3)
+      expect(launchEvents()).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the timer for a --resume that carries a follow-up prompt', async () => {
+    // A follow-up onto an existing session rides on argv next to --resume;
+    // its UserPromptSubmit hook reports in within a second, so a spawn that
+    // never does is as stalled as a brand-new one.
+    vi.useFakeTimers()
+    try {
+      setupDb(makeSession({ claude_session_id: 'claude-session-1' }))
+      await createClaudeCliTerminal('hive-session-1', {
+        pendingPrompt: 'Address the review'
+      })
+
+      await vi.advanceTimersByTimeAsync(CLAUDE_CLI_LAUNCH_TIMEOUT_MS)
+      expect(launchEvents()).toEqual([
+        { sessionId: 'hive-session-1', state: 'not_started', detail: 'no_session_start' }
+      ])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('never reads the trust dialog out of a resumed transcript, even with a prompt', async () => {
+    setupDb(makeSession({ claude_session_id: 'claude-session-1' }))
+    await createClaudeCliTerminal('hive-session-1', {
+      pendingPrompt: 'Address the review'
+    })
+
+    mocks.dataCallbacks.get('hive-session-1')?.(TRUST_DIALOG)
+    await waitImmediate()
+    expect(launchEvents()).toEqual([])
+    expect(mocks.reassertSessionFolderTrust).not.toHaveBeenCalled()
+  })
+
+  it('still marks a brand-new spawn that never reports in', async () => {
+    vi.useFakeTimers()
+    try {
+      await createClaudeCliTerminal('hive-session-1', {
+        pendingPrompt: 'Implement the plan'
+      })
+
+      await vi.advanceTimersByTimeAsync(CLAUDE_CLI_LAUNCH_TIMEOUT_MS)
+      expect(launchEvents()).toEqual([
+        { sessionId: 'hive-session-1', state: 'not_started', detail: 'no_session_start' }
+      ])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

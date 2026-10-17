@@ -62,6 +62,31 @@ describe('buildClaudeCliPtySpawn', () => {
       'claude-uuid-1',
       'Implement this plan'
     ])
+    expect(spawn.resumeSessionId).toBe('claude-uuid-1')
+  })
+
+  it('reports a brand-new session as not resumed', () => {
+    const spawn = buildClaudeCliPtySpawn({
+      session: makeSession(),
+      worktreePath: '/repo/worktree',
+      pendingPrompt: 'Implement this plan',
+      claudeBinary: '/usr/local/bin/claude'
+    })
+
+    expect(spawn.args).not.toContain('--resume')
+    expect(spawn.resumeSessionId).toBeNull()
+  })
+
+  it('never resumes a pending:: placeholder id', () => {
+    const spawn = buildClaudeCliPtySpawn({
+      session: makeSession({ claude_session_id: 'pending::0000' }),
+      worktreePath: '/repo/worktree',
+      pendingPrompt: 'Implement this plan',
+      claudeBinary: '/usr/local/bin/claude'
+    })
+
+    expect(spawn.args).not.toContain('--resume')
+    expect(spawn.resumeSessionId).toBeNull()
   })
 
   it('passes the Fable model category through to Claude CLI', () => {
@@ -255,6 +280,7 @@ describe('buildClaudeCliPtySpawn', () => {
         'Implement this plan'
       ])
       expect(spawn.cwd).toBe('/repo/worktree')
+      expect(spawn.resumeSessionId).toBe('claude-uuid-1')
     })
 
     it('uses fish argv semantics for fish login shells', () => {

@@ -86,6 +86,21 @@ describe('claude-cli launch watch', () => {
     expect(mocks.publishDesktopBackendEvent).toHaveBeenCalledTimes(1)
   })
 
+  it('ignores the dialog wording when output scanning is off, but keeps the timer', () => {
+    const onTrustDialog = vi.fn()
+    armClaudeCliLaunchWatch(SESSION, { timeoutMs: 1_000, scanOutput: false, onTrustDialog })
+    observeClaudeCliLaunchOutput(SESSION, TRUST_DIALOG_2_1)
+
+    expect(mocks.publishDesktopBackendEvent).not.toHaveBeenCalled()
+    expect(onTrustDialog).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1_000)
+    expect(mocks.publishDesktopBackendEvent).toHaveBeenCalledWith('claude-cli:launch', {
+      sessionId: SESSION,
+      state: 'not_started',
+      detail: 'no_session_start'
+    })
+  })
+
   it('publishes not_started when no hook arrives within the launch window', () => {
     armClaudeCliLaunchWatch(SESSION, { timeoutMs: 1_000 })
     observeClaudeCliLaunchOutput(SESSION, 'Welcome to Claude Code!')

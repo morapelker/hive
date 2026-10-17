@@ -42,6 +42,12 @@ export interface ClaudeCliPtySpawn {
   args: string[]
   cwd: string
   env: Record<string, string>
+  /**
+   * The claude session id that went on argv as `--resume`, or null for a
+   * brand-new session. The bridge keys its launch watch on this: a resumed
+   * transcript is not a launch.
+   */
+  resumeSessionId: string | null
 }
 
 const VALID_MODELS = new Set(['fable', 'opus', 'sonnet', 'haiku'])
@@ -151,9 +157,12 @@ export function buildClaudeCliPtySpawn(input: ClaudeCliPtySpawnInput): ClaudeCli
     args.push('--effort', effort)
   }
 
+  // A `pending::` placeholder is the SDK path's not-yet-materialised id (the
+  // codex spawner guards the same way); it is never a transcript to resume.
   const resumeId = input.claudeSessionId ?? input.session.claude_session_id
-  if (resumeId) {
-    args.push('--resume', resumeId)
+  const resumeSessionId = resumeId && !resumeId.startsWith('pending::') ? resumeId : null
+  if (resumeSessionId) {
+    args.push('--resume', resumeSessionId)
   }
 
   if (ultracode) {
@@ -181,7 +190,8 @@ export function buildClaudeCliPtySpawn(input: ClaudeCliPtySpawnInput): ClaudeCli
     return {
       ...buildCustomProviderShellSpawn(customCommand, args),
       cwd: input.worktreePath,
-      env
+      env,
+      resumeSessionId
     }
   }
 
@@ -189,7 +199,8 @@ export function buildClaudeCliPtySpawn(input: ClaudeCliPtySpawnInput): ClaudeCli
     command: input.claudeBinary || 'claude',
     args,
     cwd: input.worktreePath,
-    env
+    env,
+    resumeSessionId
   }
 }
 

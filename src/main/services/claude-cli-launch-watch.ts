@@ -9,10 +9,14 @@ import { createLogger } from './logger'
 const log = createLogger({ component: 'ClaudeCliLaunchWatch' })
 
 /**
- * A healthy claude spawn fires SessionStart well under a second after the
- * PTY starts (plugins and MCP servers can stretch that to a few seconds). A
- * spawn that has not reported in by this point is held up by something that
- * blocks the REPL before any hook runs — in practice the folder-trust dialog.
+ * A healthy claude spawn fires its first hook well under a second after the
+ * PTY starts (plugins and MCP servers can stretch that to a few seconds). The
+ * CLI does not deliver SessionStart over http hooks, so in practice that first
+ * hook is the UserPromptSubmit of the argv prompt. A spawn that has not
+ * reported in by this point is held up by something that blocks the REPL
+ * before any hook runs — in practice the folder-trust dialog. A `--resume`
+ * without an argv prompt is not a launch and is never watched; a resume that
+ * does carry a prompt gets the timer but not the output scan.
  */
 export const CLAUDE_CLI_LAUNCH_TIMEOUT_MS = 20_000
 
@@ -34,6 +38,12 @@ const OUTPUT_WINDOW_CHARS = 4_000
 
 interface LaunchWatch {
   timer: NodeJS.Timeout | null
+  /**
+   * Whether PTY output is scanned for the trust dialog. Off for a `--resume`:
+   * the CLI replays the prior transcript into the PTY, and that text can
+   * itself contain the dialog's wording.
+   */
+  scanOutput: boolean
   /** Normalised tail of the PTY output seen so far. */
   output: string
   /** The last non-clear state published for this session, if any. */
@@ -65,17 +75,19 @@ function publish(sessionId: string, state: ClaudeCliLaunchState, detail: string)
 
 /**
  * Start watching a fresh claude spawn. Until a hook arrives, the PTY output is
- * scanned for the trust dialog and a timer waits for SessionStart; whichever
+ * scanned for the trust dialog and a timer waits for the first hook; whichever
  * fires first publishes the launch state. `onTrustDialog` runs once when the
  * dialog is recognised (the bridge re-asserts the trust entry there).
+ * `scanOutput: false` keeps only the timer.
  */
 export function armClaudeCliLaunchWatch(
   sessionId: string,
-  opts?: { onTrustDialog?: () => void; timeoutMs?: number }
+  opts?: { onTrustDialog?: () => void; timeoutMs?: number; scanOutput?: boolean }
 ): void {
   disarm(sessionId)
   const watch: LaunchWatch = {
     timer: null,
+    scanOutput: opts?.scanOutput ?? true,
     output: '',
     published: null,
     onTrustDialog: opts?.onTrustDialog ?? null
@@ -86,7 +98,7 @@ export function armClaudeCliLaunchWatch(
     watch.timer = null
     if (watch.published) return
     watch.published = 'not_started'
-    log.warn('Claude CLI spawn has not fired SessionStart within the launch window', {
+    log.warn('Claude CLI spawn has not fired any hook within the launch window', {
       sessionId,
       timeoutMs: opts?.timeoutMs ?? CLAUDE_CLI_LAUNCH_TIMEOUT_MS
     })
@@ -99,7 +111,7 @@ export function armClaudeCliLaunchWatch(
 /** Feed raw PTY output of a watched session. No-op once the session has started. */
 export function observeClaudeCliLaunchOutput(sessionId: string, data: string): void {
   const watch = watches.get(sessionId)
-  if (!watch || watch.published === 'awaiting_trust') return
+  if (!watch || !watch.scanOutput || watch.published === 'awaiting_trust') return
   watch.output = (watch.output + normalizeClaudeCliOutput(data)).slice(-OUTPUT_WINDOW_CHARS)
   if (!containsClaudeTrustDialog(watch.output)) return
   watch.published = 'awaiting_trust'

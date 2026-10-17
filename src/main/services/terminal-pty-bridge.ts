@@ -915,6 +915,7 @@ export async function createClaudeCliTerminal(
 
     let spawn: { command: string; args: string[]; cwd: string; env: Record<string, string> }
     let codexPromptViaPty: string | null = null
+    let claudeResumeSessionId: string | null = null
     if (codex) {
       const projectPath = db.getProject(session.project_id)?.path ?? null
       const hookOverrides = buildCodexCliHookOverrides(port, sessionId)
@@ -931,7 +932,7 @@ export async function createClaudeCliTerminal(
       codexPromptViaPty = codexSpawn.promptViaPty
     } else {
       const hookSettingsJson = buildClaudeCliHookSettings(port, sessionId)
-      spawn = buildClaudeCliPtySpawn({
+      const claudeSpawn = buildClaudeCliPtySpawn({
         session,
         worktreePath,
         pendingPrompt,
@@ -941,6 +942,8 @@ export async function createClaudeCliTerminal(
         customProviderCommand,
         customProviderModels
       })
+      spawn = claudeSpawn
+      claudeResumeSessionId = claudeSpawn.resumeSessionId
     }
 
     log.info(`Creating ${cliName} PTY`, {
@@ -1121,15 +1124,32 @@ export async function createClaudeCliTerminal(
       ensureCodexHookSubscription()
     } else {
       ensureClaudeHookSubscription()
-      if (!alreadyExists) {
-        // A fresh claude process must report in with a SessionStart within
-        // seconds. Until it does, its output is scanned for the folder-trust
-        // dialog (which blocks the REPL — and the argv prompt — before any
-        // hook can fire) so the ticket shows "not started" instead of looking
-        // launched. Seeing the dialog also means the pre-flight's trust entry
-        // never reached the CLI: write it again so the next launch works.
+      if (!alreadyExists && claudeResumeSessionId && !pendingPrompt) {
+        // Reopening a ticket (or Restart) onto a session that already ran:
+        // a promptless `--resume` of its transcript. That is not a launch,
+        // and "Not started" is reserved for brand-new sessions. The CLI drops
+        // http hooks for SessionStart, so with no argv prompt the only hook
+        // that could end a watch is the user's next message — which is
+        // exactly how resumed tickets came to wear the badge.
+        log.info('Skipping the Claude CLI launch watch for a resumed session', {
+          sessionId,
+          claudeSessionId: claudeResumeSessionId
+        })
+      } else if (!alreadyExists) {
+        // A fresh claude process must report in with a hook within seconds
+        // (the CLI never delivers SessionStart over http, so in practice that
+        // is the UserPromptSubmit of the argv prompt — a resume carrying a
+        // follow-up prompt reports in the same way). Until it does, its
+        // output is scanned for the folder-trust dialog (which blocks the
+        // REPL — and the argv prompt — before any hook can fire) so the
+        // ticket shows "not started" instead of looking launched. Seeing the
+        // dialog also means the pre-flight's trust entry never reached the
+        // CLI: write it again so the next launch works. Not for a resume: the
+        // CLI replays the prior transcript into the PTY, and that text can
+        // itself contain the dialog's wording.
         const cwd = worktreePath
         armClaudeCliLaunchWatch(sessionId, {
+          scanOutput: !claudeResumeSessionId,
           onTrustDialog: () => {
             void reassertSessionFolderTrust(db, cwd)
           }
