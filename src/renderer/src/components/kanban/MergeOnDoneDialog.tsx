@@ -91,7 +91,7 @@ export function MergeOnDoneDialog() {
     [pendingDoneMove]
   )
 
-  // Document-run batch (cmd+shift-drop of the run's ticket): the entry being handled
+  // Document-run batch (shift-drop of the run's ticket): the entry being handled
   const runEntry = pendingDoneMove?.run ? pendingDoneMove.entry : undefined
   const isRunChild = runEntry?.kind === 'run-child'
   const isRunIntegration = runEntry?.kind === 'run-integration'
@@ -607,7 +607,7 @@ export function MergeOnDoneDialog() {
           }
           toast.error(
             isRunIntegration
-              ? `${conflictSummary} on ${resolved.baseBranch} — nothing archived. Fix them, then cmd+shift-drag the run's ticket again`
+              ? `${conflictSummary} on ${resolved.baseBranch} — nothing archived. Fix them, then shift-drag the run's ticket again`
               : `${conflictSummary} — merge manually`
           )
         } else {

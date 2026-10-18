@@ -1,5 +1,5 @@
 /**
- * The merge-on-done queue of a document-run batch (cmd+shift-drop of the run's ticket): a
+ * The merge-on-done queue of a document-run batch (shift-drop of the run's ticket): a
  * ticket branch is queued once to merge into the integration branch and again, at the tail,
  * to be archived; each finished entry moves its own ticket, the run's ticket moves last, and
  * never past a branch that was skipped or hit conflicts.

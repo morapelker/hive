@@ -1,6 +1,8 @@
 /**
- * The modifier keys held when a card's drag starts travel with the drag data: cmd+shift on the
+ * The modifier keys held when a card's drag starts travel with the drag data: shift on the
  * ticket of a document run dropped on Done/Merged finishes the whole run (KanbanColumn).
+ * Only shift is recorded: macOS refuses a 'move' drop while ⌘, ⌥ or ⌃ is held, so a drop
+ * with those keys never reaches the column.
  */
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -91,25 +93,25 @@ describe('KanbanTicketCard drag modifiers', () => {
     setKanbanDragData(null)
   })
 
-  it('records cmd+shift held when the drag starts', () => {
-    dragStart({ metaKey: true, shiftKey: true })
+  it('records shift held when the drag starts', () => {
+    dragStart({ shiftKey: true })
 
     expect(getKanbanDragData()).toMatchObject({
       ticketId: 'ticket-run',
       sourceColumn: 'review',
-      modifiers: { cmd: true, shift: true }
+      modifiers: { shift: true }
     })
   })
 
-  it('counts ctrl as cmd', () => {
-    dragStart({ ctrlKey: true, shiftKey: true })
-
-    expect(getKanbanDragData()?.modifiers).toEqual({ cmd: true, shift: true })
-  })
-
-  it('records a plain drag as held with neither', () => {
+  it('records a plain drag as shift not held', () => {
     dragStart({})
 
-    expect(getKanbanDragData()?.modifiers).toEqual({ cmd: false, shift: false })
+    expect(getKanbanDragData()?.modifiers).toEqual({ shift: false })
+  })
+
+  it('ignores cmd: it is not part of the gesture', () => {
+    dragStart({ metaKey: true })
+
+    expect(getKanbanDragData()?.modifiers).toEqual({ shift: false })
   })
 })

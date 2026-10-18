@@ -1,4 +1,4 @@
-// cmd+shift-dropping the ticket of a document run (the orchestrator) on Done/Merged finishes the
+// Shift-dropping the ticket of a document run (the orchestrator) on Done/Merged finishes the
 // whole run in one go: every ticket branch the run opened is checked, the ones with work the
 // integration branch lacks are merged into it (the run's own merge path, one dialog step each),
 // the integration branch is merged into the base branch like a plain drop of the run's ticket,

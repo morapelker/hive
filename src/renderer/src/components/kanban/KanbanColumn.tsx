@@ -547,11 +547,9 @@ export function KanbanColumn({
       if (!dragData) return
 
       const { ticketId, sourceColumn, projectId: draggedProjectId } = dragData
-      // cmd+shift (held at drag start or at the drop): a document run's ticket dropped on
+      // Shift (held at drag start or at the drop): a document run's ticket dropped on
       // Done/Merged finishes the whole run — see the batch branch below
-      const batchRun =
-        (dragData.modifiers?.cmd || e.metaKey || e.ctrlKey) &&
-        (dragData.modifiers?.shift || e.shiftKey)
+      const batchRun = Boolean(dragData.modifiers?.shift || e.shiftKey)
       setKanbanDragData(null) // Clear after reading
 
       const targetIndex = dropIndexRef.current ?? tickets.length
@@ -615,7 +613,7 @@ export function KanbanColumn({
             store.moveTicket(ticketId, ticketProjectId, column, sortOrder)
             return
           }
-          // cmd+shift: Done/Merged for the whole run. Every ticket branch the run opened is
+          // shift: Done/Merged for the whole run. Every ticket branch the run opened is
           // checked; the ones with work are merged into the integration branch (a dialog
           // step each), then the integration branch into base, and the archive step offers
           // to archive all of them and move their tickets along. A branch that cannot be

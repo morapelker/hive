@@ -875,14 +875,15 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   const handleDragStart = useCallback(
     (e: React.DragEvent) => {
       // Store drag data
-      // cmd+shift held on the ticket of a document run: dropping it on Done/Merged
-      // merges and archives the run's branches as one batch (KanbanColumn.handleDrop)
+      // Shift held on the ticket of a document run: dropping it on Done/Merged merges
+      // and archives the run's branches as one batch (KanbanColumn.handleDrop). Shift
+      // only — see KanbanDragData.modifiers for why ⌘/⌥/⌃ cannot work here.
       setKanbanDragData({
         projectId: ticket.project_id,
         ticketId: ticket.id,
         sourceColumn: ticket.column,
         sourceIndex: index,
-        modifiers: { cmd: e.metaKey || e.ctrlKey, shift: e.shiftKey }
+        modifiers: { shift: e.shiftKey }
       })
       e.dataTransfer.setData('text/plain', ticket.id)
       e.dataTransfer.effectAllowed = 'move'

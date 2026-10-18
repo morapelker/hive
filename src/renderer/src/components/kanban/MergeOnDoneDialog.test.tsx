@@ -1121,7 +1121,7 @@ describe('MergeOnDoneDialog — changed files', () => {
   })
 })
 
-describe('MergeOnDoneDialog — document-run batch (cmd+shift-drop of the run ticket)', () => {
+describe('MergeOnDoneDialog — document-run batch (shift-drop of the run ticket)', () => {
   const integrationWorktree = {
     id: 'worktree-int',
     project_id: 'project-1',

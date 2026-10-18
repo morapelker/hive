@@ -83,12 +83,17 @@ export interface KanbanDragData {
   sourceColumn: string
   sourceIndex: number
   /**
-   * Modifier keys held when the drag started. cmd+shift on the ticket of a document run
-   * dropped on Done/Merged merges and archives the run's branches as one batch (see
-   * lib/document-flow/run-done-queue.ts). The drop event is consulted too, so a modifier
-   * pressed mid-drag counts as well.
+   * Modifier keys held when the drag started. Shift on the ticket of a document run dropped
+   * on Done/Merged merges and archives the run's branches as one batch (see
+   * lib/document-flow/run-done-queue.ts). The drop event is consulted too, so Shift pressed
+   * mid-drag counts as well.
+   *
+   * Shift is the only modifier a drag can carry on macOS: AppKit filters the drag's allowed
+   * operations by the modifier held (⌘ → generic, ⌥ → copy, ⌃ → link), and a card drags
+   * with `effectAllowed = 'move'` only, so a drop with any of those held is refused by the
+   * OS before the drop event ever fires.
    */
-  modifiers?: { cmd: boolean; shift: boolean }
+  modifiers?: { shift: boolean }
 }
 
 let _kanbanDragData: KanbanDragData | null = null
@@ -245,7 +250,7 @@ export interface PendingDoneMoveWorktree {
    */
   alreadyMerged?: boolean
   /**
-   * Document-run batch (cmd+shift-drop of the run's ticket): what the entry is.
+   * Document-run batch (shift-drop of the run's ticket): what the entry is.
    * - `run-child`: a ticket branch with work the integration branch lacks; merged INTO the
    *   integration branch through the run's own merge path. Its ticket moves to Merged on
    *   success and to the target column with its `run-child-archive` twin at the tail.

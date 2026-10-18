@@ -1,5 +1,5 @@
 /**
- * Which branches of a document run the cmd+shift-drop of its ticket queues for the merge-on-done
+ * Which branches of a document run the shift-drop of its ticket queues for the merge-on-done
  * dialog, and in what order: branches with work the integration branch lacks first (to merge
  * into it), the integration worktree next (to merge into base), every branch to archive last.
  * Anything that cannot be shown to be safe is kept and named.

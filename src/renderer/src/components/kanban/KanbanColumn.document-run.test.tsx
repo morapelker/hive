@@ -152,7 +152,7 @@ function seedRun(
 async function drop(
   ticket: KanbanTicket,
   column: KanbanTicketColumn,
-  modifiers?: { cmd: boolean; shift: boolean }
+  modifiers?: { shift: boolean }
 ): Promise<void> {
   useKanbanStore.setState({ tickets: new Map([[ticket.project_id, [ticket]]]) })
   render(
@@ -564,8 +564,8 @@ describe('a run that is not in the store', () => {
   })
 })
 
-describe('cmd+shift-dropping the ticket of a run that has ended', () => {
-  const batch = { cmd: true, shift: true }
+describe('shift-dropping the ticket of a run that has ended', () => {
+  const batch = { shift: true }
 
   beforeEach(() => {
     seedRun('completed')
@@ -594,14 +594,14 @@ describe('cmd+shift-dropping the ticket of a run that has ended', () => {
     )
   })
 
-  it('takes the usual single-branch path without the modifiers, or with only one of them', async () => {
-    for (const modifiers of [undefined, { cmd: true, shift: false }, { cmd: false, shift: true }]) {
+  it('takes the usual single-branch path without shift', async () => {
+    for (const modifiers of [undefined, { shift: false }]) {
       await drop(makeTicket({ column: 'review' }), 'done', modifiers)
       cleanup()
     }
 
     expect(runDoneQueue.queueDocumentRunDone).not.toHaveBeenCalled()
-    await waitFor(() => expect(setPendingDoneMove).toHaveBeenCalledTimes(3))
+    await waitFor(() => expect(setPendingDoneMove).toHaveBeenCalledTimes(2))
   })
 
   it('still refuses the drop while the run is going', async () => {
