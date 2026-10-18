@@ -270,3 +270,21 @@ describe('ignoring Fable', () => {
     expect(autoSwitchIneligibilityReason(row, 90, NOW, true)).toBeNull()
   })
 })
+
+describe('autoSwitchIneligibilityReason for accounts removed from auto-switch', () => {
+  const row = { usage: usage(10, 10), status: 'ok' as const, isActive: false }
+
+  it('names the removal once auto-switch is armed, even with plenty of headroom', () => {
+    expect(autoSwitchIneligibilityReason(row, 90, NOW, false, true)).toMatch(
+      /removed from auto-switch/i
+    )
+    expect(autoSwitchIneligibilityReason(row, 90, NOW, false, false)).toBeNull()
+  })
+
+  it('stays silent while auto-switch is off or for the active account', () => {
+    expect(autoSwitchIneligibilityReason(row, undefined, NOW, false, true)).toBeNull()
+    expect(
+      autoSwitchIneligibilityReason({ ...row, isActive: true }, 90, NOW, false, true)
+    ).toBeNull()
+  })
+})

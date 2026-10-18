@@ -555,6 +555,43 @@ describe('UsageAccountRow', () => {
     expect(onSwitch).toHaveBeenCalledTimes(1)
   })
 
+  it('removes the account from auto-switch and adds it back from the row', async () => {
+    const user = userEvent.setup()
+    useAccountScheduleStore.setState({ autoSwitchExcluded: {} })
+    render(
+      <UsageAccountRow
+        provider="anthropic"
+        row={{
+          id: 'acc-2',
+          email: 'other@example.com',
+          usage: sampleUsage,
+          status: 'ok',
+          lastError: null,
+          isActive: false,
+          isRefreshing: false
+        }}
+        onSwitch={vi.fn()}
+      />
+    )
+
+    const toggle = screen.getByTestId('auto-switch-exclude-toggle')
+    expect(toggle).toHaveTextContent('Remove from auto-switch')
+    await user.click(
+      screen.getByRole('button', { name: /^remove other@example.com from auto-switch$/i })
+    )
+    expect(useAccountScheduleStore.getState().autoSwitchExcluded.anthropic).toEqual([
+      'other@example.com'
+    ])
+    expect(toggle).toHaveTextContent('Not in auto-switch')
+    expect(toggle.getAttribute('aria-pressed')).toBe('true')
+
+    await user.click(
+      screen.getByRole('button', { name: /^add other@example.com back to auto-switch$/i })
+    )
+    expect(useAccountScheduleStore.getState().autoSwitchExcluded.anthropic).toEqual([])
+    expect(toggle).toHaveTextContent('Remove from auto-switch')
+  })
+
   it('renders no overlay without an ineligibility reason', () => {
     render(
       <UsageAccountRow

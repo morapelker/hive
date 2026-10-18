@@ -7,6 +7,7 @@ import { useUsageStore } from '@/stores/useUsageStore'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useLoginStore } from '@/stores/useLoginStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
+import { useAccountScheduleStore } from '@/stores/useAccountScheduleStore'
 import { DEFAULT_AUTO_SIGN_IN_SETTINGS } from '@shared/types/settings'
 import { SettingsAccounts } from './SettingsAccounts'
 import type { SavedAccountDTO } from '@shared/types/usage'
@@ -77,6 +78,7 @@ describe('SettingsAccounts', () => {
     } as Partial<ReturnType<typeof useUsageStore.getState>>)
     useAccountStore.setState({ anthropicEmail: 'active@example.com', openaiEmail: null })
     useLoginStore.setState({ activeLogin: null })
+    useAccountScheduleStore.setState({ autoSwitchExcluded: {} })
   })
 
   afterEach(() => {
@@ -140,11 +142,38 @@ describe('SettingsAccounts', () => {
     expect(screen.getAllByRole('button', { name: /sign in again/i })).toHaveLength(2)
   })
 
+  it('removes an account from auto-switch and adds it back from its row, with a badge', async () => {
+    const user = userEvent.setup()
+    await renderSettingsAccounts()
+
+    expect(screen.queryByTestId('account-auto-switch-excluded-acc-expired')).toBeNull()
+    await user.click(
+      screen.getByRole('button', { name: /^remove expired@example.com from auto-switch$/i })
+    )
+
+    expect(useAccountScheduleStore.getState().autoSwitchExcluded.anthropic).toEqual([
+      'expired@example.com'
+    ])
+    expect(screen.getByTestId('account-auto-switch-excluded-acc-expired')).toHaveTextContent(
+      'Not in auto-switch'
+    )
+    // The active account can be removed too (it affects future hops, not this one).
+    expect(
+      screen.getByRole('button', { name: /^remove active@example.com from auto-switch$/i })
+    ).not.toBeNull()
+
+    await user.click(
+      screen.getByRole('button', { name: /^add expired@example.com back to auto-switch$/i })
+    )
+    expect(useAccountScheduleStore.getState().autoSwitchExcluded.anthropic).toEqual([])
+    expect(screen.queryByTestId('account-auto-switch-excluded-acc-expired')).toBeNull()
+  })
+
   it('requires confirmation before removing an account', async () => {
     const user = userEvent.setup()
     await renderSettingsAccounts()
 
-    await user.click(screen.getByRole('button', { name: /remove expired@example.com/i }))
+    await user.click(screen.getByRole('button', { name: /^remove expired@example.com$/i }))
 
     // No RPC call before confirming
     expect(request).not.toHaveBeenCalledWith('accountOps.removeSaved', expect.anything())

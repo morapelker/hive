@@ -55,7 +55,7 @@ describe('useAccountScheduleStore auto-switch', () => {
     vi.setSystemTime(new Date('2026-07-16T10:00:00.000Z'))
     vi.clearAllMocks()
 
-    useAccountScheduleStore.setState({ schedules: {}, autoSwitch: {} })
+    useAccountScheduleStore.setState({ schedules: {}, autoSwitch: {}, autoSwitchExcluded: {} })
     resetExecutingProvidersForTests()
     useAccountStore.setState({ anthropicEmail: 'current@x.com', openaiEmail: null })
 
@@ -168,6 +168,52 @@ describe('useAccountScheduleStore auto-switch', () => {
     expect(switchCalls()[0][1]).toEqual({ accountId: 'acc-2' })
     // Stays armed for the next threshold crossing.
     expect(useAccountScheduleStore.getState().autoSwitch.anthropic).toBeDefined()
+  })
+
+  it('removes and re-adds accounts to auto-switch by provider, case-insensitively', () => {
+    const store = useAccountScheduleStore.getState()
+    store.setAccountAutoSwitchExcluded('anthropic', 'Best@X.com', true)
+    store.setAccountAutoSwitchExcluded('anthropic', 'best@x.com', true)
+    expect(useAccountScheduleStore.getState().autoSwitchExcluded.anthropic).toEqual(['best@x.com'])
+    expect(useAccountScheduleStore.getState().autoSwitchExcluded.openai).toBeUndefined()
+
+    store.setAccountAutoSwitchExcluded('anthropic', 'BEST@x.com', false)
+    expect(useAccountScheduleStore.getState().autoSwitchExcluded.anthropic).toEqual([])
+  })
+
+  it('never picks an account removed from auto-switch, and does not refresh it in the sweep', async () => {
+    // acc-2 would win on headroom, but it was removed: acc-3 gets the switch.
+    useAccountScheduleStore.getState().setAccountAutoSwitchExcluded('anthropic', 'best@x.com', true)
+    useAccountScheduleStore.getState().setAutoSwitch('anthropic', 90)
+
+    await useAccountScheduleStore.getState().checkSchedules()
+
+    expect(refreshAllCalls()).toHaveLength(1)
+    const sweepParams = refreshAllCalls()[0][1] as { excludeAccountIds?: string[] }
+    expect(sweepParams.excludeAccountIds).toContain('acc-2')
+    expect(switchCalls()).toHaveLength(1)
+    expect(switchCalls()[0][1]).toEqual({ accountId: 'acc-3' })
+  })
+
+  it('reports no target when the only account with usage left was removed from auto-switch', async () => {
+    // Only acc-2 would qualify (acc-3 is over the threshold), and it was removed.
+    refreshedAccounts[2] = makeAccount('acc-3', 'meh@x.com', makeUsage(95, 50))
+    useUsageStore.setState({ savedAccounts: { anthropic: refreshedAccounts, openai: [] } })
+    useAccountScheduleStore.getState().setAccountAutoSwitchExcluded('anthropic', 'best@x.com', true)
+    useAccountScheduleStore.getState().setAutoSwitch('anthropic', 90)
+    const events: AccountSwitchEvent[] = []
+    subscribeAccountSwitches((event) => events.push(event))
+
+    await useAccountScheduleStore.getState().checkSchedules()
+
+    expect(switchCalls()).toHaveLength(0)
+    expect(events).toHaveLength(0)
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('no other account below 90%'))
+    // Still armed, backed off until the retry delay.
+    expect(useAccountScheduleStore.getState().autoSwitch.anthropic?.notBefore).toBeGreaterThan(
+      Date.now()
+    )
+    resetAccountSwitchListenersForTests()
   })
 
   it('prefers the comfortable account whose 7-day window resets soonest over the emptiest one', async () => {

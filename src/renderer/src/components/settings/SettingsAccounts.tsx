@@ -7,6 +7,7 @@ import {
   RefreshCw,
   Repeat,
   Share2,
+  Shuffle,
   Timer,
   Trash2,
   Wand2,
@@ -24,7 +25,7 @@ import {
   type AutoSignInSettings
 } from '@shared/types/settings'
 import { Switch } from '@/components/ui/switch'
-import { useAccountScheduleStore } from '@/stores/useAccountScheduleStore'
+import { isExcludedFromAutoSwitch, useAccountScheduleStore } from '@/stores/useAccountScheduleStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { accountApi } from '@/api/account-api'
 import { createHiveAccountShare } from '@/api/hive-enterprise/client'
@@ -324,6 +325,10 @@ function ProviderAccountsCard({ provider }: { provider: UsageProvider }): React.
   const [emailPromptOpen, setEmailPromptOpen] = useState(false)
   const schedule = useAccountScheduleStore((s) => s.schedules[provider])
   const cancelSchedule = useAccountScheduleStore((s) => s.cancelSchedule)
+  const autoSwitchExcluded = useAccountScheduleStore((s) => s.autoSwitchExcluded)
+  const setAccountAutoSwitchExcluded = useAccountScheduleStore(
+    (s) => s.setAccountAutoSwitchExcluded
+  )
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null)
   const hiveAuthToken = useSettingsStore((s) => s.hiveAuthToken)
   const [sharingAccountId, setSharingAccountId] = useState<string | null>(null)
@@ -415,6 +420,7 @@ function ProviderAccountsCard({ provider }: { provider: UsageProvider }): React.
               account.status === 'ok'
                 ? sessionEndingSoonLabel(account.session_expires_at, Date.now())
                 : null
+            const isExcluded = isExcludedFromAutoSwitch(autoSwitchExcluded, provider, account.email)
 
             return (
               <div
@@ -435,6 +441,16 @@ function ProviderAccountsCard({ provider }: { provider: UsageProvider }): React.
                     {account.plan && (
                       <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
                         {account.plan}
+                      </span>
+                    )}
+                    {isExcluded && (
+                      <span
+                        className="inline-flex items-center gap-0.5 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-500"
+                        title="Removed from auto-switch: it never switches to this account"
+                        data-testid={`account-auto-switch-excluded-${account.id}`}
+                      >
+                        <Shuffle className="h-2.5 w-2.5" />
+                        Not in auto-switch
                       </span>
                     )}
                     {!isExpired && account.status === 'ok' && !isActive && (
@@ -483,6 +499,32 @@ function ProviderAccountsCard({ provider }: { provider: UsageProvider }): React.
                     ) : (
                       <RefreshCw className="h-3.5 w-3.5" />
                     )}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className={cn(
+                      'h-7 w-7',
+                      isExcluded
+                        ? 'text-amber-500 hover:text-amber-400'
+                        : 'text-muted-foreground hover:text-foreground'
+                    )}
+                    onClick={() =>
+                      setAccountAutoSwitchExcluded(provider, account.email, !isExcluded)
+                    }
+                    aria-pressed={isExcluded}
+                    aria-label={
+                      isExcluded
+                        ? `Add ${account.email} back to auto-switch`
+                        : `Remove ${account.email} from auto-switch`
+                    }
+                    title={
+                      isExcluded
+                        ? 'Removed from auto-switch: it never switches to this account. Click to add it back.'
+                        : 'Remove from auto-switch: it will never switch to this account (for accounts also used elsewhere). Manual and scheduled switches still work.'
+                    }
+                  >
+                    <Shuffle className={cn('h-3.5 w-3.5', isExcluded && 'line-through')} />
                   </Button>
                   {canShare && (
                     <Button

@@ -159,10 +159,14 @@ export function pickAutoSwitchTarget<T extends { usage: UsageData }>(
   return [...candidates].sort(byHeadroomDesc)[0] ?? null
 }
 
+/** Why an account the user removed from auto-switch can't be its target. */
+export const AUTO_SWITCH_EXCLUDED_REASON = 'Removed from auto-switch — never an auto-switch target'
+
 /**
  * Why an account can't be an auto-switch target right now, mirroring the
- * candidate filter in useAccountScheduleStore's sweep: the token must be
- * valid and every usage window must sit below the armed threshold. Null when
+ * candidate filter in useAccountScheduleStore's sweep: the account must not be
+ * removed from auto-switch, the token must be valid and every usage window
+ * must sit below the armed threshold. Null when
  * the account is (or may turn out to be, once refreshed) a viable target —
  * unknown usage is not dimmed since the sweep refreshes it before deciding.
  * The active account is never a candidate, but it's the one being left, so
@@ -172,9 +176,11 @@ export function autoSwitchIneligibilityReason(
   row: { usage: UsageData | null; status: SavedUsageStatus; isActive: boolean },
   thresholdPercent: number | undefined,
   nowMs: number,
-  ignoreFable = false
+  ignoreFable = false,
+  excludedFromAutoSwitch = false
 ): string | null {
   if (thresholdPercent === undefined || row.isActive) return null
+  if (excludedFromAutoSwitch) return AUTO_SWITCH_EXCLUDED_REASON
   if (row.status === 'stale') return 'Expired — not an auto-switch target'
   if (row.status === 'error') return 'Refresh failed — not an auto-switch target'
   if (!row.usage) return null

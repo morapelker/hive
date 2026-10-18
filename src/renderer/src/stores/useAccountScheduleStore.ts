@@ -54,6 +54,14 @@ export interface AutoSwitchConfig {
 interface AccountScheduleState {
   schedules: Partial<Record<UsageProvider, ScheduledSwitch>>
   autoSwitch: Partial<Record<UsageProvider, AutoSwitchConfig>>
+  /**
+   * Accounts removed from auto-switch, per provider, by lowercased email
+   * (emails survive a re-login; saved-account row ids don't). Typically an
+   * account also used by other tools or people that the rotation must not
+   * hammer: it is never an auto-switch target (manual and scheduled switches
+   * still work), and the candidate sweep doesn't bother refreshing it.
+   */
+  autoSwitchExcluded: Partial<Record<UsageProvider, string[]>>
 
   scheduleByTime: (
     provider: UsageProvider,
@@ -71,7 +79,19 @@ interface AccountScheduleState {
   /** Enable auto-switch (or update its threshold). Replaces any pending schedule. */
   setAutoSwitch: (provider: UsageProvider, thresholdPercent: number) => void
   disableAutoSwitch: (provider: UsageProvider) => void
+  /** Remove an account from auto-switch (or add it back). */
+  setAccountAutoSwitchExcluded: (provider: UsageProvider, email: string, excluded: boolean) => void
   checkSchedules: () => Promise<void>
+}
+
+/** Whether `email` was removed from auto-switch for `provider` (see autoSwitchExcluded). */
+export function isExcludedFromAutoSwitch(
+  autoSwitchExcluded: Partial<Record<UsageProvider, string[]>>,
+  provider: UsageProvider,
+  email: string | null
+): boolean {
+  if (email === null) return false
+  return (autoSwitchExcluded[provider] ?? []).includes(email.toLowerCase())
 }
 
 const PROVIDERS: UsageProvider[] = ['anthropic', 'openai']
@@ -155,10 +175,11 @@ function savedAccountUsage(provider: UsageProvider, account: SavedAccountDTO): U
 
 /**
  * Saved-account ids a candidate sweep may skip: the active account (never a
- * candidate) plus accounts whose cached usage PROVES they are at/over the
- * threshold until a known future reset — refreshing those is a wasted
- * request. Undefined before the first successful account-list load (nothing
- * to prove non-viability from — callers fall back to the full sweep).
+ * candidate), accounts the user removed from auto-switch, plus accounts whose
+ * cached usage PROVES they are at/over the threshold until a known future
+ * reset — refreshing those is a wasted request. Undefined before the first
+ * successful account-list load (nothing to prove non-viability from —
+ * callers fall back to the full sweep).
  */
 export function computeSweepExclusions(
   provider: UsageProvider,
@@ -169,9 +190,11 @@ export function computeSweepExclusions(
   if (!usageState.savedAccountsLoaded[provider]) return undefined
   const nowMs = Date.now()
   const ignoreFable = ignoreFableForAutoSwitch()
+  const excluded = useAccountScheduleStore.getState().autoSwitchExcluded
   return usageState.savedAccounts[provider]
     .filter((account) => {
       if (activeEmail !== null && account.email === activeEmail) return true
+      if (isExcludedFromAutoSwitch(excluded, provider, account.email)) return true
       const usage = savedAccountUsage(provider, account)
       if (!usage) return false
       return isProvablyAtOrAbove(autoSwitchUsage(usage, ignoreFable), thresholdPercent, nowMs)
@@ -211,6 +234,7 @@ export const useAccountScheduleStore = create<AccountScheduleState>()(
     (set, get) => ({
       schedules: {},
       autoSwitch: {},
+      autoSwitchExcluded: {},
 
       scheduleByTime: (provider, accountId, email, delayMs) => {
         set((state) => {
@@ -282,6 +306,20 @@ export const useAccountScheduleStore = create<AccountScheduleState>()(
         set((state) => {
           const { [provider]: _, ...rest } = state.autoSwitch
           return { autoSwitch: rest }
+        })
+      },
+
+      setAccountAutoSwitchExcluded: (provider, email, excluded) => {
+        const key = email.toLowerCase()
+        set((state) => {
+          const current = state.autoSwitchExcluded[provider] ?? []
+          const next = excluded
+            ? current.includes(key)
+              ? current
+              : [...current, key]
+            : current.filter((e) => e !== key)
+          if (next === current) return state
+          return { autoSwitchExcluded: { ...state.autoSwitchExcluded, [provider]: next } }
         })
       },
 
@@ -380,14 +418,19 @@ export const useAccountScheduleStore = create<AccountScheduleState>()(
               const now = Date.now()
               const ignoreFable = ignoreFableForAutoSwitch()
               // Eligible: the refresh succeeded, the token is valid, it's not
-              // the account we're leaving, its windows carry CURRENT data
+              // the account we're leaving, the user hasn't removed it from
+              // auto-switch, its windows carry CURRENT data
               // (all-expired resets right after a refresh means its live usage
               // is unknown, not zero), and it isn't itself at/over the
               // threshold (hopping there would immediately re-trigger).
               const candidates = useUsageStore
                 .getState()
                 .savedAccounts[provider].filter(
-                  (a) => succeededIds.has(a.id) && a.status === 'ok' && a.email !== activeEmail
+                  (a) =>
+                    succeededIds.has(a.id) &&
+                    a.status === 'ok' &&
+                    a.email !== activeEmail &&
+                    !isExcludedFromAutoSwitch(get().autoSwitchExcluded, provider, a.email)
                 )
                 .map((a) => ({ account: a, usage: savedAccountUsage(provider, a) }))
                 .filter(
@@ -551,7 +594,11 @@ export const useAccountScheduleStore = create<AccountScheduleState>()(
     {
       name: 'hive-account-switch-schedules',
       storage: createJSONStorage(() => localStorage),
-      partialize: (state) => ({ schedules: state.schedules, autoSwitch: state.autoSwitch })
+      partialize: (state) => ({
+        schedules: state.schedules,
+        autoSwitch: state.autoSwitch,
+        autoSwitchExcluded: state.autoSwitchExcluded
+      })
     }
   )
 )

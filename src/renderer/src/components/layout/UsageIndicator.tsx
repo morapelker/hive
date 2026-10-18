@@ -19,7 +19,7 @@ import { fetchHiveAccountMembers, isHiveTelemetryEnabled } from '@/api/hive-ente
 import { MemberAvatarStack, type AccountMemberInfo } from './MemberAvatarStack'
 import { cn } from '@/lib/utils'
 import { Loader2, RefreshCw, Shuffle, Timer } from 'lucide-react'
-import { useAccountScheduleStore } from '@/stores/useAccountScheduleStore'
+import { isExcludedFromAutoSwitch, useAccountScheduleStore } from '@/stores/useAccountScheduleStore'
 import { autoSwitchIneligibilityReason, isFableWindow } from '@/lib/auto-switch-score'
 import { sessionEndingSoonLabel, staleAccountNotice } from '@/lib/account-session'
 import { compareByResetTime } from '@/lib/usage-reset-order'
@@ -328,9 +328,21 @@ export function UsageAccountRow({
 
   const schedule = useAccountScheduleStore((s) => (provider ? s.schedules[provider] : undefined))
   const cancelSchedule = useAccountScheduleStore((s) => s.cancelSchedule)
+  const isExcluded = useAccountScheduleStore((s) =>
+    provider ? isExcludedFromAutoSwitch(s.autoSwitchExcluded, provider, row.email) : false
+  )
+  const setAccountAutoSwitchExcluded = useAccountScheduleStore(
+    (s) => s.setAccountAutoSwitchExcluded
+  )
   const [showScheduleForm, setShowScheduleForm] = useState(false)
   const scheduleTargetsRow = schedule !== undefined && schedule.accountId === row.id
   const canSchedule = provider !== undefined && !row.isActive && onSwitch !== undefined
+  // Removing from auto-switch keys on the saved account's email: the
+  // credentials-only placeholder row (no email) can't be.
+  const excludeTarget =
+    provider !== undefined && row.email !== null && onSwitch !== undefined
+      ? { provider, email: row.email }
+      : null
   const sessionEndingSoon = sessionEndingSoonLabel(row.sessionExpiresAt, Date.now())
 
   return (
@@ -453,6 +465,39 @@ export function UsageAccountRow({
             >
               <Timer className="h-2.5 w-2.5" />
               Schedule
+            </button>
+          )}
+          {excludeTarget && (
+            <button
+              type="button"
+              onClick={() =>
+                setAccountAutoSwitchExcluded(
+                  excludeTarget.provider,
+                  excludeTarget.email,
+                  !isExcluded
+                )
+              }
+              aria-pressed={isExcluded}
+              aria-label={
+                isExcluded
+                  ? `Add ${excludeTarget.email} back to auto-switch`
+                  : `Remove ${excludeTarget.email} from auto-switch`
+              }
+              title={
+                isExcluded
+                  ? 'Removed from auto-switch: it never switches to this account. Click to add it back.'
+                  : 'Remove from auto-switch: it will never switch to this account'
+              }
+              data-testid="auto-switch-exclude-toggle"
+              className={cn(
+                'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium transition-colors',
+                isExcluded
+                  ? 'border-amber-500/50 text-amber-600 hover:bg-amber-500/10 dark:text-amber-400'
+                  : 'border-border text-muted-foreground hover:bg-accent/60 hover:text-foreground'
+              )}
+            >
+              <Shuffle className={cn('h-2.5 w-2.5', isExcluded && 'line-through')} />
+              {isExcluded ? 'Not in auto-switch' : 'Remove from auto-switch'}
             </button>
           )}
           {row.status === 'stale' && onSignInAgain && (
@@ -655,6 +700,7 @@ function ProviderUsagePopoverBody({ provider }: { provider: UsageProvider }): Re
     (s) => s.autoSwitch[provider]?.thresholdPercent
   )
   const autoSwitchArmed = autoSwitchThreshold !== undefined
+  const autoSwitchExcluded = useAccountScheduleStore((s) => s.autoSwitchExcluded)
   const ignoreFable = useSettingsStore((s) => s.ignoreFableForAutoSwitch)
   const telemetryEnabled = useSettingsStore((s) => isHiveTelemetryEnabled(s))
   const {
@@ -708,7 +754,13 @@ function ProviderUsagePopoverBody({ provider }: { provider: UsageProvider }): Re
   const ineligibleReasons = new Map(
     accountRows.map((row) => [
       row.id,
-      autoSwitchIneligibilityReason(row, autoSwitchThreshold, nowMs, ignoreFable)
+      autoSwitchIneligibilityReason(
+        row,
+        autoSwitchThreshold,
+        nowMs,
+        ignoreFable,
+        isExcludedFromAutoSwitch(autoSwitchExcluded, provider, row.email)
+      )
     ])
   )
   // Freeze IDs, not row data, so refreshes and account switches update the
