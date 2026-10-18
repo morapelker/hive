@@ -27,7 +27,7 @@ describe('pet animation settings', () => {
 
   it('keeps automatic corgi styles independent of the shared speed controls', () => {
     const { rerender } = render(<SettingsPet />)
-    expect(screen.getByTestId('pet-animation-variants')).toHaveTextContent('up to 5 styles')
+    expect(screen.getByTestId('pet-animation-variants')).toHaveTextContent('up to 8 styles')
     expect(screen.getByTestId('pet-animation-speed-enabled-checkbox')).toBeChecked()
     expect(screen.getByTestId('pet-animation-speed-slider')).toHaveValue('3')
 

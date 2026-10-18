@@ -2,25 +2,31 @@
 
 The working corgi automatically changes appearance with the number of active
 **sessions**. Styles are cumulative and always enabled. At five sessions it gains a numbered
-cape; the same animation then displays the actual count (6, 20, 123, etc.). Idle
-and attention states use the existing static corgi.
+cape, and the cape displays the actual count from then on (6, 20, 123, etc.). Three
+more styles arrive at 10, 15 and 20 sessions (the "power-up" track chosen from
+`docs/corgi-concurrency-levels.html`). The manifest's `workingLottieVariantSessions`
+lists the minimum count for each variant; `workingVariantIndex()` picks the last one
+the count reaches. Idle and attention states use the existing static corgi.
 
 Speed scaling is independent for every pet: when enabled, the animation speeds
 up with the session count to the configured maximum; when disabled, it runs at
 1×. Neither the speed toggle nor its limit affects the style or cape number.
 Pets without `workingLottieVariants` keep their single working animation.
 
-| Sessions | Asset                         | Appearance                                           |
-| -------- | ----------------------------- | ---------------------------------------------------- |
-| 1        | `assets/corgi-anim.lottie`    | Original, unchanged                                  |
-| 2        | `assets/corgi-level-2.lottie` | Long wagging tail with a cream tip                   |
-| 3        | `assets/corgi-level-3.lottie` | Tail and gold crown                                  |
-| 4        | `assets/corgi-level-4.lottie` | Tail, crown, and rippling red cape                   |
-| 5+       | `assets/corgi-level-5.lottie` | Actual session count on the cape, with golden sparks |
+| Sessions | Asset                          | Appearance                                            |
+| -------- | ------------------------------ | ----------------------------------------------------- |
+| 1        | `assets/corgi-anim.lottie`     | Original, unchanged                                   |
+| 2        | `assets/corgi-level-2.lottie`  | Long wagging tail with a cream tip                    |
+| 3        | `assets/corgi-level-3.lottie`  | Tail and gold crown                                   |
+| 4        | `assets/corgi-level-4.lottie`  | Tail, crown, and rippling red cape                    |
+| 5–9      | `assets/corgi-level-5.lottie`  | Actual session count on the cape, with golden sparks  |
+| 10–14    | `assets/corgi-level-10.lottie` | Sunglasses on the head and streaking speed lines      |
+| 15–19    | `assets/corgi-level-15.lottie` | A pair of flapping wings under the cape               |
+| 20+      | `assets/corgi-level-20.lottie` | Flame trail, drifting embers, warm glow, amber sparks |
 
 ## Editable cape number
 
-Level five contains a native Lottie text layer parented to the cape and a text
+Level five and every level above it contain a native Lottie text layer parented to the cape and a text
 slot named `session-count`. Its default text is `5`. All ten digit outlines are
 embedded, so the file works without a font download or HTML overlay.
 
@@ -64,11 +70,11 @@ speed controls. The gallery stays at 1× for comparison. Numbered
 cards download the reusable template, whose default number is five. This is a
 development preview, not a production route.
 
-The generator reads the original archive and writes only levels 2–5. It preserves
+The generator reads the original archive and writes levels 2–5, 10, 15 and 20. It preserves
 the original composition, frame rate, run cycle, colors, and character rig. The
 original file doubles as level one. The additions use native Lottie shapes and
-keyframes: the tail and cape follow the body, the crown follows the head, and the
-cape's shape paths animate independently. Generation is deterministic; edit the
+keyframes: the tail, cape, wings, speed lines, flames and glow follow the body, the
+crown and sunglasses follow the head, and the cape's shape paths animate independently. Generation is deterministic; edit the
 generator before rebuilding the archives.
 
 The checked-in `digit-glyphs.json` contains outlines from the bundled Geist font

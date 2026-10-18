@@ -3,6 +3,7 @@ import type * as React from 'react'
 import type { LoadedPet, PetSettings, PetState } from '@shared/types/pet'
 import { DotLottieSprite } from './DotLottieSprite'
 import { sessionCounterSlots } from './sessionCounter'
+import { workingVariantIndex } from './workingVariant'
 
 const SIZE_PX: Record<PetSettings['size'], number> = {
   S: 64,
@@ -76,8 +77,7 @@ export function PetSprite({
   const variants = pet.resolvedWorkingLottieVariants
   const speed = workingAnimationSpeed(settings, workingSessionCount)
   const overlay = overlayForState(state)
-  const variantIndex =
-    Math.min(Math.max(Math.floor(workingSessionCount), 1), variants?.length ?? 1) - 1
+  const variantIndex = workingVariantIndex(pet, workingSessionCount)
   const lottieSrc =
     state === 'working'
       ? (variants?.[variantIndex] ?? pet.resolvedLottieAssets?.working)

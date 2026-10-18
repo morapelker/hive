@@ -3,6 +3,7 @@ import dotLottieWasmUrl from '@lottiefiles/dotlottie-web/dotlottie-player.wasm?u
 import { createRoot } from 'react-dom/client'
 import { PetSprite } from '../PetSprite'
 import { sessionCounterSlots } from '../sessionCounter'
+import { workingVariantIndex } from '../workingVariant'
 import { getPet } from '../registry'
 import type { PetSize } from '@shared/types/pet'
 import '../pet.css'
@@ -16,10 +17,16 @@ const baseLevels = [
   ['Royal corgi', 'A golden crown for a very good multitasker.', 'corgi-level-3'],
   ['Here to help', 'A red cape that ripples with every stride.', 'corgi-level-4']
 ]
+const milestones: Record<number, [string, string, string]> = {
+  10: ['Speedster', 'Sunglasses and speed lines: ten sessions at full tilt.', 'corgi-level-10'],
+  15: ['Winged', 'A pair of flapping wings behind the cape.', 'corgi-level-15'],
+  20: ['Blazing', 'A flame trail, drifting embers, and a warm glow.', 'corgi-level-20']
+}
 const levels = Array.from(
   { length: 20 },
   (_, index) =>
-    baseLevels[index] ?? [
+    baseLevels[index] ??
+    milestones[index + 1] ?? [
       `Super corgi · ${index + 1}`,
       `The cape wears the actual count: ${index + 1} active sessions.`,
       'corgi-level-5'
@@ -36,7 +43,7 @@ let loaded = 0
 playButton.textContent = playing ? 'Pause animations' : 'Play animations'
 
 for (const [index, [name, description, filename]] of levels.entries()) {
-  const src = corgi.resolvedWorkingLottieVariants![Math.min(index, 4)]
+  const src = corgi.resolvedWorkingLottieVariants![workingVariantIndex(corgi, index + 1)]
   const card = document.createElement('article')
   card.className = 'card'
   card.dataset.sessions = String(index + 1)

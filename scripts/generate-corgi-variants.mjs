@@ -1,6 +1,7 @@
-// Rebuild the four cumulative variants from the untouched, checked-in corgi.
+// Rebuild the cumulative variants (levels 2-5, then 10, 15 and 20) from the untouched, checked-in corgi.
 // Run: node apps/hive/scripts/generate-corgi-variants.mjs
 // All additions are native Lottie vectors, parented to the original character rig.
+// Levels 10+ follow the "power-up" track from docs/corgi-concurrency-levels.html.
 import { readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { crc32, deflateRawSync, inflateRawSync } from 'node:zlib'
@@ -22,20 +23,34 @@ const palette = {
   red: 'e74750',
   redShade: 'b52d46',
   redLight: 'ff7273',
-  jewel: '2baba4'
+  jewel: '2baba4',
+  amber: 'ffb347',
+  ink: '1b1f3a',
+  inkLight: '2b3059',
+  flame: 'ff7a1a',
+  flameCore: 'ffd23f',
+  feather: 'fff6e3',
+  featherShade: 'f3dfae',
+  featherFar: 'f1dcae',
+  featherFarShade: 'e0c58c'
 }
+const LINEAR = { i: { x: 1, y: 1 }, o: { x: 0, y: 0 } }
 
 function transform(p = [0, 0, 0]) {
   return { o: still(100), r: still(0), p: still(p), a: still([0, 0, 0]), s: still([100, 100, 100]) }
 }
 
-function keyframes(values, times = [0, 22.5, 45, 67.5, 90]) {
+function keyframes(
+  values,
+  times = [0, 22.5, 45, 67.5, 90],
+  ease = { i: { x: 0.667, y: 1 }, o: { x: 0.333, y: 0 } }
+) {
   return {
     a: 1,
     k: values.map((value, index) => ({
       t: times[index],
       s: Array.isArray(value) ? value : [value],
-      ...(index < values.length - 1 ? { i: { x: 0.667, y: 1 }, o: { x: 0.333, y: 0 } } : {})
+      ...(index < values.length - 1 ? ease : {})
     }))
   }
 }
@@ -50,7 +65,12 @@ function bezier(nodes, closed = true) {
   }
 }
 
-function shape(name, nodes, hex, { morph, stroke, width = 3, closed = true } = {}) {
+function shape(
+  name,
+  nodes,
+  hex,
+  { morph, stroke, width = 3, closed = true, opacity = 100, tr } = {}
+) {
   const paths = morph ? morph.map((frame) => bezier(frame, closed)) : null
   const ks = paths ? keyframes(paths.map((path) => [path])) : still(bezier(nodes, closed))
   return {
@@ -58,22 +78,34 @@ function shape(name, nodes, hex, { morph, stroke, width = 3, closed = true } = {
     nm: name,
     it: [
       { ty: 'sh', nm: name, ks },
-      ...(hex ? [{ ty: 'fl', c: still(color(hex)), o: still(100), r: 1 }] : []),
+      ...(hex ? [{ ty: 'fl', c: still(color(hex)), o: still(opacity), r: 1 }] : []),
       ...(stroke
-        ? [{ ty: 'st', c: still(color(stroke)), o: still(100), w: still(width), lc: 2, lj: 2 }]
+        ? [{ ty: 'st', c: still(color(stroke)), o: still(opacity), w: still(width), lc: 2, lj: 2 }]
         : []),
-      { ty: 'tr', ...transform([0, 0]) }
+      { ty: 'tr', ...transform([0, 0]), ...tr }
     ]
   }
 }
 
-function ellipse(name, p, size, hex) {
+function rect(name, p, size, radius, hex, opacity = 100, tr) {
+  return {
+    ty: 'gr',
+    nm: name,
+    it: [
+      { ty: 'rc', d: 1, p: still(p), s: still(size), r: still(radius) },
+      { ty: 'fl', c: still(color(hex)), o: still(opacity), r: 1 },
+      { ty: 'tr', ...transform([0, 0]), ...tr }
+    ]
+  }
+}
+
+function ellipse(name, p, size, hex, opacity = 100) {
   return {
     ty: 'gr',
     nm: name,
     it: [
       { ty: 'el', p: still(p), s: still(size) },
-      { ty: 'fl', c: still(color(hex)), o: still(100), r: 1 },
+      { ty: 'fl', c: still(color(hex)), o: still(opacity), r: 1 },
       { ty: 'tr', ...transform([0, 0]) }
     ]
   }
@@ -308,7 +340,7 @@ function addCape(rig, superCorgi) {
   }
 }
 
-function addTrail(rig) {
+function addTrail(rig, hex = palette.gold) {
   const positions = [
     [690, -42],
     [773, 16],
@@ -335,7 +367,7 @@ function addTrail(rig) {
             [-size, 0],
             [-size * 0.28, -size * 0.28]
           ],
-          palette.gold
+          hex
         )
       ]
     )
@@ -353,7 +385,219 @@ function addTrail(rig) {
   }
 }
 
-for (let level = 2; level <= 5; level++) {
+// Level 10: shades on the head and streaks behind the body.
+function addSunglasses(rig) {
+  const glasses = layer(
+    40,
+    'Speedster · sunglasses follow head',
+    5,
+    [154, 123, 0],
+    [
+      rect('Lens shine', [-16, -9], [24, 7], 3.5, 'ffffff', 60, { r: still(-14) }),
+      rect('Lens', [0, 0], [74, 44], 15, palette.ink),
+      rect('Lens frame', [0, 0], [84, 54], 19, palette.inkLight),
+      shape(
+        'Temple arm',
+        [
+          [38, -10],
+          [118, -30]
+        ],
+        null,
+        { stroke: palette.ink, width: 9, closed: false }
+      ),
+      shape(
+        'Bridge',
+        [
+          [-40, -6],
+          [-62, 0]
+        ],
+        null,
+        { stroke: palette.ink, width: 8, closed: false }
+      )
+    ]
+  )
+  glasses.ks.r = still(-4)
+  rig.layers.unshift(glasses)
+}
+
+function addSpeedLines(rig) {
+  const lines = [
+    [640, 60, 120, 0],
+    [700, 135, 160, 1],
+    [655, 215, 100, 0]
+  ]
+  for (const [index, [x, y, length, phase]] of lines.entries()) {
+    const line = layer(
+      41 + index,
+      'Speedster · speed line ' + (index + 1),
+      10,
+      [x, y, 0],
+      [
+        shape(
+          'Streak',
+          [
+            [0, 0],
+            [length, 0]
+          ],
+          null,
+          { stroke: palette.cream, width: 14, closed: false }
+        )
+      ]
+    )
+    line.ks.o = keyframes(phase ? [15, 85, 15, 85, 15] : [85, 15, 85, 15, 85])
+    line.ks.p = keyframes([
+      [x, y, 0],
+      [x + 70, y, 0],
+      [x, y, 0],
+      [x + 70, y, 0],
+      [x, y, 0]
+    ])
+    rig.layers.push(line)
+  }
+}
+
+// Level 15: two wings rooted on the back, drawn under the cape and over the body.
+function addWings(rig) {
+  const feathered = [
+    [0, 0, 0, 0, 24, -62],
+    [92, -142, -46, 36, 34, -24],
+    [204, -204, -42, 2, 10, 4],
+    [236, -168, 0, -14, -4, 12],
+    [206, -140, 10, -6, 10, 6],
+    [238, -112, 0, -12, -2, 10],
+    [200, -92, 10, -4, 10, 6],
+    [228, -58, 2, -12, -4, 10],
+    [182, -46, 10, -4, 8, 8],
+    [200, -8, 4, -12, -6, 8],
+    [148, -8, 10, -6, 6, 8],
+    [152, 28, 6, -10, -8, 6],
+    [98, 20, 12, -2, -14, 2],
+    [42, 24, 16, 2, -16, -2]
+  ]
+  const wing = (ind, name, p, scale, rotation, main, shade, outline) => {
+    const item = layer(ind, name, 10, p, [
+      shape('Feather shading', feathered, shade, {
+        tr: { s: still([72, 72, 100]), p: still([10, -6]) }
+      }),
+      shape('Wing', feathered, main, { stroke: outline, width: 7 })
+    ])
+    item.ks.s = still([scale, scale, 100])
+    item.ks.r = keyframes(rotation)
+    return item
+  }
+  const near = wing(
+    44,
+    'Winged · near wing',
+    [400, 22, 0],
+    108,
+    [-16, 8, -16, 8, -16],
+    palette.feather,
+    palette.featherShade,
+    'e3a93f'
+  )
+  const far = wing(
+    45,
+    'Winged · far wing',
+    [352, 38, 0],
+    88,
+    [-6, 18, -6, 18, -6],
+    palette.featherFar,
+    palette.featherFarShade,
+    'cf8f2a'
+  )
+  rig.layers.splice(rig.layers.findIndex((item) => item.ind === 21) + 1, 0, near, far)
+}
+
+// Level 20: a flame trail with drifting embers behind the paws, and a soft glow behind everything.
+function addBlaze(rig) {
+  const flame = (w) => [
+    [0, 0, 0, -18, 0, 18],
+    [58, 42 + w, -30, 10, 40, -6],
+    [150, 12 - w, -30, 26, 20, -22],
+    [104, -26 + w, 20, 12, -22, -6],
+    [176, -74 - w, -22, 32, 10, -12],
+    [72, -52 + w, 30, 10, -30, -12]
+  ]
+  const core = (w) =>
+    flame(w).map(([x, y, ...rest]) => [x * 0.58, y * 0.58 + 2, ...rest.map((v) => v * 0.58)])
+  const waves = [0, 16, 0, -14, 0]
+  const flames = [
+    [600, 236, 125, 0],
+    [566, 156, 85, 1],
+    [628, 296, 70, 1]
+  ]
+  for (const [index, [x, y, scale, drift]] of flames.entries()) {
+    const item = layer(
+      46 + index,
+      'Blazing · flame ' + (index + 1),
+      10,
+      [x, y, 0],
+      [
+        shape('Flame core', null, palette.flameCore, { morph: waves.map(core) }),
+        shape('Flame', null, palette.flame, { morph: waves.map(flame), opacity: 92 })
+      ]
+    )
+    item.ks.s = still([scale, scale, 100])
+    if (drift)
+      item.ks.p = keyframes([
+        [x, y, 0],
+        [x + 14, y - 8, 0],
+        [x, y, 0],
+        [x - 10, y + 6, 0],
+        [x, y, 0]
+      ])
+    rig.layers.push(item)
+  }
+  const embers = [
+    [760, 190, 9],
+    [800, 120, 7],
+    [740, 300, 8],
+    [830, 240, 6]
+  ]
+  for (const [index, [x, y, size]] of embers.entries()) {
+    const ember = layer(
+      49 + index,
+      'Blazing · ember ' + (index + 1),
+      10,
+      [x, y, 0],
+      [ellipse('Ember', [0, 0], [size * 2, size * 2], palette.amber)]
+    )
+    ember.ks.o = keyframes(index % 2 ? [20, 100, 20, 100, 20] : [100, 20, 100, 20, 100])
+    ember.ks.p = keyframes([
+      [x, y, 0],
+      [x + 36, y - 22, 0],
+      [x + 72, y - 44, 0],
+      [x + 36, y - 22, 0],
+      [x, y, 0]
+    ])
+    rig.layers.push(ember)
+  }
+}
+
+function addWarmGlow(rig) {
+  const glow = layer(
+    53,
+    'Blazing · warm glow',
+    10,
+    [380, 150, 0],
+    [
+      ellipse('Inner glow', [0, 0], [600, 460], 'ffd166', 11),
+      ellipse('Outer glow', [0, 0], [800, 620], palette.amber, 7)
+    ]
+  )
+  glow.ks.s = keyframes([
+    [100, 100, 100],
+    [107, 107, 100],
+    [100, 100, 100],
+    [107, 107, 100],
+    [100, 100, 100]
+  ])
+  rig.layers.push(glow)
+}
+
+export const LEVELS = [2, 3, 4, 5, 10, 15, 20]
+
+for (const level of LEVELS) {
   const animation = structuredClone(original)
   const rig = animation.assets.find((asset) => asset.id === 'comp_0')
   if (!rig || !rig.layers.some((item) => item.ind === 9 && item.nm === 'duoi Outlines')) {
@@ -362,9 +606,18 @@ for (let level = 2; level <= 5; level++) {
   animation.nm = `Corgi · ${level} active sessions`
   addTail(rig)
   if (level >= 3) addCrown(rig)
-  if (level >= 4) addCape(rig, level === 5)
+  if (level >= 4) addCape(rig, level >= 5)
+  if (level >= 10) {
+    addSunglasses(rig)
+    addSpeedLines(rig)
+  }
+  if (level >= 15) addWings(rig)
+  if (level >= 20) {
+    addBlaze(rig)
+    addWarmGlow(rig)
+  }
   if (level >= 5) {
-    addTrail(rig)
+    addTrail(rig, level >= 20 ? palette.amber : palette.gold)
     animation.fonts = digits.fonts
     animation.chars = structuredClone(digits.chars)
     for (const glyph of animation.chars)

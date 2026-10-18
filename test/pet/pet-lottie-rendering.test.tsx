@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DotLottie } from '@lottiefiles/dotlottie-web'
 import type { LoadedPet, PetSettings } from '@shared/types/pet'
 import { getPet, listPets } from '@/pet/registry'
+import { workingVariantIndex } from '@/pet/workingVariant'
 import { PetSprite } from '@/pet/PetSprite'
 
 vi.mock('motion/react', () => ({
@@ -271,12 +272,14 @@ describe('pet Lottie rendering', () => {
     expect(container.querySelector('img')?.getAttribute('src')).toContain('corgi-static')
   })
 
-  it('resolves all five corgi styles in session-count order', () => {
+  it('resolves all eight corgi styles in session-count order', () => {
     const pet = getPet('corgi')
-    expect(pet.resolvedWorkingLottieVariants).toHaveLength(5)
+    const levels = [1, 2, 3, 4, 5, 10, 15, 20]
+    expect(pet.resolvedWorkingLottieVariants).toHaveLength(levels.length)
+    expect(pet.workingLottieVariantSessions).toEqual(levels)
     expect(pet.resolvedWorkingLottieVariants?.[0]).toBe(pet.resolvedLottieAssets?.working)
-    for (let level = 2; level <= 5; level++) {
-      expect(pet.resolvedWorkingLottieVariants?.[level - 1]).toContain(`corgi-level-${level}`)
+    for (const [index, level] of levels.slice(1).entries()) {
+      expect(pet.resolvedWorkingLottieVariants?.[index + 1]).toContain(`corgi-level-${level}`)
     }
     expect(getPet('bee').resolvedWorkingLottieVariants).toBeUndefined()
   })
@@ -311,19 +314,23 @@ describe('pet Lottie rendering', () => {
       await waitFor(() => expect(DotLottie).toHaveBeenCalledTimes(1))
 
       let loads = 1
-      for (const count of [2, 3, 4, 5, 8, 2, 0]) {
+      let previousIndex = 0
+      for (const count of [2, 3, 4, 5, 8, 10, 12, 15, 20, 99, 2, 0]) {
         const previousPlayer = vi.mocked(DotLottie).mock.results.at(-1)?.value
         rerender(sprite(count))
-        if (count !== 8) loads++ // Five and eight share a style; keep that player alive.
+        const index = workingVariantIndex(pet, count)
+        const changed = index !== previousIndex // Counts sharing a style keep that player alive.
+        previousIndex = index
+        if (changed) loads++
         await waitFor(() => expect(DotLottie).toHaveBeenCalledTimes(loads))
-        expect(fetch).toHaveBeenLastCalledWith(
-          pet.resolvedWorkingLottieVariants?.[Math.max(1, Math.min(count, 5)) - 1]
-        )
+        expect(fetch).toHaveBeenLastCalledWith(pet.resolvedWorkingLottieVariants?.[index])
         expect(vi.mocked(DotLottie).mock.calls.at(-1)?.[0]).toMatchObject({
           speed: scaling ? Math.max(1, Math.min(count, 2)) : 1
         })
-        expect(previousPlayer.destroy).toHaveBeenCalledTimes(count === 8 ? 0 : 1)
+        expect(previousPlayer.destroy).toHaveBeenCalledTimes(changed ? 1 : 0)
       }
+      expect(workingVariantIndex(pet, 8)).toBe(4)
+      expect(workingVariantIndex(pet, 99)).toBe(7)
 
       rerender(sprite(5, false))
       loads++
@@ -372,16 +379,17 @@ describe('pet Lottie rendering', () => {
           onContextMenu={vi.fn()}
         />
       )
-      const { rerender } = render(sprite(5))
+      // Every count here stays on the level-20 style, so the same player is kept throughout.
+      const { rerender } = render(sprite(20))
       await waitFor(() => expect(DotLottie).toHaveBeenCalledTimes(1))
-      rerender(sprite(7))
+      rerender(sprite(21))
       expect(vi.mocked(DotLottie).mock.calls[0]?.[0]).toMatchObject({ speed: scaling ? 2 : 1 })
       expect(player.setTextSlot).not.toHaveBeenCalled()
       player.isLoaded = true
       listeners.get('load')?.()
-      expect(player.setTextSlot).toHaveBeenLastCalledWith('session-count', { t: '7', s: 90 })
+      expect(player.setTextSlot).toHaveBeenLastCalledWith('session-count', { t: '21', s: 90 })
 
-      for (const count of [8, 9, 10, 20, 123, 12345, 6]) {
+      for (const count of [22, 23, 20, 123, 12345, 25, 99]) {
         rerender(sprite(count))
         expect(player.setTextSlot).toHaveBeenLastCalledWith('session-count', {
           t: String(count),
@@ -402,7 +410,7 @@ describe('pet Lottie rendering', () => {
       expect(fetch).toHaveBeenCalledTimes(1)
       expect(DotLottie).toHaveBeenCalledTimes(1)
       expect(player.destroy).not.toHaveBeenCalled()
-      // Seven on load, seven count changes, then twenty once. Speed-only
+      // Twenty-one on load, seven count changes, then twenty once. Speed-only
       // updates must not reapply identical slots (the WASM core resets glyphs).
       expect(player.setTextSlot).toHaveBeenCalledTimes(9)
       expect(player.setFrame).not.toHaveBeenCalled()

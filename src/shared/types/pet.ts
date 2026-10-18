@@ -24,8 +24,13 @@ export interface PetManifest {
   author?: string
   assets: Record<PetState, string>
   lottieAssets?: Partial<Record<PetState, string>>
-  /** Working animations for 1..N active sessions, capped at the last variant; independent of playback speed. */
+  /**
+   * Working animations by active session count, capped at the last variant; independent of playback speed.
+   * Entry i applies from `workingLottieVariantSessions[i]` sessions (default: i + 1).
+   */
   workingLottieVariants?: string[]
+  /** Ascending minimum session count per entry of `workingLottieVariants`; omitted entries default to their 1-based index. */
+  workingLottieVariantSessions?: number[]
   /** Editable Lottie text slot showing the actual count, including beyond the last style. */
   workingSessionCounter?: {
     slotId: string
