@@ -7,7 +7,6 @@ import {
   RefreshCw,
   Repeat,
   Share2,
-  Shuffle,
   Timer,
   Trash2,
   Wand2,
@@ -25,6 +24,7 @@ import {
   type AutoSignInSettings
 } from '@shared/types/settings'
 import { Switch } from '@/components/ui/switch'
+import { AutoSwitchBanIcon } from './AutoSwitchBanIcon'
 import { isExcludedFromAutoSwitch, useAccountScheduleStore } from '@/stores/useAccountScheduleStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { accountApi } from '@/api/account-api'
@@ -449,7 +449,7 @@ function ProviderAccountsCard({ provider }: { provider: UsageProvider }): React.
                         title="Removed from auto-switch: it never switches to this account"
                         data-testid={`account-auto-switch-excluded-${account.id}`}
                       >
-                        <Shuffle className="h-2.5 w-2.5" />
+                        <AutoSwitchBanIcon className="h-2.5 w-2.5" active />
                         Not in auto-switch
                       </span>
                     )}
@@ -524,7 +524,7 @@ function ProviderAccountsCard({ provider }: { provider: UsageProvider }): React.
                         : 'Remove from auto-switch: it will never switch to this account (for accounts also used elsewhere). Manual and scheduled switches still work.'
                     }
                   >
-                    <Shuffle className={cn('h-3.5 w-3.5', isExcluded && 'line-through')} />
+                    <AutoSwitchBanIcon className="h-4 w-4" active={isExcluded} />
                   </Button>
                   {canShare && (
                     <Button
