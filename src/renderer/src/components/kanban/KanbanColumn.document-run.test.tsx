@@ -24,9 +24,12 @@ const gitApiMocks = vi.hoisted(() => ({
   branchDiffShortStat: vi.fn()
 }))
 
+const runDoneQueue = vi.hoisted(() => ({ queueDocumentRunDone: vi.fn() }))
+
 vi.mock('@/api/document-flow-api', () => ({ documentFlowApi: flowApi }))
 vi.mock('@/api/db-api', () => ({ dbApi: dbApiMocks }))
 vi.mock('@/api/git-api', () => ({ gitApi: gitApiMocks }))
+vi.mock('@/lib/document-flow/run-done-queue', () => runDoneQueue)
 
 vi.mock('@/components/kanban/KanbanTicketCard', () => ({
   KanbanTicketCard: ({ ticket }: { ticket: KanbanTicket }) => (
@@ -142,8 +145,15 @@ function seedRun(
   return detail
 }
 
-/** Drop `ticket` (as it sits in its own column) on `column`. */
-async function drop(ticket: KanbanTicket, column: KanbanTicketColumn): Promise<void> {
+/**
+ * Drop `ticket` (as it sits in its own column) on `column`. jsdom has no DragEvent, so the
+ * modifier keys of a drag can only travel through the drag data here, never the drop event.
+ */
+async function drop(
+  ticket: KanbanTicket,
+  column: KanbanTicketColumn,
+  modifiers?: { cmd: boolean; shift: boolean }
+): Promise<void> {
   useKanbanStore.setState({ tickets: new Map([[ticket.project_id, [ticket]]]) })
   render(
     <TooltipProvider>
@@ -154,7 +164,8 @@ async function drop(ticket: KanbanTicket, column: KanbanTicketColumn): Promise<v
     projectId: ticket.project_id,
     ticketId: ticket.id,
     sourceColumn: ticket.column,
-    sourceIndex: 0
+    sourceIndex: 0,
+    ...(modifiers ? { modifiers } : {})
   })
   await act(async () => {
     fireEvent.drop(screen.getByTestId(`kanban-drop-area-${column}`))
@@ -550,6 +561,84 @@ describe('a run that is not in the store', () => {
 
     await waitFor(() => expect(setPendingDoneMove).toHaveBeenCalled())
     expect(toast.warning).not.toHaveBeenCalled()
+  })
+})
+
+describe('cmd+shift-dropping the ticket of a run that has ended', () => {
+  const batch = { cmd: true, shift: true }
+
+  beforeEach(() => {
+    seedRun('completed')
+    runDoneQueue.queueDocumentRunDone.mockReset().mockResolvedValue('queued')
+  })
+
+  it('hands the whole run to the batch queue instead of the single-branch dialog', async () => {
+    await drop(makeTicket({ column: 'review' }), 'done', batch)
+
+    expect(runDoneQueue.queueDocumentRunDone).toHaveBeenCalledExactlyOnceWith({
+      runId: 'run-1',
+      ticketId: 'ticket-run',
+      projectId: 'proj-1',
+      targetColumn: 'done',
+      sortOrder: expect.any(Number)
+    })
+    expect(setPendingDoneMove).not.toHaveBeenCalled()
+    expect(moveTicket).not.toHaveBeenCalled()
+  })
+
+  it('does so for Merged as well', async () => {
+    await drop(makeTicket({ column: 'review' }), 'merged', batch)
+
+    expect(runDoneQueue.queueDocumentRunDone).toHaveBeenCalledWith(
+      expect.objectContaining({ targetColumn: 'merged' })
+    )
+  })
+
+  it('takes the usual single-branch path without the modifiers, or with only one of them', async () => {
+    for (const modifiers of [undefined, { cmd: true, shift: false }, { cmd: false, shift: true }]) {
+      await drop(makeTicket({ column: 'review' }), 'done', modifiers)
+      cleanup()
+    }
+
+    expect(runDoneQueue.queueDocumentRunDone).not.toHaveBeenCalled()
+    await waitFor(() => expect(setPendingDoneMove).toHaveBeenCalledTimes(3))
+  })
+
+  it('still refuses the drop while the run is going', async () => {
+    seedRun('running')
+
+    await drop(makeTicket(), 'done', batch)
+
+    expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('still going'))
+    expect(runDoneQueue.queueDocumentRunDone).not.toHaveBeenCalled()
+  })
+
+  it('moves the ticket like a plain drop when the run has nothing to batch', async () => {
+    runDoneQueue.queueDocumentRunDone.mockResolvedValue('nothing')
+
+    await drop(makeTicket({ column: 'review' }), 'done', batch)
+
+    await waitFor(() => expect(setPendingDoneMove).toHaveBeenCalled())
+    expect(toast.warning).not.toHaveBeenCalled()
+  })
+
+  it('says so and moves the ticket alone for a run on a connection project', async () => {
+    runDoneQueue.queueDocumentRunDone.mockResolvedValue('unsupported')
+
+    await drop(makeTicket({ column: 'review' }), 'done', batch)
+
+    expect(toast.info).toHaveBeenCalledWith(expect.stringContaining('connection project'))
+    await waitFor(() => expect(setPendingDoneMove).toHaveBeenCalled())
+  })
+
+  it('refuses the drop when a branch of the run cannot be verified', async () => {
+    runDoneQueue.queueDocumentRunDone.mockRejectedValue(new Error('a2-beta: git is down'))
+
+    await drop(makeTicket({ column: 'review' }), 'done', batch)
+
+    expect(toast.warning).toHaveBeenCalledWith('Could not verify merge status: a2-beta: git is down')
+    expect(setPendingDoneMove).not.toHaveBeenCalled()
+    expect(moveTicket).not.toHaveBeenCalled()
   })
 })
 

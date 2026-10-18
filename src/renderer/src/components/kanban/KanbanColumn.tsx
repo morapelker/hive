@@ -58,6 +58,7 @@ import type {
   Worktree
 } from '../../../../main/db/types'
 import { documentRunIdOf, isDocumentRunTicket } from '@shared/document-flow/run-ticket'
+import { queueDocumentRunDone } from '@/lib/document-flow/run-done-queue'
 import type { DocumentRun } from '@shared/types/document-flow'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { dbApi } from '@/api/db-api'
@@ -546,6 +547,11 @@ export function KanbanColumn({
       if (!dragData) return
 
       const { ticketId, sourceColumn, projectId: draggedProjectId } = dragData
+      // cmd+shift (held at drag start or at the drop): a document run's ticket dropped on
+      // Done/Merged finishes the whole run — see the batch branch below
+      const batchRun =
+        (dragData.modifiers?.cmd || e.metaKey || e.ctrlKey) &&
+        (dragData.modifiers?.shift || e.shiftKey)
       setKanbanDragData(null) // Clear after reading
 
       const targetIndex = dropIndexRef.current ?? tickets.length
@@ -608,6 +614,37 @@ export function KanbanColumn({
             )
             store.moveTicket(ticketId, ticketProjectId, column, sortOrder)
             return
+          }
+          // cmd+shift: Done/Merged for the whole run. Every ticket branch the run opened is
+          // checked; the ones with work are merged into the integration branch (a dialog
+          // step each), then the integration branch into base, and the archive step offers
+          // to archive all of them and move their tickets along. A branch that cannot be
+          // verified refuses the drop: Done means merged.
+          if (batchRun && (column === 'done' || column === 'merged')) {
+            try {
+              const outcome = await queueDocumentRunDone({
+                runId: documentRunId,
+                ticketId,
+                projectId: ticketProjectId,
+                targetColumn: column,
+                sortOrder: store.computeSortOrder(
+                  projectTicketsForColumn(ticketProjectId),
+                  projectLocalDropIndex(ticketProjectId, targetIndex)
+                )
+              })
+              if (outcome === 'queued') return
+              if (outcome === 'unsupported') {
+                toast.info(
+                  'Archive all is not available for a run on a connection project — moving its ticket alone'
+                )
+              }
+            } catch (err) {
+              toast.warning(
+                `Could not verify merge status: ${err instanceof Error ? err.message : String(err)}`
+              )
+              return
+            }
+            // Nothing left to merge or archive — the run's ticket takes the plain path below
           }
           // A connection run's ticket has no worktree: its integration branch lives in an
           // instance, one worktree per member. Done/Merged take the per-member merge-on-done

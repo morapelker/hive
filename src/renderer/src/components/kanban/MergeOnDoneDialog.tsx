@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { ticketKey, useKanbanStore } from '@/stores/useKanbanStore'
+import { ticketKey, useKanbanStore, type PendingDoneMoveIdentity } from '@/stores/useKanbanStore'
+import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
+import { documentFlowApi } from '@/api/document-flow-api'
 import { useGitStore } from '@/stores/useGitStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
@@ -71,21 +73,28 @@ export function MergeOnDoneDialog() {
   const pendingDoneMove = useKanbanStore((s) => s.pendingDoneMove)
   const completeDoneMove = useKanbanStore((s) => s.completeDoneMove)
   const continueDoneMoveAfterConflict = useKanbanStore((s) => s.continueDoneMoveAfterConflict)
+  const skipDoneMoveEntry = useKanbanStore((s) => s.skipDoneMoveEntry)
   const clearPendingDoneMove = useKanbanStore((s) => s.clearPendingDoneMove)
 
   // Identity passed to completeDoneMove so a stale async completion (e.g. a
   // merge resolving after dismissal) can't act on a replacement pending move
-  const pendingIdentity = useMemo(
+  const pendingIdentity = useMemo<PendingDoneMoveIdentity | undefined>(
     () =>
       pendingDoneMove
         ? {
             ticketId: pendingDoneMove.ticketId,
             projectId: pendingDoneMove.projectId,
-            worktreeId: pendingDoneMove.worktreeId
+            worktreeId: pendingDoneMove.worktreeId,
+            kind: pendingDoneMove.entry?.kind
           }
         : undefined,
     [pendingDoneMove]
   )
+
+  // Document-run batch (cmd+shift-drop of the run's ticket): the entry being handled
+  const runEntry = pendingDoneMove?.run ? pendingDoneMove.entry : undefined
+  const isRunChild = runEntry?.kind === 'run-child'
+  const isRunIntegration = runEntry?.kind === 'run-integration'
 
   const [step, setStep] = useState<Step>('loading')
   const [resolved, setResolved] = useState<ResolvedState | null>(null)
@@ -164,6 +173,19 @@ export function MergeOnDoneDialog() {
         // Look up ticket from store
         const tickets = useKanbanStore.getState().getTicketsForProject(pending.projectId)
         const ticket = tickets.find((t) => t.id === pending.ticketId)
+        const identity: PendingDoneMoveIdentity = {
+          ticketId: pending.ticketId,
+          projectId: pending.projectId,
+          worktreeId: pending.worktreeId,
+          kind: pending.entry?.kind
+        }
+        // Document-run batch: the entry's own ticket names the step, not the run's
+        const entry = pending.run ? pending.entry : undefined
+        const entryTicket = entry?.ticketId
+          ? tickets.find((t) => t.id === entry.ticketId)
+          : undefined
+        const entryTitle = entryTicket?.title ?? entry?.label ?? ticket?.title ?? ''
+        const runChild = entry?.kind === 'run-child'
 
         // Connection tickets carry no worktree_id — the drop handler queues
         // each member worktree explicitly via pending.worktreeId
@@ -178,11 +200,7 @@ export function MergeOnDoneDialog() {
         if (!featureWorktree || featureWorktree.status !== 'active') {
           // Worktree archived/deleted since the drop — nothing to merge, so
           // complete the move instead of failing the transition
-          await completeDoneMove({
-            ticketId: pending.ticketId,
-            projectId: pending.projectId,
-            worktreeId: pending.worktreeId
-          })
+          await completeDoneMove(identity)
           return
         }
 
@@ -191,32 +209,41 @@ export function MergeOnDoneDialog() {
           pending.worktreeProjectId ?? pending.projectId
         )
         const defaultWt = activeWorktrees.find((w) => w.is_default)
-        const resolvedBaseBranch = featureWorktree.base_branch ?? defaultWt?.branch_name
+        let resolvedBaseBranch = featureWorktree.base_branch ?? defaultWt?.branch_name
+        // Document-run batch: a ticket branch merges into the run's integration branch (the
+        // branch it was cut from), never straight into base — that is the integration
+        // entry's step, after every ticket branch landed
+        let integrationWorktree: MergeWorktree | null = null
+        if (runChild && entry?.integrationBranch && entry.integrationWorktreeId) {
+          integrationWorktree = await dbApi.worktree.get<MergeWorktree>(
+            entry.integrationWorktreeId
+          )
+          if (cancelled) return
+          if (!integrationWorktree || integrationWorktree.status !== 'active') {
+            skipDoneMoveEntry(identity, 'the integration worktree is gone')
+            return
+          }
+          resolvedBaseBranch = entry.integrationBranch
+        }
 
         if (!resolvedBaseBranch) {
           toast.warning('Skipping merge — no base branch resolved')
-          await completeDoneMove({
-            ticketId: pending.ticketId,
-            projectId: pending.projectId,
-            worktreeId: pending.worktreeId
-          })
+          await completeDoneMove(identity)
           return
         }
 
         // Find base worktree
-        const baseWorktree = activeWorktrees.find(
-          (w) => w.branch_name === resolvedBaseBranch && w.status === 'active'
-        )
+        const baseWorktree =
+          integrationWorktree ??
+          activeWorktrees.find(
+            (w) => w.branch_name === resolvedBaseBranch && w.status === 'active'
+          )
 
         if (!baseWorktree) {
           // Base worktree archived/deleted — merge impossible, but the move
           // should still land in the target column
           toast.warning(`Skipping merge — no worktree for ${resolvedBaseBranch}`)
-          await completeDoneMove({
-            ticketId: pending.ticketId,
-            projectId: pending.projectId,
-            worktreeId: pending.worktreeId
-          })
+          await completeDoneMove(identity)
           return
         }
 
@@ -246,22 +273,33 @@ export function MergeOnDoneDialog() {
         // commit/merge steps but still offer the archive/keep choice
         const alreadyMerged = !hasUncommitted && branchStats.commitsAhead === 0
 
+        // Document-run batch: a ticket branch with nothing left for the integration branch
+        // needs no merge step (its archive entry at the tail takes the archive/keep step);
+        // an archive entry that picked up work since the queue was built is left alone —
+        // the branch must not be deleted, and a merge into base is not this batch's to do
+        if (runChild && alreadyMerged) {
+          await completeDoneMove(identity)
+          return
+        }
+        if (entry?.kind === 'run-child-archive' && !alreadyMerged) {
+          skipDoneMoveEntry(identity, 'has new changes since the run')
+          return
+        }
+
         // Plain-connection members never get the archive prompt — archiving
         // would tear the worktree out of a connection the user still needs.
         // Connection-PROJECT members (offerArchive) fall through to it so the
         // instance's worktrees can be archived like any feature worktree.
         if (pending.worktreeId && alreadyMerged && !pending.offerArchive) {
-          await completeDoneMove({
-            ticketId: pending.ticketId,
-            projectId: pending.projectId,
-            worktreeId: pending.worktreeId
-          })
+          await completeDoneMove(identity)
           return
         }
 
         // Get project path for archive step
         const project = await dbApi.project.get<MergeProject>(featureWorktree.project_id)
-        const carriedRunTickets = alreadyMerged
+        // (A run batch merges ticket branches into the integration branch, where the
+        // sibling merges already are: nothing is carried.)
+        const carriedRunTickets = alreadyMerged || runChild
           ? []
           : await findCarriedRunTickets({
               ticketId: ticket.id,
@@ -278,7 +316,7 @@ export function MergeOnDoneDialog() {
           baseWorktreeId: baseWorktree.id,
           baseWorktreePath: baseWorktree.path,
           baseBranch: resolvedBaseBranch,
-          ticketTitle: ticket.title,
+          ticketTitle: entryTitle,
           projectPath: project?.path ?? baseWorktree.path,
           projectName: project?.name ?? null,
           baseDirty,
@@ -286,7 +324,7 @@ export function MergeOnDoneDialog() {
           alreadyMerged,
           carriedRunTickets
         })
-        setCommitMessage(ticket.title)
+        setCommitMessage(entryTitle)
         setBaseCommitMessage('')
         setStep(
           alreadyMerged
@@ -309,12 +347,23 @@ export function MergeOnDoneDialog() {
     return () => {
       cancelled = true
     }
-  }, [pendingDoneMove, completeDoneMove, clearPendingDoneMove])
+  }, [pendingDoneMove, completeDoneMove, clearPendingDoneMove, skipDoneMoveEntry])
 
   const handleCommit = useCallback(async () => {
     if (!resolved || !commitMessage.trim()) return
     setCommitting(true)
     try {
+      // A run's ticket branch may hold a half-resolved merge of the integration branch:
+      // committing would land the conflict markers as the resolution
+      if (isRunChild) {
+        const statuses = await gitApi.getFileStatuses(resolved.featureWorktreePath)
+        if (statuses.files?.some((file) => file.status === 'C')) {
+          toast.error(
+            `${resolved.featureBranch} has unresolved conflict markers — resolve them first`
+          )
+          return
+        }
+      }
       const stageResult = await gitApi.stageAll(resolved.featureWorktreePath)
       if (!stageResult.success) {
         toast.error(`Failed to stage: ${stageResult.error}`)
@@ -365,7 +414,14 @@ export function MergeOnDoneDialog() {
     } finally {
       setCommitting(false)
     }
-  }, [resolved, commitMessage, pendingIdentity, completeDoneMove, clearPendingDoneMove])
+  }, [
+    resolved,
+    commitMessage,
+    pendingIdentity,
+    isRunChild,
+    completeDoneMove,
+    clearPendingDoneMove
+  ])
 
   const handleCommitBase = useCallback(async () => {
     if (!resolved || !baseCommitMessage.trim()) return
@@ -440,6 +496,67 @@ export function MergeOnDoneDialog() {
         return
       }
 
+      // Document-run batch: a ticket branch lands on the integration branch through the
+      // run's own merge path — a dry run first, and a conflicting merge is aborted on the
+      // server, so the integration worktree is never left mid-merge and the queue goes on
+      // with the next branch. The run's item and ticket read as merged afterwards, as
+      // they would had the run merged it.
+      if (isRunChild && runEntry?.runId && runEntry.itemId && pendingDoneMove.run) {
+        const label = runEntry.label ?? resolved.featureBranch
+        const check = await documentFlowApi.prepareMerge(runEntry.runId, runEntry.itemId)
+        if (check.state === 'conflict' || check.state === 'error') {
+          toast.error(
+            check.state === 'conflict'
+              ? `Merge conflicts in ${check.conflictedFiles.length} file${check.conflictedFiles.length !== 1 ? 's' : ''} on ${label} — kept, continuing with the next branch`
+              : `Could not check ${label}: ${check.error ?? 'unknown error'} — kept`
+          )
+          continueDoneMoveAfterConflict(pendingIdentity)
+          return
+        }
+        if (check.state === 'no_changes' || check.alreadyMerged) {
+          await completeDoneMove(pendingIdentity)
+          return
+        }
+        const result = await documentFlowApi.merge(runEntry.runId, runEntry.itemId)
+        if (!result.success) {
+          toast.error(`Could not merge ${label}: ${result.error ?? 'merge conflicts'} — kept`)
+          continueDoneMoveAfterConflict(pendingIdentity)
+          return
+        }
+        toast.success(`${label} merged into ${resolved.baseBranch}`)
+        const { runId, itemId, ticketId } = runEntry
+        const projectId = pendingDoneMove.projectId
+        void useDocumentFlowStore
+          .getState()
+          .updateItem(runId, itemId, {
+            status: 'merged',
+            status_detail: 'Merged from the board after the run ended.',
+            finished_at: new Date().toISOString()
+          })
+          .catch(() => {
+            // The dashboard may lag behind the branch; the merge itself landed
+          })
+        if (ticketId) {
+          const kanban = useKanbanStore.getState()
+          const ticket = kanban.tickets.get(projectId)?.find((t) => t.id === ticketId)
+          if (ticket && ticket.column !== 'merged' && ticket.column !== 'done') {
+            await kanban
+              .moveTicket(
+                ticketId,
+                projectId,
+                'merged',
+                kanban.computeSortOrder(kanban.getTicketsByColumn(projectId, 'merged'), 0),
+                { skipCompletionEffects: true }
+              )
+              .catch(() => {
+                // Its archive entry moves it again at the end of the batch
+              })
+          }
+        }
+        await completeDoneMove(pendingIdentity)
+        return
+      }
+
       // Pull latest on base branch first (only if remote exists)
       const remoteResult = await gitApi.getRemoteUrl(resolved.baseWorktreePath)
       if (remoteResult.url) {
@@ -476,7 +593,10 @@ export function MergeOnDoneDialog() {
           // Connection flow: a conflicted member must not abort the queue —
           // keep checking the remaining members so every branch gets merged
           // (or flagged) in one pass. The ticket stays put at the end.
-          if (pendingDoneMove.worktreeId) {
+          // (A run batch's integration entry is the exception: the ticket
+          // branches behind it may only be archived once the integration branch
+          // is on base, and base is now mid-merge — the batch stops here.)
+          if (pendingDoneMove.worktreeId && !isRunIntegration) {
             const where = resolved.projectName ?? resolved.baseBranch
             const hasMore = (pendingDoneMove.remainingWorktrees?.length ?? 0) > 0
             toast.error(
@@ -485,7 +605,11 @@ export function MergeOnDoneDialog() {
             continueDoneMoveAfterConflict(pendingIdentity)
             return
           }
-          toast.error(`${conflictSummary} — merge manually`)
+          toast.error(
+            isRunIntegration
+              ? `${conflictSummary} on ${resolved.baseBranch} — nothing archived. Fix them, then cmd+shift-drag the run's ticket again`
+              : `${conflictSummary} — merge manually`
+          )
         } else {
           toast.error(`Merge failed: ${mergeResult.error}`)
         }
@@ -511,6 +635,9 @@ export function MergeOnDoneDialog() {
     resolved,
     pendingDoneMove,
     pendingIdentity,
+    runEntry,
+    isRunChild,
+    isRunIntegration,
     completeDoneMove,
     continueDoneMoveAfterConflict,
     clearPendingDoneMove
@@ -564,6 +691,12 @@ export function MergeOnDoneDialog() {
     if (!pendingDoneMove?.offerArchive || remaining.length === 0) return []
     return remaining.every((w) => w.alreadyMerged) ? remaining : []
   }, [pendingDoneMove])
+
+  // Document-run batch: the branches left out, for the archive step's "Kept" line
+  const keptEntries = useMemo(
+    () => [...(pendingDoneMove?.run?.kept ?? []), ...(pendingDoneMove?.keptWorktrees ?? [])],
+    [pendingDoneMove]
+  )
 
   const handleArchiveAll = useCallback(async () => {
     if (!resolved || archiveAllCandidates.length === 0) return
@@ -792,12 +925,20 @@ export function MergeOnDoneDialog() {
           <DialogTitle className="flex items-center gap-2 text-sm">
             {stepIcon[step]}
             {stepTitle[step]}
-            {isConnectionFlow && resolved?.projectName && (
-              <span className="font-normal text-muted-foreground">— {resolved.projectName}</span>
+            {runEntry ? (
+              <span className="font-normal text-muted-foreground" data-testid="run-entry-label">
+                — {runEntry.label ?? resolved?.featureBranch}
+              </span>
+            ) : (
+              isConnectionFlow &&
+              resolved?.projectName && (
+                <span className="font-normal text-muted-foreground">— {resolved.projectName}</span>
+              )
             )}
             {isConnectionFlow && remainingCount > 0 && (
               <span className="text-xs font-normal text-muted-foreground">
-                ({remainingCount} more project{remainingCount !== 1 ? 's' : ''})
+                ({remainingCount} more {runEntry ? 'branch' : 'project'}
+                {remainingCount !== 1 ? (runEntry ? 'es' : 's') : ''})
               </span>
             )}
           </DialogTitle>
@@ -908,14 +1049,30 @@ export function MergeOnDoneDialog() {
                 Keep in Review
               </button>
               <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => completeDoneMove(pendingIdentity)}
-                  disabled={primaryAction.busy}
-                >
-                  Move to {targetLabel} anyway
-                </Button>
+                {/* A run batch has no "anyway": a ticket branch can be skipped (kept as it
+                    is, the run's ticket stays), the integration branch only merged */}
+                {runEntry ? (
+                  isRunChild && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => skipDoneMoveEntry(pendingIdentity, 'skipped')}
+                      disabled={primaryAction.busy}
+                      data-testid="skip-run-branch"
+                    >
+                      Skip this branch
+                    </Button>
+                  )
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => completeDoneMove(pendingIdentity)}
+                    disabled={primaryAction.busy}
+                  >
+                    Move to {targetLabel} anyway
+                  </Button>
+                )}
                 <Button size="sm" onClick={primaryAction.onClick} disabled={primaryAction.disabled}>
                   {primaryAction.busy ? (
                     <Loader2 className="h-3 w-3 animate-spin mr-1" />
@@ -937,13 +1094,41 @@ export function MergeOnDoneDialog() {
             </p>
             {archiveAllCandidates.length > 0 && (
               <p className="text-xs text-muted-foreground" data-testid="archive-all-hint">
-                The{' '}
-                {archiveAllCandidates.length === 1
-                  ? 'other'
-                  : `other ${archiveAllCandidates.length}`}{' '}
-                project{archiveAllCandidates.length !== 1 ? 's' : ''} in this connection{' '}
-                {archiveAllCandidates.length === 1 ? 'is' : 'are'} already merged too. Archive all
-                archives {archiveAllCandidates.length === 1 ? 'both' : 'all of them'} at once.
+                {pendingDoneMove?.run ? (
+                  <>
+                    The{' '}
+                    {archiveAllCandidates.length === 1
+                      ? 'other'
+                      : `other ${archiveAllCandidates.length}`}{' '}
+                    branch{archiveAllCandidates.length !== 1 ? 'es' : ''} of this document run{' '}
+                    {archiveAllCandidates.length === 1 ? 'is' : 'are'} merged too. Archive all
+                    archives {archiveAllCandidates.length === 1 ? 'both' : 'all of them'} and
+                    moves their tickets to {targetLabel}.
+                  </>
+                ) : (
+                  <>
+                    The{' '}
+                    {archiveAllCandidates.length === 1
+                      ? 'other'
+                      : `other ${archiveAllCandidates.length}`}{' '}
+                    project{archiveAllCandidates.length !== 1 ? 's' : ''} in this connection{' '}
+                    {archiveAllCandidates.length === 1 ? 'is' : 'are'} already merged too. Archive
+                    all archives {archiveAllCandidates.length === 1 ? 'both' : 'all of them'} at
+                    once.
+                  </>
+                )}
+              </p>
+            )}
+            {keptEntries.length > 0 && (
+              <p
+                className="flex items-start gap-1.5 text-xs text-amber-500"
+                data-testid="archive-kept-branches"
+              >
+                <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
+                <span>
+                  Kept: {keptEntries.map((k) => `${k.label} (${k.reason})`).join(', ')}. The
+                  run&rsquo;s ticket stays until they are merged.
+                </span>
               </p>
             )}
             <div className="flex items-center justify-between">
@@ -969,6 +1154,7 @@ export function MergeOnDoneDialog() {
                       <Archive className="h-3 w-3 mr-1" />
                     )}
                     Archive all
+                    {pendingDoneMove?.run ? ` (${1 + archiveAllCandidates.length})` : ''}
                   </Button>
                 )}
                 <Button size="sm" onClick={handleArchive} disabled={archiving || archivingAll}>

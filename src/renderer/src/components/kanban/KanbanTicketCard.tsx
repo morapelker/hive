@@ -875,11 +875,14 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   const handleDragStart = useCallback(
     (e: React.DragEvent) => {
       // Store drag data
+      // cmd+shift held on the ticket of a document run: dropping it on Done/Merged
+      // merges and archives the run's branches as one batch (KanbanColumn.handleDrop)
       setKanbanDragData({
         projectId: ticket.project_id,
         ticketId: ticket.id,
         sourceColumn: ticket.column,
-        sourceIndex: index
+        sourceIndex: index,
+        modifiers: { cmd: e.metaKey || e.ctrlKey, shift: e.shiftKey }
       })
       e.dataTransfer.setData('text/plain', ticket.id)
       e.dataTransfer.effectAllowed = 'move'

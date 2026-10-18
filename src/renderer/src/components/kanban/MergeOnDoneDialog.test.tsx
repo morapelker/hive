@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MergeOnDoneDialog } from './MergeOnDoneDialog'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { useGitStore } from '@/stores/useGitStore'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { makeDetail } from '@/components/document-flow/test-fixtures'
 import type { KanbanTicket } from '../../../../main/db/types'
@@ -40,6 +41,17 @@ const gitApiMocks = vi.hoisted(() => ({
 
 vi.mock('@/api/git-api', () => ({
   gitApi: gitApiMocks
+}))
+
+// A document-run batch merges ticket branches through the run's own merge path
+const flowApiMocks = vi.hoisted(() => ({
+  prepareMerge: vi.fn(),
+  merge: vi.fn(),
+  updateItem: vi.fn()
+}))
+
+vi.mock('@/api/document-flow-api', () => ({
+  documentFlowApi: flowApiMocks
 }))
 
 // diff2html and the image loaders are exercised elsewhere; here the diff view
@@ -1106,5 +1118,345 @@ describe('MergeOnDoneDialog — changed files', () => {
     const strip = await screen.findByTestId('merge-file-list-refresh-error')
     expect(strip.textContent).toContain('lost git')
     expect(screen.getAllByTestId('merge-file-row')).toHaveLength(4)
+  })
+})
+
+describe('MergeOnDoneDialog — document-run batch (cmd+shift-drop of the run ticket)', () => {
+  const integrationWorktree = {
+    id: 'worktree-int',
+    project_id: 'project-1',
+    branch_name: 'doc-run',
+    path: '/repo/doc-run',
+    status: 'active' as const,
+    is_default: false,
+    base_branch: 'main'
+  }
+  const betaWorktree = {
+    id: 'worktree-b',
+    project_id: 'project-1',
+    branch_name: 'feature-b',
+    path: '/repo/feature-b',
+    status: 'active' as const,
+    is_default: false,
+    base_branch: null
+  }
+  const runTicket: KanbanTicket = {
+    ...ticket,
+    id: 'ticket-run',
+    title: 'The run',
+    worktree_id: 'worktree-int',
+    external_provider: 'document-run',
+    external_id: 'run-1'
+  }
+  const alphaTicket: KanbanTicket = {
+    ...ticket,
+    id: 'ticket-a',
+    title: 'Alpha',
+    column: 'review',
+    parent_ticket_id: 'ticket-run'
+  }
+  const betaTicket: KanbanTicket = {
+    ...ticket,
+    id: 'ticket-b',
+    title: 'Beta',
+    column: 'merged',
+    worktree_id: 'worktree-b',
+    parent_ticket_id: 'ticket-run'
+  }
+
+  const childMerge = {
+    worktreeId: 'worktree-1',
+    projectId: 'project-1',
+    kind: 'run-child' as const,
+    ticketId: 'ticket-a',
+    label: 'A1 · Alpha',
+    runId: 'run-1',
+    itemId: 'item-a',
+    integrationBranch: 'doc-run',
+    integrationWorktreeId: 'worktree-int'
+  }
+  const integration = {
+    worktreeId: 'worktree-int',
+    projectId: 'project-1',
+    kind: 'run-integration' as const,
+    label: 'The run'
+  }
+  const archiveAlpha = {
+    worktreeId: 'worktree-1',
+    projectId: 'project-1',
+    kind: 'run-child-archive' as const,
+    alreadyMerged: true,
+    ticketId: 'ticket-a',
+    label: 'A1 · Alpha'
+  }
+  const archiveBeta = {
+    worktreeId: 'worktree-b',
+    projectId: 'project-1',
+    kind: 'run-child-archive' as const,
+    alreadyMerged: true,
+    ticketId: 'ticket-b',
+    label: 'A2 · Beta'
+  }
+  const run = {
+    runId: 'run-1',
+    title: 'The run',
+    kept: [] as { label: string; reason: string }[],
+    alsoMoveTicketIds: [] as string[]
+  }
+  const updateItemMock = vi.fn().mockResolvedValue(undefined)
+
+  /** Commits each worktree path is ahead of a branch; everything else is 0. */
+  let ahead: Record<string, Record<string, number>> = {}
+
+  function seedPending(
+    current: typeof childMerge | typeof integration | typeof archiveAlpha,
+    remaining: Array<typeof integration | typeof archiveAlpha | typeof archiveBeta>,
+    extra: Partial<{ run: typeof run & { kept: { label: string; reason: string }[] } }> = {}
+  ): void {
+    useKanbanStore.setState({
+      tickets: new Map([['project-1', [runTicket, alphaTicket, betaTicket]]]),
+      pendingDoneMove: {
+        ticketId: 'ticket-run',
+        projectId: 'project-1',
+        sortOrder: 5,
+        targetColumn: 'done',
+        worktreeId: current.worktreeId,
+        worktreeProjectId: 'project-1',
+        remainingWorktrees: remaining,
+        offerArchive: true,
+        entry: current,
+        run,
+        ...extra
+      },
+      moveTicket: moveTicketMock
+    })
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    ahead = {}
+    moveTicketMock.mockResolvedValue(undefined)
+    archiveWorktreeMock.mockResolvedValue({ success: true })
+    updateItemMock.mockResolvedValue(undefined)
+    mockAlreadyMergedBranch()
+    dbApiMocks.worktree.get.mockImplementation(async (id: string) => {
+      if (id === 'worktree-1') return featureWorktree
+      if (id === 'worktree-int') return integrationWorktree
+      if (id === 'worktree-b') return betaWorktree
+      if (id === 'worktree-main') return baseWorktree
+      return null
+    })
+    dbApiMocks.worktree.getActiveByProject.mockResolvedValue([
+      featureWorktree,
+      baseWorktree,
+      integrationWorktree,
+      betaWorktree
+    ])
+    dbApiMocks.project.get.mockResolvedValue({ path: '/project-1', name: 'Project' })
+    gitApiMocks.hasUncommittedChanges.mockResolvedValue(false)
+    gitApiMocks.branchDiffShortStat.mockImplementation(async (path: string, base: string) => {
+      const commitsAhead = ahead[path]?.[base] ?? 0
+      return {
+        success: true,
+        filesChanged: commitsAhead,
+        insertions: commitsAhead,
+        deletions: 0,
+        commitsAhead
+      }
+    })
+    gitApiMocks.getFileStatuses.mockResolvedValue({ success: true, files: [] })
+    gitApiMocks.getRemoteUrl.mockResolvedValue({ url: null })
+    gitApiMocks.isBranchMerged.mockResolvedValue({ success: true, isMerged: false })
+    useWorktreeStore.setState({ archiveWorktree: archiveWorktreeMock, loadWorktrees: vi.fn() })
+    useDocumentFlowStore.setState({ updateItem: updateItemMock })
+  })
+
+  afterEach(() => {
+    cleanup()
+    useKanbanStore.setState({ pendingDoneMove: null })
+  })
+
+  it('merges a ticket branch into the integration branch through the run, never with a plain git merge', async () => {
+    ahead = { '/repo/feature': { 'doc-run': 1 } }
+    flowApiMocks.prepareMerge.mockResolvedValue({
+      state: 'clean',
+      conflictedFiles: [],
+      committed: false,
+      commitsAhead: 1
+    })
+    flowApiMocks.merge.mockResolvedValue({ success: true, mergeSha: 'abc' })
+    seedPending(childMerge, [integration, archiveAlpha])
+
+    render(<MergeOnDoneDialog />)
+
+    expect((await screen.findByTestId('run-entry-label')).textContent).toContain('A1 · Alpha')
+    expect(screen.getByText(/into/).textContent).toContain('doc-run')
+    fireEvent.click(await screen.findByRole('button', { name: 'Merge' }))
+
+    await waitFor(() => expect(flowApiMocks.merge).toHaveBeenCalledWith('run-1', 'item-a'))
+    expect(flowApiMocks.prepareMerge).toHaveBeenCalledWith('run-1', 'item-a')
+    expect(gitApiMocks.merge).not.toHaveBeenCalled()
+    await waitFor(() =>
+      expect(updateItemMock).toHaveBeenCalledWith(
+        'run-1',
+        'item-a',
+        expect.objectContaining({ status: 'merged' })
+      )
+    )
+    // The ticket reads as merged, as it would had the run merged it; Done waits for its
+    // archive entry at the tail
+    expect(moveTicketMock).toHaveBeenCalledWith(
+      'ticket-a',
+      'project-1',
+      'merged',
+      expect.any(Number),
+      { skipCompletionEffects: true }
+    )
+    await waitFor(() =>
+      expect(useKanbanStore.getState().pendingDoneMove?.worktreeId).toBe('worktree-int')
+    )
+  })
+
+  it('offers to skip a ticket branch instead of moving anyway', async () => {
+    ahead = { '/repo/feature': { 'doc-run': 1 } }
+    seedPending(childMerge, [integration, archiveAlpha])
+
+    render(<MergeOnDoneDialog />)
+
+    const skip = await screen.findByTestId('skip-run-branch')
+    expect(screen.queryByRole('button', { name: /anyway/ })).toBeNull()
+    fireEvent.click(skip)
+
+    await waitFor(() =>
+      expect(useKanbanStore.getState().pendingDoneMove?.worktreeId).toBe('worktree-int')
+    )
+    // Its archive turn goes with it: a branch that was not merged is never deleted
+    expect(useKanbanStore.getState().pendingDoneMove?.remainingWorktrees).toEqual([])
+    expect(useKanbanStore.getState().pendingDoneMove?.keptWorktrees).toEqual([
+      { label: 'A1 · Alpha', reason: 'skipped', worktreeId: 'worktree-1' }
+    ])
+    expect(moveTicketMock).not.toHaveBeenCalled()
+  })
+
+  it('keeps a ticket branch that conflicts with the integration branch and goes on', async () => {
+    ahead = { '/repo/feature': { 'doc-run': 1 } }
+    flowApiMocks.prepareMerge.mockResolvedValue({
+      state: 'conflict',
+      conflictedFiles: ['src/a.ts'],
+      committed: false,
+      commitsAhead: 1
+    })
+    seedPending(childMerge, [integration, archiveAlpha])
+
+    render(<MergeOnDoneDialog />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Merge' }))
+
+    await waitFor(() =>
+      expect(useKanbanStore.getState().pendingDoneMove?.worktreeId).toBe('worktree-int')
+    )
+    expect(flowApiMocks.merge).not.toHaveBeenCalled()
+    expect(gitApiMocks.merge).not.toHaveBeenCalled()
+    expect(useKanbanStore.getState().pendingDoneMove?.remainingWorktrees).toEqual([])
+    expect(useKanbanStore.getState().pendingDoneMove?.conflictedWorktrees).toEqual([
+      { worktreeId: 'worktree-1', projectId: 'project-1' }
+    ])
+  })
+
+  it('refuses to commit a ticket branch with conflict markers', async () => {
+    gitApiMocks.hasUncommittedChanges.mockImplementation(
+      async (path: string) => path === '/repo/feature'
+    )
+    gitApiMocks.getFileStatuses.mockResolvedValue({
+      success: true,
+      files: [{ path: 'a.ts', relativePath: 'a.ts', status: 'C', staged: false }]
+    })
+    seedPending(childMerge, [integration, archiveAlpha])
+
+    render(<MergeOnDoneDialog />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Commit' }))
+
+    await waitFor(() => expect(gitApiMocks.getFileStatuses).toHaveBeenCalledWith('/repo/feature'))
+    expect(gitApiMocks.stageAll).not.toHaveBeenCalled()
+    expect(gitApiMocks.commit).not.toHaveBeenCalled()
+  })
+
+  it('stops the whole batch when the integration branch conflicts with base: nothing is archived', async () => {
+    ahead = { '/repo/doc-run': { main: 3 } }
+    gitApiMocks.merge.mockResolvedValue({ success: false, conflicts: ['src/x.ts'] })
+    useGitStore.setState({ setHasConflicts: vi.fn(), refreshStatuses: vi.fn() })
+    seedPending(integration, [archiveAlpha, archiveBeta])
+
+    render(<MergeOnDoneDialog />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Merge' }))
+
+    await waitFor(() => expect(useKanbanStore.getState().pendingDoneMove).toBeNull())
+    expect(archiveWorktreeMock).not.toHaveBeenCalled()
+    expect(moveTicketMock).not.toHaveBeenCalled()
+  })
+
+  it('counts every branch in Archive all and moves their tickets, the run’s last', async () => {
+    seedPending(integration, [archiveAlpha, archiveBeta])
+
+    render(<MergeOnDoneDialog />)
+
+    const archiveAll = await screen.findByRole('button', { name: 'Archive all (3)' })
+    expect(screen.getByTestId('archive-all-hint').textContent).toContain(
+      'other 2 branches of this document run'
+    )
+    fireEvent.click(archiveAll)
+
+    await waitFor(() =>
+      expect(moveTicketMock).toHaveBeenCalledWith('ticket-run', 'project-1', 'done', 5)
+    )
+    const moved = moveTicketMock.mock.calls.map((call) => call[0])
+    expect(moved).toEqual(['ticket-a', 'ticket-b', 'ticket-run'])
+    expect(moveTicketMock).toHaveBeenCalledWith(
+      'ticket-a',
+      'project-1',
+      'done',
+      expect.any(Number),
+      { skipCompletionEffects: true }
+    )
+    await waitFor(() => expect(archiveWorktreeMock).toHaveBeenCalledTimes(3))
+    expect(archiveWorktreeMock).toHaveBeenCalledWith(
+      'worktree-int',
+      '/repo/doc-run',
+      'doc-run',
+      '/project-1'
+    )
+    expect(archiveWorktreeMock).toHaveBeenCalledWith('worktree-1', '/repo/feature', 'feature', '/project-1')
+    expect(archiveWorktreeMock).toHaveBeenCalledWith(
+      'worktree-b',
+      '/repo/feature-b',
+      'feature-b',
+      '/project-1'
+    )
+    expect(useKanbanStore.getState().pendingDoneMove).toBeNull()
+  })
+
+  it('leaves a ticket branch that picked up work alone instead of merging it into base', async () => {
+    ahead = { '/repo/feature': { main: 2 } }
+    seedPending(archiveAlpha, [])
+
+    render(<MergeOnDoneDialog />)
+
+    await waitFor(() => expect(useKanbanStore.getState().pendingDoneMove).toBeNull())
+    expect(screen.queryByRole('button', { name: 'Merge' })).toBeNull()
+    expect(gitApiMocks.merge).not.toHaveBeenCalled()
+    expect(archiveWorktreeMock).not.toHaveBeenCalled()
+    expect(moveTicketMock).not.toHaveBeenCalled()
+  })
+
+  it('names the branches that were left out at the archive step', async () => {
+    seedPending(integration, [archiveAlpha], {
+      run: { ...run, kept: [{ label: 'A3 · Gamma', reason: 'never started' }] }
+    })
+
+    render(<MergeOnDoneDialog />)
+
+    expect((await screen.findByTestId('archive-kept-branches')).textContent).toContain(
+      'A3 · Gamma (never started)'
+    )
+    expect(screen.getByRole('button', { name: 'Archive all (2)' })).toBeTruthy()
   })
 })

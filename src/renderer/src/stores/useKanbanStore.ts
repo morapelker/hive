@@ -82,6 +82,13 @@ export interface KanbanDragData {
   ticketId: string
   sourceColumn: string
   sourceIndex: number
+  /**
+   * Modifier keys held when the drag started. cmd+shift on the ticket of a document run
+   * dropped on Done/Merged merges and archives the run's branches as one batch (see
+   * lib/document-flow/run-done-queue.ts). The drop event is consulted too, so a modifier
+   * pressed mid-drag counts as well.
+   */
+  modifiers?: { cmd: boolean; shift: boolean }
 }
 
 let _kanbanDragData: KanbanDragData | null = null
@@ -237,6 +244,36 @@ export interface PendingDoneMoveWorktree {
    * at once (see `completeDoneMove`'s `handledWorktreeIds`).
    */
   alreadyMerged?: boolean
+  /**
+   * Document-run batch (cmd+shift-drop of the run's ticket): what the entry is.
+   * - `run-child`: a ticket branch with work the integration branch lacks; merged INTO the
+   *   integration branch through the run's own merge path. Its ticket moves to Merged on
+   *   success and to the target column with its `run-child-archive` twin at the tail.
+   * - `run-integration`: the run's integration worktree, merged into the base branch like a
+   *   plain drop of the run's ticket; the archive/keep step offers "Archive all".
+   * - `run-child-archive`: a ticket branch already on the integration branch; only the
+   *   archive/keep step is left, and only once the integration branch is on base.
+   */
+  kind?: 'run-child' | 'run-integration' | 'run-child-archive'
+  /** The entry's own ticket (a run's task ticket): moved when the entry completes. */
+  ticketId?: string
+  /** Tickets with no worktree of their own that move along with this entry. */
+  alsoMoveTicketIds?: string[]
+  /** `A3 · title` for the dialog header and the default commit message. */
+  label?: string
+  /** `run-child` only: the item to merge through `documentFlowApi.prepareMerge` / `merge`. */
+  runId?: string
+  itemId?: string
+  integrationBranch?: string
+  integrationWorktreeId?: string
+}
+
+/** A run branch left out of the batch, named for the user. */
+export interface PendingDoneMoveKept {
+  label: string
+  reason: string
+  /** Set when a queued entry was skipped; children never queued carry only a reason. */
+  worktreeId?: string
 }
 
 /** Pending "move to done/merged" data — drives the MergeOnDoneDialog */
@@ -263,6 +300,24 @@ export interface PendingDoneMove {
    * out of a connection the user still needs).
    */
   offerArchive?: boolean
+  /**
+   * Document-run batch: the queue entry being handled (its `worktreeId` / `projectId` are
+   * mirrored above). Set on every entry of a batch, never on the connection flow.
+   */
+  entry?: PendingDoneMoveWorktree
+  /** Document-run batch: the run, and the branches that were never queued. */
+  run?: {
+    runId: string
+    title: string
+    kept: PendingDoneMoveKept[]
+    /** Children with no worktree of their own: moved along with the run's ticket. */
+    alsoMoveTicketIds: string[]
+  }
+  /**
+   * Document-run batch: queued entries the user skipped (or that picked up work since the
+   * queue was built). Their branches are kept, and the run's ticket stays put at the end.
+   */
+  keptWorktrees?: PendingDoneMoveKept[]
 }
 
 /**
@@ -272,14 +327,25 @@ export interface PendingDoneMove {
  */
 function pendingDoneMoveMatches(
   pending: PendingDoneMove,
-  expected?: { ticketId: string; projectId: string; worktreeId?: string }
+  expected?: PendingDoneMoveIdentity
 ): boolean {
   return (
     !expected ||
     (expected.ticketId === pending.ticketId &&
       expected.projectId === pending.projectId &&
-      expected.worktreeId === pending.worktreeId)
+      expected.worktreeId === pending.worktreeId &&
+      // A run batch queues a child's worktree twice (merge, then archive): the kind
+      // tells the two entries apart
+      expected.kind === pending.entry?.kind)
   )
+}
+
+/** The pending move a dialog completion was started for (see `completeDoneMove`). */
+export interface PendingDoneMoveIdentity {
+  ticketId: string
+  projectId: string
+  worktreeId?: string
+  kind?: PendingDoneMoveWorktree['kind']
 }
 
 /**
@@ -292,8 +358,16 @@ function nextPendingDoneMove(
   conflictedWorktrees: NonNullable<PendingDoneMove['conflictedWorktrees']>,
   handledWorktreeIds?: ReadonlySet<string>
 ): PendingDoneMove | null {
+  // A run batch queues a child's worktree for a merge and again for the archive step: once
+  // its merge was skipped or hit conflicts, the branch is not on the integration branch, so
+  // its archive turn is dropped too (archive deletes the branch)
+  const keptWorktrees = pending.keptWorktrees ?? []
+  const left = new Set<string>([
+    ...conflictedWorktrees.map((w) => w.worktreeId),
+    ...keptWorktrees.flatMap((w) => (w.worktreeId ? [w.worktreeId] : []))
+  ])
   const [nextWorktree, ...restWorktrees] = (pending.remainingWorktrees ?? []).filter(
-    (w) => !handledWorktreeIds?.has(w.worktreeId)
+    (w) => !handledWorktreeIds?.has(w.worktreeId) && !left.has(w.worktreeId)
   )
   if (!nextWorktree) return null
   return {
@@ -305,13 +379,53 @@ function nextPendingDoneMove(
     worktreeProjectId: nextWorktree.projectId,
     remainingWorktrees: restWorktrees,
     offerArchive: pending.offerArchive,
-    ...(conflictedWorktrees.length > 0 ? { conflictedWorktrees } : {})
+    ...(conflictedWorktrees.length > 0 ? { conflictedWorktrees } : {}),
+    ...(pending.run ? { entry: nextWorktree, run: pending.run } : {}),
+    ...(keptWorktrees.length > 0 ? { keptWorktrees } : {})
   }
 }
 
-function toastConflictedDoneMove(count: number): void {
+function toastConflictedDoneMove(count: number, unit: 'project' | 'branch' = 'project'): void {
   toast.warning(
-    `Merge conflicts in ${count} project${count !== 1 ? 's' : ''} — ticket not moved. Fix the conflicts and move it again.`
+    `Merge conflicts in ${count} ${unit}${count !== 1 ? (unit === 'branch' ? 'es' : 's') : ''} — ticket not moved. Fix the conflicts and move it again.`
+  )
+}
+
+/**
+ * Document-run batch: move the tickets that a finished queue entry carries to the target
+ * column. Each goes to the top of the column with the run's own completion effects off
+ * (dependent auto-launch, follow-ups): the run scheduled its own dependents, and a batch
+ * must not launch anything. Missing, archived and already-moved tickets are left alone.
+ */
+async function moveRunEntryTickets(
+  pending: PendingDoneMove,
+  ticketIds: readonly string[]
+): Promise<void> {
+  const state = useKanbanStore.getState()
+  for (const ticketId of new Set(ticketIds)) {
+    if (ticketId === pending.ticketId) continue
+    const ticket = state.tickets.get(pending.projectId)?.find((t) => t.id === ticketId)
+    if (!ticket || ticket.archived_at || ticket.column === pending.targetColumn) continue
+    const sortOrder = state.computeSortOrder(
+      state.getTicketsByColumn(pending.projectId, pending.targetColumn),
+      0
+    )
+    try {
+      await state.moveTicket(ticketId, pending.projectId, pending.targetColumn, sortOrder, {
+        skipCompletionEffects: true
+      })
+    } catch (err) {
+      toast.error(
+        `Could not move ${ticket.title}: ${err instanceof Error ? err.message : String(err)}`
+      )
+    }
+  }
+}
+
+function toastKeptDoneMove(kept: readonly PendingDoneMoveKept[]): void {
+  const names = kept.map((k) => k.label).join(', ')
+  toast.warning(
+    `${names} ${kept.length === 1 ? 'was' : 'were'} kept — the run's ticket stays until ${kept.length === 1 ? 'it is' : 'they are'} merged.`
   )
 }
 
@@ -407,16 +521,13 @@ interface KanbanState {
    * destructively afterwards (archive) must stop on false.
    */
   completeDoneMove: (
-    expected?: {
-      ticketId: string
-      projectId: string
-      worktreeId?: string
-    },
+    expected?: PendingDoneMoveIdentity,
     opts?: {
       /**
        * Connection flow: queued members the dialog handled together with the
        * current one ("Archive all") — they are dropped from the queue instead
-       * of getting their own turn.
+       * of getting their own turn. In a document-run batch their tickets move
+       * along with the current entry's.
        */
       handledWorktreeIds?: ReadonlySet<string>
     }
@@ -425,11 +536,13 @@ interface KanbanState {
    * Connection flow: the current member's merge hit conflicts. Record it and
    * advance to the next member instead of aborting the whole queue.
    */
-  continueDoneMoveAfterConflict: (expected?: {
-    ticketId: string
-    projectId: string
-    worktreeId?: string
-  }) => void
+  continueDoneMoveAfterConflict: (expected?: PendingDoneMoveIdentity) => void
+  /**
+   * Document-run batch: leave the current entry's branch as it is (the user
+   * skipped it, or it picked up work since the queue was built) and advance.
+   * Its ticket does not move, and the run's ticket stays put at the end.
+   */
+  skipDoneMoveEntry: (expected: PendingDoneMoveIdentity | undefined, reason: string) => void
 
   // ── Session coordination ────────────────────────────────────────────
   syncTicketWithSession: (sessionId: string, event: KanbanSessionEvent) => void
@@ -1872,15 +1985,36 @@ export const useKanbanStore = create<KanbanState>()(
         const next = nextPendingDoneMove(pending, conflictedWorktrees, opts?.handledWorktreeIds)
         if (next) {
           set({ pendingDoneMove: next })
-          return true
+        } else {
+          set({ pendingDoneMove: null })
         }
-        set({ pendingDoneMove: null })
+        // Document-run batch: the finished entry's tickets follow it. A merge entry's
+        // ticket waits for its archive twin at the tail (the dialog moved it to Merged).
+        if (pending.run) {
+          const finished = [
+            ...(pending.entry && pending.entry.kind !== 'run-child' ? [pending.entry] : []),
+            ...(pending.remainingWorktrees ?? []).filter((w) =>
+              opts?.handledWorktreeIds?.has(w.worktreeId)
+            )
+          ]
+          await moveRunEntryTickets(
+            pending,
+            finished.flatMap((w) => [...(w.ticketId ? [w.ticketId] : []), ...(w.alsoMoveTicketIds ?? [])])
+          )
+        }
+        if (next) return true
         // Earlier members hit conflicts — the queue ran to the end so every
         // member got checked, but the ticket stays until they're resolved
         if (conflictedWorktrees.length > 0) {
-          toastConflictedDoneMove(conflictedWorktrees.length)
+          toastConflictedDoneMove(conflictedWorktrees.length, pending.run ? 'branch' : 'project')
           return true
         }
+        // Skipped branches are not merged either: the run's ticket waits for them
+        if (pending.keptWorktrees?.length) {
+          toastKeptDoneMove(pending.keptWorktrees)
+          return true
+        }
+        if (pending.run) await moveRunEntryTickets(pending, pending.run.alsoMoveTicketIds)
         await get().moveTicket(
           pending.ticketId,
           pending.projectId,
@@ -1911,7 +2045,33 @@ export const useKanbanStore = create<KanbanState>()(
         }
         // Last member — never move the ticket past unresolved conflicts
         set({ pendingDoneMove: null })
-        toastConflictedDoneMove(conflictedWorktrees.length)
+        toastConflictedDoneMove(conflictedWorktrees.length, pending.run ? 'branch' : 'project')
+      },
+
+      skipDoneMoveEntry: (expected, reason) => {
+        const pending = get().pendingDoneMove
+        if (!pending || !pendingDoneMoveMatches(pending, expected)) return
+        const keptWorktrees: PendingDoneMoveKept[] = [
+          ...(pending.keptWorktrees ?? []),
+          {
+            label: pending.entry?.label ?? pending.worktreeId ?? pending.ticketId,
+            reason,
+            ...(pending.worktreeId ? { worktreeId: pending.worktreeId } : {})
+          }
+        ]
+        const conflictedWorktrees = pending.conflictedWorktrees ?? []
+        const next = nextPendingDoneMove({ ...pending, keptWorktrees }, conflictedWorktrees)
+        if (next) {
+          set({ pendingDoneMove: next })
+          return
+        }
+        // Last entry — the run's ticket never moves past a branch that was left out
+        set({ pendingDoneMove: null })
+        if (conflictedWorktrees.length > 0) {
+          toastConflictedDoneMove(conflictedWorktrees.length, 'branch')
+          return
+        }
+        toastKeptDoneMove(keptWorktrees)
       },
 
       // ── getTicketsForProject ─────────────────────────────────────
