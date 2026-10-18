@@ -4,6 +4,7 @@ import { MergeOnDoneDialog } from './MergeOnDoneDialog'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useGitStore } from '@/stores/useGitStore'
+import { useSessionStore } from '@/stores/useSessionStore'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { makeDetail } from '@/components/document-flow/test-fixtures'
 import type { KanbanTicket } from '../../../../main/db/types'
@@ -1461,5 +1462,373 @@ describe('MergeOnDoneDialog — document-run batch (shift-drop of the run ticket
       'A3 · Gamma (never started)'
     )
     expect(screen.getByRole('button', { name: 'Archive all (2)' })).toBeTruthy()
+  })
+})
+
+describe('MergeOnDoneDialog — document-run batch on a connection project (instances)', () => {
+  type Wt = {
+    id: string
+    project_id: string
+    branch_name: string
+    path: string
+    status: 'active' | 'archived'
+    is_default: boolean
+    base_branch: string | null
+  }
+  const wt = (
+    id: string,
+    project_id: string,
+    branch_name: string,
+    path: string,
+    extra: Partial<Wt> = {}
+  ): Wt => ({ id, project_id, branch_name, path, status: 'active', is_default: false, base_branch: 'main', ...extra })
+  const worktrees: Record<string, Wt> = {
+    'wt-main-web': wt('wt-main-web', 'proj-web', 'main', '/web', { is_default: true, base_branch: null }),
+    'wt-main-api': wt('wt-main-api', 'proj-api', 'main', '/api', { is_default: true, base_branch: null }),
+    'wt-int-web': wt('wt-int-web', 'proj-web', 'doc-run', '/web/int'),
+    'wt-int-api': wt('wt-int-api', 'proj-api', 'doc-run', '/api/int'),
+    'wt-a-web': wt('wt-a-web', 'proj-web', 'a1-alpha', '/web/a1'),
+    'wt-a-api': wt('wt-a-api', 'proj-api', 'a1-alpha', '/api/a1')
+  }
+  const members = [
+    { worktreeId: 'wt-a-web', projectId: 'proj-web', projectName: 'Web', branchName: 'a1-alpha', worktreePath: '/web/a1', integrationBranch: 'doc-run', integrationWorktreeId: 'wt-int-web' },
+    { worktreeId: 'wt-a-api', projectId: 'proj-api', projectName: 'Api', branchName: 'a1-alpha', worktreePath: '/api/a1', integrationBranch: 'doc-run', integrationWorktreeId: 'wt-int-api' }
+  ]
+  const runTicket: KanbanTicket = { ...ticket, id: 'ticket-run', project_id: 'proj-conn', title: 'The run', worktree_id: null, external_provider: 'document-run', external_id: 'run-1' }
+  const alphaTicket: KanbanTicket = { ...ticket, id: 'ticket-a', project_id: 'proj-conn', title: 'Alpha', column: 'review', parent_ticket_id: 'ticket-run' }
+
+  const childInstance = {
+    worktreeId: 'wt-a-web', projectId: 'proj-web', kind: 'run-child' as const, ticketId: 'ticket-a', label: 'A1 · Alpha',
+    runId: 'run-1', itemId: 'item-a', integrationBranch: 'doc-run', integrationWorktreeId: 'wt-int-web', connectionId: 'conn-a', members
+  }
+  const archiveInstance = {
+    worktreeId: 'wt-a-web', projectId: 'proj-web', kind: 'run-child-archive' as const, alreadyMerged: true, ticketId: 'ticket-a', label: 'A1 · Alpha', itemId: 'item-a', connectionId: 'conn-a', members
+  }
+  const integrationWeb = { worktreeId: 'wt-int-web', projectId: 'proj-web', kind: 'run-integration' as const, alreadyMerged: true, label: 'The run · Web', connectionId: 'conn-int' }
+  const integrationApi = { worktreeId: 'wt-int-api', projectId: 'proj-api', kind: 'run-integration' as const, alreadyMerged: true, label: 'The run · Api', connectionId: 'conn-int' }
+  const run = { runId: 'run-1', title: 'The run', kept: [] as { label: string; reason: string }[], alsoMoveTicketIds: [] as string[] }
+
+  let ahead: Record<string, Record<string, number>> = {}
+  let dirtyPaths: string[] = []
+  const skipDoneMoveEntryMock = vi.fn().mockResolvedValue(undefined)
+  const realSkipDoneMoveEntry = useKanbanStore.getState().skipDoneMoveEntry
+  const closeSessionMock = vi.fn().mockResolvedValue({ success: true })
+  const instanceB = {
+    worktreeId: 'wt-b-web', projectId: 'proj-web', kind: 'run-child-archive' as const, alreadyMerged: true, ticketId: 'ticket-b', label: 'A2 · Beta', itemId: 'item-b', connectionId: 'conn-b',
+    members: [
+      { worktreeId: 'wt-b-web', projectId: 'proj-web', projectName: 'Web', branchName: 'a2-beta', worktreePath: '/web/a2', integrationBranch: 'doc-run', integrationWorktreeId: 'wt-int-web' },
+      { worktreeId: 'wt-b-api', projectId: 'proj-api', projectName: 'Api', branchName: 'a2-beta', worktreePath: '/api/a2', integrationBranch: 'doc-run', integrationWorktreeId: 'wt-int-api' }
+    ]
+  }
+  const betaTicketB: KanbanTicket = { ...ticket, id: 'ticket-b', project_id: 'proj-conn', title: 'Beta', column: 'merged', parent_ticket_id: 'ticket-run' }
+
+  function seed(current: { worktreeId: string; projectId: string }, remaining: object[] = []): void {
+    useKanbanStore.setState({
+      tickets: new Map([['proj-conn', [runTicket, alphaTicket, betaTicketB]]]),
+      pendingDoneMove: {
+        ticketId: 'ticket-run', projectId: 'proj-conn', sortOrder: 5, targetColumn: 'done',
+        worktreeId: current.worktreeId, worktreeProjectId: current.projectId,
+        remainingWorktrees: remaining as never, offerArchive: true, entry: current as never, run
+      },
+      moveTicket: moveTicketMock
+    })
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    ahead = {}
+    dirtyPaths = []
+    for (const w of Object.values(worktrees)) w.status = 'active'
+    worktrees['wt-b-web'] = wt('wt-b-web', 'proj-web', 'a2-beta', '/web/a2')
+    worktrees['wt-b-api'] = wt('wt-b-api', 'proj-api', 'a2-beta', '/api/a2')
+    moveTicketMock.mockResolvedValue(undefined)
+    archiveWorktreeMock.mockResolvedValue({ success: true })
+    closeSessionMock.mockResolvedValue({ success: true })
+    useSessionStore.setState({ sessionsByConnection: new Map(), closeSession: closeSessionMock })
+    useGitStore.setState({ setHasConflicts: vi.fn(), refreshStatuses: vi.fn() })
+    dbApiMocks.worktree.get.mockImplementation(async (id: string) => worktrees[id] ?? null)
+    dbApiMocks.worktree.getActiveByProject.mockImplementation(async (projectId: string) =>
+      Object.values(worktrees).filter((w) => w.project_id === projectId)
+    )
+    dbApiMocks.project.get.mockImplementation(async (id: string) => ({ path: `/${id}`, name: id }))
+    gitApiMocks.hasUncommittedChanges.mockImplementation(async (path: string) => dirtyPaths.includes(path))
+    gitApiMocks.branchDiffShortStat.mockImplementation(async (path: string, base: string) => {
+      const commitsAhead = ahead[path]?.[base] ?? 0
+      return { success: true, filesChanged: commitsAhead, insertions: commitsAhead, deletions: 0, commitsAhead }
+    })
+    gitApiMocks.getFileStatuses.mockResolvedValue({ success: true, files: [] })
+    gitApiMocks.getBranchDiffFiles.mockResolvedValue({ success: true, files: [] })
+    gitApiMocks.getDiffStat.mockResolvedValue({ success: true, files: [] })
+    gitApiMocks.stageAll.mockResolvedValue({ success: true })
+    gitApiMocks.commit.mockResolvedValue({ success: true })
+    gitApiMocks.getRemoteUrl.mockResolvedValue({ url: null })
+    useWorktreeStore.setState({ archiveWorktree: archiveWorktreeMock, loadWorktrees: vi.fn() })
+    useDocumentFlowStore.setState({ updateItem: vi.fn().mockResolvedValue(undefined) })
+  })
+
+  afterEach(() => {
+    cleanup()
+    useKanbanStore.setState({ pendingDoneMove: null, skipDoneMoveEntry: realSkipDoneMoveEntry })
+  })
+
+  it('is not short-circuited by a clean first member: the merge step shows every member as a chip', async () => {
+    ahead = { '/api/a1': { 'doc-run': 2 } }
+    seed(childInstance)
+
+    render(<MergeOnDoneDialog />)
+
+    expect(await screen.findByRole('button', { name: 'Merge' })).toBeTruthy()
+    const chips = screen.getByTestId('run-child-members')
+    expect(chips.textContent).toContain('Web · 0 commits')
+    expect(chips.textContent).toContain('Api · 2 commits')
+    // The member with work is in focus; a chip switches the view
+    expect(screen.getByTestId('run-child-member-proj-api').getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(screen.getByTestId('run-child-member-proj-web'))
+    expect(screen.getByTestId('run-child-member-proj-web').getAttribute('aria-pressed')).toBe('true')
+    expect(moveTicketMock).not.toHaveBeenCalled()
+  })
+
+  it('a clean instance completes without a dialog step', async () => {
+    seed(childInstance, [integrationWeb])
+
+    render(<MergeOnDoneDialog />)
+
+    await waitFor(() => expect(useKanbanStore.getState().pendingDoneMove?.worktreeId).toBe('wt-int-web'))
+    expect(gitApiMocks.commit).not.toHaveBeenCalled()
+  })
+
+  it('commits every dirty member with one message, then merges the whole instance through the run', async () => {
+    dirtyPaths = ['/web/a1', '/api/a1']
+    seed(childInstance)
+    render(<MergeOnDoneDialog />)
+    expect(await screen.findByText('Uncommitted changes')).toBeTruthy()
+
+    // After the commits both members are ahead of their integration branch
+    gitApiMocks.commit.mockImplementation(async (path: string) => {
+      dirtyPaths = dirtyPaths.filter((p) => p !== path)
+      ahead = { '/web/a1': { 'doc-run': 1 }, '/api/a1': { 'doc-run': 1 } }
+      return { success: true }
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Commit' }))
+
+    expect(await screen.findByRole('button', { name: 'Merge' })).toBeTruthy()
+    expect(gitApiMocks.commit).toHaveBeenCalledWith('/web/a1', 'Alpha')
+    expect(gitApiMocks.commit).toHaveBeenCalledWith('/api/a1', 'Alpha')
+
+    flowApiMocks.prepareMerge.mockResolvedValue({ state: 'clean', conflictedFiles: [], committed: false, commitsAhead: 2 })
+    flowApiMocks.merge.mockResolvedValue({ success: true, mergeSha: 'm' })
+    fireEvent.click(screen.getByRole('button', { name: 'Merge' }))
+
+    await waitFor(() => expect(flowApiMocks.merge).toHaveBeenCalledWith('run-1', 'item-a'))
+    expect(gitApiMocks.merge).not.toHaveBeenCalled()
+    await waitFor(() => expect(useKanbanStore.getState().pendingDoneMove).toBeNull())
+    // The child ticket read as merged; the run's ticket moved once the queue ended
+    expect(moveTicketMock).toHaveBeenCalledWith('ticket-a', 'proj-conn', 'merged', expect.any(Number), { skipCompletionEffects: true })
+    expect(moveTicketMock).toHaveBeenCalledWith('ticket-run', 'proj-conn', 'done', 5)
+  })
+
+  it('keeps the whole instance when any member is not on its base at the archive step', async () => {
+    ahead = { '/api/a1': { main: 1 } }
+    useKanbanStore.setState({ skipDoneMoveEntry: skipDoneMoveEntryMock })
+    seed(archiveInstance, [integrationWeb])
+
+    render(<MergeOnDoneDialog />)
+
+    await waitFor(() =>
+      expect(skipDoneMoveEntryMock).toHaveBeenCalledWith(
+        expect.objectContaining({ worktreeId: 'wt-a-web', kind: 'run-child-archive' }),
+        'has new changes in Api since the run'
+      )
+    )
+    expect(archiveWorktreeMock).not.toHaveBeenCalled()
+  })
+
+  it('Archive on an instance archives its worktrees one after the other', async () => {
+    seed(archiveInstance)
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Archive' }))
+
+    await waitFor(() => expect(archiveWorktreeMock).toHaveBeenCalledTimes(2))
+    expect(archiveWorktreeMock.mock.calls.map((c) => c[0])).toEqual(['wt-a-web', 'wt-a-api'])
+    expect(archiveWorktreeMock).toHaveBeenCalledWith('wt-a-api', '/api/a1', 'a1-alpha', '/proj-api')
+    expect(moveTicketMock).toHaveBeenCalledWith('ticket-a', 'proj-conn', 'done', expect.any(Number), { skipCompletionEffects: true })
+    expect(moveTicketMock).toHaveBeenCalledWith('ticket-run', 'proj-conn', 'done', 5)
+  })
+
+  it('Archive all counts instances, archives every worktree of each, and moves all tickets', async () => {
+    seed(integrationWeb, [integrationApi, archiveInstance])
+    render(<MergeOnDoneDialog />)
+
+    // The integration instance (two member entries) and one ticket instance: 2 instances, 4 worktrees
+    const button = await screen.findByRole('button', { name: 'Archive all (2)' })
+    expect(screen.getByTestId('archive-all-hint').textContent).toContain('4 worktrees across 2 repositories')
+    fireEvent.click(button)
+
+    await waitFor(() => expect(archiveWorktreeMock).toHaveBeenCalledTimes(4))
+    expect(new Set(archiveWorktreeMock.mock.calls.map((c) => c[0]))).toEqual(
+      new Set(['wt-int-web', 'wt-int-api', 'wt-a-web', 'wt-a-api'])
+    )
+    // The ticket's instance goes in order; the run ticket moves last
+    const instanceCalls = archiveWorktreeMock.mock.calls.map((c) => c[0]).filter((id) => id.startsWith('wt-a-'))
+    expect(instanceCalls).toEqual(['wt-a-web', 'wt-a-api'])
+    expect(moveTicketMock.mock.calls.map((c) => c[0])).toEqual(['ticket-a', 'ticket-run'])
+  })
+
+  it('Archive all keeps a whole instance when one of its members picked up work', async () => {
+    ahead = { '/api/a1': { main: 3 } }
+    seed(integrationWeb, [integrationApi, archiveInstance])
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Archive all (2)' }))
+
+    await waitFor(() => expect(archiveWorktreeMock).toHaveBeenCalledTimes(2))
+    expect(archiveWorktreeMock.mock.calls.map((c) => c[0]).sort()).toEqual(['wt-int-api', 'wt-int-web'])
+    // The instance kept its own turn; its init found Api ahead of base, so the whole instance is
+    // kept, its ticket stays, and the run's ticket moves at the end
+    await waitFor(() => expect(useKanbanStore.getState().pendingDoneMove).toBeNull())
+    expect(archiveWorktreeMock.mock.calls.map((c) => c[0])).not.toContain('wt-a-web')
+    expect(moveTicketMock.mock.calls.map((c) => c[0])).toEqual(['ticket-run'])
+  })
+
+  it('Archive all on a ticket instance archives every member in its own repository', async () => {
+    seed(archiveInstance, [instanceB])
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Archive all (2)' }))
+
+    await waitFor(() => expect(archiveWorktreeMock).toHaveBeenCalledTimes(4))
+    expect(archiveWorktreeMock).toHaveBeenCalledWith('wt-a-web', '/web/a1', 'a1-alpha', '/proj-web')
+    expect(archiveWorktreeMock).toHaveBeenCalledWith('wt-a-api', '/api/a1', 'a1-alpha', '/proj-api')
+    expect(archiveWorktreeMock).toHaveBeenCalledWith('wt-b-api', '/api/a2', 'a2-beta', '/proj-api')
+    expect(moveTicketMock.mock.calls.map((c) => c[0])).toEqual(['ticket-a', 'ticket-b', 'ticket-run'])
+  })
+
+  it('Archive all leaves an instance alone when one of its worktrees is gone, and skips one that is gone entirely', async () => {
+    worktrees['wt-b-api'].status = 'archived'
+    seed(integrationWeb, [integrationApi, archiveInstance, instanceB])
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Archive all (3)' }))
+
+    // The integration members and the whole A1 instance go; nothing of A2 does
+    await waitFor(() => expect(archiveWorktreeMock).toHaveBeenCalledTimes(4))
+    expect(archiveWorktreeMock.mock.calls.map((c) => c[0])).not.toContain('wt-b-web')
+    // A2 keeps its own turn, where its init finds the worktree gone and skips it whole
+    await waitFor(() => expect(useKanbanStore.getState().pendingDoneMove).toBeNull())
+    expect(moveTicketMock.mock.calls.map((c) => c[0])).toEqual(['ticket-a', 'ticket-run'])
+  })
+
+  it('releases the instance’s sessions before its worktrees are archived', async () => {
+    useSessionStore.setState({
+      sessionsByConnection: new Map([['conn-a', [{ id: 's-a' } as never]]]),
+      closeSession: closeSessionMock
+    })
+    seed(archiveInstance)
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Archive' }))
+
+    await waitFor(() => expect(archiveWorktreeMock).toHaveBeenCalledTimes(2))
+    expect(closeSessionMock).toHaveBeenCalledWith('s-a')
+    expect(closeSessionMock.mock.invocationCallOrder[0]).toBeLessThan(archiveWorktreeMock.mock.invocationCallOrder[0])
+  })
+
+  it('archiving one member of the integration instance leaves the instance’s sessions alone', async () => {
+    useSessionStore.setState({
+      sessionsByConnection: new Map([['conn-int', [{ id: 's-int' } as never]]]),
+      closeSession: closeSessionMock
+    })
+    seed(integrationWeb, [integrationApi])
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Archive' }))
+
+    await waitFor(() => expect(archiveWorktreeMock).toHaveBeenCalledWith('wt-int-web', '/web/int', 'doc-run', '/proj-web'))
+    expect(closeSessionMock).not.toHaveBeenCalled()
+  })
+
+  it('a member conflict in the run’s merge keeps the instance and drops its archive twin', async () => {
+    ahead = { '/api/a1': { 'doc-run': 1 } }
+    flowApiMocks.prepareMerge.mockResolvedValue({
+      state: 'conflict',
+      conflictedFiles: ['api/src/x.ts'],
+      committed: false,
+      commitsAhead: 1,
+      members: [
+        { project_id: 'proj-web', project_name: 'Web', symlink_name: 'web', integrationBranch: 'doc-run', integrationHead: 'h', state: 'no_changes', conflictedFiles: [], commitsAhead: 0 },
+        { project_id: 'proj-api', project_name: 'Api', symlink_name: 'api', integrationBranch: 'doc-run', integrationHead: 'h', state: 'conflict', conflictedFiles: ['src/x.ts'], commitsAhead: 1 }
+      ]
+    })
+    seed(childInstance, [integrationWeb, archiveInstance])
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Merge' }))
+
+    await waitFor(() => expect(useKanbanStore.getState().pendingDoneMove?.worktreeId).toBe('wt-int-web'))
+    expect(flowApiMocks.merge).not.toHaveBeenCalled()
+    // The archive twin of the conflicted instance is gone from the queue
+    expect(useKanbanStore.getState().pendingDoneMove?.remainingWorktrees).toEqual([])
+    expect(useKanbanStore.getState().pendingDoneMove?.conflictedWorktrees).toEqual([{ worktreeId: 'wt-a-web', projectId: 'proj-web' }])
+  })
+
+  it('a conflict merging a member integration branch into its base stops the batch with nothing archived', async () => {
+    ahead = { '/api/int': { main: 3 } }
+    gitApiMocks.merge.mockResolvedValue({ success: false, conflicts: ['src/x.ts'] })
+    const integrationApiWithWork = { ...integrationApi, alreadyMerged: undefined }
+    seed(integrationApiWithWork, [integrationWeb, archiveInstance])
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Merge' }))
+
+    await waitFor(() => expect(useKanbanStore.getState().pendingDoneMove).toBeNull())
+    expect(archiveWorktreeMock).not.toHaveBeenCalled()
+    expect(moveTicketMock).not.toHaveBeenCalled()
+  })
+
+  it('commits uncommitted changes on the member integration branches first, only where there are any', async () => {
+    dirtyPaths = ['/api/int']
+    ahead = { '/web/a1': { 'doc-run': 1 } }
+    seed(childInstance)
+    render(<MergeOnDoneDialog />)
+
+    expect(await screen.findByText('Uncommitted changes on base')).toBeTruthy()
+    fireEvent.change(screen.getByPlaceholderText('Commit message for base branch'), { target: { value: 'wip' } })
+    gitApiMocks.commit.mockImplementation(async () => {
+      dirtyPaths = []
+      return { success: true }
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Commit' }))
+
+    await waitFor(() => expect(gitApiMocks.commit).toHaveBeenCalledWith('/api/int', 'wip'))
+    expect(gitApiMocks.commit).not.toHaveBeenCalledWith('/web/int', expect.anything())
+    expect(await screen.findByRole('button', { name: 'Merge' })).toBeTruthy()
+  })
+
+  it('a retried commit skips the members already committed by the failed attempt', async () => {
+    dirtyPaths = ['/web/a1', '/api/a1']
+    seed(childInstance)
+    render(<MergeOnDoneDialog />)
+    expect(await screen.findByText('Uncommitted changes')).toBeTruthy()
+
+    // Web commits, Api fails; the second attempt must not commit Web again
+    gitApiMocks.commit.mockImplementation(async (path: string) => {
+      if (path === '/api/a1') return { success: false, error: 'hook failed' }
+      dirtyPaths = dirtyPaths.filter((p) => p !== path)
+      return { success: true }
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Commit' }))
+    await waitFor(() => expect(gitApiMocks.commit).toHaveBeenCalledWith('/api/a1', 'Alpha'))
+    expect(await screen.findByText('Uncommitted changes')).toBeTruthy()
+
+    gitApiMocks.commit.mockImplementation(async (path: string) => {
+      dirtyPaths = dirtyPaths.filter((p) => p !== path)
+      ahead = { '/web/a1': { 'doc-run': 1 }, '/api/a1': { 'doc-run': 1 } }
+      return { success: true }
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Commit' }))
+
+    expect(await screen.findByRole('button', { name: 'Merge' })).toBeTruthy()
+    expect(gitApiMocks.commit.mock.calls.filter((c) => c[0] === '/web/a1')).toHaveLength(1)
   })
 })

@@ -23,6 +23,7 @@ const gitApiMocks = vi.hoisted(() => ({
   hasUncommittedChanges: vi.fn(),
   branchDiffShortStat: vi.fn()
 }))
+const runDoneQueue = vi.hoisted(() => ({ queueDocumentRunDone: vi.fn() }))
 const connectionMerge = vi.hoisted(() => ({
   buildConnectionMergeQueue: vi.fn(),
   resolveTicketConnectionId: vi.fn(),
@@ -62,6 +63,7 @@ vi.mock('@/api/document-flow-api', () => ({ documentFlowApi: flowApi }))
 vi.mock('@/api/db-api', () => ({ dbApi: dbApiMocks }))
 vi.mock('@/api/git-api', () => ({ gitApi: gitApiMocks }))
 vi.mock('@/lib/connection-merge', () => connectionMerge)
+vi.mock('@/lib/document-flow/run-done-queue', () => runDoneQueue)
 
 vi.mock('@/components/kanban/KanbanTicketCard', () => ({
   KanbanTicketCard: ({ ticket }: { ticket: KanbanTicket }) => (
@@ -173,7 +175,11 @@ function seedRun(
 }
 
 /** Drop `ticket` (as it sits in its own column) on `column`. */
-async function drop(ticket: KanbanTicket, column: KanbanTicketColumn): Promise<void> {
+async function drop(
+  ticket: KanbanTicket,
+  column: KanbanTicketColumn,
+  modifiers?: { shift: boolean }
+): Promise<void> {
   useKanbanStore.setState({ tickets: new Map([[ticket.project_id, [ticket]]]) })
   render(
     <TooltipProvider>
@@ -184,7 +190,8 @@ async function drop(ticket: KanbanTicket, column: KanbanTicketColumn): Promise<v
     projectId: ticket.project_id,
     ticketId: ticket.id,
     sourceColumn: ticket.column,
-    sourceIndex: 0
+    sourceIndex: 0,
+    ...(modifiers ? { modifiers } : {})
   })
   await act(async () => {
     fireEvent.drop(screen.getByTestId(`kanban-drop-area-${column}`))
@@ -225,6 +232,42 @@ afterEach(async () => {
   setKanbanDragData(null)
   useDocumentFlowStore.setState(initialFlowState, true)
   useKanbanStore.setState(initialKanbanState, true)
+})
+
+describe('shift-dropping the ticket of an ended connection run', () => {
+  it('finishes the whole run through the batch instead of the integration instance alone', async () => {
+    seedRun('completed')
+    runDoneQueue.queueDocumentRunDone.mockResolvedValue('queued')
+
+    await drop(makeTicket(), 'done', { shift: true })
+
+    await waitFor(() =>
+      expect(runDoneQueue.queueDocumentRunDone).toHaveBeenCalledWith({
+        runId: 'run-1',
+        ticketId: 'ticket-run',
+        projectId: 'proj-conn',
+        targetColumn: 'done',
+        sortOrder: expect.any(Number)
+      })
+    )
+    expect(connectionMerge.buildConnectionMergeQueue).not.toHaveBeenCalled()
+    expect(setPendingDoneMove).not.toHaveBeenCalled()
+    expect(moveTicket).not.toHaveBeenCalled()
+    expect(toast.info).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the integration instance when the batch has nothing to queue', async () => {
+    seedRun('completed')
+    runDoneQueue.queueDocumentRunDone.mockResolvedValue('nothing')
+
+    await drop(makeTicket(), 'done', { shift: true })
+
+    await waitFor(() =>
+      expect(setPendingDoneMove).toHaveBeenCalledWith(
+        expect.objectContaining({ worktreeId: WEB.worktreeId, remainingWorktrees: [API] })
+      )
+    )
+  })
 })
 
 describe('dropping the ticket of an ended connection run', () => {

@@ -622,15 +622,6 @@ describe('shift-dropping the ticket of a run that has ended', () => {
     expect(toast.warning).not.toHaveBeenCalled()
   })
 
-  it('says so and moves the ticket alone for a run on a connection project', async () => {
-    runDoneQueue.queueDocumentRunDone.mockResolvedValue('unsupported')
-
-    await drop(makeTicket({ column: 'review' }), 'done', batch)
-
-    expect(toast.info).toHaveBeenCalledWith(expect.stringContaining('connection project'))
-    await waitFor(() => expect(setPendingDoneMove).toHaveBeenCalled())
-  })
-
   it('refuses the drop when a branch of the run cannot be verified', async () => {
     runDoneQueue.queueDocumentRunDone.mockRejectedValue(new Error('a2-beta: git is down'))
 

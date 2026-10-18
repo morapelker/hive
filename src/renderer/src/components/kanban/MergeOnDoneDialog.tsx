@@ -1,10 +1,17 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { ticketKey, useKanbanStore, type PendingDoneMoveIdentity } from '@/stores/useKanbanStore'
+import {
+  ticketKey,
+  useKanbanStore,
+  type PendingDoneMoveIdentity,
+  type PendingDoneMoveMember,
+  type PendingDoneMoveWorktree
+} from '@/stores/useKanbanStore'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { documentFlowApi } from '@/api/document-flow-api'
 import { useGitStore } from '@/stores/useGitStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { useSessionStore } from '@/stores/useSessionStore'
 import {
   Dialog,
   DialogContent,
@@ -49,6 +56,22 @@ interface BranchStats {
   commitsAhead: number
 }
 
+/**
+ * Document-run batch on a connection project: one member worktree of the instance the entry
+ * stands for, checked against the branch it should be on (the member's integration branch
+ * for a merge entry, the member's base for an archive entry).
+ */
+interface ResolvedMember extends PendingDoneMoveMember {
+  /** Root of the member repository, where its worktree is removed from. */
+  projectPath: string
+  baseBranch: string
+  baseWorktreeId: string
+  baseWorktreePath: string
+  baseDirty: boolean
+  dirty: boolean
+  branchStats: BranchStats
+}
+
 interface ResolvedState {
   featureWorktreeId: string
   featureWorktreePath: string
@@ -67,6 +90,43 @@ interface ResolvedState {
    * the run's integration branch) but not on the base branch yet: merging brings them along.
    */
   carriedRunTickets: string[]
+  /**
+   * Connection project: every member worktree of the instance; the `feature*` / `base*`
+   * fields above describe the member in focus. Merged in one call, archived all or none.
+   */
+  members?: ResolvedMember[]
+}
+
+const toBranchStats = (stat: {
+  filesChanged: number
+  insertions: number
+  deletions: number
+  commitsAhead: number
+}): BranchStats => ({
+  filesChanged: stat.filesChanged,
+  insertions: stat.insertions,
+  deletions: stat.deletions,
+  commitsAhead: stat.commitsAhead
+})
+
+/** The worktrees an entry stands for: its instance's members, or the one worktree. */
+const entryWorktreeCount = (entry: Pick<PendingDoneMoveWorktree, 'members'>): number =>
+  entry.members?.length ?? 1
+
+/**
+ * Archiving every worktree of an instance deletes the instance; its sessions (an agent's
+ * terminal, say) must be released first — they are listed per connection, not per worktree.
+ */
+async function closeInstanceSessions(connectionId: string | undefined): Promise<void> {
+  if (!connectionId) return
+  const sessionStore = useSessionStore.getState()
+  for (const session of sessionStore.sessionsByConnection.get(connectionId) ?? []) {
+    try {
+      await sessionStore.closeSession(session.id)
+    } catch {
+      // Non-critical — the session may be gone already
+    }
+  }
 }
 
 export function MergeOnDoneDialog() {
@@ -98,6 +158,20 @@ export function MergeOnDoneDialog() {
 
   const [step, setStep] = useState<Step>('loading')
   const [resolved, setResolved] = useState<ResolvedState | null>(null)
+  // Connection project: which member of the instance the file list and header show
+  const [memberIndex, setMemberIndex] = useState(0)
+  const focusedMember = resolved?.members?.[memberIndex] ?? resolved?.members?.[0]
+  // What the inspect steps describe: the member in focus, else the entry's one worktree
+  const view = resolved
+    ? {
+        featureWorktreePath: focusedMember?.worktreePath ?? resolved.featureWorktreePath,
+        featureBranch: focusedMember?.branchName ?? resolved.featureBranch,
+        baseBranch: focusedMember?.baseBranch ?? resolved.baseBranch,
+        baseWorktreePath: focusedMember?.baseWorktreePath ?? resolved.baseWorktreePath,
+        branchStats: focusedMember?.branchStats ?? resolved.branchStats,
+        projectName: focusedMember?.projectName ?? resolved.projectName
+      }
+    : null
   const [commitMessage, setCommitMessage] = useState('')
   const [baseCommitMessage, setBaseCommitMessage] = useState('')
   const [committingBase, setCommittingBase] = useState(false)
@@ -117,21 +191,25 @@ export function MergeOnDoneDialog() {
   const changedSource = useMemo<ChangedFilesSource | null>(() => {
     // `resolved`/`step` linger after the dialog closes; stop watching then
     if (!resolved || !pendingDoneMove) return null
+    const shown = focusedMember ?? resolved
     switch (step) {
       case 'merge':
         return {
           kind: 'branch',
-          worktreePath: resolved.featureWorktreePath,
-          baseBranch: resolved.baseBranch
+          worktreePath: focusedMember?.worktreePath ?? resolved.featureWorktreePath,
+          baseBranch: shown.baseBranch
         }
       case 'commit':
-        return { kind: 'worktree', worktreePath: resolved.featureWorktreePath }
+        return {
+          kind: 'worktree',
+          worktreePath: focusedMember?.worktreePath ?? resolved.featureWorktreePath
+        }
       case 'commit_base':
-        return { kind: 'worktree', worktreePath: resolved.baseWorktreePath }
+        return { kind: 'worktree', worktreePath: shown.baseWorktreePath }
       default:
         return null
     }
-  }, [resolved, step, pendingDoneMove])
+  }, [resolved, focusedMember, step, pendingDoneMove])
   const changed = useChangedFiles(changedSource)
 
   // The merge step assumes a clean feature tree, but an agent may still be
@@ -163,6 +241,7 @@ export function MergeOnDoneDialog() {
     const init = async () => {
       setStep('loading')
       setResolved(null)
+      setMemberIndex(0)
       setCommittingBase(false)
       setCommitting(false)
       setMerging(false)
@@ -192,6 +271,125 @@ export function MergeOnDoneDialog() {
         const mergeWorktreeId = pending.worktreeId ?? ticket?.worktree_id
         if (!ticket || !mergeWorktreeId) {
           clearPendingDoneMove()
+          return
+        }
+
+        // Document-run batch on a connection project: the entry is a ticket's whole instance.
+        // Every member worktree is checked; one that cannot go holds the whole instance.
+        const instanceMembers = pending.run && entry?.members?.length ? entry.members : null
+        if (instanceMembers) {
+          const members: ResolvedMember[] = []
+          for (const member of instanceMembers) {
+            const worktree = await dbApi.worktree.get<MergeWorktree>(member.worktreeId)
+            if (cancelled) return
+            if (!worktree || worktree.status !== 'active') {
+              await skipDoneMoveEntry(identity, `its worktree in ${member.projectName} is gone`)
+              return
+            }
+            let baseBranch: string | undefined
+            let baseWorktree: MergeWorktree | undefined
+            if (runChild) {
+              // A ticket branch merges into its member's integration branch
+              const integrationWorktree = member.integrationWorktreeId
+                ? await dbApi.worktree.get<MergeWorktree>(member.integrationWorktreeId)
+                : null
+              if (cancelled) return
+              if (
+                !integrationWorktree ||
+                integrationWorktree.status !== 'active' ||
+                !member.integrationBranch
+              ) {
+                await skipDoneMoveEntry(
+                  identity,
+                  `the integration worktree of ${member.projectName} is gone`
+                )
+                return
+              }
+              baseBranch = member.integrationBranch
+              baseWorktree = integrationWorktree
+            } else {
+              // An archive entry may only go once the member's base has its work
+              const activeWorktrees = await dbApi.worktree.getActiveByProject<MergeWorktree>(
+                member.projectId
+              )
+              if (cancelled) return
+              baseBranch =
+                worktree.base_branch ?? activeWorktrees.find((w) => w.is_default)?.branch_name
+              baseWorktree = activeWorktrees.find((w) => w.branch_name === baseBranch)
+            }
+            if (!baseBranch) {
+              await skipDoneMoveEntry(identity, `no base branch resolved for ${member.projectName}`)
+              return
+            }
+            const [baseDirty, dirty, stat] = await Promise.all([
+              baseWorktree ? gitApi.hasUncommittedChanges(baseWorktree.path) : Promise.resolve(false),
+              gitApi.hasUncommittedChanges(worktree.path),
+              gitApi.branchDiffShortStat(worktree.path, baseBranch)
+            ])
+            if (cancelled) return
+            if (!stat.success) {
+              toast.warning(
+                `Cannot verify merge status in ${member.projectName}: ${stat.error ?? 'unknown error'}`
+              )
+              clearPendingDoneMove()
+              return
+            }
+            const memberProject = await dbApi.project.get<MergeProject>(member.projectId)
+            if (cancelled) return
+            members.push({
+              ...member,
+              worktreePath: worktree.path,
+              branchName: worktree.branch_name,
+              projectPath: memberProject?.path ?? worktree.path,
+              baseBranch,
+              baseWorktreeId: baseWorktree?.id ?? '',
+              baseWorktreePath: baseWorktree?.path ?? worktree.path,
+              baseDirty,
+              dirty,
+              branchStats: toBranchStats(stat)
+            })
+          }
+          const hasWork = (m: ResolvedMember): boolean => m.dirty || m.branchStats.commitsAhead > 0
+          const alreadyMerged = !members.some(hasWork)
+          if (runChild && alreadyMerged) {
+            await completeDoneMove(identity)
+            return
+          }
+          if (!runChild && !alreadyMerged) {
+            const where = members.filter(hasWork).map((m) => m.projectName).join(', ')
+            await skipDoneMoveEntry(identity, `has new changes in ${where} since the run`)
+            return
+          }
+          const focus = Math.max(0, members.findIndex(hasWork))
+          const anchor = members[focus]
+          setResolved({
+            featureWorktreeId: anchor.worktreeId,
+            featureWorktreePath: anchor.worktreePath,
+            featureBranch: anchor.branchName,
+            baseWorktreeId: anchor.baseWorktreeId,
+            baseWorktreePath: anchor.baseWorktreePath,
+            baseBranch: anchor.baseBranch,
+            ticketTitle: entryTitle,
+            projectPath: anchor.projectPath,
+            projectName: anchor.projectName,
+            baseDirty: members.some((m) => m.baseDirty),
+            branchStats: anchor.branchStats,
+            alreadyMerged,
+            carriedRunTickets: [],
+            members
+          })
+          setMemberIndex(focus)
+          setCommitMessage(entryTitle)
+          setBaseCommitMessage('')
+          setStep(
+            alreadyMerged
+              ? 'archive'
+              : members.some((m) => m.baseDirty)
+                ? 'commit_base'
+                : members.some((m) => m.dirty)
+                  ? 'commit'
+                  : 'merge'
+          )
           return
         }
 
@@ -349,10 +547,79 @@ export function MergeOnDoneDialog() {
     }
   }, [pendingDoneMove, completeDoneMove, clearPendingDoneMove, skipDoneMoveEntry])
 
+  /**
+   * Connection project: the members' branches after a commit or a base commit. Any member
+   * with commits its branch to merge into lacks → the merge step; none → the entry is done.
+   */
+  const continueInstanceAfterCommit = useCallback(
+    async (members: ResolvedMember[]): Promise<void> => {
+      const updated: ResolvedMember[] = []
+      for (const member of members) {
+        const [dirty, stat] = await Promise.all([
+          gitApi.hasUncommittedChanges(member.worktreePath),
+          gitApi.branchDiffShortStat(member.worktreePath, member.baseBranch)
+        ])
+        if (!stat.success) {
+          toast.warning(
+            `Cannot verify merge status in ${member.projectName}: ${stat.error ?? 'unknown error'}`
+          )
+          clearPendingDoneMove()
+          return
+        }
+        updated.push({ ...member, dirty, branchStats: toBranchStats(stat) })
+      }
+      const focusDirty = updated.findIndex((m) => m.dirty)
+      const focusWork = updated.findIndex((m) => m.branchStats.commitsAhead > 0)
+      const focus = focusDirty >= 0 ? focusDirty : Math.max(0, focusWork)
+      setResolved((prev) =>
+        prev ? { ...prev, members: updated, branchStats: updated[focus].branchStats } : prev
+      )
+      setMemberIndex(focus)
+      if (focusDirty >= 0) setStep('commit')
+      else if (focusWork >= 0) setStep('merge')
+      else await completeDoneMove(pendingIdentity)
+    },
+    [pendingIdentity, completeDoneMove, clearPendingDoneMove]
+  )
+
   const handleCommit = useCallback(async () => {
     if (!resolved || !commitMessage.trim()) return
     setCommitting(true)
     try {
+      // Connection project: every member worktree with uncommitted changes, one message
+      if (resolved.members) {
+        const dirty = resolved.members.filter((m) => m.dirty)
+        for (const member of dirty) {
+          const statuses = await gitApi.getFileStatuses(member.worktreePath)
+          if (statuses.files?.some((file) => file.status === 'C')) {
+            toast.error(
+              `${member.branchName} in ${member.projectName} has unresolved conflict markers — resolve them first`
+            )
+            return
+          }
+        }
+        for (const member of dirty) {
+          // A retry after a failure further down the list: this member is committed already
+          if (!(await gitApi.hasUncommittedChanges(member.worktreePath))) continue
+          const stageResult = await gitApi.stageAll(member.worktreePath)
+          if (!stageResult.success) {
+            toast.error(`Failed to stage in ${member.projectName}: ${stageResult.error}`)
+            return
+          }
+          const commitResult = await gitApi.commit(member.worktreePath, commitMessage.trim())
+          if (!commitResult.success) {
+            toast.error(`Failed to commit in ${member.projectName}: ${commitResult.error}`)
+            return
+          }
+        }
+        toast.success(
+          dirty.length === 1
+            ? 'Changes committed'
+            : `Changes committed in ${dirty.map((m) => m.projectName).join(', ')}`
+        )
+        await continueInstanceAfterCommit(resolved.members)
+        return
+      }
       // A run's ticket branch may hold a half-resolved merge of the integration branch:
       // committing would land the conflict markers as the resolution
       if (isRunChild) {
@@ -420,13 +687,35 @@ export function MergeOnDoneDialog() {
     pendingIdentity,
     isRunChild,
     completeDoneMove,
-    clearPendingDoneMove
+    clearPendingDoneMove,
+    continueInstanceAfterCommit
   ])
 
   const handleCommitBase = useCallback(async () => {
     if (!resolved || !baseCommitMessage.trim()) return
     setCommittingBase(true)
     try {
+      // Connection project: every member integration worktree with uncommitted changes
+      if (resolved.members) {
+        for (const member of resolved.members.filter((m) => m.baseDirty)) {
+          if (!(await gitApi.hasUncommittedChanges(member.baseWorktreePath))) continue
+          const stageResult = await gitApi.stageAll(member.baseWorktreePath)
+          if (!stageResult.success) {
+            toast.error(`Failed to stage on ${member.baseBranch} in ${member.projectName}: ${stageResult.error}`)
+            return
+          }
+          const commitResult = await gitApi.commit(member.baseWorktreePath, baseCommitMessage.trim())
+          if (!commitResult.success) {
+            toast.error(`Failed to commit on ${member.baseBranch} in ${member.projectName}: ${commitResult.error}`)
+            return
+          }
+        }
+        toast.success('Changes committed on the integration branches')
+        await continueInstanceAfterCommit(
+          resolved.members.map((m) => ({ ...m, baseDirty: false }))
+        )
+        return
+      }
       const stageResult = await gitApi.stageAll(resolved.baseWorktreePath)
       if (!stageResult.success) {
         toast.error(`Failed to stage on ${resolved.baseBranch}: ${stageResult.error}`)
@@ -482,16 +771,33 @@ export function MergeOnDoneDialog() {
     } finally {
       setCommittingBase(false)
     }
-  }, [resolved, baseCommitMessage, pendingIdentity, completeDoneMove, clearPendingDoneMove])
+  }, [
+    resolved,
+    baseCommitMessage,
+    pendingIdentity,
+    completeDoneMove,
+    clearPendingDoneMove,
+    continueInstanceAfterCommit
+  ])
 
   const handleMerge = useCallback(async () => {
     if (!resolved || !pendingDoneMove) return
     setMerging(true)
     try {
       // Last look before landing commits only: anything written since the
-      // step opened must be committed first (see the status watcher above)
-      if (await gitApi.hasUncommittedChanges(resolved.featureWorktreePath)) {
+      // step opened must be committed first (see the status watcher above).
+      // An instance is looked at member by member — the run commits nothing on its own.
+      const branchPaths = resolved.members
+        ? resolved.members.map((m) => m.worktreePath)
+        : [resolved.featureWorktreePath]
+      const dirtyNow = await Promise.all(branchPaths.map((p) => gitApi.hasUncommittedChanges(p)))
+      if (dirtyNow.some(Boolean)) {
         toast.warning('New uncommitted changes on the branch — commit them before merging')
+        if (resolved.members) {
+          const members = resolved.members.map((m, i) => ({ ...m, dirty: dirtyNow[i] }))
+          setResolved((prev) => (prev ? { ...prev, members } : prev))
+          setMemberIndex(Math.max(0, dirtyNow.findIndex(Boolean)))
+        }
         setStep('commit')
         return
       }
@@ -505,9 +811,20 @@ export function MergeOnDoneDialog() {
         const label = runEntry.label ?? resolved.featureBranch
         const check = await documentFlowApi.prepareMerge(runEntry.runId, runEntry.itemId)
         if (check.state === 'conflict' || check.state === 'error') {
+          // Connection project: name the members that conflicted
+          const conflicted = (check.members ?? []).filter((m) => m.state === 'conflict')
+          const where =
+            conflicted.length > 0
+              ? conflicted
+                  .map(
+                    (m) =>
+                      `${m.project_name} (${m.conflictedFiles.length} file${m.conflictedFiles.length !== 1 ? 's' : ''})`
+                  )
+                  .join(', ')
+              : `${check.conflictedFiles.length} file${check.conflictedFiles.length !== 1 ? 's' : ''}`
           toast.error(
             check.state === 'conflict'
-              ? `Merge conflicts in ${check.conflictedFiles.length} file${check.conflictedFiles.length !== 1 ? 's' : ''} on ${label} — kept, continuing with the next branch`
+              ? `Merge conflicts in ${where} on ${label} — kept, continuing with the next branch`
               : `Could not check ${label}: ${check.error ?? 'unknown error'} — kept`
           )
           continueDoneMoveAfterConflict(pendingIdentity)
@@ -523,7 +840,11 @@ export function MergeOnDoneDialog() {
           continueDoneMoveAfterConflict(pendingIdentity)
           return
         }
-        toast.success(`${label} merged into ${resolved.baseBranch}`)
+        toast.success(
+          resolved.members
+            ? `${label} merged into ${resolved.members.map((m) => `${m.baseBranch} of ${m.projectName}`).join(', ')}`
+            : `${label} merged into ${resolved.baseBranch}`
+        )
         const { runId, itemId, ticketId } = runEntry
         const projectId = pendingDoneMove.projectId
         void useDocumentFlowStore
@@ -646,12 +967,26 @@ export function MergeOnDoneDialog() {
   const handleArchive = useCallback(async () => {
     if (!resolved) return
 
-    const archiveTarget = {
-      featureWorktreeId: resolved.featureWorktreeId,
-      featureWorktreePath: resolved.featureWorktreePath,
-      featureBranch: resolved.featureBranch,
-      projectPath: resolved.projectPath
-    }
+    // Connection project: every worktree of the instance; the last one removed deletes
+    // the instance itself, so they go one after the other
+    const archiveTargets = resolved.members
+      ? resolved.members.map((m) => ({
+          worktreeId: m.worktreeId,
+          worktreePath: m.worktreePath,
+          branch: m.branchName,
+          projectPath: m.projectPath
+        }))
+      : [
+          {
+            worktreeId: resolved.featureWorktreeId,
+            worktreePath: resolved.featureWorktreePath,
+            branch: resolved.featureBranch,
+            projectPath: resolved.projectPath
+          }
+        ]
+    // A ticket's instance goes whole, so its sessions go first; the integration instance
+    // loses one member here and keeps its sessions
+    const connectionId = resolved.members ? runEntry?.connectionId : undefined
 
     try {
       setArchiving(true)
@@ -662,25 +997,28 @@ export function MergeOnDoneDialog() {
       return
     }
 
-    useWorktreeStore
-      .getState()
-      .archiveWorktree(
-        archiveTarget.featureWorktreeId,
-        archiveTarget.featureWorktreePath,
-        archiveTarget.featureBranch,
-        archiveTarget.projectPath
-      )
-      .then((result) => {
-        if (result.success) {
-          toast.success('Worktree archived')
-        } else {
-          toast.error(`Failed to archive: ${result.error}`)
+    void (async () => {
+      await closeInstanceSessions(connectionId)
+      const store = useWorktreeStore.getState()
+      let archived = 0
+      for (const target of archiveTargets) {
+        try {
+          const result = await store.archiveWorktree(
+            target.worktreeId,
+            target.worktreePath,
+            target.branch,
+            target.projectPath
+          )
+          if (result.success) archived += 1
+          else toast.error(`Failed to archive ${target.branch}: ${result.error}`)
+        } catch (err) {
+          toast.error(`Archive failed: ${err instanceof Error ? err.message : String(err)}`)
         }
-      })
-      .catch((err) => {
-        toast.error(`Archive failed: ${err instanceof Error ? err.message : String(err)}`)
-      })
-  }, [resolved, pendingIdentity, completeDoneMove])
+      }
+      if (archived === 1 && archiveTargets.length === 1) toast.success('Worktree archived')
+      else if (archived > 0) toast.success(`${archived} worktree${archived !== 1 ? 's' : ''} archived`)
+    })()
+  }, [resolved, runEntry, pendingIdentity, completeDoneMove])
 
   // Connection-project flow: once the members with work to merge are done,
   // the rest of the queue is archive/keep prompts only (the queue builder
@@ -698,6 +1036,21 @@ export function MergeOnDoneDialog() {
     [pendingDoneMove]
   )
 
+  // Document-run batch: what "Archive all" stands for. On a connection project an entry is an
+  // instance (several worktrees) and the integration instance is one entry per member, so
+  // the count is of instances, the hint says how many worktrees that is
+  const archiveAllScope = useMemo(() => {
+    const entries: Pick<PendingDoneMoveWorktree, 'worktreeId' | 'connectionId' | 'members' | 'projectId'>[] =
+      [...(runEntry ? [runEntry] : []), ...archiveAllCandidates]
+    const instances = new Set(entries.map((e) => e.connectionId ?? e.worktreeId)).size
+    const worktrees = entries.reduce((n, e) => n + entryWorktreeCount(e), 0)
+    const repositories = new Set(
+      entries.flatMap((e) => e.members?.map((m) => m.projectId) ?? [e.projectId])
+    ).size
+    const isConnectionRun = entries.some((e) => !!e.connectionId)
+    return { instances, worktrees, repositories, isConnectionRun }
+  }, [runEntry, archiveAllCandidates])
+
   const handleArchiveAll = useCallback(async () => {
     if (!resolved || archiveAllCandidates.length === 0) return
     setArchivingAll(true)
@@ -709,15 +1062,32 @@ export function MergeOnDoneDialog() {
       baseBranch: string
       projectPath: string
     }
-    const targets: ArchiveTarget[] = [
-      {
-        worktreeId: resolved.featureWorktreeId,
-        worktreePath: resolved.featureWorktreePath,
-        branch: resolved.featureBranch,
-        baseBranch: resolved.baseBranch,
-        projectPath: resolved.projectPath
-      }
+    // One group per entry: a connection instance's worktrees are archived one after the
+    // other (the last removal deletes the instance), groups in parallel
+    const groups: ArchiveTarget[][] = [
+      resolved.members
+        ? resolved.members.map((m) => ({
+            worktreeId: m.worktreeId,
+            worktreePath: m.worktreePath,
+            branch: m.branchName,
+            baseBranch: m.baseBranch,
+            projectPath: m.projectPath
+          }))
+        : [
+            {
+              worktreeId: resolved.featureWorktreeId,
+              worktreePath: resolved.featureWorktreePath,
+              branch: resolved.featureBranch,
+              baseBranch: resolved.baseBranch,
+              projectPath: resolved.projectPath
+            }
+          ]
     ]
+    // Sessions of a ticket's instance are released before its worktrees go (the last one
+    // removed deletes the instance); the integration instance keeps its sessions
+    const connectionIds = new Set<string>(
+      resolved.members && runEntry?.connectionId ? [runEntry.connectionId] : []
+    )
     // Archive removes the worktree and deletes the branch, so a target is only
     // archived while it has nothing to commit or merge
     const isClean = async (worktreePath: string, baseBranch: string): Promise<boolean> => {
@@ -733,33 +1103,62 @@ export function MergeOnDoneDialog() {
     const handled = new Set<string>()
     const keptForMerge: string[] = []
 
+    // One worktree of a candidate: its archive target when it is clean against its base
+    const assess = async (
+      worktreeId: string,
+      projectId: string
+    ): Promise<ArchiveTarget | 'gone' | 'kept' | 'unknown-base'> => {
+      const worktree = await dbApi.worktree.get<MergeWorktree>(worktreeId)
+      if (!worktree || worktree.status !== 'active') return 'gone'
+      const activeWorktrees = await dbApi.worktree.getActiveByProject<MergeWorktree>(projectId)
+      const baseBranch =
+        worktree.base_branch ?? activeWorktrees.find((w) => w.is_default)?.branch_name
+      if (!baseBranch) return 'unknown-base'
+      if (!(await isClean(worktree.path, baseBranch))) return 'kept'
+      const project = await dbApi.project.get<MergeProject>(worktree.project_id)
+      return {
+        worktreeId: worktree.id,
+        worktreePath: worktree.path,
+        branch: worktree.branch_name,
+        baseBranch,
+        projectPath: project?.path ?? worktree.path
+      }
+    }
+
     try {
       await Promise.all(
-        archiveAllCandidates.map(async (member) => {
-          const worktree = await dbApi.worktree.get<MergeWorktree>(member.worktreeId)
-          if (!worktree || worktree.status !== 'active') {
-            handled.add(member.worktreeId)
+        archiveAllCandidates.map(async (candidate) => {
+          if (candidate.members?.length) {
+            // A connection instance goes all or none
+            const results = await Promise.all(
+              candidate.members.map((m) => assess(m.worktreeId, m.projectId))
+            )
+            if (results.every((r) => r === 'gone')) {
+              handled.add(candidate.worktreeId)
+              return
+            }
+            if (results.some((r) => typeof r === 'string')) {
+              keptForMerge.push(candidate.label ?? candidate.members[0].branchName)
+              return
+            }
+            handled.add(candidate.worktreeId)
+            if (candidate.connectionId) connectionIds.add(candidate.connectionId)
+            groups.push(results as ArchiveTarget[])
             return
           }
-          const activeWorktrees = await dbApi.worktree.getActiveByProject<MergeWorktree>(
-            member.projectId
-          )
-          const baseBranch =
-            worktree.base_branch ?? activeWorktrees.find((w) => w.is_default)?.branch_name
-          if (!baseBranch) return
-          if (!(await isClean(worktree.path, baseBranch))) {
-            keptForMerge.push(worktree.branch_name)
+          const result = await assess(candidate.worktreeId, candidate.projectId)
+          if (result === 'gone') {
+            handled.add(candidate.worktreeId)
             return
           }
-          const project = await dbApi.project.get<MergeProject>(worktree.project_id)
-          handled.add(member.worktreeId)
-          targets.push({
-            worktreeId: worktree.id,
-            worktreePath: worktree.path,
-            branch: worktree.branch_name,
-            baseBranch,
-            projectPath: project?.path ?? worktree.path
-          })
+          if (result === 'unknown-base') return
+          if (result === 'kept') {
+            const worktree = await dbApi.worktree.get<MergeWorktree>(candidate.worktreeId)
+            keptForMerge.push(worktree?.branch_name ?? candidate.label ?? candidate.worktreeId)
+            return
+          }
+          handled.add(candidate.worktreeId)
+          groups.push([result])
         })
       )
     } catch (err) {
@@ -785,27 +1184,39 @@ export function MergeOnDoneDialog() {
     }
 
     const store = useWorktreeStore.getState()
-    void Promise.all(
-      targets.map(async (t) => {
-        // Last look right before the destructive step: work that landed in
-        // the worktree since its check above (an agent still writing) is kept
+    const archiveGroup = async (
+      group: ArchiveTarget[]
+    ): Promise<({ branch: string; error: string | null | undefined } | null)[]> => {
+      // Last look right before the destructive step: work that landed in a worktree since
+      // its check above (an agent still writing) keeps it — and, for an instance, every
+      // worktree of it
+      const dirtyNow = await Promise.all(
+        group.map(async (t) => !(await isClean(t.worktreePath, t.baseBranch)))
+      )
+      if (dirtyNow.some(Boolean)) {
+        keptForMerge.push(...group.filter((_, i) => dirtyNow[i]).map((t) => t.branch))
+        return group.map(() => null)
+      }
+      const results: ({ branch: string; error: string | null | undefined } | null)[] = []
+      for (const t of group) {
         try {
-          if (!(await isClean(t.worktreePath, t.baseBranch))) {
-            keptForMerge.push(t.branch)
-            return null
-          }
           const result = await store.archiveWorktree(
             t.worktreeId,
             t.worktreePath,
             t.branch,
             t.projectPath
           )
-          return { branch: t.branch, error: result.success ? null : result.error }
+          results.push({ branch: t.branch, error: result.success ? null : result.error })
         } catch (err) {
-          return { branch: t.branch, error: err instanceof Error ? err.message : String(err) }
+          results.push({ branch: t.branch, error: err instanceof Error ? err.message : String(err) })
         }
-      })
-    ).then((results) => {
+      }
+      return results
+    }
+    void (async () => {
+      for (const connectionId of connectionIds) await closeInstanceSessions(connectionId)
+      return (await Promise.all(groups.map(archiveGroup))).flat()
+    })().then((results) => {
       if (keptForMerge.length > 0) {
         toast.warning(
           `${keptForMerge.join(', ')} ${keptForMerge.length === 1 ? 'has' : 'have'} new changes — not archived`
@@ -819,7 +1230,7 @@ export function MergeOnDoneDialog() {
       }
       for (const f of failed) toast.error(`Failed to archive ${f.branch}: ${f.error}`)
     })
-  }, [resolved, archiveAllCandidates, pendingIdentity, completeDoneMove])
+  }, [resolved, runEntry, archiveAllCandidates, pendingIdentity, completeDoneMove])
 
   // The dialog serves both the Done and the optional Merged column
   const targetLabel = pendingDoneMove?.targetColumn === 'merged' ? 'Merged' : 'Done'
@@ -859,26 +1270,26 @@ export function MergeOnDoneDialog() {
   // Header totals until the file list has loaded (renames make the shortstat
   // and the list disagree, so the list wins once it is there)
   const branchTotals: ChangedFilesTotals | null =
-    step === 'merge' && resolved
+    step === 'merge' && view
       ? {
-          files: resolved.branchStats.filesChanged,
-          additions: resolved.branchStats.insertions,
-          deletions: resolved.branchStats.deletions
+          files: view.branchStats.filesChanged,
+          additions: view.branchStats.insertions,
+          deletions: view.branchStats.deletions
         }
       : null
 
-  const emptyState = resolved ? (
+  const emptyState = view ? (
     step === 'merge' ? (
       <>
         <p>
           No file differences against{' '}
-          <code className="bg-muted px-1 rounded">{resolved.baseBranch}</code>.
+          <code className="bg-muted px-1 rounded">{view.baseBranch}</code>.
         </p>
-        {resolved.branchStats.commitsAhead > 0 && (
+        {view.branchStats.commitsAhead > 0 && (
           <p className="text-[11px]">
-            The branch is {resolved.branchStats.commitsAhead} commit
-            {resolved.branchStats.commitsAhead !== 1 ? 's' : ''} ahead, but its content already
-            matches <code className="bg-muted px-1 rounded">{resolved.baseBranch}</code>.
+            The branch is {view.branchStats.commitsAhead} commit
+            {view.branchStats.commitsAhead !== 1 ? 's' : ''} ahead, but its content already
+            matches <code className="bg-muted px-1 rounded">{view.baseBranch}</code>.
           </p>
         )}
       </>
@@ -886,7 +1297,7 @@ export function MergeOnDoneDialog() {
       <p>
         No uncommitted changes found in{' '}
         <code className="bg-muted px-1 rounded">
-          {step === 'commit_base' ? resolved.baseBranch : resolved.featureBranch}
+          {step === 'commit_base' ? view.baseBranch : view.featureBranch}
         </code>
         .
       </p>
@@ -942,31 +1353,63 @@ export function MergeOnDoneDialog() {
               </span>
             )}
           </DialogTitle>
-          {inspecting && resolved && (
+          {inspecting && view && (
             <DialogDescription className="text-xs">
               {step === 'merge' && (
                 <>
-                  Merge <code className="bg-muted px-1 rounded">{resolved.featureBranch}</code> into{' '}
-                  <code className="bg-muted px-1 rounded">{resolved.baseBranch}</code>
+                  Merge <code className="bg-muted px-1 rounded">{view.featureBranch}</code> into{' '}
+                  <code className="bg-muted px-1 rounded">{view.baseBranch}</code>
                 </>
               )}
               {step === 'commit' && (
                 <>
                   Commit the changes on{' '}
-                  <code className="bg-muted px-1 rounded">{resolved.featureBranch}</code> before
-                  merging into <code className="bg-muted px-1 rounded">{resolved.baseBranch}</code>
+                  <code className="bg-muted px-1 rounded">{view.featureBranch}</code> before
+                  merging into <code className="bg-muted px-1 rounded">{view.baseBranch}</code>
                 </>
               )}
               {step === 'commit_base' && (
                 <>
-                  <code className="bg-muted px-1 rounded">{resolved.baseBranch}</code> has
+                  <code className="bg-muted px-1 rounded">{view.baseBranch}</code> has
                   uncommitted changes. Commit them before merging{' '}
-                  <code className="bg-muted px-1 rounded">{resolved.featureBranch}</code>
+                  <code className="bg-muted px-1 rounded">{view.featureBranch}</code>
+                </>
+              )}
+              {resolved?.members && resolved.members.length > 1 && (
+                <>
+                  {' '}
+                  in {view.projectName} — one merge lands every member of the instance (
+                  {resolved.members.map((m) => m.projectName).join(', ')})
                 </>
               )}
             </DialogDescription>
           )}
         </DialogHeader>
+
+        {/* Connection project: the instance's members; a chip switches the file list to it */}
+        {inspecting && resolved?.members && resolved.members.length > 1 && (
+          <div className="flex shrink-0 flex-wrap gap-1" data-testid="run-child-members">
+            {resolved.members.map((member, index) => (
+              <button
+                key={member.worktreeId}
+                type="button"
+                onClick={() => setMemberIndex(index)}
+                data-testid={`run-child-member-${member.projectId}`}
+                aria-pressed={index === memberIndex}
+                className={cn(
+                  'rounded border px-1.5 py-0.5 text-[11px] transition-colors',
+                  index === memberIndex
+                    ? 'border-foreground/40 bg-muted text-foreground'
+                    : 'border-border text-muted-foreground hover:text-foreground'
+                )}
+              >
+                {member.projectName} · {member.branchStats.commitsAhead} commit
+                {member.branchStats.commitsAhead !== 1 ? 's' : ''}
+                {member.dirty ? ' · uncommitted' : ''}
+              </button>
+            ))}
+          </div>
+        )}
 
         {step === 'loading' && (
           <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
@@ -985,8 +1428,8 @@ export function MergeOnDoneDialog() {
               >
                 <SummaryChip testId="merge-summary-commits">
                   <GitCommit className="h-3 w-3" />
-                  {resolved.branchStats.commitsAhead} commit
-                  {resolved.branchStats.commitsAhead !== 1 ? 's' : ''} ahead
+                  {(view ?? resolved).branchStats.commitsAhead} commit
+                  {(view ?? resolved).branchStats.commitsAhead !== 1 ? 's' : ''} ahead
                 </SummaryChip>
               </ChangedFilesSummary>
             ) : (
@@ -1012,8 +1455,8 @@ export function MergeOnDoneDialog() {
 
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-border/60 bg-muted/10">
               <ChangedFilesPanel
-                // Remount per step and queue member so navigation starts fresh
-                key={`${step}:${pendingDoneMove?.ticketId ?? ''}:${pendingDoneMove?.worktreeId ?? ''}`}
+                // Remount per step, queue member and instance member so navigation starts fresh
+                key={`${step}:${pendingDoneMove?.ticketId ?? ''}:${pendingDoneMove?.worktreeId ?? ''}:${focusedMember?.worktreeId ?? ''}`}
                 ref={panelRef}
                 source={changedSource}
                 files={changed.files}
@@ -1089,12 +1532,45 @@ export function MergeOnDoneDialog() {
         {step === 'archive' && resolved && (
           <div className="flex flex-col gap-3 py-2">
             <p className="text-xs text-muted-foreground">
-              {resolved.alreadyMerged ? 'Branch already merged.' : 'Merge successful!'} Archive the{' '}
-              <code className="bg-muted px-1 rounded">{resolved.featureBranch}</code> worktree?
+              {resolved.alreadyMerged ? 'Branch already merged.' : 'Merge successful!'}{' '}
+              {resolved.members ? (
+                <>
+                  Archive the {resolved.members.length} worktree
+                  {resolved.members.length !== 1 ? 's' : ''} of{' '}
+                  <code className="bg-muted px-1 rounded">{runEntry?.label ?? resolved.featureBranch}</code>{' '}
+                  ({resolved.members.map((m) => m.projectName).join(', ')})?
+                </>
+              ) : (
+                <>
+                  Archive the <code className="bg-muted px-1 rounded">{resolved.featureBranch}</code>{' '}
+                  worktree?
+                </>
+              )}
             </p>
             {archiveAllCandidates.length > 0 && (
               <p className="text-xs text-muted-foreground" data-testid="archive-all-hint">
-                {pendingDoneMove?.run ? (
+                {pendingDoneMove?.run && archiveAllScope.isConnectionRun ? (
+                  archiveAllScope.instances > 1 ? (
+                    <>
+                      The{' '}
+                      {archiveAllScope.instances - 1 === 1
+                        ? 'other instance'
+                        : `other ${archiveAllScope.instances - 1} instances`}{' '}
+                      of this document run {archiveAllScope.instances - 1 === 1 ? 'is' : 'are'}{' '}
+                      merged too ({archiveAllScope.worktrees} worktree
+                      {archiveAllScope.worktrees !== 1 ? 's' : ''} across{' '}
+                      {archiveAllScope.repositories} repositor
+                      {archiveAllScope.repositories !== 1 ? 'ies' : 'y'} in all). Archive all
+                      archives all of them and moves their tickets to {targetLabel}.
+                    </>
+                  ) : (
+                    <>
+                      The other {archiveAllCandidates.length === 1 ? 'worktree' : `${archiveAllCandidates.length} worktrees`}{' '}
+                      of this instance {archiveAllCandidates.length === 1 ? 'is' : 'are'} merged too.
+                      Archive all archives {archiveAllCandidates.length === 1 ? 'both' : 'all of them'}.
+                    </>
+                  )
+                ) : pendingDoneMove?.run ? (
                   <>
                     The{' '}
                     {archiveAllCandidates.length === 1
@@ -1154,7 +1630,7 @@ export function MergeOnDoneDialog() {
                       <Archive className="h-3 w-3 mr-1" />
                     )}
                     Archive all
-                    {pendingDoneMove?.run ? ` (${1 + archiveAllCandidates.length})` : ''}
+                    {pendingDoneMove?.run ? ` (${archiveAllScope.instances})` : ''}
                   </Button>
                 )}
                 <Button size="sm" onClick={handleArchive} disabled={archiving || archivingAll}>

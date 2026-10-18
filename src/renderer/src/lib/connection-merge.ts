@@ -4,6 +4,7 @@ import { gitApi } from '@/api/git-api'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import type { Session, Worktree } from '../../../main/db/types'
+import { useWorktreeStore } from '@/stores/useWorktreeStore'
 
 /** One connection-member worktree that needs the merge-on-done flow */
 export interface ConnectionMergeTarget {
@@ -56,35 +57,77 @@ export async function buildConnectionMergeQueue(
   connectionId: string,
   opts?: { includeAlreadyMerged?: boolean }
 ): Promise<ConnectionMergeTarget[]> {
+  return (await assessConnectionMembers(connectionId, opts)).targets
+}
+
+/** A member `assessConnectionMembers` left out of the queue, and why. */
+export interface ConnectionMemberSkipped {
+  worktreeId: string
+  projectId: string
+  reason:
+    /** The worktree row is gone, archived, or mid-archive. */
+    | 'inactive'
+    /** The worktree is on its base branch itself: nothing to merge. */
+    | 'on-base'
+    /** No active worktree holds the base branch to merge into. */
+    | 'no-base-worktree'
+}
+
+export interface ConnectionMembersAssessment {
+  /** Members with work first, then (with `includeAlreadyMerged`) the clean ones. */
+  targets: ConnectionMergeTarget[]
+  skipped: ConnectionMemberSkipped[]
+  /** False when the connection is deleted or archived: nothing of it is mergeable. */
+  found: boolean
+}
+
+/**
+ * The assessment behind `buildConnectionMergeQueue`, with the members it leaves out named:
+ * a document-run batch has to tell a member it can archive from one whose integration
+ * branch can never reach its base here.
+ */
+export async function assessConnectionMembers(
+  connectionId: string,
+  opts?: { includeAlreadyMerged?: boolean }
+): Promise<ConnectionMembersAssessment> {
   const result = await connectionApi.get(connectionId)
   if (!result.success || !result.connection) {
     // A deleted connection has nothing to merge — return an empty queue so
     // the ticket move proceeds instead of failing the transition
-    if (result.error === 'Connection not found') return []
+    if (result.error === 'Connection not found') return { targets: [], skipped: [], found: false }
     throw new Error(result.error ?? 'Could not retrieve connection members')
   }
   // Same for archived connections — their members are no longer mergeable
-  if (result.connection.status === 'archived') return []
+  if (result.connection.status === 'archived') return { targets: [], skipped: [], found: false }
   const members = result.connection.members
   const seenWorktrees = new Set<string>()
+  // Members mid-archive are already detached from the ticket's point of view --
+  // never ask to commit/merge a branch that is on its way out
+  const archivingWorktreeIds = useWorktreeStore.getState().archivingWorktreeIds
+  const skipped: ConnectionMemberSkipped[] = []
 
   const assessed = await Promise.all(
     members.map(async (member): Promise<ConnectionMergeTarget | null> => {
       if (seenWorktrees.has(member.worktree_id)) return null
       seenWorktrees.add(member.worktree_id)
+      const skip = (reason: ConnectionMemberSkipped['reason']): null => {
+        skipped.push({ worktreeId: member.worktree_id, projectId: member.project_id, reason })
+        return null
+      }
+      if (archivingWorktreeIds.has(member.worktree_id)) return skip('inactive')
 
       const worktree = await dbApi.worktree.get<Worktree>(member.worktree_id)
-      if (!worktree || worktree.status !== 'active') return null
+      if (!worktree || worktree.status !== 'active') return skip('inactive')
 
       const activeWorktrees = await dbApi.worktree.getActiveByProject<Worktree>(member.project_id)
       const defaultWt = activeWorktrees.find((w) => w.is_default)
       const baseBranch = worktree.base_branch ?? defaultWt?.branch_name
-      if (!baseBranch || worktree.branch_name === baseBranch) return null
+      if (!baseBranch || worktree.branch_name === baseBranch) return skip('on-base')
 
       const baseWorktree = activeWorktrees.find(
         (w) => w.branch_name === baseBranch && w.status === 'active'
       )
-      if (!baseWorktree) return null
+      if (!baseWorktree) return skip('no-base-worktree')
 
       const [hasUncommitted, branchStatResult] = await Promise.all([
         gitApi.hasUncommittedChanges(worktree.path),
@@ -108,7 +151,11 @@ export async function buildConnectionMergeQueue(
 
   const queue = assessed.filter((t): t is ConnectionMergeTarget => t !== null)
   // Stable: members keep their connection order within each group
-  return [...queue.filter((t) => !t.alreadyMerged), ...queue.filter((t) => t.alreadyMerged)]
+  return {
+    targets: [...queue.filter((t) => !t.alreadyMerged), ...queue.filter((t) => t.alreadyMerged)],
+    skipped,
+    found: true
+  }
 }
 
 /**

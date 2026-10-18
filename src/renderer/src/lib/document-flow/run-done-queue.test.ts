@@ -7,7 +7,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeDetail } from '@/components/document-flow/test-fixtures'
 import { useKanbanStore } from '@/stores/useKanbanStore'
-import type { DocumentRun, DocumentRunDetail, DocumentRunItem } from '@shared/types/document-flow'
+import type {
+  DocumentRun,
+  DocumentRunDetail,
+  DocumentRunItem,
+  DocumentRunMember
+} from '@shared/types/document-flow'
 import type { KanbanTicket } from '../../../../main/db/types'
 import { buildRunDoneQueue, queueDocumentRunDone } from './run-done-queue'
 
@@ -20,6 +25,7 @@ const gitApiMocks = vi.hoisted(() => ({
   getFileStatuses: vi.fn()
 }))
 const flowApi = vi.hoisted(() => ({ get: vi.fn() }))
+const connectionMerge = vi.hoisted(() => ({ assessConnectionMembers: vi.fn() }))
 const signal = vi.hoisted(() => ({ getSessionSignal: vi.fn() }))
 const toastMocks = vi.hoisted(() => ({
   warning: vi.fn(),
@@ -33,6 +39,7 @@ const toastMocks = vi.hoisted(() => ({
 vi.mock('@/api/db-api', () => ({ dbApi: dbApiMocks }))
 vi.mock('@/api/git-api', () => ({ gitApi: gitApiMocks }))
 vi.mock('@/api/document-flow-api', () => ({ documentFlowApi: flowApi }))
+vi.mock('@/lib/connection-merge', () => connectionMerge)
 vi.mock('@/lib/document-flow/session-signal', () => signal)
 vi.mock('@/lib/toast', () => ({ toast: toastMocks }))
 
@@ -161,6 +168,285 @@ beforeEach(() => {
   gitApiMocks.getFileStatuses.mockResolvedValue({ success: true, files: [] })
   signal.getSessionSignal.mockReturnValue({ kind: 'ended' })
   worktrees['wt-int'].status = 'active'
+})
+
+// ── A run on a connection project: two members, every ticket an instance of two worktrees ──
+const connectionWorktrees: Record<string, Wt> = {
+  'wt-main-web': { id: 'wt-main-web', project_id: 'proj-web', branch_name: 'main', path: '/web', status: 'active', is_default: true, base_branch: null },
+  'wt-main-api': { id: 'wt-main-api', project_id: 'proj-api', branch_name: 'main', path: '/api', status: 'active', is_default: true, base_branch: null },
+  'wt-int-web': { id: 'wt-int-web', project_id: 'proj-web', branch_name: 'doc-run', path: '/web/int', status: 'active', is_default: false, base_branch: 'main' },
+  'wt-int-api': { id: 'wt-int-api', project_id: 'proj-api', branch_name: 'doc-run', path: '/api/int', status: 'active', is_default: false, base_branch: 'main' },
+  'wt-a-web': { id: 'wt-a-web', project_id: 'proj-web', branch_name: 'a1-alpha', path: '/web/a1', status: 'active', is_default: false, base_branch: 'main' },
+  'wt-a-api': { id: 'wt-a-api', project_id: 'proj-api', branch_name: 'a1-alpha', path: '/api/a1', status: 'active', is_default: false, base_branch: 'main' },
+  'wt-b-web': { id: 'wt-b-web', project_id: 'proj-web', branch_name: 'a2-beta', path: '/web/a2', status: 'active', is_default: false, base_branch: 'main' },
+  'wt-b-api': { id: 'wt-b-api', project_id: 'proj-api', branch_name: 'a2-beta', path: '/api/a2', status: 'active', is_default: false, base_branch: 'main' }
+}
+
+const runMembers: DocumentRunMember[] = [
+  { project_id: 'proj-web', project_name: 'Web', project_path: '/web', symlink_name: 'web', base_branch: 'main', base_sha: 'w0', integration_branch: 'doc-run', integration_worktree_id: 'wt-int-web', integration_worktree_path: '/web/int' },
+  { project_id: 'proj-api', project_name: 'Api', project_path: '/api', symlink_name: 'api', base_branch: 'main', base_sha: 'a0', integration_branch: 'doc-run', integration_worktree_id: 'wt-int-api', integration_worktree_path: '/api/int' }
+]
+
+const instance = (key: string, mergeSha: string | null): DocumentRunItem['members'] => [
+  { project_id: 'proj-web', worktree_id: `wt-${key}-web`, branch_name: 'x', pre_merge_sha: null, merge_sha: mergeSha },
+  { project_id: 'proj-api', worktree_id: `wt-${key}-api`, branch_name: 'x', pre_merge_sha: null, merge_sha: mergeSha }
+]
+
+function connectionDetail(
+  items: Partial<DocumentRunItem>[] = [
+    { key: 'A1', title: 'Alpha', status: 'merged', ticket_id: 't-a', connection_id: 'conn-a', members: instance('a', 'sha-a'), merge_sha: 'sha-a', session_id: 's-a' },
+    { key: 'A2', title: 'Beta', status: 'needs_attention', ticket_id: 't-b', connection_id: 'conn-b', members: instance('b', null), session_id: 's-b' }
+  ],
+  run: Partial<DocumentRun> = {}
+): DocumentRunDetail {
+  return detail(items, {
+    integration_worktree_id: null,
+    integration_worktree_path: null,
+    integration_branch: 'doc-run',
+    integration_connection_id: 'conn-int',
+    integration_connection_path: '/connections/doc-run',
+    members: runMembers,
+    ...run
+  })
+}
+
+/** Point the db mock at the connection worktrees (the git-project ones stay reachable). */
+function useConnectionWorktrees(): void {
+  for (const wt of Object.values(connectionWorktrees)) wt.status = 'active'
+  dbApiMocks.worktree.get.mockImplementation(
+    async (id: string) => connectionWorktrees[id] ?? worktrees[id] ?? null
+  )
+  dbApiMocks.worktree.getActiveByProject.mockImplementation(async (projectId: string) =>
+    Object.values(connectionWorktrees).filter((w) => w.project_id === projectId && w.status === 'active')
+  )
+  connectionMerge.assessConnectionMembers.mockResolvedValue({
+    targets: [
+      { worktreeId: 'wt-int-api', projectId: 'proj-api' },
+      { worktreeId: 'wt-int-web', projectId: 'proj-web', alreadyMerged: true }
+    ],
+    skipped: [],
+    found: true
+  })
+}
+
+describe('buildRunDoneQueue — run on a connection project', () => {
+  beforeEach(useConnectionWorktrees)
+
+  it('makes one entry per ticket instance and one integration entry per member, work first', async () => {
+    ahead = { '/api/a2': { 'doc-run': 2 } }
+
+    const queue = await buildRunDoneQueue(connectionDetail(), 'run-ticket', tickets())
+
+    expect(labels(queue.entries)).toEqual([
+      'run-child:A2 · Beta',
+      'run-integration:The run · Api',
+      'run-integration:The run · Web',
+      'run-child-archive:A1 · Alpha',
+      'run-child-archive:A2 · Beta'
+    ])
+    // The ticket's instance is one entry anchored on its first member worktree
+    expect(queue.entries[0]).toMatchObject({
+      worktreeId: 'wt-b-web',
+      projectId: 'proj-web',
+      ticketId: 't-b',
+      runId: 'run-1',
+      itemId: 'item-A2',
+      connectionId: 'conn-b',
+      integrationBranch: 'doc-run',
+      integrationWorktreeId: 'wt-int-web',
+      members: [
+        expect.objectContaining({ worktreeId: 'wt-b-web', projectId: 'proj-web', projectName: 'Web', worktreePath: '/web/a2', integrationWorktreeId: 'wt-int-web' }),
+        expect.objectContaining({ worktreeId: 'wt-b-api', projectId: 'proj-api', projectName: 'Api', worktreePath: '/api/a2', integrationWorktreeId: 'wt-int-api' })
+      ]
+    })
+    // Its archive twin shares the anchor, so skipping the merge drops both
+    expect(queue.entries[4]).toMatchObject({ worktreeId: 'wt-b-web', kind: 'run-child-archive', alreadyMerged: true, ticketId: 't-b' })
+    expect(queue.entries[1]).toMatchObject({ worktreeId: 'wt-int-api', projectId: 'proj-api', connectionId: 'conn-int' })
+    expect(queue.entries[2]).toMatchObject({ worktreeId: 'wt-int-web', alreadyMerged: true })
+    // Every member is measured against ITS integration branch
+    expect(gitApiMocks.branchDiffShortStat).toHaveBeenCalledWith('/web/a1', 'doc-run')
+    expect(gitApiMocks.branchDiffShortStat).toHaveBeenCalledWith('/api/a1', 'doc-run')
+    expect(connectionMerge.assessConnectionMembers).toHaveBeenCalledWith('conn-int', { includeAlreadyMerged: true })
+    expect(queue.kept).toEqual([{ label: 'Ticket t-old', reason: 'never started' }])
+  })
+
+  it('keeps the whole instance of a landed ticket with leftovers in one member; its ticket rides along', async () => {
+    gitApiMocks.hasUncommittedChanges.mockImplementation(async (path: string) => path === '/api/a1')
+
+    const queue = await buildRunDoneQueue(connectionDetail(), 'run-ticket', tickets())
+
+    expect(labels(queue.entries)).toEqual([
+      'run-integration:The run · Api',
+      'run-integration:The run · Web',
+      'run-child-archive:A2 · Beta'
+    ])
+    expect(queue.kept).toContainEqual({
+      label: 'A1 · Alpha',
+      reason: 'has uncommitted changes in Api since the run merged it — not archived'
+    })
+    expect(queue.alsoMoveTicketIds).toContain('t-a')
+  })
+
+  it('keeps a ticket with work in a member whose integration worktree is gone', async () => {
+    connectionWorktrees['wt-int-api'].status = 'archived'
+    ahead = { '/api/a2': { main: 1 } }
+
+    const queue = await buildRunDoneQueue(connectionDetail(), 'run-ticket', tickets())
+
+    // Without its integration worktree the member is measured against its base
+    expect(gitApiMocks.branchDiffShortStat).toHaveBeenCalledWith('/api/a2', 'main')
+    expect(gitApiMocks.branchDiffShortStat).toHaveBeenCalledWith('/web/a2', 'doc-run')
+    expect(queue.kept).toContainEqual({
+      label: 'A2 · Beta',
+      reason: 'Api: the integration worktree is gone — merge it by hand'
+    })
+    expect(labels(queue.entries)).not.toContain('run-child:A2 · Beta')
+  })
+
+  it('a member worktree that is gone settles the ticket: along if it landed, kept otherwise', async () => {
+    connectionWorktrees['wt-a-api'].status = 'archived'
+    connectionWorktrees['wt-b-web'].status = 'archived'
+
+    const queue = await buildRunDoneQueue(connectionDetail(), 'run-ticket', tickets())
+
+    expect(labels(queue.entries)).toEqual(['run-integration:The run · Api', 'run-integration:The run · Web'])
+    expect(queue.alsoMoveTicketIds).toContain('t-a')
+    expect(queue.kept).toContainEqual({
+      label: 'A2 · Beta',
+      reason: 'its worktree in Web is gone and its work never landed'
+    })
+  })
+
+  it('a member with no worktree on its base keeps the run entry and every ticket with work there', async () => {
+    connectionMerge.assessConnectionMembers.mockResolvedValue({
+      targets: [{ worktreeId: 'wt-int-web', projectId: 'proj-web', alreadyMerged: true }],
+      skipped: [{ worktreeId: 'wt-int-api', projectId: 'proj-api', reason: 'no-base-worktree' }],
+      found: true
+    })
+    ahead = { '/api/a2': { 'doc-run': 1 } }
+
+    const queue = await buildRunDoneQueue(connectionDetail(), 'run-ticket', tickets())
+
+    expect(queue.kept).toContainEqual({ label: 'The run · Api', reason: 'no worktree on main to merge into' })
+    expect(queue.kept).toContainEqual({ label: 'A2 · Beta', reason: 'Api: no worktree on main to merge into' })
+    expect(queue.kept).toContainEqual({ label: 'A1 · Alpha', reason: 'Api: no worktree on main to merge into' })
+    expect(labels(queue.entries)).toEqual(['run-integration:The run · Web'])
+  })
+
+  it('without the integration instance, tickets are measured against their bases and nothing merges', async () => {
+    connectionMerge.assessConnectionMembers.mockResolvedValue({ targets: [], skipped: [], found: false })
+
+    const queue = await buildRunDoneQueue(connectionDetail(), 'run-ticket', tickets())
+
+    expect(gitApiMocks.branchDiffShortStat).toHaveBeenCalledWith('/web/a1', 'main')
+    expect(labels(queue.entries)).toEqual(['run-child-archive:A1 · Alpha', 'run-child-archive:A2 · Beta'])
+    expect(dbApiMocks.worktree.get).not.toHaveBeenCalledWith('wt-int-web')
+  })
+
+  it('an integration member a ticket merge will land on is no longer "already merged"', async () => {
+    // Web's integration branch is on base now, but A2 has commits for it
+    ahead = { '/web/a2': { 'doc-run': 2 } }
+
+    const queue = await buildRunDoneQueue(connectionDetail(), 'run-ticket', tickets())
+
+    expect(labels(queue.entries)).toEqual([
+      'run-child:A2 · Beta',
+      'run-integration:The run · Api',
+      'run-integration:The run · Web',
+      'run-child-archive:A1 · Alpha',
+      'run-child-archive:A2 · Beta'
+    ])
+    expect(queue.entries[2]).toMatchObject({ worktreeId: 'wt-int-web' })
+    expect(queue.entries[2].alreadyMerged).toBeUndefined()
+  })
+
+  it('a landed ticket that cannot be verified in one member is kept with the member named', async () => {
+    gitApiMocks.branchDiffShortStat.mockImplementation(async (path: string, base: string) =>
+      path === '/api/a1'
+        ? { success: false, error: 'boom' }
+        : { success: true, filesChanged: 0, insertions: 0, deletions: 0, commitsAhead: ahead[path]?.[base] ?? 0 }
+    )
+
+    const queue = await buildRunDoneQueue(connectionDetail(), 'run-ticket', tickets())
+
+    expect(queue.kept).toContainEqual({ label: 'A1 · Alpha', reason: 'could not be verified in Api: boom — not archived' })
+    expect(queue.alsoMoveTicketIds).toContain('t-a')
+    expect(labels(queue.entries).filter((l) => l.endsWith('A1 · Alpha'))).toEqual([])
+  })
+
+  it('a ticket that never landed and cannot be verified refuses the drop', async () => {
+    gitApiMocks.branchDiffShortStat.mockImplementation(async (path: string) =>
+      path === '/api/a2'
+        ? { success: false, error: 'boom' }
+        : { success: true, filesChanged: 0, insertions: 0, deletions: 0, commitsAhead: 0 }
+    )
+
+    await expect(buildRunDoneQueue(connectionDetail(), 'run-ticket', tickets())).rejects.toThrow('a2-beta: boom')
+  })
+
+  it('conflict markers in one member keep the whole instance', async () => {
+    gitApiMocks.getFileStatuses.mockImplementation(async (path: string) => ({
+      success: true,
+      files: path === '/web/a2' ? [{ path: 'x.ts', status: 'C' }] : []
+    }))
+
+    const queue = await buildRunDoneQueue(connectionDetail(), 'run-ticket', tickets())
+
+    expect(queue.kept).toContainEqual({ label: 'A2 · Beta', reason: 'has unresolved conflict markers in Web' })
+    expect(labels(queue.entries).filter((l) => l.endsWith('A2 · Beta'))).toEqual([])
+  })
+
+  it('a landed ticket whose instance is only partly gone is kept with the survivors named', async () => {
+    connectionWorktrees['wt-a-api'].status = 'archived'
+
+    const queue = await buildRunDoneQueue(connectionDetail(), 'run-ticket', tickets())
+
+    expect(queue.kept).toContainEqual({
+      label: 'A1 · Alpha',
+      reason: 'its worktree in Api is gone — Web left as it is'
+    })
+    expect(queue.alsoMoveTicketIds).toContain('t-a')
+    expect(labels(queue.entries).filter((l) => l.endsWith('A1 · Alpha'))).toEqual([])
+  })
+
+  it('a clean instance with a worktree in a blocked member is kept, not archived', async () => {
+    connectionMerge.assessConnectionMembers.mockResolvedValue({
+      targets: [{ worktreeId: 'wt-int-web', projectId: 'proj-web', alreadyMerged: true }],
+      skipped: [{ worktreeId: 'wt-int-api', projectId: 'proj-api', reason: 'no-base-worktree' }],
+      found: true
+    })
+
+    const queue = await buildRunDoneQueue(connectionDetail(), 'run-ticket', tickets())
+
+    expect(queue.kept).toContainEqual({ label: 'A1 · Alpha', reason: 'Api: no worktree on main to merge into' })
+    expect(labels(queue.entries)).toEqual(['run-integration:The run · Web'])
+  })
+
+  it('a member integration worktree mid-archive counts as gone', async () => {
+    connectionMerge.assessConnectionMembers.mockResolvedValue({
+      targets: [{ worktreeId: 'wt-int-web', projectId: 'proj-web', alreadyMerged: true }],
+      skipped: [{ worktreeId: 'wt-int-api', projectId: 'proj-api', reason: 'inactive' }],
+      found: true
+    })
+    ahead = { '/api/a2': { main: 1 } }
+
+    const queue = await buildRunDoneQueue(connectionDetail(), 'run-ticket', tickets())
+
+    expect(dbApiMocks.worktree.get).not.toHaveBeenCalledWith('wt-int-api')
+    expect(gitApiMocks.branchDiffShortStat).toHaveBeenCalledWith('/api/a2', 'main')
+    expect(queue.kept).toContainEqual({ label: 'A2 · Beta', reason: 'Api: the integration worktree is gone — merge it by hand' })
+  })
+
+  it('a ticket with no instance rides along like a worktree-less one', async () => {
+    const queue = await buildRunDoneQueue(
+      connectionDetail([{ key: 'A1', title: 'Alpha', status: 'merged', ticket_id: 't-a', members: null }]),
+      'run-ticket',
+      tickets()
+    )
+
+    expect(queue.alsoMoveTicketIds).toContain('t-a')
+    expect(labels(queue.entries)).toEqual(['run-integration:The run · Api', 'run-integration:The run · Web'])
+  })
 })
 
 describe('buildRunDoneQueue', () => {
@@ -420,17 +706,22 @@ describe('queueDocumentRunDone', () => {
     expect(moveTicket).not.toHaveBeenCalled()
   })
 
-  it('does not batch a run on a connection project', async () => {
+  it('leaves a connection run whose members were never recorded to the plain path', async () => {
     flowApi.get.mockResolvedValue(
-      detail([], {
-        integration_worktree_id: null,
-        integration_connection_id: 'conn-1',
-        members: [{ project_id: 'm1' }] as unknown as DocumentRun['members']
-      })
+      detail([], { integration_worktree_id: null, integration_connection_id: 'conn-1', members: null })
     )
 
-    expect(await queueDocumentRunDone(args)).toBe('unsupported')
+    expect(await queueDocumentRunDone(args)).toBe('nothing')
     expect(useKanbanStore.getState().pendingDoneMove).toBeNull()
+    expect(moveTicket).not.toHaveBeenCalled()
+  })
+
+  it('counts every member worktree of a connection run in the checking toast', async () => {
+    flowApi.get.mockResolvedValue(connectionDetail())
+
+    await queueDocumentRunDone(args)
+
+    expect(toastMocks.loading).toHaveBeenCalledWith('Checking 4 branches of The run…')
   })
 
   it('moves the worktree-less children along and leaves the run ticket to the caller when nothing is queued', async () => {

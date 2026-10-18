@@ -239,6 +239,21 @@ async function loadProjectTicketsSnapshot(
   return { tickets, diagnostics }
 }
 
+/**
+ * Document-run batch on a connection project: one member worktree of the instance an entry
+ * stands for (a ticket's instance has one worktree per member repository).
+ */
+export interface PendingDoneMoveMember {
+  worktreeId: string
+  projectId: string
+  projectName: string
+  branchName: string
+  worktreePath: string
+  /** The member's integration branch and worktree (what a `run-child` merges into). */
+  integrationBranch?: string
+  integrationWorktreeId?: string
+}
+
 /** One queued connection-member worktree of a pending done/merged move */
 export interface PendingDoneMoveWorktree {
   worktreeId: string
@@ -271,6 +286,17 @@ export interface PendingDoneMoveWorktree {
   itemId?: string
   integrationBranch?: string
   integrationWorktreeId?: string
+  /**
+   * Connection project: the entry stands for a ticket's whole INSTANCE — every member
+   * worktree listed here. A `run-child` merges them all in one all-or-nothing call (the
+   * run's own merge path), a `run-child-archive` archives them all or none. `worktreeId`
+   * is the first member's, so the twin rule in `nextPendingDoneMove` still pairs the two
+   * entries of one ticket. A `run-integration` entry is one member integration worktree
+   * and carries no members.
+   */
+  members?: PendingDoneMoveMember[]
+  /** Connection project: the instance (connection) the entry's worktrees belong to. */
+  connectionId?: string
 }
 
 /** A run branch left out of the batch, named for the user. */

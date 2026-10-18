@@ -631,11 +631,6 @@ export function KanbanColumn({
                 )
               })
               if (outcome === 'queued') return
-              if (outcome === 'unsupported') {
-                toast.info(
-                  'Archive all is not available for a run on a connection project — moving its ticket alone'
-                )
-              }
             } catch (err) {
               toast.warning(
                 `Could not verify merge status: ${err instanceof Error ? err.message : String(err)}`

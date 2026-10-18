@@ -39,7 +39,19 @@ vi.mock('@/stores/useSessionStore', () => ({
   useSessionStore: { getState: () => sessionStoreState }
 }))
 
-import { buildConnectionMergeQueue, resolveTicketConnectionId } from './connection-merge'
+const worktreeStoreState = vi.hoisted(() => ({
+  archivingWorktreeIds: new Set<string>()
+}))
+
+vi.mock('@/stores/useWorktreeStore', () => ({
+  useWorktreeStore: { getState: () => worktreeStoreState }
+}))
+
+import {
+  assessConnectionMembers,
+  buildConnectionMergeQueue,
+  resolveTicketConnectionId
+} from './connection-merge'
 
 function worktree(overrides: Record<string, unknown> = {}) {
   return {
@@ -288,5 +300,69 @@ describe('buildConnectionMergeQueue', () => {
     })
     expect(await buildConnectionMergeQueue('conn-1')).toEqual([])
     expect(dbApiMocks.worktree.get).not.toHaveBeenCalled()
+  })
+})
+
+describe('assessConnectionMembers', () => {
+  const members = [
+    { worktree_id: 'wt-feature', project_id: 'proj-1' },
+    { worktree_id: 'wt-no-base', project_id: 'proj-2' },
+    { worktree_id: 'wt-archived', project_id: 'proj-1' },
+    { worktree_id: 'wt-main', project_id: 'proj-1' }
+  ]
+
+  it('names every member it leaves out, and why', async () => {
+    connectionApiMocks.get.mockResolvedValue({
+      success: true,
+      connection: { id: 'conn-1', members }
+    })
+    dbApiMocks.worktree.get.mockImplementation(async (id: string) => {
+      if (id === 'wt-feature') return worktree({ base_branch: 'main' })
+      if (id === 'wt-no-base') return worktree({ id: 'wt-no-base', project_id: 'proj-2', path: '/p2/f', base_branch: 'main' })
+      if (id === 'wt-archived') return worktree({ id: 'wt-archived', status: 'archived' })
+      if (id === 'wt-main') return mainWorktree
+      return null
+    })
+    dbApiMocks.worktree.getActiveByProject.mockImplementation(async (projectId: string) =>
+      projectId === 'proj-1' ? [mainWorktree, worktree({ base_branch: 'main' })] : []
+    )
+    gitApiMocks.hasUncommittedChanges.mockResolvedValue(false)
+    gitApiMocks.branchDiffShortStat.mockResolvedValue({ success: true, filesChanged: 0, insertions: 0, deletions: 0, commitsAhead: 0 })
+
+    const assessment = await assessConnectionMembers('conn-1', { includeAlreadyMerged: true })
+
+    expect(assessment.found).toBe(true)
+    expect(assessment.targets).toEqual([{ worktreeId: 'wt-feature', projectId: 'proj-1', alreadyMerged: true }])
+    expect([...assessment.skipped].sort((a, b) => a.worktreeId.localeCompare(b.worktreeId))).toEqual([
+      { worktreeId: 'wt-archived', projectId: 'proj-1', reason: 'inactive' },
+      { worktreeId: 'wt-main', projectId: 'proj-1', reason: 'on-base' },
+      { worktreeId: 'wt-no-base', projectId: 'proj-2', reason: 'no-base-worktree' }
+    ])
+    // The queue is the targets alone
+    expect(await buildConnectionMergeQueue('conn-1', { includeAlreadyMerged: true })).toEqual(assessment.targets)
+  })
+
+  it('marks a member mid-archive as inactive', async () => {
+    connectionApiMocks.get.mockResolvedValue({
+      success: true,
+      connection: { id: 'conn-1', members: [{ worktree_id: 'wt-feature', project_id: 'proj-1' }] }
+    })
+    worktreeStoreState.archivingWorktreeIds = new Set(['wt-feature'])
+
+    const assessment = await assessConnectionMembers('conn-1')
+
+    expect(assessment.skipped).toEqual([{ worktreeId: 'wt-feature', projectId: 'proj-1', reason: 'inactive' }])
+    expect(dbApiMocks.worktree.get).not.toHaveBeenCalled()
+  })
+
+  it('reports a deleted or archived connection as not found', async () => {
+    connectionApiMocks.get.mockResolvedValue({ success: false, error: 'Connection not found' })
+    expect(await assessConnectionMembers('conn-1')).toEqual({ targets: [], skipped: [], found: false })
+
+    connectionApiMocks.get.mockResolvedValue({
+      success: true,
+      connection: { id: 'conn-1', status: 'archived', members: [{ worktree_id: 'wt-feature', project_id: 'proj-1' }] }
+    })
+    expect(await assessConnectionMembers('conn-1')).toEqual({ targets: [], skipped: [], found: false })
   })
 })
