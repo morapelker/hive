@@ -220,7 +220,7 @@ export function MergeOnDoneDialog() {
           )
           if (cancelled) return
           if (!integrationWorktree || integrationWorktree.status !== 'active') {
-            skipDoneMoveEntry(identity, 'the integration worktree is gone')
+            await skipDoneMoveEntry(identity, 'the integration worktree is gone')
             return
           }
           resolvedBaseBranch = entry.integrationBranch
@@ -282,7 +282,7 @@ export function MergeOnDoneDialog() {
           return
         }
         if (entry?.kind === 'run-child-archive' && !alreadyMerged) {
-          skipDoneMoveEntry(identity, 'has new changes since the run')
+          await skipDoneMoveEntry(identity, 'has new changes since the run')
           return
         }
 
@@ -1050,13 +1050,13 @@ export function MergeOnDoneDialog() {
               </button>
               <div className="flex items-center gap-2">
                 {/* A run batch has no "anyway": a ticket branch can be skipped (kept as it
-                    is, the run's ticket stays), the integration branch only merged */}
+                    is, its ticket stays with it), the integration branch only merged */}
                 {runEntry ? (
                   isRunChild && (
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => skipDoneMoveEntry(pendingIdentity, 'skipped')}
+                      onClick={() => void skipDoneMoveEntry(pendingIdentity, 'skipped')}
                       disabled={primaryAction.busy}
                       data-testid="skip-run-branch"
                     >
@@ -1126,8 +1126,8 @@ export function MergeOnDoneDialog() {
               >
                 <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
                 <span>
-                  Kept: {keptEntries.map((k) => `${k.label} (${k.reason})`).join(', ')}. The
-                  run&rsquo;s ticket stays until they are merged.
+                  Kept as {keptEntries.length === 1 ? 'it is' : 'they are'}:{' '}
+                  {keptEntries.map((k) => `${k.label} (${k.reason})`).join(', ')}.
                 </span>
               </p>
             )}

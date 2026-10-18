@@ -115,3 +115,20 @@ describe('KanbanTicketCard drag modifiers', () => {
     expect(getKanbanDragData()?.modifiers).toEqual({ shift: false })
   })
 })
+
+describe('KanbanTicketCard shift-draggability', () => {
+  afterEach(cleanup)
+
+  // Blink starts a drag with Shift held only when the element under the mouse is itself
+  // user-draggable (globals.css gives that to every descendant of .ticket-draggable)
+  it('marks a draggable card so its descendants drag as the element', () => {
+    render(
+      <TooltipProvider>
+        <KanbanTicketCard ticket={ticket} />
+      </TooltipProvider>
+    )
+    const card = screen.getByTestId('kanban-ticket-ticket-run')
+    expect(card.getAttribute('draggable')).toBe('true')
+    expect(card.classList.contains('ticket-draggable')).toBe(true)
+  })
+})

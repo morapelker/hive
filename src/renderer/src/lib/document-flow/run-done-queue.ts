@@ -116,10 +116,13 @@ export async function buildRunDoneQueue(
     if (seenWorktrees.has(worktreeId)) continue
     seenWorktrees.add(worktreeId)
 
+    // The run merged this branch into the integration branch itself: its work is on the
+    // branch that survives, so what is left in the worktree (an agent's stray files, a
+    // fixup commit) is never force-committed and merged again by the batch
+    const landed = item.status === 'merged' || !!item.merge_sha
     const worktree = await dbApi.worktree.get<RunWorktree>(worktreeId)
     if (!worktree || worktree.status !== 'active') {
       // The branch is gone: its ticket follows the run only if its work landed
-      const landed = item.status === 'merged' || !!item.merge_sha
       if (landed) {
         if (moveable(item.ticket_id)) alsoMoveTicketIds.push(item.ticket_id)
       } else {
@@ -129,6 +132,11 @@ export async function buildRunDoneQueue(
     }
 
     const ticketId = moveable(item.ticket_id) ? item.ticket_id : undefined
+    // Landed work whose branch is left as it is: named, not archived; its ticket follows
+    const keepLanded = (reason: string): void => {
+      kept.push({ label, reason })
+      if (ticketId) alsoMoveTicketIds.push(ticketId)
+    }
     const archiveEntry: PendingDoneMoveWorktree = {
       worktreeId: worktree.id,
       projectId: worktree.project_id,
@@ -150,10 +158,16 @@ export async function buildRunDoneQueue(
         gitApi.branchDiffShortStat(worktree.path, baseBranch)
       ])
       if (!stat.success) {
+        if (landed) {
+          keepLanded(`could not be verified: ${stat.error ?? 'git failed'} — not archived`)
+          continue
+        }
         throw new Error(`${worktree.branch_name}: ${stat.error ?? 'could not verify merge status'}`)
       }
       if (!dirty && stat.commitsAhead === 0) {
         archiveEntries.push(archiveEntry)
+      } else if (landed && stat.commitsAhead === 0) {
+        keepLanded('has uncommitted changes since the run merged it — not archived')
       } else {
         kept.push({ label, reason: 'the integration worktree is gone — merge it by hand' })
       }
@@ -166,16 +180,27 @@ export async function buildRunDoneQueue(
       gitApi.getFileStatuses(worktree.path)
     ])
     if (!stat.success) {
+      if (landed) {
+        keepLanded(`could not be verified: ${stat.error ?? 'git failed'} — not archived`)
+        continue
+      }
       throw new Error(`${worktree.branch_name}: ${stat.error ?? 'could not verify merge status'}`)
     }
     if (statuses.files?.some((file) => file.status === 'C')) {
-      kept.push({ label, reason: 'has unresolved conflict markers' })
+      if (landed) keepLanded('has unresolved conflict markers — not archived')
+      else kept.push({ label, reason: 'has unresolved conflict markers' })
       continue
     }
     if (!dirty && stat.commitsAhead === 0) {
       archiveEntries.push(archiveEntry)
       continue
     }
+    if (landed && stat.commitsAhead === 0) {
+      // Only uncommitted leftovers on a branch the run already merged: nothing to merge
+      keepLanded('has uncommitted changes since the run merged it — not archived')
+      continue
+    }
+    // Commits the integration branch lacks (never landed, or added since): a merge step
     mergeEntries.push({
       worktreeId: worktree.id,
       projectId: worktree.project_id,
@@ -251,7 +276,18 @@ export async function queueDocumentRunDone(args: {
 
   const store = useKanbanStore.getState()
   const tickets = store.tickets.get(args.projectId) ?? []
-  const queue = await buildRunDoneQueue(detail, args.ticketId, tickets)
+  // Every branch is checked with git before anything shows: say so meanwhile, so a drop
+  // never looks like it did nothing
+  const branchCount = detail.items.filter((item) => item.selected).length
+  const checking = toast.loading(
+    `Checking ${branchCount} branch${branchCount === 1 ? '' : 'es'} of ${detail.run.title}…`
+  )
+  let queue: RunDoneQueue
+  try {
+    queue = await buildRunDoneQueue(detail, args.ticketId, tickets)
+  } finally {
+    toast.dismiss(checking)
+  }
 
   if (queue.entries.length === 0) {
     if (queue.kept.length > 0) {

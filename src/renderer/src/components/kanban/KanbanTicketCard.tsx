@@ -1647,6 +1647,10 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                 className={cn(
                   'group cursor-pointer rounded-md border bg-card px-2.5 pt-2.5 pb-2 transition-[border-color,background-color] duration-150',
                   'hover:border-muted-foreground/35',
+                  // Shift-dragging the card (a document run's ticket: finish the whole run on
+                  // Done/Merged) needs the element under the mouse itself to be draggable —
+                  // see .ticket-draggable in globals.css
+                  'ticket-draggable',
                   // Type cues: a shell command has a torn-receipt bottom edge, the ticket of
                   // a document run (an orchestrator) wears the elite dragon
                   isShellCommandTicket &&

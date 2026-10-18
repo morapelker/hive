@@ -503,6 +503,16 @@
   will-change: transform;
 }
 
+/* A kanban card drags as a whole, with Shift held too. Blink starts a drag while Shift is
+   held (otherwise Shift+press extends the text selection) only when the element under the
+   mouse is itself user-draggable: `draggable` on the card gives that to the card element
+   alone, not to the title, badges and icons the mouse actually lands on. So every descendant
+   drags "as the element"; the drag source is still the card (the drag events bubble to it). */
+.ticket-draggable[draggable='true'],
+.ticket-draggable[draggable='true'] *:not(input):not(textarea):not([contenteditable='true']) {
+  -webkit-user-drag: element;
+}
+
 /* Ticket type cues (KanbanTicketCard).
    Shell-command ticket: a zigzag bottom edge, like a torn receipt. Two stacked rows of
    teeth, the outline one 1px wider and taller than the card-colored one on top of it. */

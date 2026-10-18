@@ -428,10 +428,31 @@ async function moveRunEntryTickets(
 }
 
 function toastKeptDoneMove(kept: readonly PendingDoneMoveKept[]): void {
-  const names = kept.map((k) => k.label).join(', ')
   toast.warning(
-    `${names} ${kept.length === 1 ? 'was' : 'were'} kept — the run's ticket stays until ${kept.length === 1 ? 'it is' : 'they are'} merged.`
+    `Kept — not merged or archived: ${kept.map((k) => `${k.label} (${k.reason})`).join(', ')}`
   )
+}
+
+/**
+ * The last entry of a merge-on-done queue is done: move the ticket (and, for a document-run
+ * batch, the children that ride along) — unless a merge hit conflicts, which the user must
+ * resolve first. Branches that were skipped are only named: the user left them as they are
+ * on purpose, and their own tickets stayed put with them.
+ */
+async function settleDoneMove(
+  pending: PendingDoneMove,
+  conflictedWorktrees: NonNullable<PendingDoneMove['conflictedWorktrees']>,
+  keptWorktrees: readonly PendingDoneMoveKept[]
+): Promise<void> {
+  if (conflictedWorktrees.length > 0) {
+    toastConflictedDoneMove(conflictedWorktrees.length, pending.run ? 'branch' : 'project')
+    return
+  }
+  if (keptWorktrees.length > 0) toastKeptDoneMove(keptWorktrees)
+  if (pending.run) await moveRunEntryTickets(pending, pending.run.alsoMoveTicketIds)
+  await useKanbanStore
+    .getState()
+    .moveTicket(pending.ticketId, pending.projectId, pending.targetColumn, pending.sortOrder)
 }
 
 // ── State interface ────────────────────────────────────────────────────
@@ -545,9 +566,10 @@ interface KanbanState {
   /**
    * Document-run batch: leave the current entry's branch as it is (the user
    * skipped it, or it picked up work since the queue was built) and advance.
-   * Its ticket does not move, and the run's ticket stays put at the end.
+   * Its ticket does not move; the run's ticket still does at the end, with the
+   * skipped branches named.
    */
-  skipDoneMoveEntry: (expected: PendingDoneMoveIdentity | undefined, reason: string) => void
+  skipDoneMoveEntry: (expected: PendingDoneMoveIdentity | undefined, reason: string) => Promise<void>
 
   // ── Session coordination ────────────────────────────────────────────
   syncTicketWithSession: (sessionId: string, event: KanbanSessionEvent) => void
@@ -2008,24 +2030,8 @@ export const useKanbanStore = create<KanbanState>()(
           )
         }
         if (next) return true
-        // Earlier members hit conflicts — the queue ran to the end so every
-        // member got checked, but the ticket stays until they're resolved
-        if (conflictedWorktrees.length > 0) {
-          toastConflictedDoneMove(conflictedWorktrees.length, pending.run ? 'branch' : 'project')
-          return true
-        }
-        // Skipped branches are not merged either: the run's ticket waits for them
-        if (pending.keptWorktrees?.length) {
-          toastKeptDoneMove(pending.keptWorktrees)
-          return true
-        }
-        if (pending.run) await moveRunEntryTickets(pending, pending.run.alsoMoveTicketIds)
-        await get().moveTicket(
-          pending.ticketId,
-          pending.projectId,
-          pending.targetColumn,
-          pending.sortOrder
-        )
+        // The queue ran to the end so every member got checked; conflicts hold the ticket
+        await settleDoneMove(pending, conflictedWorktrees, pending.keptWorktrees ?? [])
         return true
       },
 
@@ -2053,7 +2059,7 @@ export const useKanbanStore = create<KanbanState>()(
         toastConflictedDoneMove(conflictedWorktrees.length, pending.run ? 'branch' : 'project')
       },
 
-      skipDoneMoveEntry: (expected, reason) => {
+      skipDoneMoveEntry: async (expected, reason) => {
         const pending = get().pendingDoneMove
         if (!pending || !pendingDoneMoveMatches(pending, expected)) return
         const keptWorktrees: PendingDoneMoveKept[] = [
@@ -2070,13 +2076,9 @@ export const useKanbanStore = create<KanbanState>()(
           set({ pendingDoneMove: next })
           return
         }
-        // Last entry — the run's ticket never moves past a branch that was left out
+        // Last entry
         set({ pendingDoneMove: null })
-        if (conflictedWorktrees.length > 0) {
-          toastConflictedDoneMove(conflictedWorktrees.length, 'branch')
-          return
-        }
-        toastKeptDoneMove(keptWorktrees)
+        await settleDoneMove(pending, conflictedWorktrees, keptWorktrees)
       },
 
       // ── getTicketsForProject ─────────────────────────────────────

@@ -1444,7 +1444,10 @@ describe('MergeOnDoneDialog — document-run batch (shift-drop of the run ticket
     expect(screen.queryByRole('button', { name: 'Merge' })).toBeNull()
     expect(gitApiMocks.merge).not.toHaveBeenCalled()
     expect(archiveWorktreeMock).not.toHaveBeenCalled()
-    expect(moveTicketMock).not.toHaveBeenCalled()
+    // The branch and its own ticket stay as they are; the run's ticket still moves
+    await waitFor(() =>
+      expect(moveTicketMock).toHaveBeenCalledExactlyOnceWith('ticket-run', 'project-1', 'done', 5)
+    )
   })
 
   it('names the branches that were left out at the archive step', async () => {

@@ -1,8 +1,8 @@
 /**
  * The merge-on-done queue of a document-run batch (shift-drop of the run's ticket): a
  * ticket branch is queued once to merge into the integration branch and again, at the tail,
- * to be archived; each finished entry moves its own ticket, the run's ticket moves last, and
- * never past a branch that was skipped or hit conflicts.
+ * to be archived; each finished entry moves its own ticket, the run's ticket moves last —
+ * never past a branch that hit conflicts; a skipped branch is only named.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useKanbanStore, type PendingDoneMove } from './useKanbanStore'
@@ -164,9 +164,9 @@ describe('completeDoneMove — document-run batch', () => {
     expect(moveTicketMock).toHaveBeenCalledExactlyOnceWith('run-ticket', 'proj', 'done', 5)
   })
 
-  it('skipping a merge entry drops its archive twin and keeps the run’s ticket put', async () => {
+  it('skipping a merge entry drops its archive twin; its ticket stays, the run’s ticket still moves', async () => {
     const store = useKanbanStore.getState()
-    store.skipDoneMoveEntry(undefined, 'skipped')
+    await store.skipDoneMoveEntry(undefined, 'skipped')
 
     expect(pending()?.worktreeId).toBe('wt-int')
     expect(pending()?.remainingWorktrees).toEqual([archiveB])
@@ -178,10 +178,12 @@ describe('completeDoneMove — document-run batch', () => {
     await store.completeDoneMove() // archive B → end
 
     expect(moveTicketMock.mock.calls).toEqual([
-      ['t-b', 'proj', 'done', expect.any(Number), { skipCompletionEffects: true }]
+      ['t-b', 'proj', 'done', expect.any(Number), { skipCompletionEffects: true }],
+      ['t-fix', 'proj', 'done', expect.any(Number), { skipCompletionEffects: true }],
+      ['run-ticket', 'proj', 'done', 5]
     ])
     expect(pending()).toBeNull()
-    expect(toastMocks.warning).toHaveBeenCalledWith(expect.stringContaining('A1 · Alpha'))
+    expect(toastMocks.warning).toHaveBeenCalledWith(expect.stringContaining('A1 · Alpha (skipped)'))
   })
 
   it('a conflicted merge entry drops its archive twin too and blocks the run’s ticket', async () => {
@@ -198,13 +200,33 @@ describe('completeDoneMove — document-run batch', () => {
     expect(toastMocks.warning).toHaveBeenCalledWith(expect.stringContaining('1 branch'))
   })
 
-  it('skipping the last entry ends the queue with the run’s ticket in place', () => {
+  it('skipping the last entry ends the queue: the skipped ticket stays, the rest move', async () => {
     seed({ worktreeId: 'wt-b', entry: archiveB, remainingWorktrees: [] })
 
-    useKanbanStore.getState().skipDoneMoveEntry(undefined, 'has new changes since the run')
+    await useKanbanStore.getState().skipDoneMoveEntry(undefined, 'has new changes since the run')
+
+    expect(pending()).toBeNull()
+    expect(moveTicketMock.mock.calls).toEqual([
+      ['t-fix', 'proj', 'done', expect.any(Number), { skipCompletionEffects: true }],
+      ['run-ticket', 'proj', 'done', 5]
+    ])
+    expect(toastMocks.warning).toHaveBeenCalledWith(
+      expect.stringContaining('A2 · Beta (has new changes since the run)')
+    )
+  })
+
+  it('a skipped last entry never moves the run’s ticket past conflicts', async () => {
+    seed({
+      worktreeId: 'wt-b',
+      entry: archiveB,
+      remainingWorktrees: [],
+      conflictedWorktrees: [{ worktreeId: 'wt-a', projectId: 'proj' }]
+    })
+
+    await useKanbanStore.getState().skipDoneMoveEntry(undefined, 'skipped')
 
     expect(pending()).toBeNull()
     expect(moveTicketMock).not.toHaveBeenCalled()
-    expect(toastMocks.warning).toHaveBeenCalledWith(expect.stringContaining('A2 · Beta'))
+    expect(toastMocks.warning).toHaveBeenCalledWith(expect.stringContaining('1 branch'))
   })
 })

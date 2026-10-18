@@ -25,7 +25,9 @@ const toastMocks = vi.hoisted(() => ({
   warning: vi.fn(),
   error: vi.fn(),
   success: vi.fn(),
-  info: vi.fn()
+  info: vi.fn(),
+  loading: vi.fn(() => 'toast-1'),
+  dismiss: vi.fn()
 }))
 
 vi.mock('@/api/db-api', () => ({ dbApi: dbApiMocks }))
@@ -203,6 +205,65 @@ describe('buildRunDoneQueue', () => {
     )
   })
 
+  it('never merges again a branch the run already merged: leftovers keep it, its ticket rides along', async () => {
+    // A1 landed (status merged, merge_sha); its agent left uncommitted files behind
+    gitApiMocks.hasUncommittedChanges.mockImplementation(async (path: string) => path === '/wt/a')
+
+    const queue = await buildRunDoneQueue(detail(), 'run-ticket', tickets())
+
+    expect(labels(queue.entries)).toEqual(['run-integration:The run', 'run-child-archive:A2 · Beta'])
+    expect(queue.kept).toContainEqual({
+      label: 'A1 · Alpha',
+      reason: 'has uncommitted changes since the run merged it — not archived'
+    })
+    expect(queue.alsoMoveTicketIds).toEqual(['t-a', 't-fix'])
+  })
+
+  it('a landed branch with commits the integration branch lacks is a merge step again', async () => {
+    ahead = { '/wt/a': { 'doc-run': 1 } }
+
+    const queue = await buildRunDoneQueue(detail(), 'run-ticket', tickets())
+
+    expect(labels(queue.entries)).toEqual([
+      'run-child:A1 · Alpha',
+      'run-integration:The run',
+      'run-child-archive:A1 · Alpha',
+      'run-child-archive:A2 · Beta'
+    ])
+    expect(queue.alsoMoveTicketIds).toEqual(['t-fix'])
+  })
+
+  it('a landed branch that cannot be verified is kept, not a reason to refuse the drop', async () => {
+    gitApiMocks.branchDiffShortStat.mockImplementation(async (path: string) =>
+      path === '/wt/a'
+        ? { success: false, error: 'not a git repository' }
+        : { success: true, filesChanged: 0, insertions: 0, deletions: 0, commitsAhead: 0 }
+    )
+
+    const queue = await buildRunDoneQueue(detail(), 'run-ticket', tickets())
+
+    expect(labels(queue.entries)).toEqual(['run-integration:The run', 'run-child-archive:A2 · Beta'])
+    expect(queue.kept).toContainEqual({
+      label: 'A1 · Alpha',
+      reason: 'could not be verified: not a git repository — not archived'
+    })
+    expect(queue.alsoMoveTicketIds).toContain('t-a')
+  })
+
+  it('without an integration worktree, a landed branch with leftovers is kept and its ticket rides along', async () => {
+    worktrees['wt-int'].status = 'archived'
+    gitApiMocks.hasUncommittedChanges.mockImplementation(async (path: string) => path === '/wt/a')
+
+    const queue = await buildRunDoneQueue(detail(), 'run-ticket', tickets())
+
+    expect(labels(queue.entries)).toEqual(['run-child-archive:A2 · Beta'])
+    expect(queue.kept).toContainEqual({
+      label: 'A1 · Alpha',
+      reason: 'has uncommitted changes since the run merged it — not archived'
+    })
+    expect(queue.alsoMoveTicketIds).toContain('t-a')
+  })
+
   it('keeps a branch whose session is still working', async () => {
     signal.getSessionSignal.mockImplementation((id: string) => ({
       kind: id === 's-b' ? 'working' : 'ended'
@@ -315,6 +376,23 @@ describe('queueDocumentRunDone', () => {
     targetColumn: 'done' as const,
     sortOrder: 7
   }
+
+  it('shows that the branches are being checked, and clears it once the queue is built', async () => {
+    flowApi.get.mockResolvedValue(detail())
+
+    await queueDocumentRunDone(args)
+
+    expect(toastMocks.loading).toHaveBeenCalledWith('Checking 2 branches of The run…')
+    expect(toastMocks.dismiss).toHaveBeenCalledWith('toast-1')
+  })
+
+  it('clears the checking toast when a branch cannot be verified', async () => {
+    flowApi.get.mockResolvedValue(detail())
+    gitApiMocks.branchDiffShortStat.mockResolvedValue({ success: false, error: 'boom' })
+
+    await expect(queueDocumentRunDone(args)).rejects.toThrow()
+    expect(toastMocks.dismiss).toHaveBeenCalledWith('toast-1')
+  })
 
   it('hands the queue to the dialog with the run attached', async () => {
     ahead = { '/wt/b': { 'doc-run': 2 } }
