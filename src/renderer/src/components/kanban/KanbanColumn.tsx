@@ -41,7 +41,6 @@ import {
 } from '@/stores/useKanbanStore'
 import type { MarkdownCardPlaceholder } from '@/stores/useKanbanStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
-import { useProjectStore } from '@/stores/useProjectStore'
 import { useUsageStore, resolveDefaultUsageProvider } from '@/stores/useUsageStore'
 import { useSettingsStore, resolvePreferredAgentSdk } from '@/stores/useSettingsStore'
 import { isBlockerSatisfied } from '@/lib/blocker-utils'
@@ -838,17 +837,14 @@ export function KanbanColumn({
                 draggedTicket.current_session_id
               )
               if (ticketConnectionId) {
-                // Connection-PROJECT tickets mimic single-project behavior:
-                // each member worktree gets the archive/keep step, and
+                // Connection tickets mimic single-project behavior, whether
+                // the ticket sits on a connection project or a plain project:
+                // each member worktree gets the archive/keep step (with
+                // "Archive all" once only clean members are left), and
                 // Review/Merged → Done drops queue already-merged members
                 // too (the archivePromptOnly analog above)
-                const offerArchive =
-                  useProjectStore.getState().projects.find((p) => p.id === ticketProjectId)
-                    ?.kind === 'connection'
                 const archivePromptOnly =
-                  offerArchive &&
-                  column === 'done' &&
-                  (sourceColumn === 'review' || sourceColumn === 'merged')
+                  column === 'done' && (sourceColumn === 'review' || sourceColumn === 'merged')
                 const mergeQueue = await buildConnectionMergeQueue(ticketConnectionId, {
                   includeAlreadyMerged: archivePromptOnly
                 })
@@ -866,7 +862,7 @@ export function KanbanColumn({
                     worktreeId: firstTarget.worktreeId,
                     worktreeProjectId: firstTarget.projectId,
                     remainingWorktrees: restTargets,
-                    offerArchive
+                    offerArchive: true
                   })
                   return
                 }

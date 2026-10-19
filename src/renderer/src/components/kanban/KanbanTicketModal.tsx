@@ -3316,17 +3316,14 @@ function ReviewModeContent({
       }
     } else if (ticket.current_session_id) {
       // Connection tickets have no worktree_id — queue the merge flow once
-      // per member worktree, mirroring the board drop path. Connection-PROJECT
-      // tickets also get the archive/keep step for each member (and queue
-      // already-merged members so the prompt still shows).
+      // per member worktree, mirroring the board drop path. Every member gets
+      // the archive/keep step (already-merged members are queued too, so the
+      // prompt still shows and "Archive all" can take the clean ones at once).
       try {
         const connectionId = await resolveTicketConnectionId(ticket.current_session_id)
         if (connectionId) {
-          const offerArchive =
-            useProjectStore.getState().projects.find((p) => p.id === ticket.project_id)?.kind ===
-            'connection'
           const mergeQueue = await buildConnectionMergeQueue(connectionId, {
-            includeAlreadyMerged: offerArchive
+            includeAlreadyMerged: true
           })
           if (mergeQueue.length > 0) {
             const [firstTarget, ...restTargets] = mergeQueue
@@ -3341,7 +3338,7 @@ function ReviewModeContent({
               worktreeId: firstTarget.worktreeId,
               worktreeProjectId: firstTarget.projectId,
               remainingWorktrees: restTargets,
-              offerArchive
+              offerArchive: true
             })
             return
           }

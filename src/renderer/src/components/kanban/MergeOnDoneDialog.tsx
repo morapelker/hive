@@ -484,10 +484,10 @@ export function MergeOnDoneDialog() {
           return
         }
 
-        // Plain-connection members never get the archive prompt — archiving
-        // would tear the worktree out of a connection the user still needs.
-        // Connection-PROJECT members (offerArchive) fall through to it so the
-        // instance's worktrees can be archived like any feature worktree.
+        // A merge-only connection queue (no offerArchive) advances past a
+        // clean member without asking. Every connection flow sets offerArchive
+        // today, so members fall through to the archive/keep step and can be
+        // archived like any feature worktree.
         if (pending.worktreeId && alreadyMerged && !pending.offerArchive) {
           await completeDoneMove(identity)
           return
@@ -939,8 +939,8 @@ export function MergeOnDoneDialog() {
       }
 
       toast.success('Branch merged successfully')
-      // Plain-connection members advance the queue instead of offering the
-      // destructive archive step; connection-project members get it (see init)
+      // A merge-only connection queue advances instead of offering the
+      // destructive archive step; connection members with offerArchive get it (see init)
       if (pendingDoneMove.worktreeId && !pendingDoneMove.offerArchive) {
         await completeDoneMove(pendingIdentity)
         return
@@ -1020,10 +1020,10 @@ export function MergeOnDoneDialog() {
     })()
   }, [resolved, runEntry, pendingIdentity, completeDoneMove])
 
-  // Connection-project flow: once the members with work to merge are done,
-  // the rest of the queue is archive/keep prompts only (the queue builder
-  // puts already-merged members last). Offer to archive them all at once
-  // instead of one Archive click per project.
+  // Connection flow: once the members with work to merge are done, the rest
+  // of the queue is archive/keep prompts only (the queue builder puts
+  // already-merged members last). Offer to archive them all at once instead
+  // of one Archive click per project.
   const archiveAllCandidates = useMemo(() => {
     const remaining = pendingDoneMove?.remainingWorktrees ?? []
     if (!pendingDoneMove?.offerArchive || remaining.length === 0) return []

@@ -326,14 +326,16 @@ describe('MergeOnDoneDialog — ticket of a document run', () => {
   })
 })
 
-describe('MergeOnDoneDialog — connection member queue', () => {
+describe('MergeOnDoneDialog — merge-only connection member queue (no offerArchive)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     moveTicketMock.mockResolvedValue(undefined)
     archiveWorktreeMock.mockResolvedValue({ success: true })
     mockAlreadyMergedBranch()
     setupStores()
-    // Connection tickets have no worktree_id — the queue supplies it
+    // Connection tickets have no worktree_id — the queue supplies it. Without
+    // offerArchive the queue is merge-only (no caller builds one today: both
+    // the board drop and the ticket modal set it for every connection ticket)
     useKanbanStore.setState({
       tickets: new Map([['project-1', [{ ...ticket, worktree_id: null }]]]),
       pendingDoneMove: {
@@ -400,7 +402,7 @@ describe('MergeOnDoneDialog — connection member queue', () => {
   })
 })
 
-describe('MergeOnDoneDialog — connection-project member queue (offerArchive)', () => {
+describe('MergeOnDoneDialog — connection member queue (offerArchive)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     moveTicketMock.mockResolvedValue(undefined)
@@ -528,7 +530,7 @@ describe('MergeOnDoneDialog — connection-project member queue (offerArchive)',
   })
 })
 
-describe('MergeOnDoneDialog — Archive all (connection-project queue)', () => {
+describe('MergeOnDoneDialog — Archive all (connection queue)', () => {
   const nextWorktree = {
     id: 'worktree-next',
     project_id: 'project-2',

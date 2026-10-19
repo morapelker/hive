@@ -326,9 +326,11 @@ export interface PendingDoneMove {
    */
   conflictedWorktrees?: { worktreeId: string; projectId: string }[]
   /**
-   * Connection-project flow: offer the archive/keep step for each member
-   * worktree (plain connections skip it — archiving would tear a worktree
-   * out of a connection the user still needs).
+   * Connection flow: offer the archive/keep step for each member worktree,
+   * and "Archive all" once only already-merged members are left in the
+   * queue. Set by every connection flow (connection-project tickets, plain
+   * connection tickets and document-run instances); a queue without it is
+   * merge-only and advances past clean members without asking.
    */
   offerArchive?: boolean
   /**
