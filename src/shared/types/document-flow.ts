@@ -106,6 +106,34 @@ export const DOCUMENT_RUN_ITEM_ACTIVE_STATUSES: readonly DocumentRunItemStatus[]
   'resolving_conflicts'
 ]
 
+export const DOCUMENT_UPDATE_STATUSES = ['queued', 'updating', 'done', 'failed', 'skipped'] as const
+
+/**
+ * The post-merge step that has a merged ticket's own session update the document the run was
+ * made from (`DocumentRun.source_path`). The item's `status` stays `merged` (or `skipped`); this
+ * is tracked beside it in `document_update_status`. Only one session edits a document at a time
+ * (the document edit lane), and the run is not finished until that lane has drained.
+ * - `queued`: waiting for its turn in the document edit lane
+ * - `updating`: the ticket's session was asked to update the document and holds the lane
+ *   (also while it waits for the user)
+ * - `done`: the document was changed by the session
+ * - `failed`: the session could not update it (`document_update_detail` says why)
+ * - `skipped`: not attempted (no session, document missing or read-only, skipped by the user,
+ *   or the run ended first)
+ */
+export type DocumentUpdateStatus = (typeof DOCUMENT_UPDATE_STATUSES)[number]
+
+/** What the editing agent reported in its DOCUMENT footer (parsed by the runner). */
+export interface DocumentUpdateReport {
+  outcome: 'updated' | 'unchanged' | 'failed'
+  /** One line: how the task was verified ("tests: 12 passed; playwright: checkout flow"), or null. */
+  verified: string | null
+  /** Follow-ups the agent listed; [] = none. */
+  followUps: string[]
+  /** One sentence on what it changed in the document, or why it could not. */
+  notes: string | null
+}
+
 // ── Config ─────────────────────────────────────────────────────────────────
 
 /** Same shape as the renderer's `LaunchModelConfig` (lib/ticket-launch.ts). */
@@ -516,6 +544,28 @@ export interface DocumentRunItem {
   wait_until: string | null
   /** Waits for background work that ran out without the agent being woken. */
   wait_timeouts: number
+  /**
+   * Where the post-merge document update stands (see `DocumentUpdateStatus`); null when it does
+   * not apply (never merged, skipped by the user, or a row from before the step existed). While
+   * it runs the step reuses `last_prompt_at`, `last_checked_at`, `continue_attempts` and
+   * `retry_at`, which nothing reads once the item is merged.
+   */
+  document_update_status: DocumentUpdateStatus | null
+  /**
+   * One human line on the document update: why it failed or was skipped, "Waiting for you: …"
+   * while the session is blocked on the user, the agent's notes once done.
+   */
+  document_update_detail: string | null
+  /** When the item joined the document edit lane; the lane runs in this order, then `position`. */
+  document_update_queued_at: string | null
+  /** Prompts re-sent for the update (the "document is unchanged" nudge, a continue after an interruption). */
+  document_update_attempts: number
+  /** sha256 of the source document taken right before the update prompt was sent. */
+  document_update_hash: string | null
+  /** The agent's DOCUMENT footer, parsed once its turn ended. */
+  document_update_report: DocumentUpdateReport | null
+  /** When the document update finished (done, failed or skipped). */
+  document_update_finished_at: string | null
   created_at: string
   updated_at: string
   started_at: string | null
@@ -595,6 +645,30 @@ export interface DocumentSourceFile {
   exists: boolean
 }
 
+/**
+ * The run's source document as the document update step sees it, read just before the update
+ * prompt is sent and again once the agent's turn ends.
+ */
+export interface DocumentSourceState {
+  path: string
+  exists: boolean
+  /** The app may write the file (checked with `access(W_OK)`). */
+  writable: boolean
+  /** Format sniffed from the extension or the content; null when the file is missing. */
+  format: 'html' | 'markdown' | 'text' | null
+  /** Detected text encoding (utf-8, windows-1252, …); null when the file is missing. */
+  encoding: string | null
+  /** sha256 of the raw bytes, to tell whether the agent changed the file. */
+  sha256: string | null
+  size: number | null
+  /** Inside a git work tree (e.g. tracked in the project's main checkout). */
+  insideRepo: boolean
+  /** `<dirname>/<stem>.assets` — where screenshots go (per task: `<assetsDir>/<KEY>/`). */
+  assetsDir: string
+  /** Path of the backup made for `backupKey` (`<run_dir>/doc-backups/<KEY>-<timestamp>.<ext>`), else null. */
+  backupPath: string | null
+}
+
 /** Fields of a run the renderer may change. `status` only toggles `running` ⇄ `paused`. */
 export interface DocumentRunPatch {
   title?: string
@@ -633,6 +707,13 @@ export interface DocumentRunItemPatch {
   retry_at?: string | null
   wait_until?: string | null
   wait_timeouts?: number
+  document_update_status?: DocumentUpdateStatus | null
+  document_update_detail?: string | null
+  document_update_queued_at?: string | null
+  document_update_attempts?: number
+  document_update_hash?: string | null
+  document_update_report?: DocumentUpdateReport | null
+  document_update_finished_at?: string | null
   started_at?: string | null
   finished_at?: string | null
 }

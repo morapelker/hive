@@ -6,7 +6,8 @@ import type { ServerEvent } from '../../../../shared/rpc/protocol'
 import type {
   DocumentRun,
   DocumentRunDetail,
-  DocumentRunVerdict
+  DocumentRunVerdict,
+  DocumentSourceState
 } from '../../../../shared/types/document-flow'
 import { makeEventBus } from '../../../events/event-bus'
 import type { RpcContext } from '../../router'
@@ -37,12 +38,26 @@ const verdict: DocumentRunVerdict = {
 
 const context = { eventBus: null } as unknown as RpcContext
 
+const sourceState: DocumentSourceState = {
+  path: '/specs/factory.html',
+  exists: true,
+  writable: true,
+  format: 'html',
+  encoding: 'utf-8',
+  sha256: 'abc',
+  size: 12,
+  insideRepo: false,
+  assetsDir: '/specs/factory.assets',
+  backupPath: null
+}
+
 /** The method names the renderer API (`documentFlowApi`) requests. */
 const API_METHODS = [
   'createRun',
   'retryExtraction',
   'get',
   'sourceFile',
+  'inspectSource',
   'list',
   'updateRun',
   'updateItem',
@@ -71,6 +86,7 @@ function makeService(overrides: Partial<DocumentFlowRpcService> = {}): DocumentF
     retryExtraction: () => Effect.succeed(detail),
     get: () => Effect.succeed(detail),
     sourceFile: () => Effect.succeed({ path: '/specs/factory.html', exists: true }),
+    inspectSource: () => Effect.succeed(sourceState),
     list: () => Effect.succeed([detail]),
     updateRun: () => Effect.succeed(run),
     updateItem: () => Effect.succeed(detail.items[0]),
@@ -175,6 +191,23 @@ describe('documentFlow RPC handlers', () => {
     await call(service, 'updateItem', { runId: 'run-1', itemId: 'item-1', patch })
     expect(updateItem).toHaveBeenCalledWith('run-1', 'item-1', patch)
 
+    const documentUpdate = {
+      document_update_status: 'done',
+      document_update_detail: 'Struck A1 through.',
+      document_update_queued_at: '2026-10-05T10:00:00.000Z',
+      document_update_attempts: 1,
+      document_update_hash: 'abc',
+      document_update_report: {
+        outcome: 'updated',
+        verified: 'tests: 12 passed',
+        followUps: [],
+        notes: 'Struck A1 through.'
+      },
+      document_update_finished_at: '2026-10-05T10:05:00.000Z'
+    }
+    await call(service, 'updateItem', { runId: 'run-1', itemId: 'item-1', patch: documentUpdate })
+    expect(updateItem).toHaveBeenLastCalledWith('run-1', 'item-1', documentUpdate)
+
     await expect(
       call(service, 'classify', { runId: 'run-1', itemId: 'item-1', finalMessage: 'Done.' })
     ).resolves.toEqual(verdict)
@@ -217,6 +250,7 @@ describe('documentFlow RPC handlers', () => {
     const service = makeService({
       get: record('get', detail),
       sourceFile: record('sourceFile', { path: '/specs/factory.html', exists: true }),
+      inspectSource: record('inspectSource', sourceState),
       updateRun: record('updateRun', run),
       start: record('start', detail),
       claimRunner: record('claimRunner', {
@@ -250,6 +284,7 @@ describe('documentFlow RPC handlers', () => {
 
     await call(service, 'get', { runId: 'run-1' })
     await call(service, 'sourceFile', { runId: 'run-1' })
+    await call(service, 'inspectSource', { runId: 'run-1', backupKey: 'A1' })
     await call(service, 'updateRun', { runId: 'run-1', patch: { status: 'paused' } })
     await call(service, 'start', { runId: 'run-1' })
     await call(service, 'claimRunner', { runId: 'run-1', clientId: 'client-1' })
@@ -267,6 +302,7 @@ describe('documentFlow RPC handlers', () => {
     expect(calls).toEqual({
       get: ['run-1'],
       sourceFile: ['run-1'],
+      inspectSource: ['run-1', 'A1'],
       updateRun: ['run-1', { status: 'paused' }],
       // `start` takes the optional default SDK positionally; the handler passes it as given.
       start: ['run-1', undefined],
@@ -412,6 +448,22 @@ describe('documentFlow RPC handlers', () => {
     await rejectsValidation(service, 'get', { runId: 'run-1', extra: true })
     await rejectsValidation(service, 'sourceFile', {})
     await rejectsValidation(service, 'sourceFile', { runId: 'run-1', extra: true })
+    await rejectsValidation(service, 'inspectSource', {})
+    await rejectsValidation(service, 'inspectSource', { runId: 'run-1', backupKey: '' })
+    await rejectsValidation(service, 'inspectSource', { runId: 'run-1', extra: true })
+    await rejectsValidation(service, 'updateItem', {
+      runId: 'r',
+      itemId: 'i',
+      patch: {
+        document_update_report: {
+          outcome: 'updated',
+          verified: null,
+          followUps: [],
+          notes: null,
+          extra: 1
+        }
+      }
+    })
     await rejectsValidation(service, 'list', { projectId: 'p', extra: 1 })
     await rejectsValidation(service, 'updateRun', {
       runId: 'run-1',
@@ -468,6 +520,16 @@ describe('documentFlow RPC handlers', () => {
       runId: 'r',
       itemId: 'i',
       patch: { nudge_count: -1 }
+    })
+    await rejectsValidation(service, 'updateItem', {
+      runId: 'r',
+      itemId: 'i',
+      patch: { document_update_status: 'editing' }
+    })
+    await rejectsValidation(service, 'updateItem', {
+      runId: 'r',
+      itemId: 'i',
+      patch: { document_update_attempts: -1 }
     })
     await rejectsValidation(service, 'updateItem', {
       runId: 'r',

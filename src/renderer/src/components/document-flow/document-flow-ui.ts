@@ -4,7 +4,11 @@ import {
   awaitsLaunch,
   WAITING_FOR_WORK_PREFIX,
   countRunningAgents,
+  documentUpdateLaneOwner,
+  documentUpdateQueuePosition,
   freeSlotCount,
+  isDocumentUpdatePending,
+  isDocumentUpdateWaitingOnUser,
   isItemWaitingOnUser,
   isMergeInFlight,
   isRunWaitingOnUser,
@@ -34,14 +38,19 @@ import {
 
 // ── Tones ──────────────────────────────────────────────────────────────────
 
-export type DocumentFlowTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger'
+/**
+ * `document`: a merged ticket's session waits to update, or is updating, the document the run
+ * was made from. Pink, like the bar under a ticket editing it; no other state wears it.
+ */
+export type DocumentFlowTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'document'
 
 const TONE_PILL_CLASSES: Record<DocumentFlowTone, string> = {
   neutral: 'border-border bg-transparent text-muted-foreground',
   info: 'border-blue-500/30 bg-blue-500/10 text-blue-500',
   success: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500',
   warning: 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400',
-  danger: 'border-red-500/30 bg-red-500/10 text-red-500'
+  danger: 'border-red-500/30 bg-red-500/10 text-red-500',
+  document: 'border-pink-500/30 bg-pink-500/10 text-pink-500'
 }
 
 export function tonePillClass(tone: DocumentFlowTone): string {
@@ -196,12 +205,31 @@ export interface ItemStatusDisplay extends StatusDisplay {
   dot: AgentDotState
 }
 
-/** What a dashboard row says: a pending item names the dependencies it is waiting for. */
+/** A merged ticket waiting for its turn to update the run's document, on its row and its card. */
+export const DOCUMENT_EDIT_QUEUED_LABEL = 'Waiting in document edit queue'
+/** A merged ticket's session updating the run's document, on its row and its card. */
+export const EDITING_DOCUMENT_LABEL = 'Editing document'
+
+/**
+ * What a dashboard row says: a pending item names the dependencies it is waiting for, and a
+ * merged (or already implemented) item still updating the run's document says so instead of
+ * "Merged". Once that update is over the row reads "Merged" / "Skipped" again; the detail
+ * column tells how the document update went.
+ */
 export function itemStatusDisplay(
   item: DocumentRunItem,
   items: readonly DocumentRunItem[]
 ): ItemStatusDisplay {
   if (!item.selected) return { label: 'Not included', tone: 'neutral', dot: 'idle' }
+  if (isDocumentUpdatePending(item)) {
+    return item.document_update_status === 'queued'
+      ? { label: DOCUMENT_EDIT_QUEUED_LABEL, tone: 'document', dot: 'idle' }
+      : {
+          label: EDITING_DOCUMENT_LABEL,
+          tone: 'document',
+          dot: isDocumentUpdateWaitingOnUser(item) ? 'question' : 'working'
+        }
+  }
   // A fix or conflict session that stopped to ask reads as a question, not as work in progress.
   const asking = needsUser(item) && item.status !== 'needs_attention'
   const base: ItemStatusDisplay = {
@@ -215,6 +243,93 @@ export function itemStatusDisplay(
   if (item.status !== 'pending') return base
   const unmet = unmetDependencies(item, items)
   return unmet.length > 0 ? { ...base, label: `Waiting for ${unmet.join(', ')}` } : base
+}
+
+export interface ItemDetailDisplay {
+  text: string | null
+  /** The full line as tooltip, with what the cell leaves out (the agent's notes). */
+  title: string | null
+  /** `warning`: the document update failed, said in amber. */
+  tone: 'muted' | 'warning'
+}
+
+/**
+ * The detail column of a dashboard row. Once the item is merged (or found already
+ * implemented) and its document update applies, the column tells how that update stands:
+ * its place in the document edit lane, what the editing session waits for, "Document updated"
+ * with the agent's notes as tooltip, or why it failed or did not happen. Otherwise, and while
+ * the update says nothing of its own, the item's own detail.
+ */
+export function itemDetailDisplay(
+  item: DocumentRunItem,
+  items: readonly DocumentRunItem[]
+): ItemDetailDisplay {
+  const own = item.status_detail
+  const plain = (text: string | null, tone: ItemDetailDisplay['tone'] = 'muted') => ({
+    text,
+    title: text,
+    tone
+  })
+  const applies = item.selected && (item.status === 'merged' || item.status === 'skipped')
+  const detail = item.document_update_detail?.trim() || null
+  if (!applies) return plain(own)
+  switch (item.document_update_status) {
+    case 'queued': {
+      if (detail) return plain(detail)
+      const position = documentUpdateQueuePosition(items, item.id)
+      return plain(position === null ? own : `#${position} in the document edit queue`)
+    }
+    case 'updating':
+      return plain(detail ?? own)
+    case 'done': {
+      const notes = item.document_update_report?.notes?.trim() || detail
+      return {
+        text: 'Document updated',
+        title: [notes ? `Document updated: ${notes}` : 'Document updated', own]
+          .filter(Boolean)
+          .join('\n'),
+        tone: 'muted'
+      }
+    }
+    case 'failed':
+      return plain(
+        detail ? `Document update failed: ${detail}` : 'Document update failed',
+        'warning'
+      )
+    case 'skipped':
+      return plain(detail ? `Document not updated: ${detail}` : 'Document not updated')
+    default:
+      return plain(own)
+  }
+}
+
+/**
+ * The document edit lane of a run that is on, for the dashboard's header: the item whose
+ * session edits the run's document now (and whether it stopped for the user), and how many
+ * wait their turn. Null when the lane is empty or the run is over.
+ */
+export interface RunDocumentEditState {
+  editing: DocumentRunItem | null
+  editingWaiting: boolean
+  queued: number
+}
+
+export function runDocumentEditState(
+  run: Pick<DocumentRun, 'status'>,
+  items: readonly DocumentRunItem[]
+): RunDocumentEditState | null {
+  if (!isActiveRunStatus(run.status)) return null
+  const owner = documentUpdateLaneOwner(items)
+  const editing = owner && isDocumentUpdatePending(owner) ? owner : null
+  const queued = items.filter(
+    (item) => isDocumentUpdatePending(item) && item.document_update_status === 'queued'
+  ).length
+  if (!editing && queued === 0) return null
+  return {
+    editing,
+    editingWaiting: editing !== null && isDocumentUpdateWaitingOnUser(editing),
+    queued
+  }
 }
 
 /** The item cannot move on until the user looks at it. */
@@ -281,6 +396,142 @@ export function isQueuedForRunMerge(
     const owner = mergeLaneOwner(detail.items)
     return owner !== null && owner.id !== item.id
   })
+}
+
+/**
+ * Where a ticket waiting to update its run's document stands in the document edit lane: its
+ * 1-based place among the queued updates of its run, the key of the ticket editing the same
+ * document now (in its run, or in another run made from the same file), and the document.
+ */
+export interface DocumentEditQueueState {
+  position: number
+  editingKey: string | null
+  sourcePath: string
+  /** False for a ticket the run skipped as already implemented (nothing new to merge). */
+  merged: boolean
+}
+
+/** The run's source path as the document edit lane compares it across runs. */
+const lanePath = (run: Pick<DocumentRun, 'source_path'>): string => run.source_path.trim()
+
+/** The item editing `sourcePath` right now, in any run that is on, or null. */
+function documentEditor(
+  runsById: Record<string, DocumentRunDetail>,
+  sourcePath: string
+): DocumentRunItem | null {
+  for (const detail of Object.values(runsById)) {
+    if (!isActiveRunStatus(detail.run.status) || lanePath(detail.run) !== sourcePath) continue
+    const owner = documentUpdateLaneOwner(detail.items)
+    if (owner && isDocumentUpdatePending(owner)) return owner
+  }
+  return null
+}
+
+/**
+ * The ticket's run item is merged (or was auto-skipped as already implemented) and waits in
+ * the document edit lane for its session's turn to update the run's source document. Null
+ * when it is not queued, or its run is no longer on. The ticket's card reads "Waiting in
+ * document edit queue" meanwhile, in any column; its tooltip names the place and the editor.
+ */
+export function isQueuedForDocumentUpdate(
+  runsById: Record<string, DocumentRunDetail>,
+  ticketId: string | null | undefined
+): DocumentEditQueueState | null {
+  if (!ticketId) return null
+  for (const detail of Object.values(runsById)) {
+    if (!isActiveRunStatus(detail.run.status)) continue
+    const item = detail.items.find((candidate) => candidate.ticket_id === ticketId)
+    if (!item || !isDocumentUpdatePending(item) || item.document_update_status !== 'queued') {
+      continue
+    }
+    const position = documentUpdateQueuePosition(detail.items, item.id)
+    if (position === null) continue
+    const sourcePath = lanePath(detail.run)
+    return {
+      position,
+      editingKey: documentEditor(runsById, sourcePath)?.key ?? null,
+      sourcePath,
+      merged: item.status === 'merged'
+    }
+  }
+  return null
+}
+
+/**
+ * Where a run item's session stands once it was sent the document update prompt and holds the
+ * document edit lane: found by the ticket the item was launched as, or by its session.
+ * `editing` while it is at the edit; `waiting` once it stopped for the user (a question, a
+ * permission, their interrupt), when nothing runs and the lane waits on them. Null otherwise.
+ */
+export function runDocumentEditStatus(
+  runsById: Record<string, DocumentRunDetail>,
+  ref: { ticketId?: string | null; sessionId?: string | null }
+): 'editing' | 'waiting' | null {
+  if (!ref.ticketId && !ref.sessionId) return null
+  for (const detail of Object.values(runsById)) {
+    if (!isActiveRunStatus(detail.run.status)) continue
+    const item = detail.items.find(
+      (candidate) =>
+        isDocumentUpdatePending(candidate) &&
+        candidate.document_update_status === 'updating' &&
+        ((ref.ticketId !== null &&
+          ref.ticketId !== undefined &&
+          candidate.ticket_id === ref.ticketId) ||
+          (ref.sessionId !== null &&
+            ref.sessionId !== undefined &&
+            candidate.session_id === ref.sessionId))
+    )
+    if (item) return isDocumentUpdateWaitingOnUser(item) ? 'waiting' : 'editing'
+  }
+  return null
+}
+
+/**
+ * Whether a run item's session is at the document edit it was prompted for (see
+ * `runDocumentEditStatus`). The ticket's card and the session's view wear the moving pink bar
+ * meanwhile, whatever column the ticket sits in; not once it stopped for the user.
+ */
+export function isUpdatingRunDocument(
+  runsById: Record<string, DocumentRunDetail>,
+  ref: { ticketId?: string | null; sessionId?: string | null }
+): boolean {
+  return runDocumentEditStatus(runsById, ref) === 'editing'
+}
+
+/**
+ * The tooltip of a ticket's "Waiting in document edit queue" pill: "Merged. The orchestrator
+ * updates checkout.html one ticket at a time — #2 in queue; A1 is editing it now."
+ */
+export function describeDocumentEditQueue(state: DocumentEditQueueState): string {
+  const editing = state.editingKey ? `; ${state.editingKey} is editing it now` : ''
+  const done = state.merged ? 'Merged.' : 'Already implemented.'
+  return `${done} The orchestrator updates ${documentNameFromPath(state.sourcePath)} one ticket at a time — #${state.position} in queue${editing}.`
+}
+
+/**
+ * Retry document update: the item's document update failed or was skipped (by the step or by
+ * the user) after it was merged, and the run is still on to take it up again. Not for an item
+ * without a session: the runner would skip it again at once.
+ */
+export function canRetryDocumentUpdate(
+  run: Pick<DocumentRun, 'status'>,
+  item: DocumentRunItem
+): boolean {
+  return (
+    isActiveRunStatus(run.status) &&
+    item.selected &&
+    item.session_id !== null &&
+    (item.status === 'merged' || item.status === 'skipped') &&
+    (item.document_update_status === 'failed' || item.document_update_status === 'skipped')
+  )
+}
+
+/** Skip document update: the item waits in the document edit lane or holds it. */
+export function canSkipDocumentUpdate(
+  run: Pick<DocumentRun, 'status'>,
+  item: DocumentRunItem
+): boolean {
+  return isActiveRunStatus(run.status) && isDocumentUpdatePending(item)
 }
 
 /** Retry / "mark done" apply to items that are waiting on the user and are not mid-merge. */
@@ -418,9 +669,16 @@ export interface RunBoardCardState {
    * "3 working", "2 waiting for answer", "Paused", "Paused · 1 working" while sessions
    * finish their turn; once the
    * run ended, what is left to do: "Ready to merge into main", "2 not merged", "Cancelled";
-   * and "Running migrations" while a session executes them.
+   * and "Running migrations" while a session executes them. "Editing document · A2" while
+   * the only session at work is a merged ticket's updating the run's document.
    */
   label: string
+  /**
+   * While the run is running and no other session is at work: the key of the merged ticket
+   * whose session is updating the run's document. The label and the bar turn pink then. Null
+   * otherwise, also while that session waits on the user (it counts as waiting then).
+   */
+  editingDocument: string | null
 }
 
 const RUN_BOARD_CARD_PHASES: Partial<Record<DocumentRunStatus, RunBoardCardPhase>> = {
@@ -451,11 +709,20 @@ export function runBoardCardState(
   const migrating = !isActiveRunStatus(run.status) && isRunMigrating(run)
   const phase = migrating ? 'migrating' : (RUN_BOARD_CARD_PHASES[run.status] ?? 'running')
   const workingLabel = `${running} working`
+  // The session editing the document is counted among those at work, or once it stopped for
+  // the user among those waiting
+  const editor = documentUpdateLaneOwner(items)
+  const pendingEditor = editor && isDocumentUpdatePending(editor) ? editor : null
+  const editorWaiting = pendingEditor !== null && isDocumentUpdateWaitingOnUser(pendingEditor)
   const waiting = isActiveRunStatus(run.status)
-    ? items.filter(needsUser).length
+    ? items.filter(needsUser).length + (editorWaiting ? 1 : 0)
     : migrating && migrationWaiting
       ? 1
       : 0
+  const editingDocument =
+    phase === 'running' && pendingEditor && !editorWaiting && running === 1 && waiting === 0
+      ? pendingEditor.key
+      : null
   const moved = column === 'merged' || column === 'done'
   const notMerged = summary.total - summary.merged
   const labels: Record<RunBoardCardPhase, string> = {
@@ -463,7 +730,12 @@ export function runBoardCardState(
     ready: 'Ready to launch',
     extract_failed: 'Extraction failed',
     // One ticket waiting for an answer outweighs the count of those at work
-    running: waiting > 0 ? `${waiting} waiting for answer` : workingLabel,
+    running:
+      waiting > 0
+        ? `${waiting} waiting for answer`
+        : editingDocument
+          ? `${EDITING_DOCUMENT_LABEL} · ${editingDocument}`
+          : workingLabel,
     paused: running > 0 ? `Paused · ${workingLabel}` : 'Paused',
     completed: moved ? 'Finished' : `Ready to merge into ${run.base_branch ?? 'the base branch'}`,
     issues: `Finished · ${notMerged} not merged`,
@@ -482,7 +754,8 @@ export function runBoardCardState(
     // Slots, not sessions at work: a ticket being checked, or waiting for an answer, holds
     // its slot too, and the launcher counts the same way
     atCap: phase === 'running' && freeSlotCount(items, run.config.maxParallel) === 0,
-    label: labels[phase]
+    label: labels[phase],
+    editingDocument
   }
 }
 

@@ -20,6 +20,7 @@ import type {
   DocumentRunnerClaim,
   DocumentSimpleResult,
   DocumentSourceFile,
+  DocumentSourceState,
   DocumentVerifyResult,
   SessionFinalMessage
 } from '@shared/types/document-flow'
@@ -56,6 +57,14 @@ export const documentFlowApi = {
 
   /** The run's source document and whether the file is still on disk. */
   sourceFile: (runId: string): Promise<DocumentSourceFile> => request('sourceFile', { runId }),
+
+  /**
+   * The source document as the post-merge document update sees it (exists, writable, format,
+   * encoding, hash, assets directory). With `backupKey` (an item key) the file is first backed
+   * up into the run directory.
+   */
+  inspectSource: (runId: string, backupKey?: string): Promise<DocumentSourceState> =>
+    request('inspectSource', backupKey === undefined ? { runId } : { runId, backupKey }),
 
   /** Newest first, without events. */
   list: (projectId?: string): Promise<DocumentRunDetail[]> =>

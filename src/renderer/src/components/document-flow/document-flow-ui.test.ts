@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  DOCUMENT_UPDATE_INTERRUPT_DETAIL,
   USER_INTERRUPT_DETAIL,
   WAITING_FOR_WORK_PREFIX,
   WAITING_PREFIX,
@@ -22,9 +23,12 @@ import {
   DOCUMENT_VERIFICATION_LABELS,
   canEditLaunchConfig,
   canEditVerification,
+  canRetryDocumentUpdate,
+  canSkipDocumentUpdate,
   currentRootBranch,
   defaultBaseBranchLabel,
   describeBaseBranch,
+  describeDocumentEditQueue,
   describeItemBranches,
   describeMemberBaseBranches,
   describeMemberVerifyCommands,
@@ -38,12 +42,14 @@ import {
   formatRunProgress,
   isLaunchedRunStatus,
   isRequeueableItem,
+  isQueuedForDocumentUpdate,
   isQueuedForRunMerge,
   isResolvingRunConflicts,
   isUnlaunchedCardPhase,
   isRunDeletable,
   isRunMigrating,
   isSkippableItem,
+  isUpdatingRunDocument,
   itemSessionTarget,
   itemStatusDisplay,
   memberBaseBranch,
@@ -54,6 +60,7 @@ import {
   progressSegments,
   runBoardCardState,
   runCountsLabel,
+  runDocumentEditStatus,
   runStatusDisplay,
   toggleVerificationMethod,
   tonePillClass,
@@ -176,6 +183,51 @@ describe('itemStatusDisplay', () => {
     const working = makeItem({ status: 'fixing', status_detail: 'Fix attempt 1 of 2' })
     expect(itemStatusDisplay(asking, [asking]).dot).toBe('question')
     expect(itemStatusDisplay(working, [working]).dot).toBe('working')
+  })
+
+  it('says a merged or already implemented item is queued to update the document, in pink', () => {
+    for (const status of ['merged', 'skipped'] as const) {
+      const queued = makeItem({ status, document_update_status: 'queued' })
+      expect(itemStatusDisplay(queued, [queued]), status).toEqual({
+        label: 'Waiting in document edit queue',
+        tone: 'document',
+        dot: 'idle'
+      })
+    }
+    expect(tonePillClass('document')).toContain('text-pink-500')
+  })
+
+  it('says an item is editing the document, with a question dot once its session waits on the user', () => {
+    const editing = makeItem({ status: 'merged', document_update_status: 'updating' })
+    expect(itemStatusDisplay(editing, [editing])).toEqual({
+      label: 'Editing document',
+      tone: 'document',
+      dot: 'working'
+    })
+    for (const detail of [`${WAITING_PREFIX}may I edit it?`, DOCUMENT_UPDATE_INTERRUPT_DETAIL]) {
+      const waiting = makeItem({
+        status: 'merged',
+        document_update_status: 'updating',
+        document_update_detail: detail
+      })
+      expect(itemStatusDisplay(waiting, [waiting]), detail).toMatchObject({
+        label: 'Editing document',
+        dot: 'question'
+      })
+    }
+  })
+
+  it('reads as merged or skipped again once the document update is over', () => {
+    for (const document_update_status of ['done', 'failed', 'skipped', null] as const) {
+      const merged = makeItem({ status: 'merged', document_update_status })
+      expect(itemStatusDisplay(merged, [merged]).label, String(document_update_status)).toBe(
+        'Merged'
+      )
+      const skipped = makeItem({ status: 'skipped', document_update_status })
+      expect(itemStatusDisplay(skipped, [skipped]).label, String(document_update_status)).toBe(
+        'Skipped'
+      )
+    }
   })
 })
 
@@ -443,6 +495,178 @@ describe('isQueuedForRunMerge', () => {
   })
 })
 
+describe('document edit lane', () => {
+  const lane = (overrides: Parameters<typeof makeDetail>[0] = {}) =>
+    makeDetail({ id: 'run-1', status: 'running', ...overrides }, [
+      {
+        key: 'A1',
+        status: 'merged',
+        ticket_id: 'ticket-a1',
+        session_id: 's-a1',
+        document_update_status: 'updating'
+      },
+      {
+        key: 'A2',
+        status: 'merged',
+        ticket_id: 'ticket-a2',
+        document_update_status: 'queued',
+        document_update_queued_at: '2026-05-04T10:02:00.000Z'
+      },
+      {
+        key: 'A3',
+        status: 'skipped',
+        ticket_id: 'ticket-a3',
+        document_update_status: 'queued',
+        document_update_queued_at: '2026-05-04T10:01:00.000Z'
+      },
+      { key: 'A4', status: 'merged', ticket_id: 'ticket-a4', document_update_status: 'done' },
+      { key: 'A5', status: 'running', ticket_id: 'ticket-a5', session_id: 's-a5' }
+    ])
+
+  it('places a queued ticket in the lane by when it joined, and names the ticket editing', () => {
+    const runs = { 'run-1': lane() }
+    // A3 was skipped as already implemented: it updates the document all the same
+    expect(isQueuedForDocumentUpdate(runs, 'ticket-a3')).toEqual({
+      position: 1,
+      editingKey: 'A1',
+      sourcePath: '/docs/checkout-redesign.html',
+      merged: false
+    })
+    expect(isQueuedForDocumentUpdate(runs, 'ticket-a2')).toMatchObject({
+      position: 2,
+      merged: true
+    })
+  })
+
+  it('is not queued for the editor, a finished update, a ticket at work or an unknown one', () => {
+    const runs = { 'run-1': lane() }
+    for (const ticketId of ['ticket-a1', 'ticket-a4', 'ticket-a5', 'ticket-x', null]) {
+      expect(isQueuedForDocumentUpdate(runs, ticketId), String(ticketId)).toBeNull()
+    }
+    expect(isQueuedForDocumentUpdate({}, 'ticket-a2')).toBeNull()
+  })
+
+  it('names the editor of the same document in another run, and nobody once the lane is free', () => {
+    const other = makeDetail(
+      { id: 'run-2', status: 'running', source_path: ' /docs/checkout-redesign.html ' },
+      [{ key: 'B1', status: 'merged', ticket_id: 'ticket-b1', document_update_status: 'updating' }]
+    )
+    const free = makeDetail({ id: 'run-1', status: 'running' }, [
+      { key: 'A2', status: 'merged', ticket_id: 'ticket-a2', document_update_status: 'queued' }
+    ])
+    expect(isQueuedForDocumentUpdate({ 'run-1': free, 'run-2': other }, 'ticket-a2')).toEqual({
+      position: 1,
+      editingKey: 'B1',
+      sourcePath: '/docs/checkout-redesign.html',
+      merged: true
+    })
+    expect(isQueuedForDocumentUpdate({ 'run-1': free }, 'ticket-a2')).toMatchObject({
+      editingKey: null
+    })
+    const elsewhere = makeDetail(
+      { id: 'run-2', status: 'running', source_path: '/docs/other.md' },
+      [{ key: 'B1', status: 'merged', document_update_status: 'updating' }]
+    )
+    expect(
+      isQueuedForDocumentUpdate({ 'run-1': free, 'run-2': elsewhere }, 'ticket-a2')?.editingKey
+    ).toBeNull()
+  })
+
+  it('finds the item editing the document by its ticket or its session', () => {
+    const runs = { 'run-1': lane() }
+    expect(isUpdatingRunDocument(runs, { ticketId: 'ticket-a1' })).toBe(true)
+    expect(isUpdatingRunDocument(runs, { sessionId: 's-a1' })).toBe(true)
+    expect(isUpdatingRunDocument(runs, { ticketId: 'ticket-a2' })).toBe(false)
+    expect(isUpdatingRunDocument(runs, { ticketId: 'ticket-a5', sessionId: 's-a5' })).toBe(false)
+    expect(isUpdatingRunDocument(runs, { ticketId: null, sessionId: null })).toBe(false)
+  })
+
+  it('tells an edit at work from one that stopped for the user', () => {
+    const runs = { 'run-1': lane() }
+    expect(runDocumentEditStatus(runs, { ticketId: 'ticket-a1' })).toBe('editing')
+    expect(runDocumentEditStatus(runs, { ticketId: 'ticket-a2' })).toBeNull()
+    for (const detail of [`${WAITING_PREFIX}Allow Bash?`, DOCUMENT_UPDATE_INTERRUPT_DETAIL]) {
+      const waiting = makeDetail({ id: 'run-1', status: 'running' }, [
+        {
+          key: 'A1',
+          status: 'merged',
+          ticket_id: 'ticket-a1',
+          session_id: 's-a1',
+          document_update_status: 'updating',
+          document_update_detail: detail
+        }
+      ])
+      expect(runDocumentEditStatus({ 'run-1': waiting }, { sessionId: 's-a1' })).toBe('waiting')
+      // No moving bar for a session that is not at work.
+      expect(isUpdatingRunDocument({ 'run-1': waiting }, { sessionId: 's-a1' })).toBe(false)
+    }
+  })
+
+  it('says nothing about the lane of a run that is over', () => {
+    const runs = { 'run-1': lane({ status: 'completed' }) }
+    expect(isQueuedForDocumentUpdate(runs, 'ticket-a2')).toBeNull()
+    expect(isUpdatingRunDocument(runs, { ticketId: 'ticket-a1' })).toBe(false)
+  })
+
+  it('tells the place in the lane and who is editing in the pill tooltip', () => {
+    expect(
+      describeDocumentEditQueue({
+        position: 2,
+        editingKey: 'A1',
+        sourcePath: '/docs/checkout-redesign.html',
+        merged: true
+      })
+    ).toBe(
+      'Merged. The orchestrator updates checkout-redesign.html one ticket at a time — #2 in queue; A1 is editing it now.'
+    )
+    expect(
+      describeDocumentEditQueue({
+        position: 1,
+        editingKey: null,
+        sourcePath: '/docs/spec.md',
+        merged: false
+      })
+    ).toBe(
+      'Already implemented. The orchestrator updates spec.md one ticket at a time — #1 in queue.'
+    )
+  })
+
+  it('offers Retry for a failed or skipped update and Skip for a pending one, while the run is on', () => {
+    const run = makeRun({ status: 'running' })
+    const item = (patch: Parameters<typeof makeItem>[0]) =>
+      makeItem({ status: 'merged', session_id: 's-a1', ...patch })
+    expect(canRetryDocumentUpdate(run, item({ document_update_status: 'failed' }))).toBe(true)
+    // Without a session the runner would skip it again at once.
+    expect(
+      canRetryDocumentUpdate(run, item({ document_update_status: 'skipped', session_id: null }))
+    ).toBe(false)
+    expect(canRetryDocumentUpdate(run, item({ document_update_status: 'skipped' }))).toBe(true)
+    expect(canRetryDocumentUpdate(run, item({ document_update_status: 'done' }))).toBe(false)
+    expect(canRetryDocumentUpdate(run, item({ document_update_status: null }))).toBe(false)
+    expect(
+      canRetryDocumentUpdate(
+        makeRun({ status: 'paused' }),
+        item({ document_update_status: 'failed' })
+      )
+    ).toBe(true)
+    expect(
+      canRetryDocumentUpdate(
+        makeRun({ status: 'completed' }),
+        item({ document_update_status: 'failed' })
+      )
+    ).toBe(false)
+    expect(canSkipDocumentUpdate(run, item({ document_update_status: 'queued' }))).toBe(true)
+    expect(canSkipDocumentUpdate(run, item({ document_update_status: 'updating' }))).toBe(true)
+    expect(canSkipDocumentUpdate(run, item({ document_update_status: 'failed' }))).toBe(false)
+    expect(
+      canSkipDocumentUpdate(
+        makeRun({ status: 'cancelled' }),
+        item({ document_update_status: 'queued' })
+      )
+    ).toBe(false)
+  })
+})
+
 describe('progress', () => {
   const items = [
     makeItem({ key: 'A1', status: 'merged' }),
@@ -582,6 +806,55 @@ describe('runBoardCardState', () => {
     expect(state.waiting).toBe(1)
     expect(state.running).toBe(1)
     expect(state.label).toBe('1 waiting for answer')
+  })
+
+  it('says which ticket edits the document while no other session is at work, in pink', () => {
+    const state = runBoardCardState(
+      makeDetail({ status: 'running' }, [
+        { key: 'A1', status: 'merged', document_update_status: 'done' },
+        { key: 'A2', status: 'merged', document_update_status: 'updating' },
+        { key: 'A3', status: 'merged', document_update_status: 'queued' }
+      ])
+    )
+
+    expect(state).toMatchObject({
+      running: 1,
+      waiting: 0,
+      label: 'Editing document · A2',
+      editingDocument: 'A2'
+    })
+  })
+
+  it('keeps counting sessions at work when the editor is not the only one', () => {
+    const state = runBoardCardState(
+      makeDetail({ status: 'running' }, [
+        { key: 'A1', status: 'running' },
+        { key: 'A2', status: 'merged', document_update_status: 'updating' }
+      ])
+    )
+
+    expect(state).toMatchObject({ running: 2, label: '2 working', editingDocument: null })
+  })
+
+  it('counts an editor stopped for the user as waiting for an answer', () => {
+    const state = runBoardCardState(
+      makeDetail({ status: 'running' }, [
+        {
+          key: 'A1',
+          status: 'merged',
+          document_update_status: 'updating',
+          document_update_detail: DOCUMENT_UPDATE_INTERRUPT_DETAIL
+        }
+      ])
+    )
+
+    expect(state).toMatchObject({
+      running: 0,
+      waiting: 1,
+      waitingOnUser: true,
+      label: '1 waiting for answer',
+      editingDocument: null
+    })
   })
 
   it('does not wait on the user for a ticket left out of the run', () => {

@@ -2,11 +2,16 @@ import { describe, expect, it } from 'vitest'
 
 import {
   CLI_FOLLOW_UP_LEAD,
+  DOCUMENT_UPDATE_FOOTER_BLOCK,
+  DOCUMENT_UPDATE_FORMAT_PARAGRAPHS,
   STATUS_FOOTER_INSTRUCTIONS,
   VERIFICATION_LEAD_PARAGRAPH,
   VERIFICATION_PARAGRAPHS,
   buildConflictPrompt,
   buildContinuePrompt,
+  buildDocumentUpdateContinuePrompt,
+  buildDocumentUpdateNudgePrompt,
+  buildDocumentUpdatePrompt,
   buildFixTicket,
   buildLaunchPrompt,
   buildMigrationPrompt,
@@ -18,6 +23,7 @@ import {
   verificationParagraphs,
   withRunRules,
   type ConflictPromptInput,
+  type DocumentUpdatePromptInput,
   type FixTicketInput,
   type LaunchPromptInput,
   type MigrationPromptInput
@@ -689,5 +695,227 @@ describe('verification paragraphs', () => {
     expect(
       withRunRules('do task 11', { interactive: true, sdk: 'claude-code', verification: ['tcu'] })
     ).toBe(['do task 11', LEAD, TCU, ASK_LINE, WAIT_LINE, GUARD_LINE, FOLLOW_UPS_LINE].join('\n\n'))
+  })
+})
+
+const documentUpdate = (
+  overrides: Partial<DocumentUpdatePromptInput> = {}
+): DocumentUpdatePromptInput => ({
+  key: 'A2',
+  title: 'Checkout redesign',
+  sourcePath: '/Users/me/docs/checkout-redesign.html',
+  format: 'html',
+  encoding: 'utf-8',
+  insideRepo: false,
+  integrationBranch: 'doc-factory',
+  branchName: 'tedooo/a2-checkout-redesign',
+  mergeSha: 'abc123def456',
+  verdict: {
+    status: 'done',
+    reason: 'The agent says the task is implemented and committed.',
+    summary: 'Rebuilt the checkout page as a two-column layout.',
+    migrations: [],
+    manualSteps: []
+  },
+  verification: ['tests', 'playwright'],
+  verifyCommand: 'pnpm check',
+  fixAttempts: 0,
+  assetsDir: '/Users/me/docs/checkout-redesign.assets',
+  otherTasks: ['A1', 'A3'],
+  today: '2026-10-19',
+  interactive: true,
+  ...overrides
+})
+
+describe('buildDocumentUpdatePrompt', () => {
+  it('names the source document by its absolute path and forbids the worktree copy and commits', () => {
+    const prompt = buildDocumentUpdatePrompt(documentUpdate())
+    expect(prompt).toContain('The document: `/Users/me/docs/checkout-redesign.html`')
+    expect(prompt).not.toContain('file://')
+    expect(prompt).toContain(
+      'do not edit a copy of it inside your worktree (a file there with the same name is a different file)'
+    )
+    expect(prompt).toContain('do not commit it, stage it or run git in its directory')
+    expect(prompt).toContain('no code changes and no commits')
+    expect(prompt).toContain('never by rewriting the whole file')
+    expect(prompt).toContain('Read the file right before you edit it')
+  })
+
+  it("lifts the ticket's read-only note for the document, but not for the run's text copy", () => {
+    const prompt = buildDocumentUpdatePrompt(
+      documentUpdate({ documentCopyPath: '/Users/me/.hive/document-runs/r1/document.md' })
+    )
+    expect(prompt).toContain(
+      "Your task listed the spec files as read-only: that no longer holds for this file, which you now edit, but it still holds for the run's text copy of it (`/Users/me/.hive/document-runs/r1/document.md`): do not edit that one."
+    )
+    expect(buildDocumentUpdatePrompt(documentUpdate())).toContain(
+      'that no longer holds for this file, which you now edit.'
+    )
+  })
+
+  it('says what was merged, where, and how it was checked', () => {
+    const prompt = buildDocumentUpdatePrompt(documentUpdate())
+    expect(prompt.split('\n', 1)[0]).toBe(
+      'Your task A2 ("Checkout redesign") is merged into `doc-factory` (merge commit `abc123def456`). One last step: record in the document this run was made from what was done, how it was verified, and what is left.'
+    )
+    expect(prompt).toContain(
+      '   - Merged: `tedooo/a2-checkout-redesign` into `doc-factory` at `abc123def456`'
+    )
+    expect(prompt).toContain('   - Status: Done | Partially done | Not done (2026-10-19)')
+    expect(prompt).toContain('- Summary: Rebuilt the checkout page as a two-column layout.')
+    expect(prompt).toContain('- Verification asked for: tests, playwright')
+    expect(prompt).toContain('- Checks after the merge: `pnpm check` passed on `doc-factory`')
+    expect(prompt).toContain('Other tasks of this document (A1, A3) update it too, one at a time')
+    expect(prompt).toContain('3. Edit only the section(s) of task A2.')
+    expect(prompt).toContain('into `/Users/me/docs/checkout-redesign.assets/A2/` (create it)')
+    expect(prompt).toContain('Strike through titles and list items only')
+  })
+
+  it('mentions the fix attempts the checks took, and verification that was not asked for', () => {
+    const prompt = buildDocumentUpdatePrompt(
+      documentUpdate({ fixAttempts: 2, verification: [], verifyCommand: 'pnpm test' })
+    )
+    expect(prompt).toContain(
+      '- Checks after the merge: `pnpm test` passed on `doc-factory` after 2 fix attempts in the integration worktree'
+    )
+    expect(prompt).toContain('- Verification asked for: none (say what you did check, if anything)')
+    expect(buildDocumentUpdatePrompt(documentUpdate({ verifyCommand: null }))).not.toContain(
+      'Checks after the merge'
+    )
+  })
+
+  it.each(['markdown', 'html', 'text'] as const)(
+    'gives the %s paragraph for a %s file',
+    (format) => {
+      const prompt = buildDocumentUpdatePrompt(documentUpdate({ format }))
+      expect(prompt).toContain(`6. ${DOCUMENT_UPDATE_FORMAT_PARAGRAPHS[format]}`)
+      for (const other of ['markdown', 'html', 'text'] as const) {
+        if (other !== format) expect(prompt).not.toContain(DOCUMENT_UPDATE_FORMAT_PARAGRAPHS[other])
+      }
+    }
+  )
+
+  it("keeps the file's encoding, and leaves the git checkout it sits in alone", () => {
+    const prompt = buildDocumentUpdatePrompt(
+      documentUpdate({ encoding: 'windows-1252', insideRepo: true })
+    )
+    expect(prompt).toContain("Keep the file's encoding (`windows-1252`) and its line endings.")
+    expect(prompt).toContain('(it sits inside a git checkout, whose git state stays as it is)')
+    expect(buildDocumentUpdatePrompt(documentUpdate())).not.toContain('sits inside a git checkout')
+  })
+
+  it('adds the merged-as-is caveat only when the verdict was not done', () => {
+    expect(buildDocumentUpdatePrompt(documentUpdate())).not.toContain('Caveat')
+    const prompt = buildDocumentUpdatePrompt(
+      documentUpdate({
+        verdict: {
+          status: 'partial',
+          reason: 'The e2e test is still failing.',
+          summary: 'Mostly done.',
+          migrations: ['drizzle/0042_cart.sql'],
+          manualSteps: ['Set CHECKOUT_V2=1']
+        }
+      })
+    )
+    expect(prompt).toContain(
+      '- Caveat: it was merged although your last message read as not done: The e2e test is still failing. Mark the task ⚠️ PARTIAL unless that was resolved'
+    )
+    expect(prompt).toContain('- Migrations: drizzle/0042_cart.sql')
+    expect(prompt).toContain('- Manual steps: Set CHECKOUT_V2=1')
+  })
+
+  it('says an already implemented task had nothing to merge', () => {
+    const prompt = buildDocumentUpdatePrompt(
+      documentUpdate({ alreadyImplemented: true, mergeSha: null, verifyCommand: null })
+    )
+    expect(prompt.split('\n', 1)[0]).toBe(
+      'Your task A2 ("Checkout redesign") is closed without a merge: your branch had nothing new to merge: the task was already implemented on `doc-factory`. One last step: record in the document this run was made from what was done, how it was verified, and what is left.'
+    )
+    expect(prompt).toContain(
+      '   - Merged: nothing new, the task was already implemented on `doc-factory`'
+    )
+    expect(prompt).toContain('Your branch stays as it is')
+    expect(prompt).not.toContain('is merged into')
+  })
+
+  it("lists each member repository's merge on a connection run", () => {
+    const prompt = buildDocumentUpdatePrompt(
+      documentUpdate({
+        mergeSha: null,
+        memberMerges: [
+          { symlinkName: 'web', mergeSha: 'aaa111' },
+          { symlinkName: 'api', mergeSha: null }
+        ]
+      })
+    )
+    expect(prompt).toContain(
+      'is merged into `doc-factory` (`web/` at `aaa111`, `api/` (nothing new)).'
+    )
+    expect(prompt).toContain(
+      '   - Merged: `tedooo/a2-checkout-redesign` into `doc-factory`: `web/` at `aaa111`, `api/` (nothing new)'
+    )
+  })
+
+  it('ends with the DOCUMENT footer, not the status footer', () => {
+    const prompt = buildDocumentUpdatePrompt(documentUpdate())
+    expect(prompt.endsWith(`\n\n${DOCUMENT_UPDATE_FOOTER_BLOCK}`)).toBe(true)
+    expect(prompt).not.toContain('STATUS: DONE')
+    expect(DOCUMENT_UPDATE_FOOTER_BLOCK.split('\n').slice(2)).toEqual([
+      'DOCUMENT: UPDATED | UNCHANGED | FAILED',
+      'VERIFIED: one line — how the task was verified (methods and results), or "not verified"',
+      'FOLLOW-UPS: none, or a semicolon-separated list',
+      'NOTES: one sentence on what you changed in the document, or why you could not'
+    ])
+  })
+
+  it('differs between interactive and unattended runs only in the asking line', () => {
+    const asking = buildDocumentUpdatePrompt(documentUpdate()).split('\n')
+    const unattended = buildDocumentUpdatePrompt(documentUpdate({ interactive: false })).split('\n')
+    expect(asking).toHaveLength(unattended.length)
+    const differing = asking
+      .map((line, index) => [line, unattended[index]])
+      .filter(([a, b]) => a !== b)
+    expect(differing).toEqual([
+      [
+        'If you need an answer from me, ask through your question tool rather than in the text of your message.',
+        'Do not ask me anything - I am not next to the computer to answer. If something is unclear, make the edit you would recommend and say so in NOTES.'
+      ]
+    ])
+  })
+})
+
+describe('document update follow-ups', () => {
+  it('nudges about an unchanged document, and about a copy edited in the worktree', () => {
+    const clean = buildDocumentUpdateNudgePrompt('/docs/a.md', false)
+    expect(clean).toContain(
+      'The document at `/docs/a.md` is unchanged since I asked you to update it.'
+    )
+    expect(clean).not.toContain('you edited a copy in your worktree')
+    // Whether or not the worktree is known to be dirty, a copy edited there is to be undone.
+    expect(clean).toContain('If you changed a copy of it in your worktree instead, undo that change')
+    const dirty = buildDocumentUpdateNudgePrompt('/docs/a.md', true)
+    expect(dirty).toContain('you edited a copy in your worktree, not the document')
+    for (const prompt of [clean, dirty]) {
+      expect(prompt.endsWith(`\n\n${DOCUMENT_UPDATE_FOOTER_BLOCK}`)).toBe(true)
+    }
+    expect(buildDocumentUpdateNudgePrompt('/docs/a.md', false, false)).toContain(
+      'Do not ask me anything'
+    )
+  })
+
+  it('resumes the document edit, never the task', () => {
+    for (const reason of ['api_error', 'interrupted'] as const) {
+      const prompt = buildDocumentUpdateContinuePrompt(reason)
+      expect(prompt).toContain('Continue updating the document where you left off')
+      expect(prompt).toContain('Do not commit anything')
+      expect(prompt).not.toContain('finish the task and commit')
+      expect(prompt.endsWith(`\n\n${DOCUMENT_UPDATE_FOOTER_BLOCK}`)).toBe(true)
+    }
+    expect(buildDocumentUpdateContinuePrompt('api_error')).toMatch(
+      /^Your last turn ended on an API error\./
+    )
+    expect(buildDocumentUpdateContinuePrompt('interrupted', false)).toContain(
+      'Do not ask me anything'
+    )
   })
 })

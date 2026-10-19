@@ -572,3 +572,260 @@ export function buildContinuePrompt(
     statusFooterInstructions(interactive)
   ].join('\n')
 }
+
+// ── Updating the document ──────────────────────────────────────────────────
+// Once a ticket is merged, its own session is asked to record in the document the run was made
+// from (the user's own file, not the run's copy) what was done, how it was verified and what is
+// left. One session edits the document at a time; the runner judges the edit by the file's hash
+// and reads the DOCUMENT footer only for the words it shows.
+
+export type DocumentUpdateFormat = 'html' | 'markdown' | 'text'
+
+/** How each format is marked up: fixed strings, one per format the document can be. */
+export const DOCUMENT_UPDATE_FORMAT_PARAGRAPHS: Record<DocumentUpdateFormat, string> = {
+  markdown:
+    'This is a Markdown file: strike through with `~~…~~`; tick a `- [ ]` checklist item as `- [x]`; write the notes block as a `> ` blockquote list right under the heading; link screenshots as `![what it shows](relative/path.png)`.',
+  html: 'This is an HTML file: strike through with `<s>…</s>` (or `<del>` if the document uses it); put the status in the heading as a short `<span>` badge ("✅ DONE", "⚠️ PARTIAL") styled like the document\'s own badges; write the notes block as a `<div>` with a `<ul>` right after the heading, reusing the document\'s own classes; screenshots as `<img src="relative/path.png" alt="…">` sized to fit. Keep the file valid HTML; add no scripts or external stylesheets.',
+  text: 'This is a plain-text file: it has no strikethrough, so prefix the title with `[✅ DONE]` or `[⚠️ PARTIAL]`, start item lines with ✅, ⚠️ or ❌, write the notes as indented lines under the title, and give screenshot paths as plain paths.'
+}
+
+/** The asking line of a document update in a run whose agents may not ask. */
+const DOCUMENT_UPDATE_DO_NOT_ASK =
+  'Do not ask me anything - I am not next to the computer to answer. If something is unclear, make the edit you would recommend and say so in NOTES.'
+
+/** The block a document update ends with; `parseDocumentUpdateFooter` reads it. */
+export const DOCUMENT_UPDATE_FOOTER_BLOCK = `End your final message with exactly this block:
+
+DOCUMENT: UPDATED | UNCHANGED | FAILED
+VERIFIED: one line — how the task was verified (methods and results), or "not verified"
+FOLLOW-UPS: none, or a semicolon-separated list
+NOTES: one sentence on what you changed in the document, or why you could not`
+
+/** The asking line for the run's current setting, then the DOCUMENT footer. */
+export function documentUpdateFooterInstructions(interactive: boolean): string {
+  return `${interactive ? STATUS_FOOTER_ASK : DOCUMENT_UPDATE_DO_NOT_ASK}\n\n${DOCUMENT_UPDATE_FOOTER_BLOCK}`
+}
+
+/** One member repository's merge of the task, on a connection run. */
+export interface DocumentUpdateMemberMerge {
+  /** Directory name of the member inside the connection directory (`web`). */
+  symlinkName: string
+  /** The member's merge commit; null when that member had nothing new to merge. */
+  mergeSha: string | null
+}
+
+export interface DocumentUpdatePromptInput {
+  key: string
+  title: string
+  /** Absolute path of the document the run was made from (`DocumentRun.source_path`), not the run's copy. */
+  sourcePath: string
+  /**
+   * The run's text copy of the document (`DocumentRun.document_path`), which the ticket's
+   * description lists among its read-only spec files; never the file to edit.
+   */
+  documentCopyPath?: string | null
+  format: DocumentUpdateFormat
+  /** The file's encoding as detected (`utf-8`, `windows-1252`); null when unknown. */
+  encoding: string | null
+  /** The document sits inside a git work tree (often the project's own main checkout). */
+  insideRepo: boolean
+  integrationBranch: string
+  /** The task's branch; null when not recorded. */
+  branchName: string | null
+  /** The merge commit on the integration branch; null when there is none (or a connection run). */
+  mergeSha: string | null
+  /** Connection projects: the merge of each member repository. */
+  memberMerges?: readonly DocumentUpdateMemberMerge[] | null
+  /** What the run last made of the agent's message; null when it was never judged. */
+  verdict: Pick<
+    DocumentRunVerdict,
+    'status' | 'reason' | 'summary' | 'migrations' | 'manualSteps'
+  > | null
+  /** How the agent was asked to verify its work (none while the run skips verification). */
+  verification: readonly DocumentVerificationMethod[]
+  /** The run's verify command, which passed on the integration branch after this merge; null when none ran. */
+  verifyCommand: string | null
+  /** Fix sessions it took for the verify command to pass after the merge. */
+  fixAttempts: number
+  /** `<dirname>/<stem>.assets` next to the document; screenshots go in `<assetsDir>/<KEY>/`. */
+  assetsDir: string
+  /** Keys of the run's other tasks, whose sections must be left alone. */
+  otherTasks: readonly string[]
+  /** YYYY-MM-DD, for the notes block. */
+  today: string
+  /** The run's "agents may ask" setting, as it is now. */
+  interactive: boolean
+  /**
+   * The task was closed without a merge: an unattended run found that its branch had nothing new
+   * to merge, because the task was already implemented.
+   */
+  alreadyImplemented?: boolean
+}
+
+const VERIFICATION_LABELS: Record<DocumentVerificationMethod, string> = {
+  tcu: 'tcu (computer use)',
+  playwright: 'playwright',
+  tests: 'tests'
+}
+
+/** "`web/` at `abc`, `api/` (nothing new)": where each member's merge sits. */
+const listMemberMerges = (members: readonly DocumentUpdateMemberMerge[]): string =>
+  members
+    .map((member) =>
+      member.mergeSha
+        ? `\`${member.symlinkName}/\` at \`${member.mergeSha}\``
+        : `\`${member.symlinkName}/\` (nothing new)`
+    )
+    .join(', ')
+
+/** The opening line: what happened to the task, and what is asked now. */
+function documentUpdateLead(input: DocumentUpdatePromptInput, title: string): string {
+  const task = `Your task ${input.key}${title ? ` ("${title}")` : ''}`
+  const ask =
+    'One last step: record in the document this run was made from what was done, how it was verified, and what is left.'
+  if (input.alreadyImplemented) {
+    return `${task} is closed without a merge: your branch had nothing new to merge: the task was already implemented on \`${input.integrationBranch}\`. ${ask}`
+  }
+  const members = input.memberMerges && input.memberMerges.length > 0 ? input.memberMerges : null
+  const where = members
+    ? ` (${listMemberMerges(members)})`
+    : input.mergeSha
+      ? ` (merge commit \`${input.mergeSha}\`)`
+      : ''
+  return `${task} is merged into \`${input.integrationBranch}\`${where}. ${ask}`
+}
+
+/** The "Merged:" line of the notes block. */
+function mergedNote(input: DocumentUpdatePromptInput): string {
+  if (input.alreadyImplemented) {
+    return `nothing new, the task was already implemented on \`${input.integrationBranch}\``
+  }
+  const members = input.memberMerges && input.memberMerges.length > 0 ? input.memberMerges : null
+  const branch = input.branchName ? `\`${input.branchName}\` into ` : 'into '
+  if (members) return `${branch}\`${input.integrationBranch}\`: ${listMemberMerges(members)}`
+  return `${branch}\`${input.integrationBranch}\`${input.mergeSha ? ` at \`${input.mergeSha}\`` : ''}`
+}
+
+/** One line of text that ends as a sentence does, without doubling a full stop. */
+const asSentence = (text: string): string => {
+  const line = text.replace(/\s+/g, ' ').trim()
+  return /[.!?]$/.test(line) ? line : `${line}.`
+}
+
+const listOrNone = (entries: readonly string[] | undefined): string => {
+  const cleaned = (entries ?? []).map((entry) => entry.replace(/\s+/g, ' ').trim()).filter(Boolean)
+  return cleaned.length > 0 ? cleaned.join('; ') : 'none'
+}
+
+/**
+ * Sent to a merged ticket's own session (or one an unattended run closed as already
+ * implemented) to update the user's document: mark the task done, and add a short notes block
+ * on what was done, how it was verified, the screenshots and the follow-ups. The file is named
+ * by its plain absolute path, because the agent edits it with its own tools; a copy of the
+ * document inside the worktree is a different file.
+ */
+export function buildDocumentUpdatePrompt(input: DocumentUpdatePromptInput): string {
+  const title = input.title.replace(/\s+/g, ' ').trim()
+  const key = input.key
+  const verdict = input.verdict
+  const assets = `${input.assetsDir.replace(/[\\/]+$/, '')}/${key}/`
+  const others =
+    input.otherTasks.length > 0
+      ? `Other tasks of this document (${input.otherTasks.join(', ')}) update it too, one at a time, and I may have it open.`
+      : 'I may have it open.'
+  const encoding = input.encoding
+    ? `Keep the file's encoding (\`${input.encoding}\`) and its line endings.`
+    : "Keep the file's encoding and its line endings."
+  const facts = [
+    `- Summary: ${verdict?.summary?.replace(/\s+/g, ' ').trim() || 'none recorded'}`,
+    ...(verdict && verdict.status !== 'done' && !input.alreadyImplemented
+      ? [
+          `- Caveat: it was merged although your last message read as not done: ${asSentence(verdict.reason)} Mark the task ⚠️ PARTIAL unless that was resolved, and list what is missing under Follow-ups.`
+        ]
+      : []),
+    input.verification.length > 0
+      ? `- Verification asked for: ${input.verification.map((method) => VERIFICATION_LABELS[method]).join(', ')}`
+      : '- Verification asked for: none (say what you did check, if anything)',
+    ...(input.verifyCommand
+      ? [
+          `- Checks after the merge: \`${input.verifyCommand}\` passed on \`${input.integrationBranch}\`${
+            input.fixAttempts > 0
+              ? ` after ${input.fixAttempts} fix attempt${input.fixAttempts === 1 ? '' : 's'} in the integration worktree`
+              : ''
+          }`
+        ]
+      : []),
+    `- Migrations: ${listOrNone(verdict?.migrations)}`,
+    `- Manual steps: ${listOrNone(verdict?.manualSteps)}`
+  ]
+  return [
+    documentUpdateLead(input, title),
+    '',
+    `The document: \`${input.sourcePath}\``,
+    '',
+    `1. Edit that file in place, at that absolute path. It is my own file, not part of your branch: do not edit a copy of it inside your worktree (a file there with the same name is a different file), do not move or rename it, and do not commit it, stage it or run git in its directory${
+      input.insideRepo ? ' (it sits inside a git checkout, whose git state stays as it is)' : ''
+    }. Your branch ${input.alreadyImplemented ? 'stays' : 'is merged and stays'} as it is: no code changes and no commits. Your task listed the spec files as read-only: that no longer holds for this file, which you now edit${
+      input.documentCopyPath
+        ? `, but it still holds for the run's text copy of it (\`${input.documentCopyPath}\`): do not edit that one`
+        : ''
+    }.`,
+    `2. ${others} Read the file right before you edit it, and change it with small targeted edits, never by rewriting the whole file. If it changed while you worked, read it again and redo your edit.`,
+    `3. Edit only the section(s) of task ${key}. Where ${key} is also listed elsewhere (a table of contents, a task table, a checklist), update only its own row or line. Never change other tasks' sections. Keep the document's formatting, headings, anchors, ids and the wording of the spec.`,
+    '4. Mark what is done:',
+    "   - The task's title: ✅ DONE and struck through when the task is done; ⚠️ PARTIAL (not struck through) when only part of it is.",
+    '   - Each item of its checklist, acceptance criteria or sub-tasks: struck through with ✅ when done, ⚠️ and what is missing when partly done, ❌ and why when not done.',
+    '   Strike through titles and list items only; keep the paragraphs of the spec readable.',
+    "5. Right under the task's title add one short notes block (replace the one an earlier update added, if any):",
+    `   - Status: Done | Partially done | Not done (${input.today})`,
+    '   - What was done: two or three sentences',
+    `   - Merged: ${mergedNote(input)}`,
+    '   - Verified: for each way you checked, what you ran or walked through and what it returned: commands, test names, the flow. Say "not verified" and why where you could not check. Never describe a check you did not run.',
+    `   - Screenshots: copy the screenshots from your verification that show the change into \`${assets}\` (create it) and link them with a path relative to the document. Leave this line out when you took none.`,
+    '   - Migrations and manual steps: what a human must still do, or "none"',
+    '   - Follow-ups: work this task leaves for later (gaps, bugs you noticed, decisions you made alone that I should review), each as an open to-do item, or "None"',
+    `6. ${DOCUMENT_UPDATE_FORMAT_PARAGRAPHS[input.format]} ${encoding}`,
+    '',
+    'What the run knows of your task, from your earlier messages (correct it from what you actually did):',
+    ...facts,
+    '',
+    documentUpdateFooterInstructions(input.interactive)
+  ].join('\n')
+}
+
+/**
+ * Sent once when the agent's turn ended and the document's bytes are what they were before the
+ * prompt. With uncommitted changes in its worktree, the agent most likely edited the copy there.
+ */
+export function buildDocumentUpdateNudgePrompt(
+  sourcePath: string,
+  worktreeDirty: boolean,
+  interactive = true
+): string {
+  const lead = worktreeDirty
+    ? `The document at \`${sourcePath}\` is unchanged, and your worktree has uncommitted changes: you edited a copy in your worktree, not the document. Undo those changes (your branch is merged and stays as it is), then make the edit in the file at that absolute path.`
+    : `The document at \`${sourcePath}\` is unchanged since I asked you to update it. Make the edit in the file at that absolute path (not a copy of it in your worktree), then check that it was saved. If you changed a copy of it in your worktree instead, undo that change: your branch is merged and stays as it is.`
+  return [
+    lead,
+    '',
+    'If you cannot edit it, say why in NOTES and report FAILED. Do not commit anything.',
+    '',
+    documentUpdateFooterInstructions(interactive)
+  ].join('\n')
+}
+
+/** Sent to resume a document update that ended on an API error or was cut off. */
+export function buildDocumentUpdateContinuePrompt(
+  reason: 'api_error' | 'interrupted',
+  interactive = true
+): string {
+  const lead =
+    reason === 'api_error'
+      ? 'Your last turn ended on an API error.'
+      : 'Your last turn was interrupted before it finished.'
+  return [
+    `${lead} Continue updating the document where you left off: read it again first to see what you already changed, then finish the edit. Do not commit anything and do not change your branch.`,
+    '',
+    documentUpdateFooterInstructions(interactive)
+  ].join('\n')
+}

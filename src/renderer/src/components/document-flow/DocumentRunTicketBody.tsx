@@ -2,6 +2,7 @@ import {
   AlertTriangle,
   CircleCheck,
   CircleSlash,
+  FilePenLine,
   FileText,
   Loader2,
   MessageCircleQuestion,
@@ -72,8 +73,9 @@ interface DocumentRunTicketBodyProps {
 /**
  * The body of a run's ticket card, under the ticket's own title: the "Document run" marker,
  * one progress bar (moving while the run is on, like any ticket at work, and again in its own
- * color while a session executes the run's migrations), the sessions at work or waiting for an
- * answer (or how the run ended) and merged of total, then a footer naming the document.
+ * color while a session executes the run's migrations, or in pink while the only session at work
+ * is a merged ticket's updating the document), the sessions at work or waiting for an answer
+ * (or how the run ended) and merged of total, then a footer naming the document.
  */
 export function DocumentRunTicketBody({
   runId,
@@ -140,6 +142,7 @@ export function DocumentRunTicketBody({
                 mode="build"
                 isAsking={state.waitingOnUser}
                 isRunningMigrations={state.phase === 'migrating'}
+                isEditingDocument={state.editingDocument !== null}
                 className="mt-2 w-full"
               />
             </div>
@@ -164,7 +167,9 @@ export function DocumentRunTicketBody({
                 'inline-flex min-w-0 items-center gap-1 font-medium',
                 state.waitingOnUser && !state.paused
                   ? 'text-orange-500'
-                  : LABEL_CLASSES[state.phase]
+                  : state.editingDocument
+                    ? 'text-pink-500'
+                    : LABEL_CLASSES[state.phase]
               )}
               data-testid={`kanban-docflow-run-running-${runId}`}
             >
@@ -173,6 +178,7 @@ export function DocumentRunTicketBody({
                 <Loader2 className="h-2.5 w-2.5 shrink-0 animate-spin" />
               )}
               {state.phase === 'ready' && <CircleCheck className="h-2.5 w-2.5 shrink-0" />}
+              {state.editingDocument && <FilePenLine className="h-2.5 w-2.5 shrink-0" />}
               {state.phase === 'extract_failed' && (
                 <AlertTriangle className="h-2.5 w-2.5 shrink-0" />
               )}

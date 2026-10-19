@@ -4,6 +4,7 @@ import {
   Copy,
   Database,
   ExternalLink,
+  FileClock,
   FileText,
   FlagTriangleRight,
   GitBranch,
@@ -79,9 +80,11 @@ import {
   isLaunchedRunStatus,
   isRunDeletable,
   isRunMigrating,
+  itemSessionTarget,
   MIGRATIONS_WAITING_LABEL,
   RUNNING_MIGRATIONS_LABEL,
   progressSegments,
+  runDocumentEditState,
   runStatusDisplay,
   shortSha,
   type StatusDisplay
@@ -323,6 +326,7 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
   const summary = summarizeItems(items)
   const segments = progressSegments(summary)
   const active = isActiveRunStatus(run.status)
+  const documentEdit = runDocumentEditState(run, items)
 
   const perform = (kind: BusyKind, action: Promise<void>, failure: string): void => {
     setBusy(kind)
@@ -423,6 +427,58 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
             </span>
           )}
         </div>
+
+        {/* The document edit lane: merged tickets update the source document one at a time */}
+        {documentEdit && (
+          <div
+            className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px]"
+            data-testid="docflow-document-lane"
+          >
+            {documentEdit.editing && (
+              <>
+                <span
+                  className="flex items-center gap-1.5 font-medium text-pink-500"
+                  data-testid="docflow-document-editing"
+                >
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Editing document: {documentEdit.editing.key}
+                </span>
+                {/* Its session stopped for the user: said in words and in orange, as elsewhere */}
+                {documentEdit.editingWaiting && (
+                  <span
+                    className="flex items-center gap-1 font-medium text-orange-500"
+                    data-testid="docflow-document-editing-waiting"
+                  >
+                    <MessageCircleQuestion className="h-3 w-3" />
+                    Waiting for you
+                  </span>
+                )}
+                {itemSessionTarget(run, documentEdit.editing) && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 text-xs"
+                    data-testid="docflow-open-document-session"
+                    onClick={() => documentEdit.editing && itemActions.open(documentEdit.editing)}
+                  >
+                    {itemActions.openLabel}
+                  </Button>
+                )}
+              </>
+            )}
+            {documentEdit.queued > 0 && (
+              <span
+                className="flex items-center gap-1 text-muted-foreground"
+                data-testid="docflow-document-edit-queue"
+              >
+                {!documentEdit.editing && <FileClock className="h-3 w-3 shrink-0 text-pink-500" />}
+                {documentEdit.editing ? '· ' : ''}
+                {documentEdit.queued} waiting in document edit queue
+              </span>
+            )}
+          </div>
+        )}
 
         {run.integration_branch && (
           <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] text-muted-foreground">

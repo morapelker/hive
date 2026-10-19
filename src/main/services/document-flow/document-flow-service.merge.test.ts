@@ -1279,7 +1279,14 @@ describe('finalize', () => {
       type: 'completed',
       message: 'Run finished: 3 of 3 tickets merged into doc-factory'
     })
-    expect(harness.published.slice(before).map((event) => event.reason)).toEqual(['run', 'event'])
+    // The run, then its log: the run status for the document (seeded at a path that does not
+    // exist, so it could not be written), then "Run finished".
+    expect(harness.published.slice(before).map((event) => event.reason)).toEqual([
+      'run',
+      'event',
+      'event'
+    ])
+    expect(detail.events.at(-2)?.type).toBe('document_summary_failed')
     // The base branch is still where it was.
     expect(repo.git(repo.projectPath, 'rev-parse', 'refs/heads/main')).toBe(repo.baseSha)
   })

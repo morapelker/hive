@@ -10,6 +10,7 @@ import {
   type DocumentRunItemPatch,
   type DocumentRunMember,
   type DocumentRunVerdict,
+  type DocumentSourceState,
   type DocumentVerifyResult,
   type SessionFinalMessage
 } from '@shared/types/document-flow'
@@ -164,6 +165,13 @@ export function makeItem(overrides: Partial<DocumentRunItem> = {}): DocumentRunI
     retry_at: null,
     wait_until: null,
     wait_timeouts: 0,
+    document_update_status: null,
+    document_update_detail: null,
+    document_update_queued_at: null,
+    document_update_attempts: 0,
+    document_update_hash: null,
+    document_update_report: null,
+    document_update_finished_at: null,
     created_at: TEST_NOW,
     updated_at: TEST_NOW,
     started_at: null,
@@ -199,6 +207,15 @@ export interface WorldOptions {
 }
 
 export type RunnerWorld = ReturnType<typeof createWorld>
+
+/** A source document on the fake disk. */
+export interface FakeDocument {
+  format: NonNullable<DocumentSourceState['format']>
+  encoding: string
+  writable: boolean
+  insideRepo: boolean
+  version: number
+}
 
 /** The run columns of a launched connection run: no integration worktree, an instance and members. */
 const CONNECTION_RUN: Partial<DocumentRun> = {
@@ -277,6 +294,8 @@ export function createWorld(options: WorldOptions = {}) {
   const closedSessions = new Set<string>()
   /** Sessions that exist as rows but whose agent never started. */
   const unstartedSessions = new Set<string>()
+  /** Source documents on the fake disk, by path; `version` changes with every edit. */
+  const documents = new Map<string, FakeDocument>()
   const notices: RunnerNotice[] = []
   const events: { itemId: string | null; type: string; message: string }[] = []
   const followups: { sessionId: string; ticketId: string; prompt: string }[] = []
@@ -284,42 +303,53 @@ export function createWorld(options: WorldOptions = {}) {
   const launches: TicketLaunchSpec[] = []
   let counter = 0
 
-  for (const item of items) {
-    if (!item.ticket_id) continue
-    tickets.set(item.ticket_id, {
-      id: item.ticket_id,
-      project_id: PROJECT_ID,
-      title: item.title,
-      // No brief of its own unless a test writes one: the runner then builds the standard one.
-      description: '',
-      attachments: [],
-      column: 'todo',
-      current_session_id: null,
-      worktree_id: null
-    })
+  const addTickets = (owned: readonly DocumentRunItem[]): void => {
+    for (const item of owned) {
+      if (!item.ticket_id) continue
+      tickets.set(item.ticket_id, {
+        id: item.ticket_id,
+        project_id: PROJECT_ID,
+        title: item.title,
+        // No brief of its own unless a test writes one: the runner then builds the standard one.
+        description: '',
+        attachments: [],
+        column: 'todo',
+        current_session_id: null,
+        worktree_id: null
+      })
+    }
   }
+  addTickets(items)
 
   const notifyListeners = (): void => {
     for (const listener of [...listeners]) listener()
   }
 
-  const detail = (): DocumentRunDetail => runs.get(RUN_ID) as DocumentRunDetail
+  const detail = (runId: string = RUN_ID): DocumentRunDetail => {
+    const found = runs.get(runId)
+    if (!found) throw new Error(`no run ${runId}`)
+    return found
+  }
 
-  const item = (key: string): DocumentRunItem => {
-    const found = detail().items.find((candidate) => candidate.key === key)
+  const item = (key: string, runId: string = RUN_ID): DocumentRunItem => {
+    const found = detail(runId).items.find((candidate) => candidate.key === key)
     if (!found) throw new Error(`no item ${key}`)
     return found
   }
 
   /** Write an item row the way the server would, bypassing the runner (a user action). */
-  const setItem = (key: string, patch: Partial<DocumentRunItem>): DocumentRunItem => {
-    const current = detail()
+  const setItem = (
+    key: string,
+    patch: Partial<DocumentRunItem>,
+    runId: string = RUN_ID
+  ): DocumentRunItem => {
+    const current = detail(runId)
     const updated = {
-      ...item(key),
+      ...item(key, runId),
       ...patch,
       updated_at: new Date(Date.now()).toISOString()
     }
-    runs.set(RUN_ID, {
+    runs.set(runId, {
       ...current,
       items: current.items.map((candidate) => (candidate.key === key ? updated : candidate))
     })
@@ -327,10 +357,61 @@ export function createWorld(options: WorldOptions = {}) {
     return updated
   }
 
-  const setRun = (patch: Partial<DocumentRun>): void => {
-    const current = detail()
-    runs.set(RUN_ID, { ...current, run: { ...current.run, ...patch } })
+  const setRun = (patch: Partial<DocumentRun>, runId: string = RUN_ID): void => {
+    const current = detail(runId)
+    runs.set(runId, { ...current, run: { ...current.run, ...patch } })
     notifyListeners()
+  }
+
+  /**
+   * A second run in the store (made from the same document, say), with items of its own. Their
+   * ids and tickets carry the run's id, so its keys may repeat the first run's.
+   */
+  const addRun = (
+    runId: string,
+    extra: { run?: Partial<DocumentRun>; items?: Partial<DocumentRunItem>[] } = {}
+  ): DocumentRunDetail => {
+    const owned = (extra.items ?? [{ key: 'A' }]).map((entry, position) => {
+      const key = entry.key ?? 'A'
+      return makeItem({
+        id: `${runId}-item-${key}`,
+        ticket_id: `${runId}-ticket-${key}`,
+        position,
+        ...entry,
+        run_id: runId
+      })
+    })
+    const added: DocumentRunDetail = {
+      run: makeRun({ ...extra.run, id: runId }),
+      items: owned,
+      events: []
+    }
+    runs.set(runId, added)
+    addTickets(owned)
+    notifyListeners()
+    return added
+  }
+
+  /** Put the run's source document on the fake disk, so the document update can edit it. */
+  const putDocument = (
+    overrides: Partial<FakeDocument> = {},
+    path: string = detail().run.source_path
+  ): void => {
+    documents.set(path, {
+      format: 'html',
+      encoding: 'utf-8',
+      writable: true,
+      insideRepo: false,
+      version: 1,
+      ...overrides
+    })
+  }
+
+  /** An agent's edit of the source document: its bytes, and so its hash, change. */
+  const editDocument = (path: string = detail().run.source_path): void => {
+    const document = documents.get(path)
+    if (!document) throw new Error(`no document at ${path}`)
+    documents.set(path, { ...document, version: document.version + 1 })
   }
 
   const setSignal = (sessionId: string, signal: SessionSignal): void => {
@@ -491,8 +572,42 @@ export function createWorld(options: WorldOptions = {}) {
       if (rolledBack) setItem(rolledBack.key, { pre_merge_sha: null, merge_sha: null })
       return { success: true } as { success: boolean; error?: string }
     }),
-    finalize: vi.fn(async (_runId: string) => {
-      const current = detail()
+    // The source document is not on disk unless a test puts it there (`putDocument`): the
+    // document update is then skipped.
+    inspectSource: vi.fn(
+      async (runId: string, backupKey?: string): Promise<DocumentSourceState> => {
+        const path = detail(runId).run.source_path
+        const state: DocumentSourceState = {
+          path,
+          exists: false,
+          writable: false,
+          format: null,
+          encoding: null,
+          sha256: null,
+          size: null,
+          insideRepo: false,
+          assetsDir: '/docs/checkout.assets',
+          backupPath: null
+        }
+        const document = documents.get(path)
+        if (!document) return state
+        return {
+          ...state,
+          exists: true,
+          writable: document.writable,
+          format: document.format,
+          encoding: document.encoding,
+          sha256: `sha-${document.version}`,
+          size: 1000 + document.version,
+          insideRepo: document.insideRepo,
+          backupPath: backupKey
+            ? `${detail(runId).run.run_dir}/doc-backups/${backupKey}.html`
+            : null
+        }
+      }
+    ),
+    finalize: vi.fn(async (runId: string) => {
+      const current = detail(runId)
       // The service's rule: a skipped ticket is not an issue.
       const settled = current.items
         .filter((candidate) => candidate.selected)
@@ -534,10 +649,10 @@ export function createWorld(options: WorldOptions = {}) {
       runs.set(applied.run.id, applied)
       notifyListeners()
     }),
-    updateItem: vi.fn(async (_runId: string, itemId: string, patch: DocumentRunItemPatch) => {
-      const target = detail().items.find((candidate) => candidate.id === itemId)
+    updateItem: vi.fn(async (runId: string, itemId: string, patch: DocumentRunItemPatch) => {
+      const target = detail(runId).items.find((candidate) => candidate.id === itemId)
       if (!target) throw new Error(`Unknown item ${itemId}`)
-      return setItem(target.key, patch)
+      return setItem(target.key, patch, runId)
     }),
     subscribe: (listener: () => void) => {
       listeners.add(listener)
@@ -662,6 +777,10 @@ export function createWorld(options: WorldOptions = {}) {
     item,
     setItem,
     setRun,
+    addRun,
+    documents,
+    putDocument,
+    editDocument,
     setSignal,
     endTurn,
     launchOk,
@@ -671,8 +790,13 @@ export function createWorld(options: WorldOptions = {}) {
       if (!sessionId) throw new Error(`${key} has no session`)
       return sessionId
     },
-    statuses: (): Record<string, string> =>
-      Object.fromEntries(detail().items.map((candidate) => [candidate.key, candidate.status]))
+    statuses: (runId: string = RUN_ID): Record<string, string> =>
+      Object.fromEntries(detail(runId).items.map((candidate) => [candidate.key, candidate.status])),
+    /** Each item's document update status, by key. */
+    documentUpdates: (runId: string = RUN_ID): Record<string, string | null> =>
+      Object.fromEntries(
+        detail(runId).items.map((candidate) => [candidate.key, candidate.document_update_status])
+      )
   }
 }
 

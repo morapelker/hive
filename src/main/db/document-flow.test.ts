@@ -43,6 +43,17 @@ const TABLES = [
   'session_final_messages'
 ]
 
+/** The item columns of the post-merge document update (v65). */
+const DOCUMENT_UPDATE_COLUMNS = [
+  'document_update_status',
+  'document_update_detail',
+  'document_update_queued_at',
+  'document_update_attempts',
+  'document_update_hash',
+  'document_update_report',
+  'document_update_finished_at'
+]
+
 const tempDirs: string[] = []
 const openDbs: DatabaseService[] = []
 
@@ -231,6 +242,21 @@ describe('document flow schema', () => {
     )
   })
 
+  it('ships the document update of a ticket as the v65 migration, columns added by the repair step', () => {
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(65)
+    const migration = MIGRATIONS.find((m) => m.version === 65)
+    expect(migration?.name).toBe('add_document_run_item_document_update')
+    // Comment only: safeAddColumn() adds the columns, so a replay cannot fail on a duplicate.
+    expect(migration?.up.replace(/--.*$/gm, '').trim()).toBe('')
+    expect(migration?.down.replace(/--.*$/gm, '').trim()).toBe('')
+    for (const column of DOCUMENT_UPDATE_COLUMNS) {
+      expect(migration?.up).toContain(`document_run_items.${column}`)
+    }
+    expect(DOCUMENT_FLOW_TABLES_SQL).toMatch(
+      /wait_timeouts\s+INTEGER NOT NULL DEFAULT 0,\s+document_update_status\s+TEXT DEFAULT NULL,\s+document_update_detail\s+TEXT DEFAULT NULL,\s+document_update_queued_at\s+TEXT DEFAULT NULL,\s+document_update_attempts\s+INTEGER NOT NULL DEFAULT 0,\s+document_update_hash\s+TEXT DEFAULT NULL,\s+document_update_report\s+TEXT DEFAULT NULL,\s+document_update_finished_at TEXT DEFAULT NULL,\s+created_at/
+    )
+  })
+
   it('keeps the migration versions strictly increasing', () => {
     for (let i = 1; i < MIGRATIONS.length; i++) {
       expect(MIGRATIONS[i].version).toBeGreaterThan(MIGRATIONS[i - 1].version)
@@ -402,6 +428,61 @@ describeIf('document flow tables', () => {
     upgraded.close()
     expect(openDb(path).getDocumentRunItem(item.id)).toMatchObject({
       verification: ['tcu', 'playwright']
+    })
+  })
+
+  it('adds the document update columns to an items table created by an earlier build', () => {
+    const path = makeDbPath()
+    const db = openDb(path)
+    const run = makeRun(db, makeProject(db), { id: 'run-old' })
+    const [item] = db.replaceDocumentRunItems(run.id, [draft('A1')])
+    const raw = db.getRawDb()
+    for (const column of DOCUMENT_UPDATE_COLUMNS) {
+      raw.exec(`ALTER TABLE document_run_items DROP COLUMN ${column}`)
+    }
+    db.setSetting('schema_version', '64')
+    db.close()
+
+    const upgraded = openDb(path)
+    expect(upgraded.getSetting('schema_version')).toBe(String(CURRENT_SCHEMA_VERSION))
+    // The ticket of the earlier build reads as one the document update never applied to.
+    expect(upgraded.getDocumentRunItem(item.id)).toEqual(item)
+    expect(upgraded.getDocumentRunItem(item.id)).toMatchObject({
+      document_update_status: null,
+      document_update_detail: null,
+      document_update_queued_at: null,
+      document_update_attempts: 0,
+      document_update_hash: null,
+      document_update_report: null,
+      document_update_finished_at: null
+    })
+    const report = {
+      outcome: 'updated' as const,
+      verified: 'tests: 12 passed',
+      followUps: ['Add the empty state'],
+      notes: 'Struck A1 through and added its notes.'
+    }
+    expect(
+      upgraded.updateDocumentRunItem(item.id, {
+        document_update_status: 'done',
+        document_update_attempts: 1,
+        document_update_hash: 'abc123',
+        document_update_report: report,
+        document_update_finished_at: '2026-03-01T10:00:00.000Z'
+      })
+    ).toMatchObject({
+      document_update_status: 'done',
+      document_update_attempts: 1,
+      document_update_hash: 'abc123',
+      document_update_report: report,
+      document_update_finished_at: '2026-03-01T10:00:00.000Z'
+    })
+
+    // Replayed on every start: the columns are there already.
+    upgraded.close()
+    expect(openDb(path).getDocumentRunItem(item.id)).toMatchObject({
+      document_update_status: 'done',
+      document_update_report: report
     })
   })
 })

@@ -53,6 +53,7 @@ export type RunnerApi = Pick<
   | 'rollbackMerge'
   | 'finalize'
   | 'logEvent'
+  | 'inspectSource'
 >
 
 export type RunnerTicket = Pick<

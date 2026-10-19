@@ -84,7 +84,10 @@ import {
 } from '@/lib/token-utils'
 import { useSettingsStore, resolveModelForSdk } from '@/stores/useSettingsStore'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
-import { isResolvingRunConflicts } from '@/components/document-flow/document-flow-ui'
+import {
+  isResolvingRunConflicts,
+  isUpdatingRunDocument
+} from '@/components/document-flow/document-flow-ui'
 import type { SelectedModel } from '@/stores/useSettingsStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
 import { usePermissionStore } from '@/stores/usePermissionStore'
@@ -839,6 +842,10 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
   // A document run's ticket session that was told to resolve merge conflicts: its bar is red.
   const isResolvingConflicts = useDocumentFlowStore((s) =>
     isResolvingRunConflicts(s.runsById, { sessionId })
+  )
+  // A merged ticket's session that was told to update its run's document: its bar is pink.
+  const isEditingDocument = useDocumentFlowStore((s) =>
+    isUpdatingRunDocument(s.runsById, { sessionId })
   )
   const activePermission = usePermissionStore((s) => s.getActivePermission(sessionId))
   const activeCommandApproval = useCommandApprovalStore((s) => s.getActiveApproval(sessionId))
@@ -6605,6 +6612,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
                     isAsking={!!activeQuestion}
                     isCompacting={isCompacting}
                     isFixingConflicts={isResolvingConflicts && !activeQuestion}
+                    isEditingDocument={isEditingDocument && !activeQuestion}
                   />
                 )}
                 {/* isStopping keeps the button in place while the abort runs: stopping

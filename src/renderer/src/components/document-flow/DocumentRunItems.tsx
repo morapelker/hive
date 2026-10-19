@@ -1,6 +1,8 @@
 import { useCallback, useMemo, useState } from 'react'
 import {
   Check,
+  FilePenLine,
+  FileX,
   GitBranch,
   MessageCircleQuestion,
   RotateCcw,
@@ -36,10 +38,13 @@ import {
 import {
   canEditLaunchConfig,
   canEditVerification,
+  canRetryDocumentUpdate,
+  canSkipDocumentUpdate,
   describeItemBranches,
   isActiveRunStatus,
   isRequeueableItem,
   isSkippableItem,
+  itemDetailDisplay,
   itemSessionTarget,
   itemStatusDisplay,
   needsUser,
@@ -66,6 +71,12 @@ interface RunItemActions {
   retry: (item: DocumentRunItem) => void
   markDone: (item: DocumentRunItem) => void
   skip: (item: DocumentRunItem) => void
+  /**
+   * Put a merged item's failed or skipped document update back in the document edit lane, and
+   * take one out of it.
+   */
+  retryDocumentUpdate: ((item: DocumentRunItem) => void) | null
+  skipDocumentUpdate: ((item: DocumentRunItem) => void) | null
   /** Flip one verification method of a ticket that has not launched yet. */
   toggleVerification: (item: DocumentRunItem, method: DocumentVerificationMethod) => void
   /** Change the model and effort of a ticket that has not launched yet; null = the run default. */
@@ -84,6 +95,8 @@ function useRunItemActions(run: DocumentRun): RunItemActions {
   const retryItem = useDocumentFlowStore((s) => s.retryItem)
   const markItemDone = useDocumentFlowStore((s) => s.markItemDone)
   const skipItem = useDocumentFlowStore((s) => s.skipItem)
+  const retryDocumentUpdate = useDocumentFlowStore((s) => s.retryDocumentUpdate)
+  const skipDocumentUpdate = useDocumentFlowStore((s) => s.skipDocumentUpdate)
   const updateItem = useDocumentFlowStore((s) => s.updateItem)
   const closeDashboard = useDocumentFlowStore((s) => s.closeDashboard)
   const sessionStatuses = useWorktreeStatusStore((s) => s.sessionStatuses)
@@ -118,6 +131,12 @@ function useRunItemActions(run: DocumentRun): RunItemActions {
       skip: (item) => {
         skipItem(run.id, item.id).catch(report(item, 'skip'))
       },
+      retryDocumentUpdate: (item) => {
+        retryDocumentUpdate(run.id, item.id).catch(report(item, 'retry the document update of'))
+      },
+      skipDocumentUpdate: (item) => {
+        skipDocumentUpdate(run.id, item.id).catch(report(item, 'skip the document update of'))
+      },
       toggleVerification: (item, method) => {
         updateItem(run.id, item.id, {
           verification: toggleVerificationMethod(item.verification, method)
@@ -139,7 +158,17 @@ function useRunItemActions(run: DocumentRun): RunItemActions {
         )
       }
     }
-  }, [run, retryItem, markItemDone, skipItem, updateItem, closeDashboard, sessionStatuses])
+  }, [
+    run,
+    retryItem,
+    markItemDone,
+    skipItem,
+    retryDocumentUpdate,
+    skipDocumentUpdate,
+    updateItem,
+    closeDashboard,
+    sessionStatuses
+  ])
 }
 
 interface RunItemsProps {
@@ -314,6 +343,7 @@ export function RunItemsTable({ run, items }: RunItemsProps): React.JSX.Element 
         <div className="divide-y divide-border/60">
           {ordered.map((item) => {
             const status = itemStatusDisplay(item, items)
+            const detail = itemDetailDisplay(item, items)
             const canRequeue = actions.enabled && isRequeueableItem(item)
             const sessionWorking = canRequeue && actions.isSessionWorking(item)
             return (
@@ -340,11 +370,16 @@ export function RunItemsTable({ run, items }: RunItemsProps): React.JSX.Element 
                   </TonePill>
                 </span>
                 <span
-                  className="truncate text-muted-foreground"
-                  title={item.status_detail ?? undefined}
+                  className={cn(
+                    'truncate',
+                    detail.tone === 'warning'
+                      ? 'text-amber-600 dark:text-amber-400'
+                      : 'text-muted-foreground'
+                  )}
+                  title={detail.title ?? undefined}
                   data-testid={`docflow-row-detail-${item.key}`}
                 >
-                  {item.status_detail}
+                  {detail.text}
                 </span>
                 <ModelCell
                   run={run}
@@ -420,6 +455,26 @@ export function RunItemsTable({ run, items }: RunItemsProps): React.JSX.Element 
                       onClick={() => actions.skip(item)}
                     >
                       <SkipForward />
+                    </RowAction>
+                  )}
+                  {/* The document update of a merged ticket: its own Retry and Skip, which
+                      leave the merge and the ticket's status alone */}
+                  {actions.retryDocumentUpdate && canRetryDocumentUpdate(run, item) && (
+                    <RowAction
+                      label="Retry document update"
+                      testId={`docflow-row-retry-doc-${item.key}`}
+                      onClick={() => actions.retryDocumentUpdate?.(item)}
+                    >
+                      <FilePenLine />
+                    </RowAction>
+                  )}
+                  {actions.skipDocumentUpdate && canSkipDocumentUpdate(run, item) && (
+                    <RowAction
+                      label="Skip document update"
+                      testId={`docflow-row-skip-doc-${item.key}`}
+                      onClick={() => actions.skipDocumentUpdate?.(item)}
+                    >
+                      <FileX />
                     </RowAction>
                   )}
                 </span>

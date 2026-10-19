@@ -1,6 +1,7 @@
 // @vitest-environment node
-import { rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { createHash } from 'node:crypto'
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DocumentRunStatus } from '@shared/types/document-flow'
 import { getRpcRequestContext, rpcRequestContext } from '../../../server/rpc/request-context'
@@ -523,3 +524,91 @@ describe('sourceFile', () => {
     await expect(harness.service.sourceFile('nope')).rejects.toThrow('The run was not found.')
   })
 })
+
+describe('inspectSource', () => {
+  it('describes a document outside any repository, without a backup when none is asked for', async () => {
+    const path = join(harness.scratch, 'docs', 'spec.html')
+    mkdirSync(dirname(path), { recursive: true })
+    const html = '<html><head><meta charset="utf-8"></head><body><h1>Spec ✓</h1></body></html>'
+    writeFileSync(path, html)
+    const { run } = seedRun(harness, { run: { source_path: path } })
+
+    await expect(harness.service.inspectSource(run.id)).resolves.toEqual({
+      path,
+      exists: true,
+      writable: true,
+      format: 'html',
+      encoding: 'utf-8',
+      sha256: createHash('sha256').update(html).digest('hex'),
+      size: Buffer.byteLength(html),
+      insideRepo: false,
+      assetsDir: join(harness.scratch, 'docs', 'spec.assets'),
+      backupPath: null
+    })
+    expect(existsSync(join(run.run_dir, 'doc-backups'))).toBe(false)
+  })
+
+  it('tells a Markdown document in a git work tree, a read-only one and a legacy encoding', async () => {
+    const path = join(repo.projectPath, 'notes.md')
+    // windows-1252 "café": not valid UTF-8.
+    writeFileSync(path, Buffer.from('# Plan\n\n- [ ] caf\xe9 menu\n', 'latin1'))
+    chmodSync(path, 0o444)
+    const { run } = seedRun(harness, { run: { source_path: path } })
+
+    const state = await harness.service.inspectSource(run.id)
+    chmodSync(path, 0o644)
+
+    expect(state).toMatchObject({
+      exists: true,
+      format: 'markdown',
+      encoding: 'windows-1252',
+      insideRepo: true,
+      assetsDir: join(repo.projectPath, 'notes.assets')
+    })
+    // Root can write anything; everyone else is refused by the mode.
+    if (process.getuid?.() !== 0) expect(state.writable).toBe(false)
+  })
+
+  it('reports a missing document, and makes no backup of it', async () => {
+    const path = join(harness.scratch, 'gone.txt')
+    const { run } = seedRun(harness, { run: { source_path: path } })
+
+    await expect(harness.service.inspectSource(run.id, 'A1')).resolves.toEqual({
+      path,
+      exists: false,
+      writable: false,
+      format: null,
+      encoding: null,
+      sha256: null,
+      size: null,
+      insideRepo: false,
+      assetsDir: join(harness.scratch, 'gone.assets'),
+      backupPath: null
+    })
+    expect(existsSync(join(run.run_dir, 'doc-backups'))).toBe(false)
+  })
+
+  it('backs the document up into the run directory for the item key', async () => {
+    const path = join(harness.scratch, 'spec.txt')
+    writeFileSync(path, 'Task A1: build the page\n')
+    const { run } = seedRun(harness, { run: { source_path: path } })
+
+    const state = await harness.service.inspectSource(run.id, 'A1')
+
+    expect(state.format).toBe('text')
+    expect(state.backupPath).toMatch(
+      new RegExp(`^${escapeRegExp(join(run.run_dir, 'doc-backups'))}/A1-[\\dT-]+Z\\.txt$`)
+    )
+    expect(readFileSync(state.backupPath!, 'utf8')).toBe('Task A1: build the page\n')
+    // A key is a file name part only: no separators reach the path.
+    const odd = await harness.service.inspectSource(run.id, '../B 2')
+    expect(dirname(odd.backupPath!)).toBe(join(run.run_dir, 'doc-backups'))
+    expect(basename(odd.backupPath!)).toMatch(/^_B_2-/)
+  })
+
+  it('refuses an unknown run', async () => {
+    await expect(harness.service.inspectSource('nope')).rejects.toThrow('The run was not found.')
+  })
+})
+
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

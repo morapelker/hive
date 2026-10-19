@@ -8,6 +8,7 @@ import {
   DOCUMENT_RUN_ITEM_STATUSES,
   DOCUMENT_RUN_NOTES_LIMIT,
   DOCUMENT_RUN_STATUSES,
+  DOCUMENT_UPDATE_STATUSES,
   DOCUMENT_VERIFICATION_METHODS,
   type DocumentCommitResult,
   type DocumentMergeCheckResult,
@@ -26,6 +27,8 @@ import {
   type DocumentRunnerClaim,
   type DocumentSimpleResult,
   type DocumentSourceFile,
+  type DocumentSourceState,
+  type DocumentUpdateReport,
   type DocumentVerifyResult,
   type SessionFinalMessage
 } from '../../../shared/types/document-flow'
@@ -60,6 +63,12 @@ export interface DocumentFlowAddMemberParams {
   baseBranch?: string | null
 }
 
+export interface DocumentFlowInspectSourceParams {
+  runId: string
+  /** The item key to back the document up for, before its session is asked to update it. */
+  backupKey?: string | null
+}
+
 export interface DocumentFlowLogEventParams {
   runId: string
   itemId?: string | null
@@ -75,6 +84,7 @@ export interface DocumentFlowRpcService {
   readonly retryExtraction: (params: DocumentFlowRetryExtractionParams) => Rpc<DocumentRunDetail>
   readonly get: (runId: string) => Rpc<DocumentRunDetail | null>
   readonly sourceFile: (runId: string) => Rpc<DocumentSourceFile>
+  readonly inspectSource: (runId: string, backupKey?: string | null) => Rpc<DocumentSourceState>
   readonly list: (projectId?: string) => Rpc<DocumentRunDetail[]>
   readonly updateRun: (runId: string, patch: DocumentRunPatch) => Rpc<DocumentRun>
   readonly updateItem: (
@@ -150,6 +160,15 @@ const verdictSchema = z
 // It ends up as a git argument: no whitespace, and nothing git could read as an option.
 const branchNameSchema = z.string().regex(/^(?!-)\S*$/)
 
+const documentUpdateReportSchema = z
+  .object({
+    outcome: z.enum(['updated', 'unchanged', 'failed']),
+    verified: z.string().nullable(),
+    followUps: z.array(z.string()),
+    notes: z.string().nullable()
+  })
+  .strict() satisfies z.ZodType<DocumentUpdateReport>
+
 const itemMemberSchema = z
   .object({
     project_id: idSchema,
@@ -218,12 +237,22 @@ const itemPatchSchema = z
     retry_at: nullableStringSchema,
     wait_until: nullableStringSchema,
     wait_timeouts: counterSchema,
+    document_update_status: z.enum(DOCUMENT_UPDATE_STATUSES).nullable().optional(),
+    document_update_detail: nullableStringSchema,
+    document_update_queued_at: nullableStringSchema,
+    document_update_attempts: counterSchema,
+    document_update_hash: nullableStringSchema,
+    document_update_report: documentUpdateReportSchema.nullable().optional(),
+    document_update_finished_at: nullableStringSchema,
     started_at: nullableStringSchema,
     finished_at: nullableStringSchema
   })
   .strict() satisfies z.ZodType<DocumentRunItemPatch>
 
 const runIdParamsSchema = z.object({ runId: idSchema }).strict()
+const inspectSourceParamsSchema = z
+  .object({ runId: idSchema, backupKey: z.string().min(1).max(200).nullable().optional() })
+  .strict() satisfies z.ZodType<DocumentFlowInspectSourceParams>
 const startParamsSchema = z
   .object({
     runId: idSchema,
@@ -304,6 +333,7 @@ export const makeLiveDocumentFlowRpcService = (eventBus?: EventBus): DocumentFlo
     retryExtraction: (params) => call((service) => service.retryExtraction(params)),
     get: (runId) => call((service) => service.get(runId)),
     sourceFile: (runId) => call((service) => service.sourceFile(runId)),
+    inspectSource: (runId, backupKey) => call((service) => service.inspectSource(runId, backupKey)),
     list: (projectId) => call((service) => service.list(projectId)),
     updateRun: (runId, patch) => call((service) => service.updateRun(runId, patch)),
     updateItem: (runId, itemId, patch) =>
@@ -359,6 +389,12 @@ export const makeDocumentFlowRpcHandlers = (
     [
       'documentFlow.sourceFile',
       handle(runIdParamsSchema, ({ runId }) => service.sourceFile(runId))
+    ],
+    [
+      'documentFlow.inspectSource',
+      handle(inspectSourceParamsSchema, ({ runId, backupKey }) =>
+        service.inspectSource(runId, backupKey)
+      )
     ],
     ['documentFlow.list', handle(listParamsSchema, (params) => service.list(params?.projectId))],
     [

@@ -4,9 +4,10 @@ import { documentFlowApi } from '@/api/document-flow-api'
 import { resolvePRContentGeneration } from '@/lib/pr-content-provider'
 import { resolveDefaultLaunchModel } from '@/lib/tedooo-agent/models'
 import { resolvePreferredAgentSdk, useSettingsStore } from '@/stores/useSettingsStore'
-import { isTerminalItemStatus } from '@shared/document-flow/planning'
-import { isUnlaunchedRunStatus } from '@shared/document-flow/run-ticket'
+import { isDocumentUpdatePending, isTerminalItemStatus } from '@shared/document-flow/planning'
+import { isActiveRunStatus, isUnlaunchedRunStatus } from '@shared/document-flow/run-ticket'
 import type { DocumentFlowUpdatedEvent } from '@shared/document-flow-events'
+import { registerDocumentUpdateHold } from './store-coordination'
 import {
   DEFAULT_DOCUMENT_RUN_CONFIG,
   DOCUMENT_RUN_MAX_PARALLEL_LIMIT,
@@ -104,6 +105,16 @@ interface DocumentFlowState {
   /** Override the classifier: treat the item as done and queue it for merging. */
   markItemDone: (runId: string, itemId: string) => Promise<void>
   skipItem: (runId: string, itemId: string) => Promise<void>
+  /**
+   * Put a merged item whose document update failed or was skipped back at the end of the
+   * document edit lane; the orchestrator asks its session again when its turn comes.
+   */
+  retryDocumentUpdate: (runId: string, itemId: string) => Promise<void>
+  /**
+   * Take an item out of the document edit lane, queued or editing: the document is left as it
+   * is and the next ticket in line gets its turn. The item stays merged.
+   */
+  skipDocumentUpdate: (runId: string, itemId: string) => Promise<void>
   setPrefs: (patch: Partial<DocumentFlowPrefs>) => void
 }
 
@@ -429,6 +440,27 @@ export const useDocumentFlowStore = create<DocumentFlowState>()(
         })
       },
 
+      // Only the document update's own fields: the item's status, its detail (the merged-as-is
+      // caveat) and its verdict are what the run's report reads, and stay as they are.
+      retryDocumentUpdate: async (runId, itemId) => {
+        await get().updateItem(runId, itemId, {
+          document_update_status: 'queued',
+          document_update_queued_at: new Date().toISOString(),
+          document_update_attempts: 0,
+          document_update_detail: null,
+          document_update_report: null,
+          document_update_finished_at: null
+        })
+      },
+
+      skipDocumentUpdate: async (runId, itemId) => {
+        await get().updateItem(runId, itemId, {
+          document_update_status: 'skipped',
+          document_update_detail: 'Skipped by you.',
+          document_update_finished_at: new Date().toISOString()
+        })
+      },
+
       setPrefs: (patch) => set((state) => ({ prefs: { ...state.prefs, ...patch } }))
     }),
     {
@@ -442,6 +474,33 @@ export const useDocumentFlowStore = create<DocumentFlowState>()(
       })
     }
   )
+)
+
+/**
+ * The ticket's run item holds the document edit lane of a run that is on: its session was told
+ * to update the run's document (the item turns `updating` before the prompt is sent), so what
+ * the session does is the run's work, not the ticket's. One still queued is not held: the user
+ * may give its session real work meanwhile, and the runner leaves a busy session alone.
+ */
+export function isTicketInDocumentUpdate(
+  runsById: Record<string, DocumentRunDetail>,
+  ticketId: string
+): boolean {
+  return Object.values(runsById).some(
+    (detail) =>
+      isActiveRunStatus(detail.run.status) &&
+      detail.items.some(
+        (item) =>
+          item.ticket_id === ticketId &&
+          isDocumentUpdatePending(item) &&
+          item.document_update_status === 'updating'
+      )
+  )
+}
+
+// The kanban store keeps a ticket in place while its session updates the run's document.
+registerDocumentUpdateHold((ticketId) =>
+  isTicketInDocumentUpdate(useDocumentFlowStore.getState().runsById, ticketId)
 )
 
 /** Runs of a project, newest first. */

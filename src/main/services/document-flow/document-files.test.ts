@@ -25,6 +25,7 @@ import {
   normalizeDocumentPath,
   readDocumentSource,
   removeRunDir,
+  replaceDocumentFile,
   writeRunFiles
 } from './document-files'
 
@@ -227,6 +228,28 @@ describe('readDocumentSource', () => {
 
   it('reports a document that disappeared since it was picked', async () => {
     await expect(readDocumentSource(join(dir, 'gone.md'))).rejects.toThrow(DocumentFileError)
+  })
+})
+
+describe('replaceDocumentFile', () => {
+  it('replaces the file while it still holds what the caller read, leaving no temporary file', async () => {
+    const path = join(dir, 'spec.md')
+    writeFileSync(path, 'old')
+
+    expect(await replaceDocumentFile(path, Buffer.from('new'), Buffer.from('old'))).toBe(true)
+
+    expect(readFileSync(path, 'utf8')).toBe('new')
+    expect(readdirSync(dir)).toEqual(['spec.md'])
+  })
+
+  it('writes nothing when the file changed since it was read', async () => {
+    const path = join(dir, 'spec.md')
+    writeFileSync(path, 'edited by the agent')
+
+    expect(await replaceDocumentFile(path, Buffer.from('new'), Buffer.from('old'))).toBe(false)
+
+    expect(readFileSync(path, 'utf8')).toBe('edited by the agent')
+    expect(readdirSync(dir)).toEqual(['spec.md'])
   })
 })
 

@@ -1,7 +1,12 @@
+import { parseDocumentUpdateFooter } from '@shared/document-flow/document-update'
 import {
+  DOCUMENT_UPDATE_INTERRUPT_DETAIL,
   USER_INTERRUPT_DETAIL,
   WAITING_FOR_WORK_PREFIX,
   WAITING_PREFIX,
+  documentUpdateCandidates,
+  documentUpdateLaneOwner,
+  isDocumentUpdatePending,
   isItemWaitingOnUser,
   isRunSettled,
   isRunWaitingOnUser,
@@ -14,12 +19,17 @@ import {
 import {
   buildConflictPrompt,
   buildContinuePrompt,
+  buildDocumentUpdateContinuePrompt,
+  buildDocumentUpdateNudgePrompt,
+  buildDocumentUpdatePrompt,
   buildFixTicket,
   buildLaunchPrompt,
   buildNudgePrompt,
   withRunRules,
   workspaceOfMembers,
   type ConnectionWorkspaceMember,
+  type DocumentUpdateFormat,
+  type DocumentUpdatePromptInput,
   type NudgeVerdict
 } from '@shared/document-flow/prompts'
 import {
@@ -37,6 +47,8 @@ import {
   type DocumentRunItemStatus,
   type DocumentRunLaunchConfig,
   type DocumentRunMember,
+  type DocumentSourceState,
+  type DocumentUpdateStatus,
   type DocumentVerificationMethod,
   type DocumentVerifyResult,
   type SessionFinalMessage
@@ -69,6 +81,8 @@ export const WAIT_FOR_WORK_MS = 30 * 60_000
 export const MAX_WAIT_TIMEOUTS = 1
 export const MAX_CONFLICT_ATTEMPTS = 2
 export const MAX_FIX_ATTEMPTS = 2
+/** "The document is unchanged" reminders a document update gets before it counts as failed. */
+export const MAX_DOCUMENT_UPDATE_NUDGES = 1
 
 const LEASE_RENEW_MS = 5_000
 const SESSION_TURN_POLL_MS = 5_000
@@ -89,6 +103,12 @@ const UNCHANGED_DETAIL =
 const MERGED_AS_IS_PREFIX = 'Merged as it stood. The agent ended on: '
 /** `status_detail` prefix of a ready ticket whose merge waits for the one in the lane. */
 export const WAITING_TO_MERGE_PREFIX = 'Waiting to merge: '
+/** `document_update_detail` of a merged ticket that has no session to update the document. */
+export const NO_SESSION_DOCUMENT_DETAIL = 'It has no session to update the document.'
+const DOCUMENT_UNCHANGED_DETAIL = 'The document was not changed.'
+const DOCUMENT_UP_TO_DATE_DETAIL = 'The document already said what was done.'
+/** `document_update_detail` prefix of a queued update while another run edits the same document. */
+const DOCUMENT_EDITED_ELSEWHERE_PREFIX = 'Waiting for another run made from this document: '
 
 const BLOCK_LABELS: Record<SessionBlockReason, string> = {
   question: 'a question',
@@ -124,13 +144,15 @@ const RECORDED_INTERRUPT_EVENT = 'Interrupt'
 
 /**
  * A run the orchestrator is busy on between sessions (classifying, merging, verifying, about
- * to launch): launched, with work left, and not merely waiting on the user. Keep-awake and
- * sleep-when-idle read this, because no session need be streaming at those moments.
+ * to launch, updating the document): launched, with work left, and not merely waiting on the
+ * user. Keep-awake and sleep-when-idle read this, because no session need be streaming at
+ * those moments.
  */
 export function isDocumentRunBusy(detail: DocumentRunDetail): boolean {
   if (detail.run.status !== 'running') return false
+  // A merged ticket whose document update is queued or under way is still work left.
   const hasOpenItems = detail.items.some(
-    (item) => item.selected && !isTerminalItemStatus(item.status)
+    (item) => (item.selected && !isTerminalItemStatus(item.status)) || isDocumentUpdatePending(item)
   )
   return (
     hasOpenItems &&
@@ -156,6 +178,11 @@ interface RunState {
   merging: boolean
   /** Ticket launches queued or under way: each cuts a branch from the integration tip. */
   launching: number
+  /**
+   * In-memory half of "one session edits the document at a time": a document update is being
+   * started. The item `updating` (`documentUpdateLaneOwner`) is the other half.
+   */
+  documenting: boolean
   finalizing: boolean
   finalizeRetryAt: number
 }
@@ -177,7 +204,7 @@ type Observation =
   | { kind: 'working' }
   | { kind: 'blocked'; reason: SessionBlockReason; detail: string | null }
   /** A finished turn, newer than the last prompt and the last check, that has settled. */
-  | { kind: 'turn_ended' }
+  | { kind: 'turn_ended'; at: number }
   /** A fresh turn end that is still too young to trust. */
   | { kind: 'settling'; until: number }
   | { kind: 'api_error'; error: string }
@@ -215,6 +242,13 @@ const tail = (text: string, max: number): string => {
 }
 
 const firstLine = (text: string): string => text.split('\n', 1)[0]
+
+/** YYYY-MM-DD in local time, the date a person reading the document goes by. */
+const localDate = (ms: number): string => {
+  const date = new Date(ms)
+  const pad = (part: number): string => String(part).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
 
 const waitingDetail = (block: { reason: SessionBlockReason; detail: string | null }): string =>
   `${WAITING_PREFIX}${block.detail ?? BLOCK_LABELS[block.reason]}`
@@ -315,10 +349,29 @@ export class DocumentFlowRunner {
   private readonly runs = new Map<string, RunState>()
   /** Items with a step in flight (item id → run id): a tick never starts a second one. */
   private readonly inFlight = new Map<string, string>()
-  private readonly lastWrites = new Map<string, { status: DocumentRunItemStatus; at: number }>()
+  private readonly lastWrites = new Map<
+    string,
+    { status: DocumentRunItemStatus; documentUpdate: DocumentUpdateStatus | null; at: number }
+  >()
   private readonly retryAfter = new Map<string, number>()
   private readonly turnPolls = new Map<string, { at: number; value: SessionFinalMessage | null }>()
   private readonly closedPolls = new Map<string, { at: number; value: boolean }>()
+  /**
+   * Source documents a document update is being started on, or a run's status summary is being
+   * written into, by any run: two runs made from the same document never prompt an edit of it
+   * at the same time.
+   */
+  private readonly documentsStarting = new Set<string>()
+  /**
+   * Sessions this runner told to edit a document (item id → where), kept beyond what the store
+   * shows: a re-read older than the `updating` write can show the item queued again, and an
+   * update the user skipped mid-edit leaves its session at the edit until its turn ends. Either
+   * way the document is still being edited (see `isDocumentEditedInMemory`).
+   */
+  private readonly documentEditors = new Map<
+    string,
+    { runId: string; sessionId: string; source: string; at: number }
+  >()
   /** Every launch goes through this chain: worktree and session creation never overlap. */
   private launchChain: Promise<unknown> = Promise.resolve()
   private started = false
@@ -406,6 +459,7 @@ export class DocumentFlowRunner {
         loaded: false,
         merging: false,
         launching: 0,
+        documenting: false,
         finalizing: false,
         finalizeRetryAt: 0
       }
@@ -482,6 +536,10 @@ export class DocumentFlowRunner {
           this.spawnMerge(state, runId, [item])
           break
         default:
+          // A merged (or already implemented) ticket whose session is updating the document.
+          if (isDocumentUpdatePending(item) && item.document_update_status === 'updating') {
+            this.spawn(runId, item, (op) => this.watchDocumentUpdate(op))
+          }
           break
       }
     }
@@ -499,7 +557,18 @@ export class DocumentFlowRunner {
     if (candidates.length > 0) this.spawnMerge(state, runId, candidates)
     this.describeWaiting(state, runId, items, candidates, now)
 
-    if (isRunSettled(items) && !this.hasStepInFlight(runId)) this.finalize(state, runId)
+    // The document edit lane: one session at a time edits the document, across runs too. It
+    // runs beside the merge lane, since the document is outside every worktree. The run is
+    // only settled once the lane has drained.
+    this.startDocumentLane(state, run, items, now)
+
+    if (
+      isRunSettled(items) &&
+      !this.hasStepInFlight(runId) &&
+      !this.isDocumentBeingEdited(run.id, run.source_path.trim(), now)
+    ) {
+      this.finalize(state, runId, run.source_path.trim())
+    }
   }
 
   /** Take or renew the lease. Renewed at most every few seconds, however often ticks run. */
@@ -565,7 +634,11 @@ export class DocumentFlowRunner {
       this.lastWrites.delete(item.id)
       return true
     }
-    if (written.status === item.status) return true
+    // A merged item keeps its status through the document update: that has a status of its
+    // own, and a stale "queued" row must not start the update twice.
+    if (written.status === item.status && written.documentUpdate === item.document_update_status) {
+      return true
+    }
     this.wakeAt(written.at + SNAPSHOT_GRACE_MS)
     return false
   }
@@ -651,7 +724,10 @@ export class DocumentFlowRunner {
     }
   }
 
-  /** Never rejects: a failing step flags its own item and nothing else. */
+  /**
+   * Never rejects: a failing step flags its own item and nothing else. A failing document
+   * update fails only the update: the ticket stays merged.
+   */
   private async runStep(op: ItemOp, work: (op: ItemOp) => Promise<void>): Promise<void> {
     try {
       await work(op)
@@ -664,6 +740,10 @@ export class DocumentFlowRunner {
         return
       }
       try {
+        if (isDocumentUpdatePending(op.item)) {
+          await this.finishDocumentUpdate(op, 'failed', describeError(error))
+          return
+        }
         await this.giveUp(op, describeError(error))
       } catch (flagError) {
         if (flagError instanceof Superseded) return
@@ -704,22 +784,27 @@ export class DocumentFlowRunner {
 
   /**
    * Persist a transition. Refused when the item is no longer in the status this step is
-   * working on (the user skipped or retried it meanwhile) or the run is over; a paused run
-   * still records the result of a step that was already under way.
+   * working on (the user skipped or retried it, or its document update, meanwhile) or the run
+   * is over; a paused run still records the result of a step that was already under way.
    */
   private async patch(op: ItemOp, patch: DocumentRunItemPatch): Promise<DocumentRunItem> {
     const current = this.currentItem(op)
     if (
       !current ||
       (current.run.status !== 'running' && current.run.status !== 'paused') ||
-      current.item.status !== op.item.status
+      current.item.status !== op.item.status ||
+      current.item.document_update_status !== op.item.document_update_status
     ) {
       throw new Superseded()
     }
     const updated = await this.ports.updateItem(op.runId, op.item.id, patch)
     op.item = updated
     op.changed = true
-    this.lastWrites.set(updated.id, { status: updated.status, at: this.ports.now() })
+    this.lastWrites.set(updated.id, {
+      status: updated.status,
+      documentUpdate: updated.document_update_status,
+      at: this.ports.now()
+    })
     this.requestTick()
     return updated
   }
@@ -885,7 +970,7 @@ export class DocumentFlowRunner {
     }
     // `waiting`: the agent paused for background work and will wake itself.
     if (end.completion !== 'waiting' && end.at > toMs(op.item.last_checked_at)) {
-      return { kind: 'turn_ended' }
+      return { kind: 'turn_ended', at: end.at }
     }
     return null
   }
@@ -1797,10 +1882,12 @@ export class DocumentFlowRunner {
       return this.flag(op, `Its branch has nothing to merge. ${verdict.reason}`)
     }
     if (!verdict || this.interactive(op)) return this.flag(op, NO_CHANGES_DETAIL)
+    // Already implemented: the document still learns that the task is done.
     await this.patch(op, {
       status: 'skipped',
       status_detail: UNCHANGED_DETAIL,
-      finished_at: toIso(this.ports.now())
+      finished_at: toIso(this.ports.now()),
+      ...this.queueDocumentUpdate(op.item)
     })
     this.event(op, 'skipped', `${op.item.key}: ${UNCHANGED_DETAIL}`)
   }
@@ -2082,7 +2169,9 @@ export class DocumentFlowRunner {
       status: 'merged',
       status_detail:
         verdict && verdict.status !== 'done' ? `${MERGED_AS_IS_PREFIX}${verdict.reason}` : null,
-      finished_at: toIso(this.ports.now())
+      finished_at: toIso(this.ports.now()),
+      // In the same write: no tick can find the item merged with the update not yet queued.
+      ...this.queueDocumentUpdate(op.item)
     })
     if (projectId && item.ticket_id) {
       // A plain move to merged would fire the board's completion effects (dependent
@@ -2094,11 +2183,560 @@ export class DocumentFlowRunner {
     this.event(op, 'merged', `Merged ${item.key}`)
   }
 
+  // ── Updating the document ────────────────────────────────────────────────
+  // Once a ticket is merged (or closed as already implemented), its own session is asked to
+  // update the document the run was made from: mark the task done, and note what was done, how
+  // it was verified and what is left. One session edits a document at a time, in the order the
+  // tickets joined the lane. The item keeps its status; the step has `document_update_*` of its
+  // own and borrows `last_prompt_at`, `last_checked_at`, `continue_attempts` and `retry_at`,
+  // which nothing reads once the item is merged, so `observe` follows the session as for any
+  // other step. Whether the document was updated is told by the file's hash, not by the
+  // classifier: the verdict the report reads must stay what it was.
+
+  /** The patch that puts a ticket that just merged in the document edit lane. */
+  private queueDocumentUpdate(item: DocumentRunItem): DocumentRunItemPatch {
+    const now = toIso(this.ports.now())
+    if (!item.session_id) {
+      return {
+        document_update_status: 'skipped',
+        document_update_detail: NO_SESSION_DOCUMENT_DETAIL,
+        document_update_finished_at: now
+      }
+    }
+    return {
+      document_update_status: 'queued',
+      document_update_queued_at: now,
+      document_update_attempts: 0,
+      document_update_detail: null
+    }
+  }
+
+  /**
+   * Start the next queued document update, when nothing edits the document now: no item of
+   * this run holds the lane, none is being started, no session this runner prompted may still
+   * be at an edit, and no other run made from the same file is editing it. The queued updates
+   * are offered in lane order, and the first whose session can take the prompt goes (see
+   * `startDocumentUpdate`): a session that works or waits on the user holds up only its own.
+   */
+  private startDocumentLane(
+    state: RunState,
+    run: DocumentRun,
+    items: readonly DocumentRunItem[],
+    now: number
+  ): void {
+    if (state.documenting || documentUpdateLaneOwner(items)) return
+    const candidates = documentUpdateCandidates(items)
+    if (candidates.length === 0) return
+    const source = run.source_path.trim()
+    if (this.documentsStarting.has(source) || this.isDocumentEditedInMemory(source, now)) return
+    const editor = this.documentEditorElsewhere(run.id, source)
+    if (editor) {
+      this.describeDocumentWait(run.id, candidates[0], editor, now)
+      return
+    }
+    const ready = candidates.filter((item) => this.canStep(item, now))
+    if (ready.length === 0) return
+    state.documenting = true
+    this.documentsStarting.add(source)
+    // All held in flight while the turn goes down the line, as a merge turn holds its candidates.
+    for (const item of ready) this.inFlight.set(item.id, run.id)
+    void this.startFirstDocumentUpdate(run.id, ready).finally(() => {
+      for (const item of ready) this.inFlight.delete(item.id)
+      state.documenting = false
+      this.documentsStarting.delete(source)
+    })
+  }
+
+  /** One turn of the lane: the candidates in order, until one takes its turn. */
+  private async startFirstDocumentUpdate(
+    runId: string,
+    ready: readonly DocumentRunItem[]
+  ): Promise<void> {
+    for (const item of ready) {
+      const op: ItemOp = { runId, item, changed: false }
+      let passedOver = false
+      await this.runStep(op, async (step) => {
+        passedOver = !(await this.startDocumentUpdate(step))
+      })
+      if (op.changed) this.requestTick()
+      if (!passedOver) return
+    }
+  }
+
+  /**
+   * A session this runner prompted to edit `source` may still be at it although the store does
+   * not show its item holding the lane: the row reads `queued` from a re-read older than the
+   * `updating` write (for a moment, as in `canStep`), or the user took the update out of the
+   * lane (skipped it, or the run finished) while its session still works. Forgotten once its
+   * item has left the lane and its session is at rest.
+   */
+  private isDocumentEditedInMemory(source: string, now: number): boolean {
+    let edited = false
+    for (const [itemId, editor] of this.documentEditors) {
+      if (editor.source !== source) continue
+      const item = this.ports.getRun(editor.runId)?.items.find((entry) => entry.id === itemId)
+      const status = item?.document_update_status ?? null
+      if (status === 'queued' && now - editor.at < SNAPSHOT_GRACE_MS) {
+        this.wakeAt(editor.at + SNAPSHOT_GRACE_MS)
+        edited = true
+      } else if (item && this.ports.getSessionSignal(editor.sessionId).kind === 'working') {
+        edited = true
+      } else if (status !== 'updating') {
+        this.documentEditors.delete(itemId)
+      }
+    }
+    return edited
+  }
+
+  /** The item of another run made from the same document that holds that run's lane, if any. */
+  private documentEditorElsewhere(runId: string, source: string): DocumentRunItem | null {
+    for (const detail of this.ports.getRuns()) {
+      if (detail.run.id === runId) continue
+      if (detail.run.status !== 'running' && detail.run.status !== 'paused') continue
+      if (detail.run.source_path.trim() !== source) continue
+      const owner = documentUpdateLaneOwner(detail.items)
+      if (owner) return owner
+    }
+    return null
+  }
+
+  /**
+   * Whether the run's status summary must wait to be written into `source`: an edit of it is
+   * being started, a session this runner prompted may still be at one, or another run's
+   * session is editing it right now. A session of another run that stopped for the user is
+   * not writing, and does not hold the summary up.
+   */
+  private isDocumentBeingEdited(runId: string, source: string, now: number): boolean {
+    if (this.documentsStarting.has(source) || this.isDocumentEditedInMemory(source, now)) {
+      return true
+    }
+    const sessionId = this.documentEditorElsewhere(runId, source)?.session_id
+    return !!sessionId && this.ports.getSessionSignal(sessionId).kind === 'working'
+  }
+
+  /**
+   * Tell the first queued update that another run's session edits the document, so the
+   * dashboard says what it waits for (that run may be paused). Only a null or an earlier such
+   * detail is replaced; the `updating` write clears it.
+   */
+  private describeDocumentWait(
+    runId: string,
+    head: DocumentRunItem,
+    editor: DocumentRunItem,
+    now: number
+  ): void {
+    const wanted = `${DOCUMENT_EDITED_ELSEWHERE_PREFIX}${editor.key} is editing it.`
+    const detail = head.document_update_detail
+    if (
+      detail === wanted ||
+      (detail !== null && !detail.startsWith(DOCUMENT_EDITED_ELSEWHERE_PREFIX))
+    ) {
+      return
+    }
+    if (!this.canStep(head, now)) return
+    this.spawn(runId, head, async (op) => {
+      await this.patch(op, { document_update_detail: wanted })
+    })
+  }
+
+  /**
+   * Ask the ticket's session to update the document. Only a session at rest is prompted: one
+   * that works (a ticket marked done while its agent goes on) or waits on the user would get
+   * the prompt typed into the middle of something, so the update stays queued, with what its
+   * session waits for as its detail, and the lane offers the next one; a later turn tries this
+   * one again. The file is looked at (and backed up) right before the prompt; its hash then is
+   * what the edit is judged against. False when the update was passed over.
+   */
+  private async startDocumentUpdate(op: ItemOp): Promise<boolean> {
+    const run = this.requireActive(op)
+    const sessionId = op.item.session_id
+    if (!sessionId) {
+      await this.finishDocumentUpdate(op, 'skipped', NO_SESSION_DOCUMENT_DETAIL)
+      return true
+    }
+    const signal = await this.reconcile(op, sessionId, this.ports.getSessionSignal(sessionId))
+    if (signal.kind === 'working' || signal.kind === 'blocked') {
+      const detail = signal.kind === 'blocked' ? waitingDetail(signal) : null
+      if (op.item.document_update_detail !== detail) {
+        await this.patch(op, { document_update_detail: detail })
+      }
+      return false
+    }
+
+    const skip = async (detail: string): Promise<boolean> => {
+      await this.finishDocumentUpdate(op, 'skipped', detail)
+      return true
+    }
+    const source = await this.ports.api.inspectSource(op.runId, op.item.key)
+    if (!source.exists) return skip(`Document not found: ${source.path}`)
+    if (!source.writable) return skip('The document is read-only.')
+    const format = source.format
+    if (!format) return skip('The document is not a text file.')
+    // The agents' edit tools read and write UTF-8: any other encoding would come back mangled,
+    // as the status summary would (the server skips those too).
+    if (source.encoding !== null && source.encoding !== 'utf-8') {
+      return skip(
+        `The document is encoded as ${source.encoding}; only UTF-8 documents are updated.`
+      )
+    }
+
+    this.requireActive(op)
+    await this.patch(op, {
+      document_update_status: 'updating',
+      document_update_hash: source.sha256,
+      document_update_detail: null,
+      last_prompt_at: toIso(this.ports.now()),
+      continue_attempts: 0,
+      retry_at: null
+    })
+    this.documentEditors.set(op.item.id, {
+      runId: op.runId,
+      sessionId,
+      source: run.source_path.trim(),
+      at: this.ports.now()
+    })
+    const prompt = buildDocumentUpdatePrompt(this.documentUpdateInput(op, run, source, format))
+    const sent = await this.sendDocumentPrompt(op, sessionId, prompt)
+    if (sent && source.backupPath) {
+      this.event(
+        op,
+        'document_backed_up',
+        `Backed up the document before ${op.item.key} updates it: ${source.backupPath}`,
+        { backupPath: source.backupPath }
+      )
+    }
+    return true
+  }
+
+  /** What the update prompt says of the task, the document and the run, as they are now. */
+  private documentUpdateInput(
+    op: ItemOp,
+    run: DocumentRun,
+    source: DocumentSourceState,
+    format: DocumentUpdateFormat
+  ): DocumentUpdatePromptInput {
+    const item = op.item
+    const items = this.ports.getRun(op.runId)?.items ?? []
+    // Closed as already implemented: no merge, and no checks ran for it.
+    const alreadyImplemented = item.status === 'skipped'
+    const members = isConnectionRun(run) ? run.members : null
+    const symlinkOf = (projectId: string | null): string =>
+      members?.find((member) => member.project_id === projectId)?.symlink_name ?? projectId ?? ''
+    const commands = runVerifyCommands(run)
+    const verifyCommand =
+      alreadyImplemented || commands.length === 0
+        ? null
+        : members
+          ? commands.map((entry) => `${symlinkOf(entry.project_id)}/: ${entry.command}`).join('; ')
+          : commands[0].command
+    return {
+      key: item.key,
+      title: item.title,
+      sourcePath: source.path,
+      documentCopyPath: run.document_path,
+      format,
+      encoding: source.encoding,
+      insideRepo: source.insideRepo,
+      integrationBranch: run.integration_branch ?? 'the integration branch',
+      branchName: item.branch_name,
+      mergeSha: item.merge_sha,
+      memberMerges:
+        members && item.members
+          ? item.members.map((member) => ({
+              symlinkName: symlinkOf(member.project_id),
+              mergeSha: member.merge_sha
+            }))
+          : null,
+      verdict: item.verdict,
+      verification: this.verification(op),
+      verifyCommand,
+      fixAttempts: item.fix_attempts,
+      assetsDir: source.assetsDir,
+      otherTasks: items
+        .filter((other) => other.selected && other.id !== item.id)
+        .map((other) => other.key),
+      today: localDate(this.ports.now()),
+      interactive: this.interactive(op),
+      alreadyImplemented
+    }
+  }
+
+  /** Send a document update prompt. A send that fails fails the update, never the ticket. */
+  private async sendDocumentPrompt(
+    op: ItemOp,
+    sessionId: string,
+    prompt: string
+  ): Promise<boolean> {
+    try {
+      await this.ports.sendFollowup({ sessionId, ticketId: op.item.ticket_id ?? '', prompt })
+      return true
+    } catch (error) {
+      await this.finishDocumentUpdate(
+        op,
+        'failed',
+        `Could not send a message to the session: ${describeError(error)}`
+      )
+      return false
+    }
+  }
+
+  /**
+   * Follow the session that holds the lane. A question, a permission or the user's own
+   * interrupt holds the lane for as long as it takes: the user answers, or skips or retries
+   * the update from the dashboard. An API error, a process that went away or an app restart is
+   * resumed with a "continue the document edit" prompt, a few times.
+   */
+  private async watchDocumentUpdate(op: ItemOp): Promise<void> {
+    const item = op.item
+    const sessionId = item.session_id
+    if (!sessionId) return this.finishDocumentUpdate(op, 'failed', NO_SESSION_DOCUMENT_DETAIL)
+    const seen = await this.observe(op, sessionId)
+    switch (seen.kind) {
+      case 'settling':
+        this.wakeAt(seen.until)
+        return
+      case 'working': {
+        // Answered, or told to go on: what it waited for is over.
+        const stale =
+          isTransientDetail(item.document_update_detail) ||
+          item.document_update_detail === DOCUMENT_UPDATE_INTERRUPT_DETAIL
+        if (!stale && !item.retry_at) return
+        await this.patch(op, {
+          document_update_detail: stale ? null : item.document_update_detail,
+          retry_at: null
+        })
+        return
+      }
+      case 'blocked':
+        return this.documentWaitsForUser(op, waitingDetail(seen))
+      case 'turn_ended':
+        return this.documentTurnEnded(op, sessionId, seen.at)
+      default:
+        return this.documentUpdateStalled(op, sessionId, seen)
+    }
+  }
+
+  /** The editing session stopped for the user; said once, and the lane stays held. */
+  private async documentWaitsForUser(op: ItemOp, detail: string): Promise<void> {
+    if (op.item.document_update_detail === detail) return
+    await this.patch(op, { document_update_detail: detail })
+    this.ports.notify({
+      level: 'info',
+      message: `${op.item.key} is waiting for you while it updates the document: ${detail}`
+    })
+    this.event(op, 'document_update_waiting', detail)
+  }
+
+  /** As `stalled`, for a document edit: back off on an API error, resume an interruption. */
+  private async documentUpdateStalled(
+    op: ItemOp,
+    sessionId: string,
+    seen: Observation
+  ): Promise<void> {
+    const item = op.item
+    const now = this.ports.now()
+    if (item.retry_at) {
+      const retryAt = toMs(item.retry_at)
+      if (now < retryAt) {
+        this.wakeAt(retryAt)
+        return
+      }
+      return this.sendDocumentContinue(op, sessionId, 'api_error')
+    }
+    switch (seen.kind) {
+      case 'api_error': {
+        if (item.continue_attempts >= MAX_CONTINUE) {
+          return this.finishDocumentUpdate(
+            op,
+            'failed',
+            `The session keeps failing with an API error (${seen.error}).`
+          )
+        }
+        const minutes =
+          BACKOFF_MINUTES[Math.min(item.continue_attempts, BACKOFF_MINUTES.length - 1)]
+        const retryAt = now + minutes * 60_000
+        await this.patch(op, {
+          retry_at: toIso(retryAt),
+          document_update_detail: `${API_ERROR_PREFIX}${seen.error}). Retrying at ${clockTime(retryAt)}.`
+        })
+        this.event(
+          op,
+          'api_error',
+          `API error (${seen.error}) while updating the document; retrying in ${minutes} min`
+        )
+        return
+      }
+      case 'interrupted':
+        if (seen.byUser) return this.documentWaitsForUser(op, DOCUMENT_UPDATE_INTERRUPT_DETAIL)
+        return this.resumeDocumentUpdate(op, sessionId)
+      case 'restarted':
+        return this.resumeDocumentUpdate(op, sessionId)
+      default:
+        return
+    }
+  }
+
+  private async resumeDocumentUpdate(op: ItemOp, sessionId: string): Promise<void> {
+    if (op.item.continue_attempts >= MAX_CONTINUE) {
+      return this.finishDocumentUpdate(
+        op,
+        'failed',
+        'The session was interrupted and could not be resumed.'
+      )
+    }
+    return this.sendDocumentContinue(op, sessionId, 'interrupted')
+  }
+
+  private async sendDocumentContinue(
+    op: ItemOp,
+    sessionId: string,
+    reason: 'api_error' | 'interrupted'
+  ): Promise<void> {
+    this.requireActive(op)
+    const detail = op.item.document_update_detail
+    await this.patch(op, {
+      continue_attempts: op.item.continue_attempts + 1,
+      document_update_attempts: op.item.document_update_attempts + 1,
+      document_update_detail: isTransientDetail(detail) ? null : detail,
+      retry_at: null,
+      last_prompt_at: toIso(this.ports.now())
+    })
+    const prompt = buildDocumentUpdateContinuePrompt(reason, this.interactive(op))
+    if (await this.sendDocumentPrompt(op, sessionId, prompt)) {
+      this.event(
+        op,
+        'document_update_continue_sent',
+        `Asked the session to continue the document edit (${reason})`
+      )
+    }
+  }
+
+  /**
+   * The editing turn ended: the file is looked at again. Changed means updated, whatever the
+   * footer says. Unchanged gets one reminder (the agent may have edited a copy, or only
+   * described the edit), then the update fails. The footer is kept for the dashboard and the
+   * run summary; `last_checked_at` keeps the same turn end from being judged twice.
+   */
+  private async documentTurnEnded(op: ItemOp, sessionId: string, endedAt: number): Promise<void> {
+    const item = op.item
+    const source = await this.ports.api.inspectSource(op.runId)
+    const text = await this.documentUpdateMessage(op, sessionId)
+    const report = text ? parseDocumentUpdateFooter(text) : null
+    const checked: DocumentRunItemPatch = {
+      last_checked_at: toIso(endedAt),
+      document_update_report: report
+    }
+    if (!source.exists) {
+      return this.finishDocumentUpdate(op, 'failed', `Document not found: ${source.path}`, checked)
+    }
+    if (source.sha256 !== item.document_update_hash) {
+      return this.finishDocumentUpdate(op, 'done', report?.notes ?? null, checked)
+    }
+    if (report?.outcome === 'unchanged') {
+      // The agent found the document already saying what it should (an earlier run marked the
+      // task): nothing to remind it of. Its prompt may have moved the ticket all the same.
+      await this.finishDocumentUpdate(
+        op,
+        'skipped',
+        report.notes ?? DOCUMENT_UP_TO_DATE_DETAIL,
+        checked
+      )
+      return this.returnTicketToMerged(op)
+    }
+    // `document_update_attempts` counts the continues too, which `continue_attempts` counts
+    // on their own since the update started: the difference is the reminders sent.
+    const nudges = item.document_update_attempts - item.continue_attempts
+    if (nudges >= MAX_DOCUMENT_UPDATE_NUDGES) {
+      // What the agent said of an edit it did not make, else that nothing changed.
+      return this.finishDocumentUpdate(
+        op,
+        'failed',
+        report?.notes ?? DOCUMENT_UNCHANGED_DETAIL,
+        checked
+      )
+    }
+    this.requireActive(op)
+    await this.patch(op, {
+      ...checked,
+      document_update_attempts: item.document_update_attempts + 1,
+      document_update_detail: null,
+      last_prompt_at: toIso(this.ports.now())
+    })
+    const prompt = buildDocumentUpdateNudgePrompt(source.path, false, this.interactive(op))
+    if (await this.sendDocumentPrompt(op, sessionId, prompt)) {
+      this.event(
+        op,
+        'document_update_nudged',
+        `${item.key} ended its turn without changing the document; reminded it once`
+      )
+    }
+  }
+
+  /**
+   * The editing turn's final message, read as `check` reads one: an SDK session's own last
+   * message, else the server's record of the session's turn — if it was written after the
+   * prompt; an older record is the previous turn's.
+   */
+  private async documentUpdateMessage(op: ItemOp, sessionId: string): Promise<string | null> {
+    const sdkMessage = await this.ports.readFinalMessage(sessionId).catch(() => null)
+    if (sdkMessage?.trim()) return sdkMessage
+    const turn = await this.ports.api.sessionTurn(sessionId).catch(() => null)
+    if (!turn?.text.trim() || toMs(turn.updated_at) <= toMs(op.item.last_prompt_at)) return null
+    return turn.text
+  }
+
+  /**
+   * Record how the document update ended. A session that was prompted may have pulled its
+   * ticket out of the merged column (a prompt reads as the user's, a turn end as a review);
+   * it goes back there. A skipped update was never prompted (but see `documentTurnEnded`).
+   */
+  private async finishDocumentUpdate(
+    op: ItemOp,
+    status: Extract<DocumentUpdateStatus, 'done' | 'failed' | 'skipped'>,
+    detail: string | null,
+    extra: DocumentRunItemPatch = {}
+  ): Promise<void> {
+    await this.patch(op, {
+      ...extra,
+      document_update_status: status,
+      document_update_detail: detail,
+      document_update_finished_at: toIso(this.ports.now()),
+      retry_at: null
+    })
+    // Ended here: its session finished its turn, or never got the prompt.
+    this.documentEditors.delete(op.item.id)
+    if (status === 'failed') {
+      this.ports.notify({
+        level: 'warning',
+        message: `${op.item.key} could not update the document: ${firstLine(detail ?? '')}`
+      })
+    }
+    if (status !== 'skipped') await this.returnTicketToMerged(op)
+  }
+
+  private async returnTicketToMerged(op: ItemOp): Promise<void> {
+    const projectId = this.currentItem(op)?.run.project_id
+    const { status, ticket_id: ticketId, key } = op.item
+    if (status !== 'merged' || !projectId || !ticketId) return
+    const ticket = this.ports.getTicket(projectId, ticketId)
+    // Only where the session's own events take a ticket: one the user put in Done stays there.
+    if (!ticket || (ticket.column !== 'in_progress' && ticket.column !== 'review')) return
+    await this.ports
+      .moveTicket(projectId, ticketId, 'merged', { skipCompletionEffects: true })
+      .catch((error) => this.ports.warn(`could not move ${key} back to merged`, error))
+  }
+
   // ── Finishing ────────────────────────────────────────────────────────────
 
-  private finalize(state: RunState, runId: string): void {
+  /**
+   * Finish the run on the server, which writes its status summary into `source`: no document
+   * update of any run starts on that file meanwhile.
+   */
+  private finalize(state: RunState, runId: string, source: string): void {
     if (state.finalizing || this.ports.now() < state.finalizeRetryAt) return
+    if (this.documentsStarting.has(source)) return
     state.finalizing = true
+    this.documentsStarting.add(source)
     void this.ports.api
       .finalize(runId)
       .then((detail) => {
@@ -2111,15 +2749,28 @@ export class DocumentFlowRunner {
         const selected = detail.items.filter((item) => item.selected)
         const merged = selected.filter((item) => item.status === 'merged').length
         const skipped = selected.filter((item) => item.status === 'skipped').length
-        if (detail.run.status === 'completed') {
+        // Its Retry went with the run: say so, the update's own notice did not know.
+        const failedUpdates = selected.filter(
+          (item) => item.document_update_status === 'failed'
+        ).length
+        const notUpdated =
+          failedUpdates > 0
+            ? `; ${failedUpdates} could not update the document (see the run's dashboard)`
+            : ''
+        if (detail.run.status === 'completed' && failedUpdates === 0) {
           this.ports.notify({
             level: 'success',
             message: `Document run finished: ${merged} merged${skipped > 0 ? `, ${skipped} skipped` : ''}`
           })
+        } else if (detail.run.status === 'completed') {
+          this.ports.notify({
+            level: 'warning',
+            message: `Document run finished: ${merged} merged${skipped > 0 ? `, ${skipped} skipped` : ''}${notUpdated}`
+          })
         } else {
           this.ports.notify({
             level: 'warning',
-            message: `Document run finished with issues: ${merged} of ${selected.length} merged`
+            message: `Document run finished with issues: ${merged} of ${selected.length} merged${notUpdated}`
           })
         }
       })
@@ -2129,6 +2780,7 @@ export class DocumentFlowRunner {
       })
       .finally(() => {
         state.finalizing = false
+        this.documentsStarting.delete(source)
       })
   }
 }

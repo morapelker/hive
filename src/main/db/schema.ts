@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 57
+export const CURRENT_SCHEMA_VERSION = 58
 
 /**
  * "Implement document" flow (v55). `document_runs` is one spec document turned into tickets
@@ -20,7 +20,9 @@ export const CURRENT_SCHEMA_VERSION = 57
  * INSTANCE instead of an integration worktree: `integration_connection_id` /
  * `integration_connection_path` and `members` (JSON, one integration worktree per member
  * project); its items have `connection_id` and `members` (JSON, one worktree per member with
- * that member's merge bookkeeping) instead of `worktree_id`.
+ * that member's merge bookkeeping) instead of `worktree_id`. The `document_update_*` item
+ * columns (v65) track the post-merge step in which a merged ticket's session updates the run's
+ * source document; `document_update_report` is JSON.
  * CREATE TABLE IF NOT EXISTS, replayed by ensureDocumentFlowTables() in database.ts.
  */
 export const DOCUMENT_FLOW_TABLES_SQL = `
@@ -100,6 +102,13 @@ export const DOCUMENT_FLOW_TABLES_SQL = `
     retry_at          TEXT DEFAULT NULL,
     wait_until        TEXT DEFAULT NULL,
     wait_timeouts     INTEGER NOT NULL DEFAULT 0,
+    document_update_status      TEXT DEFAULT NULL,
+    document_update_detail      TEXT DEFAULT NULL,
+    document_update_queued_at   TEXT DEFAULT NULL,
+    document_update_attempts    INTEGER NOT NULL DEFAULT 0,
+    document_update_hash        TEXT DEFAULT NULL,
+    document_update_report      TEXT DEFAULT NULL,
+    document_update_finished_at TEXT DEFAULT NULL,
     created_at        TEXT NOT NULL,
     updated_at        TEXT NOT NULL,
     started_at        TEXT DEFAULT NULL,
@@ -1010,6 +1019,18 @@ DROP TABLE IF EXISTS diff_comments;`
     // CREATE IF NOT EXISTS, idempotent backfill) because it must also repair a database an
     // older build wrote to after this migration ran.
     up: `-- NOTE: handled idempotently by ensureTicketKeys() in database.ts.`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 58,
+    name: 'add_document_run_item_document_update',
+    // The post-merge step that has a merged ticket's session update the run's source document.
+    up: `-- NOTE: ALTER TABLE for document_run_items.document_update_status,
+         -- document_run_items.document_update_detail, document_run_items.document_update_queued_at,
+         -- document_run_items.document_update_attempts, document_run_items.document_update_hash,
+         -- document_run_items.document_update_report and
+         -- document_run_items.document_update_finished_at is handled idempotently by
+         -- safeAddColumn() in database.ts to avoid "duplicate column" errors.`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]

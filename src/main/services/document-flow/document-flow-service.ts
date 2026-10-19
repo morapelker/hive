@@ -12,11 +12,11 @@
  * Runs in the server child. The orchestrator loop that decides WHEN to call these lives in the
  * renderer; nothing here launches or prompts a session. The base branch is only ever read.
  */
-import { randomUUID } from 'node:crypto'
-import { existsSync, realpathSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
+import { constants as fsConstants, createReadStream, existsSync, realpathSync } from 'node:fs'
+import { access, mkdir, open, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, join, resolve } from 'node:path'
+import { basename, dirname, extname, join, resolve, sep } from 'node:path'
 import type { DocumentFlowUpdatedEvent } from '@shared/document-flow-events'
 import {
   CLASSIFICATION_JSON_SCHEMA,
@@ -42,8 +42,17 @@ import {
   sanitizeDependencies,
   ticketBranchHint
 } from '@shared/document-flow/planning'
-import { DOCUMENT_TEXT_LIMIT, preprocessDocument } from '@shared/document-flow/preprocess'
+import {
+  DOCUMENT_TEXT_LIMIT,
+  detectDocumentFormat,
+  preprocessDocument
+} from '@shared/document-flow/preprocess'
 import { buildLaunchPrompt, workspaceOfMembers } from '@shared/document-flow/prompts'
+import {
+  renderRunStatusBlock,
+  runStatusInput,
+  upsertRunStatusBlock
+} from '@shared/document-flow/document-status'
 import type { HandoffAgentSdk } from '@shared/types/agent-sdk'
 import type { ConnectionWithMembers } from '@shared/types/connection'
 import {
@@ -82,6 +91,8 @@ import {
   type DocumentRunnerClaim,
   type DocumentSimpleResult,
   type DocumentSourceFile,
+  type DocumentSourceState,
+  type DocumentUpdateStatus,
   type DocumentVerifyResult,
   type SessionFinalMessage
 } from '@shared/types/document-flow'
@@ -97,12 +108,16 @@ import { downloadDocument, isDocumentUrl, type DocumentFetch } from './document-
 import {
   DocumentFileError,
   assertDocumentFile,
+  decodeDocument,
   documentFileExists,
   documentRunsRoot,
   normalizeDocumentPath,
   readDocumentSource,
   removeRunDir,
-  writeRunFiles
+  replaceDocumentFile,
+  writeRunFiles,
+  writeRunFilesFromStaging,
+  type StagedRunFiles
 } from './document-files'
 import * as documentFlowGit from './document-flow-git'
 import { resolveSessionFinalMessage } from './final-message'
@@ -493,9 +508,39 @@ const ORCHESTRATION_ITEM_FIELDS = [
   'retry_at',
   'wait_until',
   'wait_timeouts',
+  'document_update_status',
+  'document_update_detail',
+  'document_update_queued_at',
+  'document_update_attempts',
+  'document_update_hash',
+  'document_update_report',
+  'document_update_finished_at',
   'started_at',
   'finished_at'
 ] as const satisfies readonly (keyof DocumentRunItemPatch)[]
+
+/** The audit event logged when an item's document update moves to each status. */
+const DOCUMENT_UPDATE_EVENTS: Record<DocumentUpdateStatus, { type: string; message: string }> = {
+  queued: { type: 'document_update_queued', message: 'waits to update the document' },
+  updating: { type: 'document_update_started', message: 'is updating the document' },
+  done: { type: 'document_updated', message: 'updated the document' },
+  failed: { type: 'document_update_failed', message: 'could not update the document' },
+  skipped: { type: 'document_update_skipped', message: 'did not update the document' }
+}
+
+/** How much of the source document is checked for NUL bytes before it is taken for text. */
+const SOURCE_BINARY_SNIFF_BYTES = 8192
+const UTF8_BOM = Buffer.from([0xef, 0xbb, 0xbf])
+/**
+ * Times the run status is rebuilt when the document changed between reading it and writing it
+ * back (a session still editing it), before the write is given up.
+ */
+const RUN_STATUS_WRITE_ATTEMPTS = 3
+
+/** `document_update_detail` of a document update the run's end left undone. */
+const DOCUMENT_UPDATE_FINISHED_DETAIL = 'The run finished before this task updated the document.'
+const DOCUMENT_UPDATE_CANCELLED_DETAIL =
+  'The run was cancelled before this task updated the document.'
 
 /** The patch that releases a run from its migration session. */
 const NO_MIGRATION_SESSION = {
@@ -603,6 +648,81 @@ export class DocumentFlowService {
     const run = this.db.getDocumentRun(runId)
     if (!run) throw notFound('The run')
     return { path: run.source_path, exists: await documentFileExists(run.source_path) }
+  }
+
+  /**
+   * The run's source document as the post-merge document update sees it: whether it is there
+   * and writable, its format and encoding, a hash of its bytes (to tell whether the agent
+   * changed it), whether it sits in a git work tree, and where screenshots for it go. With
+   * `backupKey` (the item's key) an existing file is first copied to
+   * `<run_dir>/doc-backups/<KEY>-<timestamp>.<ext>`, so an edit gone wrong can be undone by
+   * hand. Never throws for the file itself: a missing or unreadable one is `exists: false`.
+   */
+  async inspectSource(runId: string, backupKey?: string | null): Promise<DocumentSourceState> {
+    const run = this.requireRun(runId)
+    let path = run.source_path
+    try {
+      path = normalizeDocumentPath(run.source_path)
+    } catch {
+      // Stored by createRun, so already absolute; an odd value is reported as it is.
+    }
+    const extension = extname(path)
+    const assetsDir = join(dirname(path), `${basename(path, extension)}.assets`)
+    const state: DocumentSourceState = {
+      path,
+      exists: false,
+      writable: false,
+      format: null,
+      encoding: null,
+      sha256: null,
+      size: null,
+      insideRepo: false,
+      assetsDir,
+      backupPath: null
+    }
+    if (!(await documentFileExists(path))) return state
+    let bytes: Buffer
+    try {
+      bytes = await readFile(path)
+    } catch {
+      return state
+    }
+
+    state.exists = true
+    state.size = bytes.length
+    state.sha256 = createHash('sha256').update(bytes).digest('hex')
+    state.writable = await access(path, fsConstants.W_OK).then(
+      () => true,
+      () => false
+    )
+    // A binary file has no format the agent could edit as text: the step skips it.
+    if (!bytes.subarray(0, SOURCE_BINARY_SNIFF_BYTES).includes(0)) {
+      const { text, encoding } = decodeDocument(bytes)
+      state.encoding = encoding.toLowerCase()
+      state.format = detectDocumentFormat(basename(path), text.replace(/^\uFEFF/, ''))
+    }
+    state.insideRepo = await this.git.topLevel(dirname(path)).then(
+      (root) => root !== '',
+      () => false
+    )
+
+    if (backupKey) {
+      const safeKey = backupKey.replace(/[^\w.-]+/g, '_').replace(/^\.+/, '') || 'item'
+      const stamp = this.now().toISOString().replace(/[:.]/g, '-')
+      const backupPath = join(run.run_dir, 'doc-backups', `${safeKey}-${stamp}${extension}`)
+      try {
+        await mkdir(dirname(backupPath), { recursive: true })
+        await writeFile(backupPath, bytes)
+        state.backupPath = backupPath
+      } catch (error) {
+        log.warn('Could not back up the source document', {
+          runId,
+          backupPath,
+          error: describeError(error)
+        })
+      }
+    }
+    return state
   }
 
   list(projectId?: string): DocumentRunDetail[] {
@@ -1039,6 +1159,19 @@ export class DocumentFlowService {
           data: { from: item.status, to: rowPatch.status }
         }
       )
+    }
+    const documentUpdate = rowPatch.document_update_status
+    if (
+      documentUpdate !== undefined &&
+      documentUpdate !== null &&
+      documentUpdate !== item.document_update_status
+    ) {
+      const event = DOCUMENT_UPDATE_EVENTS[documentUpdate]
+      const detail = rowPatch.document_update_detail ? `: ${rowPatch.document_update_detail}` : ''
+      this.log(run, event.type, `${item.key} ${event.message}${detail}`, {
+        itemId: item.id,
+        data: { from: item.document_update_status, to: documentUpdate }
+      })
     }
     return updated
   }
@@ -3049,6 +3182,9 @@ export class DocumentFlowService {
     }
     // A merge still under way lands (or fails) first, so the report cannot miss it.
     await this.mergesInFlight.get(runId)?.catch(() => undefined)
+    // The orchestrator only finalizes once the document edit lane has drained; finishing early
+    // closes whatever is left in it.
+    this.skipPendingDocumentUpdates(run, DOCUMENT_UPDATE_FINISHED_DETAIL)
     const unconfirmed = await this.adoptLandedMerges(run)
     const items = this.db.getDocumentRunItems(run.id).filter((item) => item.selected)
     const merged = items.filter((item) => item.status === 'merged')
@@ -3059,6 +3195,8 @@ export class DocumentFlowService {
     const settled = items.every((item) => item.status === 'merged' || item.status === 'skipped')
     const status = settled && unconfirmed === 0 ? 'completed' : 'completed_with_issues'
     const updated = this.saveRun(run, { status, report, finished_at: this.now().toISOString() })
+    // Before the run's last log line, so that one stays "Run finished".
+    await this.writeRunStatus(updated, items, report)
     this.log(
       updated,
       status,
@@ -3066,6 +3204,105 @@ export class DocumentFlowService {
     )
     await this.settleRunTicket(updated)
     return this.detail(updated, true)
+  }
+
+  /**
+   * A run that ends closes its document edit lane: every document update still queued or under
+   * way is skipped with `detail`, so the dashboard and the run status say it never happened. A
+   * session in the middle of its edit is not stopped (the user may still be talking to it).
+   */
+  private skipPendingDocumentUpdates(run: DocumentRun, detail: string): void {
+    const finishedAt = this.now().toISOString()
+    const event = DOCUMENT_UPDATE_EVENTS.skipped
+    for (const item of this.db.getDocumentRunItems(run.id)) {
+      const from = item.document_update_status
+      if (from !== 'queued' && from !== 'updating') continue
+      this.saveItem(run, item.id, {
+        document_update_status: 'skipped',
+        document_update_detail: detail,
+        document_update_finished_at: finishedAt
+      })
+      this.log(run, event.type, `${item.key} ${event.message}: ${detail}`, {
+        itemId: item.id,
+        data: { from, to: 'skipped' }
+      })
+    }
+  }
+
+  /**
+   * Writes the run status summary (see document-status.ts) into the document the run was made
+   * from, replacing the one an earlier run left there. Only a UTF-8 document is rewritten (a
+   * BOM is kept): any other encoding would be corrupted by the round trip, so it is skipped and
+   * logged, as is a document the user made read-only. The file is read right before the block is built and written back through a
+   * temporary file, and the write is redone when the document changed in between. Never
+   * throws: the run is finished either way, and the outcome is in the run's log.
+   */
+  private async writeRunStatus(
+    run: DocumentRun,
+    items: readonly DocumentRunItem[],
+    report: DocumentRunReport
+  ): Promise<void> {
+    const path = run.source_path
+    const name = basename(path)
+    const failed = (reason: string): void =>
+      this.log(
+        run,
+        'document_summary_failed',
+        `The run status could not be written into ${name}: ${reason}`,
+        { data: { path } }
+      )
+    const skipped = (reason: string, data: Record<string, unknown> = {}): void =>
+      this.log(
+        run,
+        'document_summary_skipped',
+        `The run status was not written into ${name}: ${reason}`,
+        { data: { path, ...data } }
+      )
+    try {
+      if (!(await documentFileExists(path))) {
+        failed(`the document is no longer at ${path}.`)
+        return
+      }
+      // The write renames a new file over the document, which only needs the directory to be
+      // writable: a document the user made read-only would be replaced all the same.
+      const writable = await access(path, fsConstants.W_OK).then(
+        () => true,
+        () => false
+      )
+      if (!writable) {
+        skipped('the document is read-only.')
+        return
+      }
+      const input = runStatusInput(run, items, report)
+      for (let attempt = 0; attempt < RUN_STATUS_WRITE_ATTEMPTS; attempt++) {
+        const bytes = await readFile(path)
+        if (bytes.subarray(0, SOURCE_BINARY_SNIFF_BYTES).includes(0)) {
+          skipped('it is not a text file.')
+          return
+        }
+        const { text, encoding } = decodeDocument(bytes)
+        if (encoding.toLowerCase() !== 'utf-8') {
+          skipped(`it is encoded as ${encoding}, and only UTF-8 documents are rewritten.`, {
+            encoding
+          })
+          return
+        }
+        const format = detectDocumentFormat(name, text)
+        const next = upsertRunStatusBlock(text, format, renderRunStatusBlock(format, input))
+        if (next === text) return
+        const bom = bytes.subarray(0, UTF8_BOM.length).equals(UTF8_BOM)
+        const data = Buffer.concat([bom ? UTF8_BOM : Buffer.alloc(0), Buffer.from(next, 'utf8')])
+        if (await replaceDocumentFile(path, data, bytes)) {
+          this.log(run, 'document_summary_written', `Wrote the run status into ${name}`, {
+            data: { path, format }
+          })
+          return
+        }
+      }
+      failed('the document kept changing while it was being written.')
+    } catch (error) {
+      failed(describeError(error))
+    }
   }
 
   /**
@@ -3312,6 +3549,7 @@ export class DocumentFlowService {
       throw invalidState('This run has already finished.')
     }
     const finishedAt = this.now().toISOString()
+    this.skipPendingDocumentUpdates(run, DOCUMENT_UPDATE_CANCELLED_DETAIL)
     let cancelledItems = 0
     for (const item of this.db.getDocumentRunItems(run.id)) {
       if (!item.selected || isTerminalItemStatus(item.status)) continue

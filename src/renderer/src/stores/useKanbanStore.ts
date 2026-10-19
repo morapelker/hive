@@ -15,6 +15,7 @@ import {
   registerKanbanAutoCreateTicket,
   registerKanbanRenameSync,
   registerKanbanModelSync,
+  isTicketHeldByDocumentUpdate,
   type KanbanSessionEvent
 } from './store-coordination'
 import { CUSTOM_MODEL_PROVIDER_ID } from '@shared/types/custom-provider'
@@ -840,6 +841,9 @@ export const useKanbanStore = create<KanbanState>()(
             implementHandled.add(projectId)
             recoveredImplement.add(ticket.current_session_id)
           }
+          // Its session works on the run's document, not on the ticket: it stays where it is
+          // (see syncTicketWithSession)
+          if (isTicketHeldByDocumentUpdate(ticket.id)) continue
           if (ticket.column === 'in_progress') {
             // Only act on positive "finished" evidence — never on progressing/
             // asking/no-status, so we don't yank not-yet-started or actively-
@@ -1676,6 +1680,13 @@ export const useKanbanStore = create<KanbanState>()(
             // explicit user follow-up (event.explicitSend) and a plan approval
             // (implement) return the ticket to in_progress — resuming work on
             // a done/merged ticket reopens it.
+            //
+            // A document run's merged ticket whose session the run told to update
+            // the run's document is held where it is: that prompt
+            // is an explicit send, and the turn ends like any other, but the work is
+            // the run's, not the ticket's. No session event moves it, in any column,
+            // until the update is over; the run puts it back in Merged then.
+            const heldByDocumentUpdate = isTicketHeldByDocumentUpdate(ticket.id)
             switch (event.type) {
               case 'session_completed': {
                 // Claude CLI sessions say whether the turn ended with a real
@@ -1706,6 +1717,7 @@ export const useKanbanStore = create<KanbanState>()(
                   // invariant: in_progress ⇔ a running progress bar or a paused one).
                   // Move is idempotent; entering review drops awaiting_completion.
                   if (
+                    !heldByDocumentUpdate &&
                     ticket.column !== 'review' &&
                     ticket.column !== 'done' &&
                     ticket.column !== 'merged'
@@ -1757,6 +1769,7 @@ export const useKanbanStore = create<KanbanState>()(
                 // land here when its completion is rerouted to plan_ready by a stale
                 // lastSendMode, so the move must not be gated on mode.
                 if (
+                  !heldByDocumentUpdate &&
                   ticket.column !== 'review' &&
                   ticket.column !== 'done' &&
                   ticket.column !== 'merged'
@@ -1778,6 +1791,7 @@ export const useKanbanStore = create<KanbanState>()(
                     .catch(() => {})
                 }
                 if (
+                  !heldByDocumentUpdate &&
                   ticket.column !== 'in_progress' &&
                   ticket.column !== 'done' &&
                   ticket.column !== 'merged'
@@ -1841,6 +1855,7 @@ export const useKanbanStore = create<KanbanState>()(
                 // their explicit send stamps. Other columns keep moving via
                 // session_working as before.
                 if (
+                  !heldByDocumentUpdate &&
                   (ticket.column === 'done' || ticket.column === 'merged') &&
                   !ticket.auto_approve_plan &&
                   !ticket.archived_at
@@ -1862,7 +1877,7 @@ export const useKanbanStore = create<KanbanState>()(
 
               case 'session_error': {
                 // Error requires user attention — move to review if currently in_progress
-                if (ticket.column === 'in_progress') {
+                if (!heldByDocumentUpdate && ticket.column === 'in_progress') {
                   get()
                     .moveTicket(ticket.id, projectId, 'review', ticket.sort_order)
                     .catch(() => {})
@@ -1895,14 +1910,13 @@ export const useKanbanStore = create<KanbanState>()(
                   event.explicitSend === true &&
                   (ticket.column === 'done' || ticket.column === 'merged') &&
                   !ticket.archived_at
-                if (
-                  ticket.column === 'todo' ||
-                  ticket.column === 'review' ||
-                  reopenedByFollowup
-                ) {
-                  get()
-                    .moveTicket(ticket.id, projectId, 'in_progress', ticket.sort_order)
-                    .catch(() => {})
+                if (ticket.column === 'todo' || ticket.column === 'review' || reopenedByFollowup) {
+                  if (!heldByDocumentUpdate) {
+                    get()
+                      .moveTicket(ticket.id, projectId, 'in_progress', ticket.sort_order)
+                      .catch(() => {})
+                  }
+                  // Held or not, a prompt to a done-closed session puts it back to work
                   if (reopenedByFollowup) {
                     // An explicit follow-up revived a done-closed session —
                     // restore its active status and tab (no focus change).

@@ -14,7 +14,7 @@ import { useGitStore } from '@/stores/useGitStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useQuestionStore, type QuestionRequest } from '@/stores/useQuestionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
-import { WAITING_PREFIX } from '@shared/document-flow/planning'
+import { DOCUMENT_UPDATE_INTERRUPT_DETAIL, WAITING_PREFIX } from '@shared/document-flow/planning'
 import type { DocumentRunDetail, DocumentRunMember } from '@shared/types/document-flow'
 import type { KanbanTicket } from '../../../../main/db/types'
 
@@ -232,6 +232,44 @@ describe('the card of a document run ticket', () => {
       within(screen.getByTestId('kanban-docflow-run-bar-run-live')).getByRole('progressbar')
     ).toHaveAccessibleName('Waiting for answer')
     expect(screen.queryByTestId('kanban-docflow-run-needs-you-run-live')).toBeNull()
+  })
+
+  it('says which ticket edits the document, in pink, while no other session is at work', () => {
+    seedRuns(
+      makeDetail({ id: 'run-live', status: 'running' }, [
+        { key: 'A1', status: 'merged', document_update_status: 'done' },
+        { key: 'A2', status: 'merged', document_update_status: 'updating' }
+      ])
+    )
+    render(<KanbanTicketCard ticket={makeTicket()} />)
+
+    const label = screen.getByTestId('kanban-docflow-run-running-run-live')
+    expect(label).toHaveTextContent(/^Editing document · A2$/)
+    expect(label.className).toContain('text-pink-500')
+    const progressbar = within(screen.getByTestId('kanban-docflow-run-bar-run-live')).getByRole(
+      'progressbar'
+    )
+    expect(progressbar).toHaveAccessibleName('Editing document')
+    expect(progressbar.firstElementChild?.className).toContain('bg-pink-500')
+    expect(card().className).toContain('[--ticket-state-tone:#ec4899]')
+    // The run's own ticket is not queued to edit anything
+    expect(screen.queryByTestId('kanban-ticket-doc-edit-queue')).toBeNull()
+    expect(screen.queryByTestId('kanban-ticket-editing-document')).toBeNull()
+  })
+
+  it('keeps "N working" in blue when the document is edited beside other sessions at work', () => {
+    seedRuns(
+      makeDetail({ id: 'run-live', status: 'running' }, [
+        { key: 'A1', status: 'running' },
+        { key: 'A2', status: 'merged', document_update_status: 'updating' }
+      ])
+    )
+    render(<KanbanTicketCard ticket={makeTicket()} />)
+
+    const label = screen.getByTestId('kanban-docflow-run-running-run-live')
+    expect(label).toHaveTextContent(/^2 working$/)
+    expect(label.className).not.toContain('text-pink-500')
+    expect(card().className).toContain('[--ticket-state-tone:#3b82f6]')
   })
 
   it('keeps "Needs you" on a paused run, whose label says it is paused', () => {
@@ -1119,6 +1157,189 @@ describe('the card of a task ticket of a document run', () => {
     )
 
     expect(screen.getByTestId('kanban-ticket-merge-queue')).toHaveTextContent('In merge queue')
+  })
+
+  it('says "Waiting in document edit queue" once merged, with its place and who is editing', async () => {
+    seedRuns(
+      makeDetail({ id: 'run-live', status: 'running', source_path: '/docs/checkout.html' }, [
+        {
+          key: 'A1',
+          status: 'merged',
+          ticket_id: 'ticket-a1',
+          document_update_status: 'updating'
+        },
+        { key: 'A2', status: 'merged', ticket_id: 'ticket-a2', document_update_status: 'queued' }
+      ])
+    )
+    render(
+      <TooltipProvider>
+        <KanbanTicketCard ticket={taskTicket({ column: 'merged' })} />
+      </TooltipProvider>
+    )
+
+    const pill = screen.getByTestId('kanban-ticket-doc-edit-queue')
+    expect(pill).toHaveTextContent(/^Waiting in document edit queue$/)
+    expect(pill.className).toContain('text-pink-500')
+    expect(pill.querySelector('svg')).not.toBeNull()
+    expect(screen.queryByTestId('kanban-ticket-editing-document')).toBeNull()
+
+    // The tooltip's popper measures itself, which jsdom cannot
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe(): void {}
+        unobserve(): void {}
+        disconnect(): void {}
+      }
+    )
+    try {
+      fireEvent.focus(pill)
+      expect(await screen.findByRole('tooltip')).toHaveTextContent(
+        'Merged. The orchestrator updates checkout.html one ticket at a time — #1 in queue; A1 is editing it now.'
+      )
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('shows the pink "Editing document" bar while its session edits the document, in any column', () => {
+    seedRuns(
+      makeDetail({ id: 'run-live', status: 'running' }, [
+        {
+          key: 'A2',
+          status: 'merged',
+          ticket_id: 'ticket-a2',
+          session_id: 'session-a2',
+          document_update_status: 'updating'
+        }
+      ])
+    )
+    for (const column of ['merged', 'in_progress'] as const) {
+      const { unmount } = render(
+        <TooltipProvider>
+          <KanbanTicketCard
+            ticket={taskTicket({ column, current_session_id: 'session-a2', mode: 'build' })}
+          />
+        </TooltipProvider>
+      )
+
+      const slot = screen.getByTestId('kanban-ticket-editing-document')
+      expect(slot, column).toHaveTextContent('Editing document')
+      const progressbar = within(slot).getByRole('progressbar')
+      expect(progressbar).toHaveAccessibleName('Editing document')
+      expect(progressbar.firstElementChild?.className).toContain('bg-pink-500')
+      expect(screen.queryByTestId('kanban-ticket-doc-edit-queue')).toBeNull()
+      expect(screen.queryByTestId('kanban-ticket-progress')).toBeNull()
+      unmount()
+    }
+  })
+
+  it('opens the ticket like a busy card when its "Editing document" bar is clicked', () => {
+    seedRuns(
+      makeDetail({ id: 'run-live', status: 'running' }, [
+        { key: 'A2', status: 'merged', ticket_id: 'ticket-a2', document_update_status: 'updating' }
+      ])
+    )
+    render(
+      <TooltipProvider>
+        <KanbanTicketCard ticket={taskTicket({ column: 'merged' })} />
+      </TooltipProvider>
+    )
+
+    fireEvent.click(screen.getByTestId('kanban-ticket-editing-document'))
+    expect(useKanbanStore.getState().selectedTicketRef).toEqual({
+      projectId: 'proj-1',
+      ticketId: 'ticket-a2'
+    })
+  })
+
+  it('says it waits for the user, without a moving bar, once the editing session stopped for them', () => {
+    seedRuns(
+      makeDetail({ id: 'run-live', status: 'running' }, [
+        {
+          key: 'A2',
+          status: 'merged',
+          ticket_id: 'ticket-a2',
+          session_id: 'session-a2',
+          document_update_status: 'updating',
+          document_update_detail: DOCUMENT_UPDATE_INTERRUPT_DETAIL
+        }
+      ])
+    )
+    render(
+      <TooltipProvider>
+        <KanbanTicketCard
+          ticket={taskTicket({ column: 'merged', current_session_id: 'session-a2', mode: 'build' })}
+        />
+      </TooltipProvider>
+    )
+
+    const slot = screen.getByTestId('kanban-ticket-editing-document')
+    expect(within(slot).getByTestId('kanban-ticket-document-edit-waiting')).toHaveTextContent(
+      'Waiting for you'
+    )
+    expect(within(slot).queryByRole('progressbar')).toBeNull()
+    expect(slot).not.toHaveTextContent('Editing document')
+  })
+
+  it('falls back to the orange Question when the editing session asks', () => {
+    seedRuns(
+      makeDetail({ id: 'run-live', status: 'running' }, [
+        {
+          key: 'A2',
+          status: 'merged',
+          ticket_id: 'ticket-a2',
+          session_id: 'session-a2',
+          document_update_status: 'updating',
+          document_update_detail: DOCUMENT_UPDATE_INTERRUPT_DETAIL
+        }
+      ])
+    )
+    useWorktreeStatusStore.setState({
+      sessionStatuses: { 'session-a2': { status: 'answering', timestamp: Date.now() } }
+    })
+    render(
+      <TooltipProvider>
+        <KanbanTicketCard
+          ticket={taskTicket({ column: 'merged', current_session_id: 'session-a2', mode: 'build' })}
+        />
+      </TooltipProvider>
+    )
+
+    expect(screen.queryByTestId('kanban-ticket-editing-document')).toBeNull()
+    const busy = screen.getByTestId('kanban-ticket-progress')
+    expect(busy).toHaveTextContent('Question')
+    const progressbar = within(busy).getByRole('progressbar')
+    expect(progressbar).toHaveAccessibleName('Waiting for answer')
+    expect(progressbar.firstElementChild?.className).not.toContain('bg-pink-500')
+  })
+
+  it('says nothing about the document once its update is done, or the run is over', () => {
+    seedRuns(
+      makeDetail({ id: 'run-live', status: 'running' }, [
+        { key: 'A2', status: 'merged', ticket_id: 'ticket-a2', document_update_status: 'done' }
+      ])
+    )
+    const { unmount } = render(
+      <TooltipProvider>
+        <KanbanTicketCard ticket={taskTicket({ column: 'merged' })} />
+      </TooltipProvider>
+    )
+    expect(screen.queryByTestId('kanban-ticket-doc-edit-queue')).toBeNull()
+    expect(screen.queryByTestId('kanban-ticket-editing-document')).toBeNull()
+    unmount()
+
+    seedRuns(
+      makeDetail({ id: 'run-live', status: 'cancelled' }, [
+        { key: 'A2', status: 'merged', ticket_id: 'ticket-a2', document_update_status: 'queued' }
+      ])
+    )
+    render(
+      <TooltipProvider>
+        <KanbanTicketCard ticket={taskTicket({ column: 'merged' })} />
+      </TooltipProvider>
+    )
+    expect(screen.queryByTestId('kanban-ticket-doc-edit-queue')).toBeNull()
   })
 
   it('says nothing about the queue when its merge is up next, or outside Review', () => {

@@ -125,10 +125,17 @@ export function mergeCandidates<T extends DocumentRunItem>(items: readonly T[]):
     .sort((a, b) => Number(a.has_migration) - Number(b.has_migration) || a.position - b.position)
 }
 
-/** Every selected item reached a terminal status: the run can be finalized. */
+/**
+ * Every selected item reached a terminal status and the document edit lane has drained (no
+ * item waits to update the source document or is updating it): the run can be finalized.
+ */
 export function isRunSettled(items: readonly DocumentRunItem[]): boolean {
   const selected = items.filter((item) => item.selected)
-  return selected.length > 0 && selected.every((item) => isTerminalItemStatus(item.status))
+  return (
+    selected.length > 0 &&
+    selected.every((item) => isTerminalItemStatus(item.status)) &&
+    !selected.some(isDocumentUpdatePending)
+  )
 }
 
 /** `status_detail` prefix of an item whose session stopped for the user mid-step. */
@@ -141,6 +148,79 @@ export const WAITING_FOR_WORK_PREFIX = 'Waiting for background work: '
 /** `status_detail` of an item whose session the user interrupted. */
 export const USER_INTERRUPT_DETAIL =
   'You interrupted this session. Send it a message to continue, or use Retry.'
+/** `document_update_detail` of an item whose session the user interrupted mid document edit. */
+export const DOCUMENT_UPDATE_INTERRUPT_DETAIL =
+  'You interrupted the document edit. Send it a message to continue, or skip the document update.'
+
+// ── Document edit lane ──────────────────────────────────────────────────────
+// Once a ticket is merged (or auto-skipped as already implemented), its own session is asked to
+// update the document the run was made from. One session edits the document at a time: the
+// item `updating` holds the lane, the `queued` ones wait in the order they joined it.
+
+type DocumentUpdateNode = Pick<DocumentRunItem, 'selected' | 'status' | 'document_update_status'>
+
+/**
+ * The item still has its document update ahead of it (queued) or under way (updating). Only a
+ * merged or skipped item has one; a row from an older build has no status and never does.
+ */
+export function isDocumentUpdatePending(item: DocumentUpdateNode): boolean {
+  return (
+    item.selected &&
+    (item.status === 'merged' || item.status === 'skipped') &&
+    (item.document_update_status === 'queued' || item.document_update_status === 'updating')
+  )
+}
+
+/** The item whose session is updating the document now, or null when the lane is free. */
+export function documentUpdateLaneOwner<T extends DocumentRunItem>(items: readonly T[]): T | null {
+  return items.find((item) => item.selected && item.document_update_status === 'updating') ?? null
+}
+
+/** Queued document updates in lane order: when they joined the lane, then document order. */
+function queuedDocumentUpdates<T extends DocumentRunItem>(items: readonly T[]): T[] {
+  return items
+    .filter((item) => isDocumentUpdatePending(item) && item.document_update_status === 'queued')
+    .sort((a, b) => {
+      const queuedA = a.document_update_queued_at
+      const queuedB = b.document_update_queued_at
+      if (queuedA !== queuedB) {
+        if (queuedA === null) return 1
+        if (queuedB === null) return -1
+        return queuedA < queuedB ? -1 : 1
+      }
+      return a.position - b.position
+    })
+}
+
+/**
+ * The queued document updates that may start now, first in line first, or none while an item
+ * holds the lane. The runner takes the first one whose session can take the prompt.
+ */
+export function documentUpdateCandidates<T extends DocumentRunItem>(items: readonly T[]): T[] {
+  if (documentUpdateLaneOwner(items)) return []
+  return queuedDocumentUpdates(items)
+}
+
+/** 1-based place of the item among the queued document updates, or null when it is not queued. */
+export function documentUpdateQueuePosition(
+  items: readonly DocumentRunItem[],
+  itemId: string
+): number | null {
+  const index = queuedDocumentUpdates(items).findIndex((item) => item.id === itemId)
+  return index === -1 ? null : index + 1
+}
+
+/**
+ * The item's session stopped mid document edit for the user: a question or permission
+ * ("Waiting for you: …"), or the user interrupted it. The lane stays held until they act.
+ */
+export function isDocumentUpdateWaitingOnUser(
+  item: Pick<DocumentRunItem, 'document_update_status' | 'document_update_detail'>
+): boolean {
+  if (item.document_update_status !== 'updating') return false
+  const detail = item.document_update_detail ?? ''
+  return detail.startsWith(WAITING_PREFIX) || detail === DOCUMENT_UPDATE_INTERRUPT_DETAIL
+}
 
 /**
  * The item cannot advance without the user: it is flagged, or its session (also while it
@@ -156,13 +236,16 @@ export function isItemWaitingOnUser(
 }
 
 /**
- * Items with an agent session at work right now: launching or working, or resolving conflicts
- * or fixing checks without having stopped for the user. Checking, merging and verifying are
- * the orchestrator's own steps and hold no live session.
+ * Items with an agent session at work right now: launching or working, resolving conflicts,
+ * fixing checks or updating the document without having stopped for the user. Checking,
+ * merging and verifying are the orchestrator's own steps and hold no live session.
  */
 export function countRunningAgents(items: readonly DocumentRunItem[]): number {
   return items.filter((item) => {
     if (!item.selected) return false
+    if (isDocumentUpdatePending(item) && item.document_update_status === 'updating') {
+      return !isDocumentUpdateWaitingOnUser(item)
+    }
     if (item.status === 'launching' || item.status === 'running') return true
     if (item.status !== 'resolving_conflicts' && item.status !== 'fixing') return false
     return !isItemWaitingOnUser(item)
@@ -173,13 +256,28 @@ export function countRunningAgents(items: readonly DocumentRunItem[]): number {
  * The run cannot advance without the user: nothing is launching, working or merging, and
  * whatever is left is waiting on them — directly, behind an item that is (a dependency, or
  * the one holding the merge lane), or (given the slot count) because every slot is held by an
- * item waiting on them.
+ * item waiting on them. Pending document updates count as open work too: they wait on the
+ * user only while the item holding the document edit lane does.
  */
 export function isRunWaitingOnUser(
   items: readonly DocumentRunItem[],
   maxParallel?: number
 ): boolean {
   const open = items.filter((item) => item.selected && !isTerminalItemStatus(item.status))
+  const updatesPending = items.some(isDocumentUpdatePending)
+  if (updatesPending) {
+    const editor = documentUpdateLaneOwner(items)
+    // A session editing the document, or a queued update about to start, is progress. With
+    // the lane free, queued updates whose sessions all stopped for the user wait on them: the
+    // runner passes such a session over, and says so in its detail.
+    const waiting = editor
+      ? isDocumentUpdateWaitingOnUser(editor)
+      : queuedDocumentUpdates(items).every((item) =>
+          (item.document_update_detail ?? '').startsWith(WAITING_PREFIX)
+        )
+    if (!waiting) return false
+    if (open.length === 0) return true
+  }
   if (open.length === 0) return false
   const slotsBlocked =
     maxParallel !== undefined &&
@@ -280,6 +378,10 @@ export interface DocumentRunItemSummary {
   attention: number
   pending: number
   skipped: number
+  /** Merged or skipped items whose session is updating the source document (0 or 1). */
+  documentUpdating: number
+  /** Merged or skipped items waiting in the document edit lane. */
+  documentQueued: number
   byStatus: Record<DocumentRunItemStatus, number>
 }
 
@@ -298,6 +400,12 @@ export function summarizeItems(items: readonly DocumentRunItem[]): DocumentRunIt
     attention,
     pending: byStatus.pending,
     skipped: byStatus.skipped + byStatus.cancelled,
+    documentUpdating: selected.filter(
+      (item) => isDocumentUpdatePending(item) && item.document_update_status === 'updating'
+    ).length,
+    documentQueued: selected.filter(
+      (item) => isDocumentUpdatePending(item) && item.document_update_status === 'queued'
+    ).length,
     byStatus
   }
 }

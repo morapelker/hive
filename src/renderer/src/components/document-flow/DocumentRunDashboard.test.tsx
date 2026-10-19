@@ -11,7 +11,11 @@ import { useSessionStore } from '@/stores/useSessionStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
-import { USER_INTERRUPT_DETAIL, WAITING_PREFIX } from '@shared/document-flow/planning'
+import {
+  DOCUMENT_UPDATE_INTERRUPT_DETAIL,
+  USER_INTERRUPT_DETAIL,
+  WAITING_PREFIX
+} from '@shared/document-flow/planning'
 import type {
   DocumentRunDetail,
   DocumentRunItemPatch,
@@ -1152,6 +1156,190 @@ describe('DocumentRunDashboard — tickets', () => {
     expect(screen.getByTestId('docflow-row-A1')).toHaveTextContent('opus')
     expect(screen.getByTestId('docflow-row-A1')).toHaveTextContent('ultracode')
     expect(screen.getByTestId('docflow-row-A2')).toHaveTextContent('gpt-5.5')
+  })
+})
+
+describe('DocumentRunDashboard — document edit lane', () => {
+  const lane = (overrides: Parameters<typeof makeDetail>[0] = {}): DocumentRunDetail =>
+    makeDetail({ ...LAUNCHED, ...overrides }, [
+      {
+        key: 'A1',
+        status: 'merged',
+        session_id: 'session-A1',
+        worktree_id: 'wt-A1',
+        document_update_status: 'updating'
+      },
+      {
+        key: 'A2',
+        status: 'merged',
+        session_id: 'session-A2',
+        document_update_status: 'queued',
+        document_update_queued_at: '2026-05-04T10:20:00.000Z'
+      },
+      {
+        key: 'A3',
+        status: 'skipped',
+        session_id: 'session-A3',
+        document_update_status: 'queued',
+        document_update_queued_at: '2026-05-04T10:21:00.000Z'
+      },
+      { key: 'A4', status: 'running', session_id: 'session-A4' }
+    ])
+
+  it('says in the header which ticket edits the document and how many wait their turn', async () => {
+    await renderDashboard(lane())
+
+    const editing = screen.getByTestId('docflow-document-editing')
+    expect(editing).toHaveTextContent(/^Editing document: A1$/)
+    expect(editing.className).toContain('text-pink-500')
+    expect(screen.getByTestId('docflow-document-edit-queue')).toHaveTextContent(
+      '· 2 waiting in document edit queue'
+    )
+    expect(screen.queryByTestId('docflow-document-editing-waiting')).toBeNull()
+
+    await click('docflow-open-document-session')
+    expect(useSessionStore.getState().activeSessionId).toBe('session-A1')
+    expect(useDocumentFlowStore.getState().dashboardRunId).toBeNull()
+  })
+
+  it('says the editing session waits for the user, in words', async () => {
+    const detail = lane()
+    detail.items[0] = {
+      ...detail.items[0],
+      document_update_detail: DOCUMENT_UPDATE_INTERRUPT_DETAIL
+    }
+    await renderDashboard(detail)
+
+    expect(screen.getByTestId('docflow-document-editing-waiting')).toHaveTextContent(
+      'Waiting for you'
+    )
+    expect(screen.getByTestId('docflow-row-detail-A1')).toHaveTextContent(
+      DOCUMENT_UPDATE_INTERRUPT_DETAIL
+    )
+  })
+
+  it('shows no lane line once nothing waits to edit the document, or the run is over', async () => {
+    await renderDashboard(
+      makeDetail(LAUNCHED, [{ key: 'A1', status: 'merged', document_update_status: 'done' }])
+    )
+    expect(screen.queryByTestId('docflow-document-lane')).toBeNull()
+    cleanup()
+
+    await renderDashboard(lane({ status: 'completed' }))
+    expect(screen.queryByTestId('docflow-document-lane')).toBeNull()
+  })
+
+  it('wears the document states on the rows, with their place in the lane', async () => {
+    await renderDashboard(lane())
+
+    const editing = screen.getByTestId('docflow-row-status-A1')
+    expect(editing).toHaveTextContent('Editing document')
+    expect(editing.className).toContain('text-pink-500')
+    expect(screen.getByTestId('docflow-row-status-A2')).toHaveTextContent(
+      'Waiting in document edit queue'
+    )
+    expect(screen.getByTestId('docflow-row-detail-A2')).toHaveTextContent(
+      '#1 in the document edit queue'
+    )
+    expect(screen.getByTestId('docflow-row-detail-A3')).toHaveTextContent(
+      '#2 in the document edit queue'
+    )
+    expect(screen.getByTestId('docflow-row-status-A4')).toHaveTextContent('Working')
+  })
+
+  it('tells how a finished document update went, in the detail column', async () => {
+    await renderDashboard(
+      makeDetail(LAUNCHED, [
+        {
+          key: 'A1',
+          status: 'merged',
+          document_update_status: 'done',
+          document_update_report: {
+            outcome: 'updated',
+            verified: 'tests: 12 passed',
+            followUps: [],
+            notes: 'Struck through task A1 and added its notes.'
+          }
+        },
+        {
+          key: 'A2',
+          status: 'merged',
+          document_update_status: 'failed',
+          document_update_detail: 'The document was not changed.'
+        },
+        {
+          key: 'A3',
+          status: 'merged',
+          document_update_status: 'skipped',
+          document_update_detail: 'The document is read-only'
+        }
+      ])
+    )
+
+    expect(screen.getByTestId('docflow-row-status-A1')).toHaveTextContent('Merged')
+    const done = screen.getByTestId('docflow-row-detail-A1')
+    expect(done).toHaveTextContent(/^Document updated$/)
+    expect(done).toHaveAttribute(
+      'title',
+      'Document updated: Struck through task A1 and added its notes.'
+    )
+    const failed = screen.getByTestId('docflow-row-detail-A2')
+    expect(failed).toHaveTextContent('Document update failed: The document was not changed.')
+    expect(failed.className).toContain('text-amber-600')
+    expect(screen.getByTestId('docflow-row-detail-A3')).toHaveTextContent(
+      'Document not updated: The document is read-only'
+    )
+  })
+
+  it('skips a pending document update and retries a failed one from the row', async () => {
+    await renderDashboard(
+      makeDetail(LAUNCHED, [
+        { key: 'A1', status: 'merged', document_update_status: 'updating' },
+        { key: 'A2', status: 'merged', document_update_status: 'queued' },
+        { key: 'A3', status: 'merged', session_id: 's-A3', document_update_status: 'failed' },
+        { key: 'A4', status: 'merged', document_update_status: 'done' }
+      ])
+    )
+
+    expect(screen.getByTestId('docflow-row-skip-doc-A1')).toHaveAccessibleName(
+      'Skip document update'
+    )
+    expect(screen.getByTestId('docflow-row-skip-doc-A2')).toBeInTheDocument()
+    expect(screen.queryByTestId('docflow-row-retry-doc-A1')).toBeNull()
+    expect(screen.getByTestId('docflow-row-retry-doc-A3')).toHaveAccessibleName(
+      'Retry document update'
+    )
+    expect(screen.queryByTestId('docflow-row-skip-doc-A3')).toBeNull()
+    expect(screen.queryByTestId('docflow-row-retry-doc-A4')).toBeNull()
+    expect(screen.queryByTestId('docflow-row-skip-doc-A4')).toBeNull()
+
+    await click('docflow-row-skip-doc-A1')
+    expect(api.updateItem).toHaveBeenLastCalledWith(
+      'run-1',
+      'item-A1',
+      expect.objectContaining({
+        document_update_status: 'skipped',
+        document_update_detail: 'Skipped by you.'
+      })
+    )
+    expect(api.updateItem.mock.lastCall?.[2]).not.toHaveProperty('status')
+
+    await click('docflow-row-retry-doc-A3')
+    expect(api.updateItem).toHaveBeenLastCalledWith(
+      'run-1',
+      'item-A3',
+      expect.objectContaining({ document_update_status: 'queued', document_update_attempts: 0 })
+    )
+  })
+
+  it('offers no document update actions once the run is over', async () => {
+    await renderDashboard(
+      makeDetail({ ...LAUNCHED, status: 'completed' }, [
+        { key: 'A1', status: 'merged', session_id: 's-A1', document_update_status: 'failed' }
+      ])
+    )
+
+    expect(screen.queryByTestId('docflow-row-retry-doc-A1')).toBeNull()
   })
 })
 

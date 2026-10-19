@@ -6,15 +6,21 @@ import {
   type DocumentRunItemStatus
 } from '../types/document-flow'
 import {
+  DOCUMENT_UPDATE_INTERRUPT_DETAIL,
   USER_INTERRUPT_DETAIL,
   WAITING_FOR_WORK_PREFIX,
   WAITING_PREFIX,
   awaitsLaunch,
   countOccupiedSlots,
   countRunningAgents,
+  documentUpdateCandidates,
+  documentUpdateLaneOwner,
+  documentUpdateQueuePosition,
   freeSlotCount,
   integrationBranchHint,
   isDependencySatisfied,
+  isDocumentUpdatePending,
+  isDocumentUpdateWaitingOnUser,
   isItemWaitingOnUser,
   isMergeInFlight,
   isRunSettled,
@@ -80,6 +86,13 @@ function item(
     retry_at: null,
     wait_until: null,
     wait_timeouts: 0,
+    document_update_status: null,
+    document_update_detail: null,
+    document_update_queued_at: null,
+    document_update_attempts: 0,
+    document_update_hash: null,
+    document_update_report: null,
+    document_update_finished_at: null,
     created_at: '2026-10-05T10:00:00.000Z',
     updated_at: '2026-10-05T10:00:00.000Z',
     started_at: null,
@@ -89,6 +102,26 @@ function item(
 }
 
 const keys = (items: readonly DocumentRunItem[]): string[] => items.map((entry) => entry.key)
+
+/** A merged item waiting in the document edit lane since `queuedAt`. */
+const queued = (
+  key: string,
+  queuedAt: string | null,
+  overrides: Partial<DocumentRunItem> = {}
+): DocumentRunItem =>
+  item(key, 'merged', {
+    document_update_status: 'queued',
+    document_update_queued_at: queuedAt,
+    ...overrides
+  })
+
+/** A merged item whose session is updating the document. */
+const editing = (key: string, overrides: Partial<DocumentRunItem> = {}): DocumentRunItem =>
+  item(key, 'merged', {
+    document_update_status: 'updating',
+    document_update_queued_at: '2026-10-05T10:00:00.000Z',
+    ...overrides
+  })
 
 describe('dependencies', () => {
   it('treats merged, skipped, deselected and absent dependencies as satisfied', () => {
@@ -389,6 +422,22 @@ describe('isRunSettled', () => {
     expect(isRunSettled([])).toBe(false)
     expect(isRunSettled([item('A', 'merged', { selected: false })])).toBe(false)
   })
+
+  it('is not settled until the document edit lane has drained', () => {
+    expect(isRunSettled([item('A', 'merged'), queued('B', '2026-10-05T10:01:00.000Z')])).toBe(false)
+    expect(isRunSettled([item('A', 'merged'), editing('B')])).toBe(false)
+    expect(
+      isRunSettled([
+        item('A', 'skipped', { document_update_status: 'updating' }),
+        item('B', 'merged')
+      ])
+    ).toBe(false)
+    for (const status of ['done', 'failed', 'skipped', null] as const) {
+      expect(isRunSettled([item('A', 'merged', { document_update_status: status })])).toBe(true)
+    }
+    // A deselected item's update never holds the run open.
+    expect(isRunSettled([item('A', 'merged'), editing('B', { selected: false })])).toBe(true)
+  })
 })
 
 describe('isRunWaitingOnUser', () => {
@@ -443,6 +492,34 @@ describe('isRunWaitingOnUser', () => {
     expect(isRunWaitingOnUser([judged, item('B', 'ready')])).toBe(true)
   })
 
+  it('waits when only document updates are left and the editing session stopped for the user', () => {
+    const asking = editing('A', { document_update_detail: `${WAITING_PREFIX}Overwrite the table?` })
+    expect(isRunWaitingOnUser([asking, queued('B', '2026-10-05T10:01:00.000Z')])).toBe(true)
+    const interrupted = editing('A', { document_update_detail: DOCUMENT_UPDATE_INTERRUPT_DETAIL })
+    expect(isRunWaitingOnUser([interrupted, item('B', 'merged')])).toBe(true)
+    // The rest of the run waiting on the user too.
+    expect(isRunWaitingOnUser([asking, item('B', 'needs_input')])).toBe(true)
+  })
+
+  it('waits when every queued document update is held by a session that stopped for the user', () => {
+    const blocked = queued('A', '2026-10-05T10:01:00.000Z', {
+      document_update_detail: `${WAITING_PREFIX}Allow Bash?`
+    })
+    expect(isRunWaitingOnUser([blocked])).toBe(true)
+    // Another queued update can still start: the runner passes the blocked one over.
+    expect(isRunWaitingOnUser([blocked, queued('B', '2026-10-05T10:02:00.000Z')])).toBe(false)
+  })
+
+  it('does not wait while a document update is at work or about to start', () => {
+    expect(isRunWaitingOnUser([editing('A'), item('B', 'merged')])).toBe(false)
+    expect(isRunWaitingOnUser([queued('A', '2026-10-05T10:01:00.000Z')])).toBe(false)
+    // The editing session is an agent at work, even with the rest of the run on the user.
+    expect(isRunWaitingOnUser([editing('A'), item('B', 'needs_input')])).toBe(false)
+    // Something else of the run can still move.
+    const asking = editing('A', { document_update_detail: `${WAITING_PREFIX}Overwrite the table?` })
+    expect(isRunWaitingOnUser([asking, item('B', 'running')])).toBe(false)
+  })
+
   it('does not wait when nothing is open', () => {
     expect(isRunWaitingOnUser([])).toBe(false)
     expect(isRunWaitingOnUser([item('A', 'merged'), item('B', 'skipped')])).toBe(false)
@@ -484,6 +561,101 @@ describe('countRunningAgents', () => {
   it('ignores items that are not part of the run', () => {
     expect(countRunningAgents([item('A', 'running', { selected: false })])).toBe(0)
     expect(countRunningAgents([])).toBe(0)
+  })
+
+  it('counts a session updating the document, unless it stopped for the user', () => {
+    expect(countRunningAgents([editing('A'), queued('B', '2026-10-05T10:01:00.000Z')])).toBe(1)
+    expect(
+      countRunningAgents([
+        editing('A', { document_update_detail: `${WAITING_PREFIX}Overwrite the table?` })
+      ])
+    ).toBe(0)
+    expect(
+      countRunningAgents([
+        editing('A', { document_update_detail: DOCUMENT_UPDATE_INTERRUPT_DETAIL })
+      ])
+    ).toBe(0)
+    expect(countRunningAgents([item('A', 'merged', { document_update_status: 'done' })])).toBe(0)
+  })
+})
+
+describe('document edit lane', () => {
+  it('knows which items still have their document update ahead of them', () => {
+    expect(isDocumentUpdatePending(queued('A', '2026-10-05T10:01:00.000Z'))).toBe(true)
+    expect(isDocumentUpdatePending(editing('A'))).toBe(true)
+    expect(
+      isDocumentUpdatePending(item('A', 'skipped', { document_update_status: 'queued' }))
+    ).toBe(true)
+    for (const status of ['done', 'failed', 'skipped', null] as const) {
+      expect(isDocumentUpdatePending(item('A', 'merged', { document_update_status: status }))).toBe(
+        false
+      )
+    }
+    // Only a merged or skipped item has a document update, and only while it is in the run.
+    expect(isDocumentUpdatePending(item('A', 'ready', { document_update_status: 'queued' }))).toBe(
+      false
+    )
+    expect(isDocumentUpdatePending(editing('A', { selected: false }))).toBe(false)
+  })
+
+  it('finds the item holding the lane', () => {
+    const owner = editing('B')
+    expect(documentUpdateLaneOwner([queued('A', '2026-10-05T10:01:00.000Z'), owner])).toBe(owner)
+    expect(documentUpdateLaneOwner([queued('A', '2026-10-05T10:01:00.000Z')])).toBeNull()
+    expect(documentUpdateLaneOwner([editing('A', { selected: false })])).toBeNull()
+  })
+
+  it('offers the queued updates first in, first out, then in document order', () => {
+    const items = [
+      queued('A', '2026-10-05T10:03:00.000Z'),
+      queued('B', '2026-10-05T10:01:00.000Z'),
+      queued('C', '2026-10-05T10:01:00.000Z'),
+      item('D', 'merged', { document_update_status: 'done' }),
+      queued('E', '2026-10-05T10:02:00.000Z'),
+      queued('F', null),
+      item('G', 'ready')
+    ]
+    expect(keys(documentUpdateCandidates(items))).toEqual(['B', 'C', 'E', 'A', 'F'])
+    expect(documentUpdateQueuePosition(items, 'item-B')).toBe(1)
+    expect(documentUpdateQueuePosition(items, 'item-A')).toBe(4)
+    expect(documentUpdateQueuePosition(items, 'item-D')).toBeNull()
+    expect(documentUpdateQueuePosition(items, 'item-G')).toBeNull()
+    expect(documentUpdateQueuePosition(items, 'nope')).toBeNull()
+  })
+
+  it('offers nothing while an item holds the lane, but still knows the queue order', () => {
+    const items = [
+      queued('A', '2026-10-05T10:02:00.000Z'),
+      editing('B'),
+      queued('C', '2026-10-05T10:01:00.000Z')
+    ]
+    expect(documentUpdateCandidates(items)).toEqual([])
+    expect(documentUpdateQueuePosition(items, 'item-C')).toBe(1)
+    expect(documentUpdateQueuePosition(items, 'item-A')).toBe(2)
+    expect(documentUpdateQueuePosition(items, 'item-B')).toBeNull()
+  })
+
+  it('tells an editing session that stopped for the user', () => {
+    expect(isDocumentUpdateWaitingOnUser(editing('A'))).toBe(false)
+    expect(
+      isDocumentUpdateWaitingOnUser(
+        editing('A', { document_update_detail: `${WAITING_PREFIX}Overwrite the table?` })
+      )
+    ).toBe(true)
+    expect(
+      isDocumentUpdateWaitingOnUser(
+        editing('A', { document_update_detail: DOCUMENT_UPDATE_INTERRUPT_DETAIL })
+      )
+    ).toBe(true)
+    // Only while it holds the lane.
+    expect(
+      isDocumentUpdateWaitingOnUser(
+        item('A', 'merged', {
+          document_update_status: 'failed',
+          document_update_detail: DOCUMENT_UPDATE_INTERRUPT_DETAIL
+        })
+      )
+    ).toBe(false)
   })
 })
 
@@ -611,6 +783,16 @@ describe('sanitizeDependencies', () => {
 })
 
 describe('summarizeItems', () => {
+  it('keeps a merged item merged while it updates the document, and counts the lane', () => {
+    const summary = summarizeItems([
+      editing('A'),
+      queued('B', '2026-10-05T10:01:00.000Z'),
+      queued('C', '2026-10-05T10:02:00.000Z', { selected: false }),
+      item('D', 'merged', { document_update_status: 'done' })
+    ])
+    expect(summary).toMatchObject({ total: 3, merged: 3, documentUpdating: 1, documentQueued: 1 })
+  })
+
   it('counts the selected items by what they need', () => {
     const items = [
       item('A', 'merged'),
@@ -638,6 +820,7 @@ describe('summarizeItems', () => {
     })
     expect(summary.byStatus).toMatchObject({ merged: 2, running: 1, pending: 1, launching: 0 })
     expect(Object.keys(summary.byStatus).sort()).toEqual([...DOCUMENT_RUN_ITEM_STATUSES].sort())
+    expect(summary).toMatchObject({ documentUpdating: 0, documentQueued: 0 })
     expect(
       summary.merged + summary.inProgress + summary.attention + summary.pending + summary.skipped
     ).toBe(summary.total)

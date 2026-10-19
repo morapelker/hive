@@ -567,6 +567,89 @@ describe('updateItem', () => {
     expect(harness.db.getDocumentRunItem(item.id)?.status_detail).toBeNull()
   })
 
+  it('stores the document update of a merged ticket and logs every change of its status', () => {
+    const { run, items } = seedRun(harness, {
+      run: { status: 'running' },
+      items: [{ status: 'merged', session_id: 'session-1' }]
+    })
+    const [item] = items
+    const report = {
+      outcome: 'updated' as const,
+      verified: 'tests: 12 passed',
+      followUps: ['Add the empty state'],
+      notes: 'Struck A1 through and added its notes.'
+    }
+
+    harness.service.updateItem(run.id, item.id, {
+      document_update_status: 'queued',
+      document_update_queued_at: '2026-10-05T10:00:00.000Z',
+      document_update_attempts: 0,
+      document_update_detail: null
+    })
+    harness.service.updateItem(run.id, item.id, {
+      document_update_status: 'updating',
+      document_update_hash: 'hash-before',
+      last_prompt_at: '2026-10-05T10:01:00.000Z'
+    })
+    // Bookkeeping without a status change is not an event.
+    harness.service.updateItem(run.id, item.id, {
+      document_update_status: 'updating',
+      document_update_detail: 'Waiting for you: Overwrite the table?'
+    })
+    harness.service.updateItem(run.id, item.id, { document_update_attempts: 1 })
+    const done = harness.service.updateItem(run.id, item.id, {
+      document_update_status: 'done',
+      document_update_detail: report.notes,
+      document_update_report: report,
+      document_update_finished_at: '2026-10-05T10:05:00.000Z'
+    })
+
+    expect(done).toMatchObject({
+      status: 'merged',
+      document_update_status: 'done',
+      document_update_detail: report.notes,
+      document_update_queued_at: '2026-10-05T10:00:00.000Z',
+      document_update_attempts: 1,
+      document_update_hash: 'hash-before',
+      document_update_report: report,
+      document_update_finished_at: '2026-10-05T10:05:00.000Z',
+      last_prompt_at: '2026-10-05T10:01:00.000Z'
+    })
+    expect(harness.db.listDocumentRunEvents(run.id)).toMatchObject([
+      {
+        type: 'document_update_queued',
+        item_id: item.id,
+        message: 'A1 waits to update the document',
+        data: { from: null, to: 'queued' }
+      },
+      { type: 'document_update_started', message: 'A1 is updating the document' },
+      {
+        type: 'document_updated',
+        message: 'A1 updated the document: Struck A1 through and added its notes.',
+        data: { from: 'updating', to: 'done' }
+      }
+    ])
+
+    harness.service.updateItem(run.id, item.id, {
+      document_update_status: 'failed',
+      document_update_detail: 'The document was not changed.'
+    })
+    harness.service.updateItem(run.id, item.id, {
+      document_update_status: 'skipped',
+      document_update_detail: 'Skipped by you.'
+    })
+    expect(harness.db.listDocumentRunEvents(run.id).slice(3)).toMatchObject([
+      {
+        type: 'document_update_failed',
+        message: 'A1 could not update the document: The document was not changed.'
+      },
+      {
+        type: 'document_update_skipped',
+        message: 'A1 did not update the document: Skipped by you.'
+      }
+    ])
+  })
+
   it('still accepts orchestration fields after the run finished', () => {
     const { run, items } = seedRun(harness, {
       run: { status: 'completed_with_issues' },

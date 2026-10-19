@@ -12,6 +12,7 @@ import {
   GitMerge,
   ExternalLink,
   X,
+  FileClock,
   FileText,
   Pin,
   PinOff,
@@ -149,7 +150,15 @@ import {
 } from '@/components/document-flow/document-flow-ui'
 import { isActiveRunStatus } from '@/components/document-flow/document-flow-ui'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
-import { isQueuedForRunMerge, isResolvingRunConflicts } from '@/components/document-flow/document-flow-ui'
+import {
+  EDITING_DOCUMENT_LABEL,
+  DOCUMENT_EDIT_QUEUED_LABEL,
+  describeDocumentEditQueue,
+  isQueuedForDocumentUpdate,
+  isQueuedForRunMerge,
+  isResolvingRunConflicts,
+  runDocumentEditStatus
+} from '@/components/document-flow/document-flow-ui'
 import { projectApi } from '@/api/project-api'
 import { terminalApi } from '@/api/terminal-api'
 import {
@@ -746,6 +755,29 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       : false
   )
 
+  // A document run's task ticket, merged (or found already implemented), whose session waits
+  // its turn to update the run's document: another ticket edits it first. In any column, since
+  // a merged ticket sits in Merged. The selector returns the pill's tooltip, a plain string.
+  const docEditQueueTooltip = useDocumentFlowStore((s) => {
+    if (isDocumentRunTicket) return null
+    const queued = isQueuedForDocumentUpdate(s.runsById, ticket.id)
+    return queued ? describeDocumentEditQueue(queued) : null
+  })
+
+  // The same ticket while its session holds the document edit lane: the card wears the pink
+  // bar and says "Editing document", from the run's state, so it shows as soon as the prompt
+  // is sent rather than once the session reports it is working. Once the session stopped for
+  // the user mid edit (a permission, their interrupt) nothing runs: the card says it waits.
+  const documentEdit = useDocumentFlowStore((s) =>
+    isDocumentRunTicket
+      ? null
+      : runDocumentEditStatus(s.runsById, {
+          ticketId: ticket.id,
+          sessionId: ticket.current_session_id
+        })
+  )
+  const isEditingDocument = documentEdit === 'editing'
+
   // The Claude CLI session stopped without a completion message (background
   // work or a scheduled wake-up still pending): the ticket stays in progress
   // and the hourglass takes the progress bar's slot until the run resumes or
@@ -753,8 +785,16 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   const isAwaitingCompletion = ticket.column === 'in_progress' && ticket.awaiting_completion
 
   const rightAlignedSlot:
-    'conflicts' | 'busy' | 'awaiting' | 'reviewing' | 'completed-review' | null = useMemo(() => {
+    | 'conflicts'
+    | 'editing-document'
+    | 'busy'
+    | 'awaiting'
+    | 'reviewing'
+    | 'completed-review'
+    | null = useMemo(() => {
     if (!isArchived && hasConflicts && conflictTargetWorktreeId) return 'conflicts'
+    // A session that stopped to ask mid edit falls through to 'busy' and its orange Question
+    if (documentEdit && !isAsking) return 'editing-document'
     if ((isBusy || isAsking) && ticket.mode && !isBlocked) return 'busy'
     if (isAwaitingCompletion) return 'awaiting'
     if (isBeingReviewed) return 'reviewing'
@@ -770,6 +810,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     isBeingReviewed,
     isBlocked,
     isBusy,
+    documentEdit,
     ticket.mode
   ])
   const hasRightAlignedStatus = rightAlignedSlot !== null
@@ -1815,7 +1856,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             )}
 
             {/* Badges + progress row */}
-            {(hasAttachments || hasNote || worktreeName || queuedBranchLabel || projectTag || connectionName || ticket.plan_ready || isError || launchStall || isInMergeQueue || rightAlignedSlot || isArchived || isBlocked || blockingDiagnostic || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram || ticket.goal_mode || ticket.auto_approve_plan || activeRemoteLaunch || showModelBadge || backgroundWork) && (
+            {(hasAttachments || hasNote || worktreeName || queuedBranchLabel || projectTag || connectionName || ticket.plan_ready || isError || launchStall || isInMergeQueue || rightAlignedSlot || isArchived || isBlocked || blockingDiagnostic || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram || ticket.goal_mode || ticket.auto_approve_plan || activeRemoteLaunch || showModelBadge || backgroundWork || docEditQueueTooltip) && (
               <div className="mt-1.5 flex flex-wrap items-center gap-1">
                 {/* Archived badge */}
                 {isArchived && (
@@ -1880,6 +1921,21 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                     <TooltipContent>
                       Ready to merge. The orchestrator is merging another ticket of the run first.
                     </TooltipContent>
+                  </Tooltip>
+                )}
+                {/* Document run task merged, waiting for the run's serial document edit lane */}
+                {docEditQueueTooltip && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span
+                        data-testid="kanban-ticket-doc-edit-queue"
+                        className={cn(ticketPillBaseClass, 'border-pink-500/30 bg-pink-500/10 text-pink-500 cursor-help')}
+                      >
+                        <FileClock className="h-2.5 w-2.5" />
+                        {DOCUMENT_EDIT_QUEUED_LABEL}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>{docEditQueueTooltip}</TooltipContent>
                   </Tooltip>
                 )}
                 {/* Running subagents in the linked claude-cli session */}
@@ -2201,6 +2257,35 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                         </button>
                       )
                     }
+                    // A merged ticket's session updating the run's document. A click falls
+                    // through to the card, which opens the ticket and its session, as on 'busy'.
+                    // Stopped for the user, it waits: no moving bar, the orange of a question.
+                    case 'editing-document':
+                      return (
+                        <span data-testid="kanban-ticket-editing-document" className="ml-auto flex items-center gap-1.5">
+                          {documentEdit === 'waiting' ? (
+                            <span
+                              data-testid="kanban-ticket-document-edit-waiting"
+                              title="The session stopped while it edits the run's document: answer it, or skip the document update in the run's dashboard"
+                              className="inline-flex items-center gap-1 text-[11px] font-medium text-orange-500"
+                            >
+                              <MessageCircleQuestion className="h-3 w-3" />
+                              Waiting for you
+                            </span>
+                          ) : (
+                            <>
+                              <IndeterminateProgressBar
+                                mode={ticket.mode || 'build'}
+                                isEditingDocument
+                                className="w-20"
+                              />
+                              <span className="text-[11px] font-medium text-pink-500">
+                                {EDITING_DOCUMENT_LABEL}
+                              </span>
+                            </>
+                          )}
+                        </span>
+                      )
                     case 'busy':
                       return (
                         <span data-testid="kanban-ticket-progress" className="ml-auto flex items-center gap-1.5">
@@ -2211,9 +2296,11 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                                 ? 'text-orange-500'
                                 : isResolvingConflicts
                                   ? 'text-red-500'
-                                  : ticket.mode === 'build'
-                                    ? 'text-blue-500'
-                                    : 'text-violet-500'
+                                  : isEditingDocument
+                                    ? 'text-pink-500'
+                                    : ticket.mode === 'build'
+                                      ? 'text-blue-500'
+                                      : 'text-violet-500'
                             )}>
                               {timerText}
                             </span>
@@ -2222,6 +2309,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                             mode={ticket.mode!}
                             isAsking={isAsking}
                             isFixingConflicts={isResolvingConflicts && !isAsking}
+                            isEditingDocument={isEditingDocument && !isAsking}
                             className="w-20"
                           />
                           {isAsking && (

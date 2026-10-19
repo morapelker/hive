@@ -1,4 +1,18 @@
-import { copyFile, mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  copyFile,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  stat,
+  unlink,
+  utimes,
+  writeFile
+} from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -142,7 +156,12 @@ function declaredCharset(buffer: Buffer): string | null {
   return null
 }
 
-function decodeDocument(buffer: Buffer): { text: string; encoding: string } {
+/**
+ * The document's bytes as text, with the encoding they were read with (see
+ * `readDocumentSource`). `encoding` is `UTF-8` for a BOM-marked or valid UTF-8 file, else the
+ * declared label or windows-1252.
+ */
+export function decodeDocument(buffer: Buffer): { text: string; encoding: string } {
   if (buffer.subarray(0, UTF8_BOM.length).equals(UTF8_BOM)) {
     return { text: buffer.subarray(UTF8_BOM.length).toString('utf8'), encoding: 'UTF-8' }
   }
@@ -160,6 +179,38 @@ function decodeDocument(buffer: Buffer): { text: string; encoding: string } {
     return { text: new TextDecoder('utf-8', { fatal: true }).decode(buffer), encoding: 'UTF-8' }
   } catch {
     return { text: new TextDecoder('windows-1252').decode(buffer), encoding: 'windows-1252' }
+  }
+}
+
+/**
+ * Replace the document's bytes with `data`, but only while it still holds `expected` (what the
+ * caller read and built `data` from): returns false, and writes nothing, when something else
+ * changed the file in between. The new bytes go to a temporary file next to the document,
+ * which is then renamed over it, so a reader never sees half a file and a failed write leaves
+ * the document as it was. A symlinked path is followed (the link stays a link), and the file
+ * keeps its permissions.
+ */
+export async function replaceDocumentFile(
+  path: string,
+  data: Buffer,
+  expected: Buffer
+): Promise<boolean> {
+  const target = await realpath(path)
+  const { mode } = await stat(target)
+  const temp = join(dirname(target), `.${basename(target)}.${process.pid}-${Date.now()}.tmp`)
+  try {
+    await writeFile(temp, data, { flag: 'wx' })
+    await chmod(temp, mode & 0o7777)
+    // Re-read last: an agent still editing the file wins, and the caller tries again.
+    if (!(await readFile(target)).equals(expected)) {
+      await unlink(temp)
+      return false
+    }
+    await rename(temp, target)
+    return true
+  } catch (error) {
+    await unlink(temp).catch(() => undefined)
+    throw error
   }
 }
 

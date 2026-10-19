@@ -73,6 +73,8 @@ export function documentRunTicketToneClass(view: DocumentRunTicketView): string 
   const { state } = view
   if (!state) return null
   if (state.waitingOnUser) return '[--ticket-state-tone:#f97316]'
+  // The only session at work is a merged ticket's updating the document: the pink of its bar
+  if (state.editingDocument) return '[--ticket-state-tone:#ec4899]'
   switch (state.phase) {
     // Before launch: blue while the tickets are extracted, green once they are ready
     case 'extracting':

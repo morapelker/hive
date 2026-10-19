@@ -571,6 +571,57 @@ describe('useDocumentFlowStore', () => {
       })
     })
 
+    it('retryDocumentUpdate puts a merged item back at the end of the document edit lane', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-05-04T12:00:00.000Z'))
+      useDocumentFlowStore.setState({
+        runsById: {
+          'run-1': makeDetail({}, [
+            {
+              key: 'A1',
+              status: 'merged',
+              status_detail: 'Merged as it stood: checks were not run.',
+              document_update_status: 'failed',
+              document_update_detail: 'The document was not changed.',
+              document_update_attempts: 1
+            }
+          ])
+        }
+      })
+
+      await useDocumentFlowStore.getState().retryDocumentUpdate('run-1', 'item-A1')
+
+      // Nothing of the item's own step: its status, detail and attempt counters stay
+      expect(api.updateItem).toHaveBeenCalledWith('run-1', 'item-A1', {
+        document_update_status: 'queued',
+        document_update_queued_at: '2026-05-04T12:00:00.000Z',
+        document_update_attempts: 0,
+        document_update_detail: null,
+        document_update_report: null,
+        document_update_finished_at: null
+      })
+    })
+
+    it('skipDocumentUpdate takes the item out of the document edit lane, still merged', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-05-04T12:00:00.000Z'))
+      useDocumentFlowStore.setState({
+        runsById: {
+          'run-1': makeDetail({}, [
+            { key: 'A1', status: 'merged', document_update_status: 'updating' }
+          ])
+        }
+      })
+
+      await useDocumentFlowStore.getState().skipDocumentUpdate('run-1', 'item-A1')
+
+      expect(api.updateItem).toHaveBeenCalledWith('run-1', 'item-A1', {
+        document_update_status: 'skipped',
+        document_update_detail: 'Skipped by you.',
+        document_update_finished_at: '2026-05-04T12:00:00.000Z'
+      })
+    })
+
     it('rejects when the server refuses the patch', async () => {
       useDocumentFlowStore.setState({ runsById: { 'run-1': makeDetail() } })
       api.updateItem.mockRejectedValue(new Error('run is finished'))

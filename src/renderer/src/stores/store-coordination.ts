@@ -173,3 +173,25 @@ export function registerConnectionSavedProjectResolver(fn: ConnectionSavedProjec
 export function resolveConnectionSavedProjectId(connectionId: string): string | null {
   return _resolveConnectionSavedProjectId?.(connectionId) ?? null
 }
+
+// ── Kanban ↔ Document flow: tickets held by a document update ──
+// Once a document run merged a ticket, the run sends that ticket's own session one more
+// prompt: update the document the run was made from. The kanban store must not read that
+// session's work as the ticket's (no reopen of the merged ticket, no move to Review), so it
+// asks the document flow store, which registers the lookup. It never imports it:
+// useDocumentFlowStore → … → useWorktreeStore → useKanbanStore would cycle.
+type DocumentUpdateHoldFn = (ticketId: string) => boolean
+
+let _documentUpdateHold: DocumentUpdateHoldFn | null = null
+
+export function registerDocumentUpdateHold(fn: DocumentUpdateHoldFn): void {
+  _documentUpdateHold = fn
+}
+
+/**
+ * The ticket holds a document run's document edit lane. False until the document
+ * flow store registers its lookup: with that store not loaded there are no runs either.
+ */
+export function isTicketHeldByDocumentUpdate(ticketId: string): boolean {
+  return _documentUpdateHold?.(ticketId) ?? false
+}

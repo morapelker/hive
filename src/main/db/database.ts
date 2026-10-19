@@ -348,6 +348,13 @@ const DOCUMENT_RUN_ITEM_PATCH_COLUMNS: Record<
   retry_at: 'plain',
   wait_until: 'plain',
   wait_timeouts: 'plain',
+  document_update_status: 'plain',
+  document_update_detail: 'plain',
+  document_update_queued_at: 'plain',
+  document_update_attempts: 'plain',
+  document_update_hash: 'plain',
+  document_update_report: 'json',
+  document_update_finished_at: 'plain',
   started_at: 'plain',
   finished_at: 'plain'
 }
@@ -755,6 +762,17 @@ export class DatabaseService implements DocumentFlowDb {
     this.safeAddColumn('document_run_items', 'members', 'TEXT DEFAULT NULL')
     this.safeAddColumn('document_run_items', 'wait_until', 'TEXT DEFAULT NULL')
     this.safeAddColumn('document_run_items', 'wait_timeouts', 'INTEGER NOT NULL DEFAULT 0')
+    this.safeAddColumn('document_run_items', 'document_update_status', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('document_run_items', 'document_update_detail', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('document_run_items', 'document_update_queued_at', 'TEXT DEFAULT NULL')
+    this.safeAddColumn(
+      'document_run_items',
+      'document_update_attempts',
+      'INTEGER NOT NULL DEFAULT 0'
+    )
+    this.safeAddColumn('document_run_items', 'document_update_hash', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('document_run_items', 'document_update_report', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('document_run_items', 'document_update_finished_at', 'TEXT DEFAULT NULL')
   }
 
   /**
@@ -1326,6 +1344,16 @@ export class DatabaseService implements DocumentFlowDb {
       retry_at: (row.retry_at as string | null) ?? null,
       wait_until: (row.wait_until as string | null) ?? null,
       wait_timeouts: (row.wait_timeouts as number) ?? 0,
+      document_update_status:
+        (row.document_update_status as DocumentRunItem['document_update_status']) ?? null,
+      document_update_detail: (row.document_update_detail as string | null) ?? null,
+      document_update_queued_at: (row.document_update_queued_at as string | null) ?? null,
+      document_update_attempts: (row.document_update_attempts as number) ?? 0,
+      document_update_hash: (row.document_update_hash as string | null) ?? null,
+      document_update_report: this.parseDocumentFlowObject<
+        NonNullable<DocumentRunItem['document_update_report']>
+      >(row.document_update_report),
+      document_update_finished_at: (row.document_update_finished_at as string | null) ?? null,
       created_at: row.created_at as string,
       updated_at: row.updated_at as string,
       started_at: (row.started_at as string | null) ?? null,

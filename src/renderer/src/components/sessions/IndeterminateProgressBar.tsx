@@ -10,6 +10,8 @@ interface IndeterminateProgressBarProps {
   isFixingConflicts?: boolean
   /** A session is executing a document run's migrations. */
   isRunningMigrations?: boolean
+  /** A merged ticket's session is updating the document its document run was made from. */
+  isEditingDocument?: boolean
   className?: string
 }
 
@@ -44,6 +46,7 @@ export function IndeterminateProgressBar({
   isReviewing,
   isFixingConflicts,
   isRunningMigrations,
+  isEditingDocument,
   className
 }: IndeterminateProgressBarProps) {
   const barRef = useRef<HTMLDivElement>(null)
@@ -68,23 +71,26 @@ export function IndeterminateProgressBar({
   }, [])
 
   // Status hues: conflicts = error red, compacting = amber (red stays unambiguous),
-  // reviewing = done emerald, migrations = fuchsia (no other state wears it), then build
-  // blue / super-plan orange / plan violet.
+  // editing the run's document = pink, reviewing = done emerald, migrations = fuchsia (no
+  // other state wears it), then build blue / super-plan orange / plan violet. Pink and
+  // fuchsia sit close, so the accessible name (and the label beside the bar) tells them apart.
   const bgBar = isFixingConflicts
     ? 'bg-red-500'
     : isCompacting
       ? 'bg-amber-500'
       : isAsking
         ? 'bg-amber-500'
-        : isReviewing
-          ? 'bg-emerald-500'
-          : isRunningMigrations
-            ? 'bg-fuchsia-500'
-            : mode === 'super-plan' || mode === 'super-build'
-              ? 'bg-orange-500'
-              : mode === 'build'
-                ? 'bg-blue-500'
-                : 'bg-violet-500'
+        : isEditingDocument
+          ? 'bg-pink-500'
+          : isReviewing
+            ? 'bg-emerald-500'
+            : isRunningMigrations
+              ? 'bg-fuchsia-500'
+              : mode === 'super-plan' || mode === 'super-build'
+                ? 'bg-orange-500'
+                : mode === 'build'
+                  ? 'bg-blue-500'
+                  : 'bg-violet-500'
 
   return (
     <div className={cn('flex flex-col items-center w-14', className)}>
@@ -100,9 +106,11 @@ export function IndeterminateProgressBar({
               ? 'Compacting conversation'
               : isAsking
                 ? 'Waiting for answer'
-                : isRunningMigrations
-                  ? 'Running migrations'
-                  : 'Agent is working'
+                : isEditingDocument
+                  ? 'Editing document'
+                  : isRunningMigrations
+                    ? 'Running migrations'
+                    : 'Agent is working'
         }
         className="relative w-full h-[3px] rounded-[2px] overflow-hidden bg-[color-mix(in_srgb,var(--foreground)_8%,transparent)]"
       >
