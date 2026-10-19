@@ -50,7 +50,6 @@ import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useGitStore } from '@/stores/useGitStore'
-import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useSleepWhenIdleStore } from '@/stores/useSleepWhenIdleStore'
 import { useVimModeStore } from '@/stores/useVimModeStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
@@ -64,6 +63,7 @@ import { HeaderVoiceToggle } from './HeaderVoiceToggle'
 import { useLifecycleActions } from '@/hooks/useLifecycleActions'
 import { usePinAndActivateSession } from '@/hooks/usePinAndActivateSession'
 import { useConflictFixFlow } from '@/hooks/useConflictFixFlow'
+import { useInProgressSessionCount } from '@/hooks/useInProgressSessionCount'
 import hiveLogo from '@/assets/icon.png'
 
 // Orca titlebar icon button — 24px in the 36px bar
@@ -96,11 +96,9 @@ export function Header(): React.JSX.Element {
   const currentReviewPromptType = useSettingsStore((s) => s.reviewPromptType)
   const updateSetting = useSettingsStore((s) => s.updateSetting)
   const keepAwakeEnabled = useSettingsStore((s) => s.keepAwakeEnabled)
-  const streamingCount = useWorktreeStatusStore((state) =>
-    Object.values(state.sessionStatuses).filter(
-      (entry) => entry && (entry.status === 'working' || entry.status === 'planning')
-    ).length
-  )
+  // Same in-progress definition as useKeepAwake, so the mug lights up exactly
+  // while the powerSaveBlocker is held.
+  const streamingCount = useInProgressSessionCount()
   const sleepWhenIdleArmed = useSleepWhenIdleStore((s) => s.armed)
   const toggleSleepWhenIdle = useSleepWhenIdleStore((s) => s.toggle)
   const mugIsOn = keepAwakeEnabled && streamingCount > 0

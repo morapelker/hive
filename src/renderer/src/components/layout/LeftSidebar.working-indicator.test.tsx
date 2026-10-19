@@ -24,12 +24,25 @@ vi.mock('./ResizeHandle', () => ({ ResizeHandle: () => null }))
 import { LeftSidebar } from './LeftSidebar'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useLayoutStore } from '@/stores/useLayoutStore'
+import { useKanbanStore } from '@/stores/useKanbanStore'
+import type { KanbanTicket } from '../../../../main/db/types'
+
+function inProgressTicket(sessionId: string): KanbanTicket {
+  return {
+    id: `ticket-${sessionId}`,
+    column: 'in_progress',
+    current_session_id: sessionId,
+    worktree_id: null,
+    archived_at: null
+  } as unknown as KanbanTicket
+}
 
 describe('LeftSidebar working-session indicator', () => {
   beforeEach(() => {
     cleanup()
     useLayoutStore.setState({ leftSidebarCollapsed: false })
     useWorktreeStatusStore.setState({ sessionStatuses: {} })
+    useKanbanStore.setState({ tickets: new Map() })
   })
 
   it('is hidden when no session is working', () => {
@@ -62,5 +75,47 @@ describe('LeftSidebar working-session indicator', () => {
       })
     })
     expect(screen.queryByTestId('working-session-indicator')).toBeNull()
+  })
+
+  it('counts a session paused behind a pending monitor or wakeup', () => {
+    render(<LeftSidebar />)
+    act(() => {
+      useWorktreeStatusStore.setState({
+        sessionStatuses: {
+          paused: { status: 'completed', timestamp: 1, completion: 'waiting' },
+          finished: { status: 'completed', timestamp: 1, completion: 'completed' }
+        }
+      })
+    })
+    expect(screen.getByTestId('working-session-count').textContent).toBe('1')
+  })
+
+  it('counts every session linked from a ticket in the in-progress column', () => {
+    render(<LeftSidebar />)
+    act(() => {
+      useWorktreeStatusStore.setState({
+        sessionStatuses: {
+          a: { status: 'working', timestamp: 1 },
+          b: { status: 'completed', timestamp: 1 },
+          c: { status: 'completed', timestamp: 1 }
+        }
+      })
+      useKanbanStore.setState({
+        tickets: new Map([
+          ['proj-1', [inProgressTicket('a'), inProgressTicket('b')]],
+          ['proj-2', [{ ...inProgressTicket('c'), column: 'review' }]]
+        ])
+      })
+    })
+    expect(screen.getByTestId('working-session-count').textContent).toBe('2')
+
+    act(() => {
+      useKanbanStore.setState({
+        tickets: new Map([
+          ['proj-1', [inProgressTicket('a'), { ...inProgressTicket('b'), column: 'review' }]]
+        ])
+      })
+    })
+    expect(screen.getByTestId('working-session-count').textContent).toBe('1')
   })
 })

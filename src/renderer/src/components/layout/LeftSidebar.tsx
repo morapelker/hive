@@ -4,8 +4,8 @@ import { useProjectStore, useConnectionStore, useFilterStore, useSpaceStore } fr
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
-import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useShortcutStore } from '@/stores/useShortcutStore'
+import { useInProgressSessionCount } from '@/hooks/useInProgressSessionCount'
 import { formatBinding, getShortcutDefinition } from '@/lib/keyboard-shortcuts'
 import { ResizeHandle } from './ResizeHandle'
 import { KanbanSquare, Link, Loader2 } from 'lucide-react'
@@ -113,16 +113,11 @@ export function LeftSidebar(): React.JSX.Element {
 
   // Connection mode state
   const connectionModeActive = useConnectionStore((s) => s.connectionModeActive)
-  // Number of sessions currently streaming ('working'/'planning'), same
-  // definition useKeepAwake uses. Drives the yellow spinner + counter next to
-  // the "Projects" title.
-  const workingSessionCount = useWorktreeStatusStore((state) => {
-    let count = 0
-    for (const entry of Object.values(state.sessionStatuses)) {
-      if (entry && (entry.status === 'working' || entry.status === 'planning')) count++
-    }
-    return count
-  })
+  // Number of in-progress sessions (streaming, paused behind a pending
+  // monitor/wakeup, or linked from a ticket in the in-progress column), the
+  // same definition the pet and useKeepAwake use. Drives the yellow spinner +
+  // counter next to the "Projects" title.
+  const workingSessionCount = useInProgressSessionCount()
   const connectionModeSelectedIds = useConnectionStore((s) => s.connectionModeSelectedIds)
   const connectionModeSubmitting = useConnectionStore((s) => s.connectionModeSubmitting)
   const exitConnectionMode = useConnectionStore((s) => s.exitConnectionMode)

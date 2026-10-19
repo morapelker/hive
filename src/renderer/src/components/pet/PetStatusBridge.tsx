@@ -2,8 +2,10 @@ import { useEffect, useRef } from 'react'
 import type { PetStatusPayload } from '@shared/types/pet'
 import { petApi } from '@/api/pet-api'
 import { aggregatePetStatus } from '@/lib/pet-status-aggregator'
+import { collectInProgressTicketSessions } from '@/lib/in-progress-sessions'
 import {
   useConnectionStore,
+  useKanbanStore,
   useProjectStore,
   useSettingsStore,
   useSessionStore,
@@ -23,12 +25,14 @@ function computeStatus(): PetStatusPayload {
   const statusState = useWorktreeStatusStore.getState()
   const sessionState = useSessionStore.getState()
   const connectionState = useConnectionStore.getState()
+  const kanbanState = useKanbanStore.getState()
 
   return aggregatePetStatus({
     sessionStatuses: statusState.sessionStatuses,
     worktreeSessions: sessionState.sessionsByWorktree,
     connectionSessions: sessionState.sessionsByConnection,
-    connections: connectionState.connections
+    connections: connectionState.connections,
+    inProgressTicketSessions: collectInProgressTicketSessions(kanbanState.tickets.values())
   })
 }
 
@@ -62,6 +66,7 @@ export function PetStatusBridge(): null {
     const cleanupStatus = useWorktreeStatusStore.subscribe(publishIfChanged)
     const cleanupSessions = useSessionStore.subscribe(publishIfChanged)
     const cleanupConnections = useConnectionStore.subscribe(publishIfChanged)
+    const cleanupKanban = useKanbanStore.subscribe(publishIfChanged)
     const cleanupJump = petApi.onJumpToWorktree(({ worktreeId }) => {
       if (worktreeId) jumpToWorktree(worktreeId)
     })
@@ -76,6 +81,7 @@ export function PetStatusBridge(): null {
       cleanupStatus()
       cleanupSessions()
       cleanupConnections()
+      cleanupKanban()
       cleanupJump()
       cleanupSettings()
     }

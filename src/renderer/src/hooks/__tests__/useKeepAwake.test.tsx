@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useKeepAwake } from '../useKeepAwake'
 import { makeDetail } from '@/components/document-flow/test-fixtures'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
+import { useKanbanStore } from '@/stores/useKanbanStore'
+import type { KanbanTicket } from '../../../../main/db/types'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 
@@ -39,6 +41,7 @@ describe('useKeepAwake', () => {
     useSettingsStore.setState({ ...initialSettingsState, keepAwakeEnabled: true }, true)
     useWorktreeStatusStore.setState({ ...initialStatusState, sessionStatuses: {} }, true)
     useDocumentFlowStore.setState({ ...initialDocumentFlowState, runsById: {} }, true)
+    useKanbanStore.setState({ tickets: new Map() })
     systemApiMocks.setKeepAwake.mockClear()
   })
 
@@ -47,6 +50,55 @@ describe('useKeepAwake', () => {
     useSettingsStore.setState(initialSettingsState, true)
     useWorktreeStatusStore.setState(initialStatusState, true)
     useDocumentFlowStore.setState(initialDocumentFlowState, true)
+  })
+
+  it('keeps the machine awake while a session is paused behind a pending monitor', () => {
+    renderHook(() => useKeepAwake())
+    expect(lastCall()).toBe(false)
+
+    act(() => {
+      useWorktreeStatusStore.setState({
+        sessionStatuses: { paused: { status: 'completed', timestamp: 1, completion: 'waiting' } }
+      })
+    })
+    expect(lastCall()).toBe(true)
+
+    act(() => {
+      useWorktreeStatusStore.setState({
+        sessionStatuses: { paused: { status: 'completed', timestamp: 2, completion: 'completed' } }
+      })
+    })
+    expect(lastCall()).toBe(false)
+  })
+
+  it('keeps the machine awake while a stopped session sits on an in-progress ticket', () => {
+    useWorktreeStatusStore.setState({
+      sessionStatuses: { sess: { status: 'completed', timestamp: 1 } }
+    })
+    useKanbanStore.setState({
+      tickets: new Map([
+        [
+          'proj',
+          [
+            {
+              id: 'ticket',
+              column: 'in_progress',
+              current_session_id: 'sess',
+              worktree_id: null,
+              archived_at: null
+            } as unknown as KanbanTicket
+          ]
+        ]
+      ])
+    })
+
+    renderHook(() => useKeepAwake())
+    expect(lastCall()).toBe(true)
+
+    act(() => {
+      useKanbanStore.setState({ tickets: new Map() })
+    })
+    expect(lastCall()).toBe(false)
   })
 
   it('keeps the machine awake while a document run works between sessions', () => {
