@@ -23,6 +23,15 @@ const palette = {
   red: 'e74750',
   redShade: 'b52d46',
   redLight: 'ff7273',
+  sapphire: '2f6df6',
+  sapphireShade: '1f45b8',
+  sapphireLight: '7aa8ff',
+  amethyst: '7b3fe4',
+  amethystShade: '53279e',
+  amethystLight: 'b58cff',
+  midnight: '232848',
+  midnightShade: '15182f',
+  midnightLight: '3f4777',
   jewel: '2baba4',
   amber: 'ffb347',
   ink: '1b1f3a',
@@ -35,6 +44,15 @@ const palette = {
   featherFarShade: 'e0c58c'
 }
 const LINEAR = { i: { x: 1, y: 1 }, o: { x: 0, y: 0 } }
+// Cape cloth colours by tier (docs/corgi-concurrency-levels.html, "cape colour tiers"):
+// red until ten sessions, then sapphire, amethyst and midnight navy.
+const CAPE_TIERS = [
+  [4, { cloth: palette.red, fold: palette.redShade, sheen: palette.redLight }],
+  [10, { cloth: palette.sapphire, fold: palette.sapphireShade, sheen: palette.sapphireLight }],
+  [15, { cloth: palette.amethyst, fold: palette.amethystShade, sheen: palette.amethystLight }],
+  [20, { cloth: palette.midnight, fold: palette.midnightShade, sheen: palette.midnightLight }]
+]
+export const capeColors = (level) => CAPE_TIERS.findLast(([min]) => level >= min)[1]
 
 function transform(p = [0, 0, 0]) {
   return { o: still(100), r: still(0), p: still(p), a: still([0, 0, 0]), s: still([100, 100, 100]) }
@@ -245,7 +263,7 @@ function addCrown(rig) {
   rig.layers.unshift(crown)
 }
 
-function addCape(rig, superCorgi) {
+function addCape(rig, superCorgi, colors) {
   // The shoulder stays fixed; only the cloth's trailing control points flutter.
   const cloth = (wave) => [
     [0, 0, 0, 0, 76, -29],
@@ -277,9 +295,9 @@ function addCape(rig, superCorgi) {
     10,
     [140, 37, 0],
     [
-      shape('Cloth highlight', null, palette.redLight, { morph: waves.map(sheen) }),
-      shape('Cloth underside', null, palette.redShade, { morph: waves.map(fold) }),
-      shape('Red cape', null, palette.red, { morph: waves.map(cloth) })
+      shape('Cloth highlight', null, colors.sheen, { morph: waves.map(sheen) }),
+      shape('Cloth underside', null, colors.fold, { morph: waves.map(fold) }),
+      shape('Cape cloth', null, colors.cloth, { morph: waves.map(cloth) })
     ]
   )
   rig.layers.splice(
@@ -295,7 +313,7 @@ function addCape(rig, superCorgi) {
     [
       ellipse('Clasp shine', [-3, -4], [7, 7], palette.goldLight),
       ellipse('Clasp', [0, 0], [28, 28], palette.gold),
-      ellipse('Clasp setting', [0, 2], [36, 36], palette.redShade)
+      ellipse('Clasp setting', [0, 2], [36, 36], colors.fold)
     ]
   )
   rig.layers.splice(
@@ -606,7 +624,7 @@ for (const level of LEVELS) {
   animation.nm = `Corgi · ${level} active sessions`
   addTail(rig)
   if (level >= 3) addCrown(rig)
-  if (level >= 4) addCape(rig, level >= 5)
+  if (level >= 4) addCape(rig, level >= 5, capeColors(level))
   if (level >= 10) {
     addSunglasses(rig)
     addSpeedLines(rig)

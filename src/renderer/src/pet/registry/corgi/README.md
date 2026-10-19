@@ -4,7 +4,8 @@ The working corgi automatically changes appearance with the number of active
 **sessions**. Styles are cumulative and always enabled. At five sessions it gains a numbered
 cape, and the cape displays the actual count from then on (6, 20, 123, etc.). Three
 more styles arrive at 10, 15 and 20 sessions (the "power-up" track chosen from
-`docs/corgi-concurrency-levels.html`). The manifest's `workingLottieVariantSessions`
+`docs/corgi-concurrency-levels.html`), and each of those also recolors the cape: sapphire
+blue at 10, amethyst purple at 15 and midnight navy at 20. The manifest's `workingLottieVariantSessions`
 lists the minimum count for each variant; `workingVariantIndex()` picks the last one
 the count reaches. Idle and attention states use the existing static corgi.
 
@@ -20,9 +21,9 @@ Pets without `workingLottieVariants` keep their single working animation.
 | 3        | `assets/corgi-level-3.lottie`  | Tail and gold crown                                   |
 | 4        | `assets/corgi-level-4.lottie`  | Tail, crown, and rippling red cape                    |
 | 5–9      | `assets/corgi-level-5.lottie`  | Actual session count on the cape, with golden sparks  |
-| 10–14    | `assets/corgi-level-10.lottie` | Sunglasses on the head and streaking speed lines      |
-| 15–19    | `assets/corgi-level-15.lottie` | A pair of flapping wings under the cape               |
-| 20+      | `assets/corgi-level-20.lottie` | Flame trail, drifting embers, warm glow, amber sparks |
+| 10–14    | `assets/corgi-level-10.lottie` | Sapphire cape, sunglasses and streaking speed lines   |
+| 15–19    | `assets/corgi-level-15.lottie` | Amethyst cape and a pair of flapping wings under it   |
+| 20+      | `assets/corgi-level-20.lottie` | Midnight cape, flame trail, embers, glow, amber sparks |
 
 ## Editable cape number
 
@@ -74,8 +75,10 @@ The generator reads the original archive and writes levels 2–5, 10, 15 and 20.
 the original composition, frame rate, run cycle, colors, and character rig. The
 original file doubles as level one. The additions use native Lottie shapes and
 keyframes: the tail, cape, wings, speed lines, flames and glow follow the body, the
-crown and sunglasses follow the head, and the cape's shape paths animate independently. Generation is deterministic; edit the
-generator before rebuilding the archives.
+crown and sunglasses follow the head, and the cape's shape paths animate independently. The
+cape's cloth, fold, sheen and clasp ring take their colours from `capeColors(level)` in the
+generator (red below ten sessions, then sapphire, amethyst and midnight). Generation is
+deterministic; edit the generator before rebuilding the archives.
 
 The checked-in `digit-glyphs.json` contains outlines from the bundled Geist font
 at weight 800. Its source and SIL OFL notice are in `src/renderer/src/assets/fonts`. To rebuild
@@ -93,7 +96,7 @@ used at runtime.
 
 Inspected all twenty counts together and checked the numbered cape throughout
 the run cycle. Verified counts 5, 10, 20, 88, 100, and 123456 at all 60 frames,
-including that the rendered number remains on the red cloth. Checked changing
+including that the rendered number remains on the cloth at every cape colour. Checked changing
 counts, normal speed, desktop sizes, and light/dark backgrounds.
 
 The pet tests cover variant selection, player replacement/cleanup, in-place

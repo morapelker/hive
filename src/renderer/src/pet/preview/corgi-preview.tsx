@@ -18,9 +18,17 @@ const baseLevels = [
   ['Here to help', 'A red cape that ripples with every stride.', 'corgi-level-4']
 ]
 const milestones: Record<number, [string, string, string]> = {
-  10: ['Speedster', 'Sunglasses and speed lines: ten sessions at full tilt.', 'corgi-level-10'],
-  15: ['Winged', 'A pair of flapping wings behind the cape.', 'corgi-level-15'],
-  20: ['Blazing', 'A flame trail, drifting embers, and a warm glow.', 'corgi-level-20']
+  10: [
+    'Speedster',
+    'A sapphire cape, sunglasses and speed lines: ten sessions at full tilt.',
+    'corgi-level-10'
+  ],
+  15: ['Winged', 'An amethyst cape with a pair of flapping wings behind it.', 'corgi-level-15'],
+  20: [
+    'Blazing',
+    'A midnight cape, a flame trail, drifting embers, and a warm glow.',
+    'corgi-level-20'
+  ]
 }
 const levels = Array.from(
   { length: 20 },
