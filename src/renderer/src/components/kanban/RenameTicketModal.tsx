@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { isComposingKeyboardEvent } from '@/lib/message-composer-shortcuts'
 
 interface RenameTicketModalProps {
   open: boolean
@@ -63,6 +64,8 @@ export function RenameTicketModal({
   }, [canSave, trimmed, onSave, onOpenChange])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
+    // Enter that confirms an IME candidate (Japanese, Chinese…) must not submit the rename
+    if (isComposingKeyboardEvent(e.nativeEvent)) return
     if (e.key === 'Enter') {
       e.preventDefault()
       void handleSave()

@@ -151,6 +151,24 @@ describe('renaming a ticket from the board', () => {
     expect(updateTicket).toHaveBeenCalledWith('ticket-1', 'project-1', { title: 'Renamed' })
   })
 
+  it('ignores Enter that confirms an IME candidate', async () => {
+    const updateTicket = stubUpdateTicket()
+    render(<KanbanTicketCard ticket={makeTicket()} />)
+
+    const input = await openRenameDialog()
+    fireEvent.change(input, { target: { value: 'ダークモード' } })
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
+    // Older engines report Enter with keyCode 229 during composition
+    fireEvent.keyDown(input, { key: 'Enter', keyCode: 229 })
+
+    expect(updateTicket).not.toHaveBeenCalled()
+    expect(screen.getByTestId('rename-ticket-modal')).toBeInTheDocument()
+
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(updateTicket).toHaveBeenCalledTimes(1))
+    expect(updateTicket).toHaveBeenCalledWith('ticket-1', 'project-1', { title: 'ダークモード' })
+  })
+
   it('refuses an empty or unchanged name', async () => {
     const updateTicket = stubUpdateTicket()
     render(<KanbanTicketCard ticket={makeTicket()} />)
