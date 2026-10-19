@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Pencil } from 'lucide-react'
 import {
   Dialog,
@@ -37,9 +37,13 @@ export function RenameTicketModal({
   const [value, setValue] = useState(currentTitle)
   const [saving, setSaving] = useState(false)
 
+  // Seed the draft only when the dialog opens. The store's optimistic update changes
+  // currentTitle mid-save and reverts it on failure; following those changes would wipe
+  // the user's draft right when they need it to retry.
+  const wasOpen = useRef(false)
   useEffect(() => {
-    if (!open) return
-    setValue(currentTitle)
+    if (open && !wasOpen.current) setValue(currentTitle)
+    wasOpen.current = open
   }, [open, currentTitle])
 
   const trimmed = value.trim()

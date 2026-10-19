@@ -167,10 +167,17 @@ describe('renaming a ticket from the board', () => {
     expect(updateTicket).not.toHaveBeenCalled()
   })
 
-  it('keeps the dialog open and reports when the rename fails', async () => {
-    const updateTicket = vi.fn().mockRejectedValue(new Error('disk full'))
+  it('keeps the dialog open with the draft when the rename fails', async () => {
+    // Mirror the real store: the title flips optimistically, then reverts on failure
+    const ticket = makeTicket()
+    const updateTicket = vi.fn(async (_id: string, _project: string, data: { title: string }) => {
+      rerender(<KanbanTicketCard ticket={{ ...ticket, title: data.title }} />)
+      await Promise.resolve()
+      rerender(<KanbanTicketCard ticket={ticket} />)
+      throw new Error('disk full')
+    })
     useKanbanStore.setState({ updateTicket } as never)
-    render(<KanbanTicketCard ticket={makeTicket()} />)
+    const { rerender } = render(<KanbanTicketCard ticket={ticket} />)
 
     const input = await openRenameDialog()
     fireEvent.change(input, { target: { value: 'Renamed' } })
@@ -180,5 +187,22 @@ describe('renaming a ticket from the board', () => {
       expect(toast.error).toHaveBeenCalledWith('Failed to rename ticket: disk full')
     )
     expect(screen.getByTestId('rename-ticket-modal')).toBeInTheDocument()
+    // The draft survives the revert so the rename can be retried as typed
+    expect((screen.getByTestId('rename-ticket-input') as HTMLInputElement).value).toBe('Renamed')
+    expect(screen.getByTestId('rename-ticket-save')).toBeEnabled()
+  })
+
+  it('re-seeds the draft from the current title each time it opens', async () => {
+    const updateTicket = vi.fn().mockResolvedValue(undefined)
+    useKanbanStore.setState({ updateTicket } as never)
+    render(<KanbanTicketCard ticket={makeTicket()} />)
+
+    const input = await openRenameDialog()
+    fireEvent.change(input, { target: { value: 'Abandoned draft' } })
+    fireEvent.keyDown(input, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByTestId('rename-ticket-modal')).toBeNull())
+
+    const reopened = await openRenameDialog()
+    expect(reopened.value).toBe('Add dark mode toggle')
   })
 })
