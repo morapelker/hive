@@ -14,6 +14,7 @@ import { BoardChatLauncher } from '@/components/kanban/BoardChatLauncher'
 import { BoardSearchBar } from '@/components/kanban/BoardSearchBar'
 import { FavoriteTicketsPane } from '@/components/kanban/FavoriteTicketsPane'
 import { MergeOnDoneDialog } from './MergeOnDoneDialog'
+import { RenameTicketDialog } from './RenameTicketModal'
 import { cn } from '@/lib/utils'
 import { toast } from '@/lib/toast'
 import { useMarkdownKanbanWatcher } from '@/hooks/useMarkdownKanbanWatcher'
@@ -534,6 +535,7 @@ export function KanbanBoard({ projectId, connectionId, isPinnedMode }: KanbanBoa
               })
             })()}
             <KanbanTicketModal />
+            <RenameTicketDialog />
             <MergeOnDoneDialog />
             {/* SVG dependency lines */}
             {svgPaths.length > 0 && (

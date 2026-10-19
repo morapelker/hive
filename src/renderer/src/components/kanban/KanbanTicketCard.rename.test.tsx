@@ -1,7 +1,8 @@
 /**
  * Renaming a ticket from the board's context menu changes its title and nothing else:
  * an in-progress ticket keeps its session, worktree and branch, because the update
- * carries only the title.
+ * carries only the title. The dialog is board-level (RenameTicketDialog, driven by the
+ * store) so it outlives its card when a board search filters the card out mid-save.
  */
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest'
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react'
@@ -12,6 +13,7 @@ vi.mock('@/lib/toast', () => ({
 }))
 
 import { KanbanTicketCard } from './KanbanTicketCard'
+import { RenameTicketDialog } from './RenameTicketModal'
 import { toast } from '@/lib/toast'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useProjectStore } from '@/stores/useProjectStore'
@@ -80,6 +82,27 @@ const makeRunningTicket = (): KanbanTicket =>
 
 const card = (): HTMLElement => screen.getByTestId('kanban-ticket-ticket-1')
 
+/** Puts the ticket in the store (the board-level dialog looks it up there). */
+function seedStore(ticket: KanbanTicket): void {
+  useKanbanStore.setState({ tickets: new Map([[ticket.project_id, [ticket]]]) })
+}
+
+/** The store-held title, as the optimistic update and its rollback would set it. */
+function setStoreTitle(ticket: KanbanTicket, title: string): void {
+  seedStore({ ...ticket, title })
+}
+
+/** Renders the card next to the board-level dialog host, as KanbanBoard does. */
+function renderBoard(ticket: KanbanTicket): ReturnType<typeof render> {
+  seedStore(ticket)
+  return render(
+    <>
+      <KanbanTicketCard ticket={ticket} />
+      <RenameTicketDialog />
+    </>
+  )
+}
+
 async function openRenameDialog(): Promise<HTMLInputElement> {
   fireEvent.contextMenu(card())
   fireEvent.click(await screen.findByTestId('ctx-rename-ticket'))
@@ -115,7 +138,7 @@ afterEach(() => {
 
 describe('renaming a ticket from the board', () => {
   it('offers Rename for a ticket with a running session', async () => {
-    render(<KanbanTicketCard ticket={makeRunningTicket()} />)
+    renderBoard(makeRunningTicket())
 
     const input = await openRenameDialog()
 
@@ -124,7 +147,7 @@ describe('renaming a ticket from the board', () => {
 
   it('updates only the title, leaving the session, worktree and branch alone', async () => {
     const updateTicket = stubUpdateTicket()
-    render(<KanbanTicketCard ticket={makeRunningTicket()} />)
+    renderBoard(makeRunningTicket())
 
     const input = await openRenameDialog()
     fireEvent.change(input, { target: { value: '  Dark mode: system follow  ' } })
@@ -141,7 +164,7 @@ describe('renaming a ticket from the board', () => {
 
   it('renames on Enter', async () => {
     const updateTicket = stubUpdateTicket()
-    render(<KanbanTicketCard ticket={makeTicket()} />)
+    renderBoard(makeTicket())
 
     const input = await openRenameDialog()
     fireEvent.change(input, { target: { value: 'Renamed' } })
@@ -153,7 +176,7 @@ describe('renaming a ticket from the board', () => {
 
   it('ignores Enter that confirms an IME candidate', async () => {
     const updateTicket = stubUpdateTicket()
-    render(<KanbanTicketCard ticket={makeTicket()} />)
+    renderBoard(makeTicket())
 
     const input = await openRenameDialog()
     fireEvent.change(input, { target: { value: 'ダークモード' } })
@@ -171,7 +194,7 @@ describe('renaming a ticket from the board', () => {
 
   it('refuses an empty or unchanged name', async () => {
     const updateTicket = stubUpdateTicket()
-    render(<KanbanTicketCard ticket={makeTicket()} />)
+    renderBoard(makeTicket())
 
     const input = await openRenameDialog()
     const save = screen.getByTestId('rename-ticket-save')
@@ -185,17 +208,19 @@ describe('renaming a ticket from the board', () => {
     expect(updateTicket).not.toHaveBeenCalled()
   })
 
-  it('keeps the dialog open with the draft when the rename fails', async () => {
-    // Mirror the real store: the title flips optimistically, then reverts on failure
+  it('keeps the dialog and draft when the rename fails, even if search drops the card', async () => {
+    // Mirror the real store: the title flips optimistically, then reverts on failure. A
+    // board search filters cards by title, so the flip can unmount the card mid-save.
     const ticket = makeTicket()
     const updateTicket = vi.fn(async (_id: string, _project: string, data: { title: string }) => {
-      rerender(<KanbanTicketCard ticket={{ ...ticket, title: data.title }} />)
+      setStoreTitle(ticket, data.title)
+      rerender(<RenameTicketDialog />)
       await Promise.resolve()
-      rerender(<KanbanTicketCard ticket={ticket} />)
+      setStoreTitle(ticket, ticket.title)
       throw new Error('disk full')
     })
+    const { rerender } = renderBoard(ticket)
     useKanbanStore.setState({ updateTicket } as never)
-    const { rerender } = render(<KanbanTicketCard ticket={ticket} />)
 
     const input = await openRenameDialog()
     fireEvent.change(input, { target: { value: 'Renamed' } })
@@ -204,6 +229,7 @@ describe('renaming a ticket from the board', () => {
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith('Failed to rename ticket: disk full')
     )
+    expect(screen.queryByTestId('kanban-ticket-ticket-1')).toBeNull()
     expect(screen.getByTestId('rename-ticket-modal')).toBeInTheDocument()
     // The draft survives the revert so the rename can be retried as typed
     expect((screen.getByTestId('rename-ticket-input') as HTMLInputElement).value).toBe('Renamed')
@@ -213,7 +239,7 @@ describe('renaming a ticket from the board', () => {
   it('re-seeds the draft from the current title each time it opens', async () => {
     const updateTicket = vi.fn().mockResolvedValue(undefined)
     useKanbanStore.setState({ updateTicket } as never)
-    render(<KanbanTicketCard ticket={makeTicket()} />)
+    renderBoard(makeTicket())
 
     const input = await openRenameDialog()
     fireEvent.change(input, { target: { value: 'Abandoned draft' } })

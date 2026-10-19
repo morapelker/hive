@@ -1,5 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Pencil } from 'lucide-react'
+import type { KanbanTicket } from '../../../../main/db/types'
+import { useKanbanStore } from '@/stores/useKanbanStore'
+import { toast } from '@/lib/toast'
 import {
   Dialog,
   DialogContent,
@@ -11,6 +14,54 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { isComposingKeyboardEvent } from '@/lib/message-composer-shortcuts'
+
+/**
+ * Board-level host for the Rename dialog, driven by the store's renameTicketRef (the card's
+ * menu item sets it). Mounted once per board, beside KanbanTicketModal, rather than inside
+ * the card: a board search filters cards by their current title, and the optimistic update
+ * would unmount a card-owned dialog mid-save, losing the draft if persistence then failed.
+ */
+export function RenameTicketDialog() {
+  const renameTicketRef = useKanbanStore((s) => s.renameTicketRef)
+  const setRenameTicketRef = useKanbanStore((s) => s.setRenameTicketRef)
+  const tickets = useKanbanStore((s) => s.tickets)
+
+  // Ticket ids are project-local in markdown mode, so the lookup is project-scoped
+  const ticket = useMemo<KanbanTicket | null>(() => {
+    if (!renameTicketRef) return null
+    return (
+      tickets.get(renameTicketRef.projectId)?.find((t) => t.id === renameTicketRef.ticketId) ?? null
+    )
+  }, [renameTicketRef, tickets])
+
+  const close = useCallback(
+    (open: boolean) => {
+      if (!open) setRenameTicketRef(null)
+    },
+    [setRenameTicketRef]
+  )
+
+  // Only the title travels: the branch, worktree and session are untouched
+  const handleSave = useCallback(
+    async (title: string) => {
+      if (!ticket) return
+      try {
+        await useKanbanStore.getState().updateTicket(ticket.id, ticket.project_id, { title })
+        toast.success('Ticket renamed')
+      } catch (err) {
+        toast.error(`Failed to rename ticket: ${err instanceof Error ? err.message : String(err)}`)
+        throw err
+      }
+    },
+    [ticket]
+  )
+
+  if (!ticket) return null
+
+  return (
+    <RenameTicketModal open onOpenChange={close} currentTitle={ticket.title} onSave={handleSave} />
+  )
+}
 
 interface RenameTicketModalProps {
   open: boolean

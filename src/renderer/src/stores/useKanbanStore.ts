@@ -500,6 +500,10 @@ interface KanbanState {
   /** Currently selected ticket ID for the detail modal (null = closed) */
   selectedTicketId: string | null
   selectedTicketRef: TicketRef | null
+  /** Ticket the board-level Rename dialog is open for (null = closed). Lives in the store so
+   *  the dialog outlives its card: a board search can unmount the card the moment the
+   *  optimistic title no longer matches, before the rename has settled. */
+  renameTicketRef: TicketRef | null
   /** Whether a ticket is currently being dragged (reactive, for column styling) */
   isDragging: boolean
   draggingTicketKey: TicketKey | null
@@ -517,6 +521,7 @@ interface KanbanState {
   // ── Actions ────────────────────────────────────────────────────────
   setSelectedTicketId: (id: null) => void
   setSelectedTicketRef: (ref: TicketRef | null) => void
+  setRenameTicketRef: (ref: TicketRef | null) => void
   setBoardTelegramTarget: (target: BoardTelegramTarget | null) => void
   clearBoardTelegramTarget: () => void
   loadTickets: (projectId: string) => Promise<void>
@@ -693,6 +698,7 @@ export const useKanbanStore = create<KanbanState>()(
       pinnedBoardLastCreateProjectId: null,
       selectedTicketId: null,
       selectedTicketRef: null,
+      renameTicketRef: null,
       isDragging: false,
       draggingTicketKey: null,
       showArchivedByProject: {} as Record<string, boolean>,
@@ -733,6 +739,10 @@ export const useKanbanStore = create<KanbanState>()(
         set({ selectedTicketId: ref?.ticketId ?? null, selectedTicketRef: ref })
         // Opening the ticket detail (from any route) marks it read
         if (ref) get().markTicketRead(ref.ticketId, ref.projectId)
+      },
+
+      setRenameTicketRef: (ref: TicketRef | null) => {
+        set({ renameTicketRef: ref })
       },
 
       setBoardTelegramTarget: (target: BoardTelegramTarget | null) => {

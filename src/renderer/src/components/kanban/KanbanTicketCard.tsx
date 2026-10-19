@@ -55,7 +55,6 @@ import { UpdateStatusModal } from './UpdateStatusModal'
 import { RemoteTerminalDialog } from './RemoteTerminalDialog'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { NoteEditorModal } from './NoteEditorModal'
-import { RenameTicketModal } from './RenameTicketModal'
 import { MoveToProjectModal } from './MoveToProjectModal'
 import { cn, parseColorQuad } from '@/lib/utils'
 import { visibleTicketTitle } from '@/lib/ticket-key-display'
@@ -235,7 +234,6 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   const [showStatusUpdate, setShowStatusUpdate] = useState(false)
   const [showPRPicker, setShowPRPicker] = useState(false)
   const [showNoteEditor, setShowNoteEditor] = useState(false)
-  const [showRenameTicket, setShowRenameTicket] = useState(false)
   const [showMoveToProject, setShowMoveToProject] = useState(false)
   const [remoteTerminalOpen, setRemoteTerminalOpen] = useState(false)
   const [showStopRemoteConfirm, setShowStopRemoteConfirm] = useState(false)
@@ -1646,20 +1644,6 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     linkedSessionAgentSdk
   ])
 
-  // Only the title travels: the branch, worktree and session are untouched
-  const handleRenameTicket = useCallback(
-    async (title: string) => {
-      try {
-        await useKanbanStore.getState().updateTicket(ticket.id, ticket.project_id, { title })
-        toast.success('Ticket renamed')
-      } catch (err) {
-        toast.error(`Failed to rename ticket: ${err instanceof Error ? err.message : String(err)}`)
-        throw err
-      }
-    },
-    [ticket.id, ticket.project_id]
-  )
-
   const handleSaveNote = useCallback(async (note: string | null) => {
     try {
       await useKanbanStore.getState().updateTicket(ticket.id, ticket.project_id, { note })
@@ -2750,7 +2734,12 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
 
             <ContextMenuItem
               data-testid="ctx-rename-ticket"
-              onClick={() => setShowRenameTicket(true)}
+              onClick={() =>
+                // The dialog is board-level (RenameTicketDialog) so it outlives this card
+                useKanbanStore
+                  .getState()
+                  .setRenameTicketRef({ projectId: ticket.project_id, ticketId: ticket.id })
+              }
               className="gap-2"
             >
               <Pencil className="h-3.5 w-3.5" />
@@ -2952,13 +2941,6 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
           ticketTitle={ticket.title}
         />
       )}
-
-      <RenameTicketModal
-        open={showRenameTicket}
-        onOpenChange={setShowRenameTicket}
-        currentTitle={ticket.title}
-        onSave={handleRenameTicket}
-      />
 
       <NoteEditorModal
         open={showNoteEditor}
