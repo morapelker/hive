@@ -59,6 +59,7 @@ import {
 import { normalizeCodexModelSlug } from './codex-models'
 import { recordSessionFinalMessage } from './document-flow/session-final-message-recorder'
 import { perfLog } from './perf-logging/perf-logger'
+import { noteClaudeCliApiErrorForRecovery } from './claude-cli-session-recovery'
 import { evaluateProcessKillCommand, getProtectedProcesses } from './claude-cli-process-kill-guard'
 
 const HOOK_SLOW_MS = 250
@@ -811,6 +812,9 @@ function processCliHook(
       api_error: apiError.error,
       hook_event: 'StopFailure'
     })
+    // A transient failure (hang, connection loss, 5xx) gets the session
+    // re-prompted once the API is reachable again.
+    noteClaudeCliApiErrorForRecovery(apiError)
   }
   // Background Task subagents can keep running after the main agent's
   // Stop fires; the tracker decides whether this Stop is truly final

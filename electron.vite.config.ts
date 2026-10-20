@@ -12,7 +12,15 @@ export default defineConfig({
           index: resolve(__dirname, 'src/main/index.ts'),
           // Voice dictation speech engine — forked as an Electron utility process
           // by src/main/voice/voice-engine.ts (out/main/voice-engine-worker.js).
-          'voice-engine-worker': resolve(__dirname, 'src/main/voice/voice-engine-worker.ts')
+          'voice-engine-worker': resolve(__dirname, 'src/main/voice/voice-engine-worker.ts'),
+          // Claude API proxy host — the loopback tunnel for every Claude Code
+          // process, forked as a utility process by
+          // src/main/services/claude-api-proxy/claude-api-proxy.ts
+          // (out/main/claude-proxy-host.js).
+          'claude-proxy-host': resolve(
+            __dirname,
+            'src/main/services/claude-api-proxy/claude-proxy-host.ts'
+          )
           // The server (`src/server/bin.ts`) is built separately via
           // electron.vite.server.config.ts so it can be electron-free — it runs
           // as its own Node process and must not contain `require('electron')`.

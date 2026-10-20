@@ -268,6 +268,19 @@ export function useClaudeCliStatusListener(): void {
       }
     )
 
+    // Main re-prompted a session whose turn died of a transient API error once
+    // the API answered again: say so, so a ticket that moves on its own is not
+    // a mystery.
+    const unsubscribeAutoResume = terminalApi.onClaudeCliAutoResume(
+      ({ sessionId, summary, waitedMs }) => {
+        const sessionName = useSessionStore.getState().getSessionById(sessionId)?.name
+        toast.info(`Resumed${sessionName ? ` "${sessionName}"` : ' session'} after an API error`, {
+          description: `${summary} — the API answered again after ${Math.max(1, Math.round(waitedMs / 60000))} min.`,
+          duration: 8000
+        })
+      }
+    )
+
     // A fresh claude-cli spawn that never got going: the CLI is sitting on its
     // folder-trust dialog, or no SessionStart hook arrived in the launch
     // window. The ticket shows a "Not started" badge until a hook proves the
@@ -300,6 +313,7 @@ export function useClaudeCliStatusListener(): void {
       unsubscribe()
       unsubscribeBackgroundWork()
       unsubscribeApiError()
+      unsubscribeAutoResume()
       unsubscribeLaunch()
     }
   }, [])

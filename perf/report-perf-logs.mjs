@@ -156,6 +156,76 @@ for (const [role, records] of byRole) {
     }
   }
 
+  // Claude API proxy: one record per request that went through the tunnel (role claude-proxy,
+  // or electron-main when the tunnel runs in-process). Outcomes other than `ok` are what a
+  // "sessions are failing" night is made of; `client-abort` after ~240 s / ~600 s is the CLI's
+  // own timeout giving up on a request the upstream never answered.
+  const proxyRecords = records.filter((r) => r.kind === 'proxy')
+  if (proxyRecords.length) {
+    console.log(`\n-- proxy requests (${proxyRecords.length} records; every ${step} min)`)
+    console.log(
+      pad('time', 17), num('reqs', 6), num('ok', 6), num('4xx', 5), num('5xx', 5), num('cAbort', 7),
+      num('upErr', 6), num('cTimeout', 9), num('drops', 6), num('ttfbP50', 8), num('ttfbMax', 8), num('maxTotal', 9)
+    )
+    let bucket = null
+    let rows = []
+    const flushBucket = () => {
+      if (!rows.length) return
+      const ttfbs = rows.map((r) => r.ttfbMs).filter((v) => typeof v === 'number').sort((a, b) => a - b)
+      const count = (outcome) => rows.filter((r) => r.outcome === outcome).length
+      console.log(
+        pad(new Date(rows[0]._t).toISOString().slice(5, 16).replace('T', ' '), 17),
+        num(rows.length, 6),
+        num(count('ok'), 6),
+        num(rows.filter((r) => r.status >= 400 && r.status < 500).length, 5),
+        num(rows.filter((r) => r.status >= 500).length, 5),
+        num(count('client-abort') + count('client-abort-mid-stream'), 7),
+        num(count('upstream-error'), 6),
+        num(count('connect-timeout'), 9),
+        num(count('upstream-drop-mid-stream'), 6),
+        num(ttfbs.length ? ttfbs[Math.floor(ttfbs.length / 2)] : '-', 8),
+        num(ttfbs.length ? ttfbs[ttfbs.length - 1] : '-', 8),
+        num(Math.max(...rows.map((r) => r.totalMs ?? 0)), 9)
+      )
+    }
+    for (const r of proxyRecords) {
+      const b = Math.floor(r._t / (step * 60_000))
+      if (b !== bucket) {
+        flushBucket()
+        bucket = b
+        rows = []
+      }
+      rows.push(r)
+    }
+    flushBucket()
+    const failures = proxyRecords.filter((r) => r.outcome !== 'ok')
+    if (failures.length) {
+      console.log('\n-- proxy failures (last 40)')
+      for (const r of failures.slice(-40)) {
+        console.log(
+          `  ${r.t} ${pad(r.outcome, 26)} ${pad(r.phase ?? '', 10)} status=${pad(r.status ?? '-', 4)} ` +
+            `ttfb=${num(r.ttfbMs ?? '-', 7)} total=${num(r.totalMs ?? '-', 7)} code=${pad(r.code ?? '-', 14)} ` +
+            `${r.method} ${String(r.path).slice(0, 40)}${r.requestId ? ` req=${r.requestId}` : ''}`
+        )
+      }
+    }
+  }
+
+  // Thread-pool heartbeat and proxy host lifecycle: a `threadpool-stall` mark with pending
+  // GetAddrInfoReqWrap / FSReqCallback requests is the wedge that hung every session.
+  const health = records.filter(
+    (r) =>
+      (r.kind === 'mark' && /^(threadpool-|proxy-host-|session-auto-resume)/.test(r.name ?? '')) ||
+      (r.kind === 'slow' && r.what === 'threadpool-probe')
+  )
+  if (health.length) {
+    console.log('\n-- thread pool / proxy host / session recovery')
+    for (const m of health.slice(-40)) {
+      const { t, role: _r, pid: _p, kind, name, what, _t, ...rest } = m
+      console.log(`  ${t} ${kind} ${name ?? what ?? ''} ${JSON.stringify(rest).slice(0, 200)}`)
+    }
+  }
+
   const slow = records.filter((r) => r.kind === 'slow')
   if (slow.length) {
     const m = new Map()

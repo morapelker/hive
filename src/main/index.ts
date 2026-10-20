@@ -78,8 +78,18 @@ import { recordSessionFinalMessage } from './services/document-flow/session-fina
 import {
   closeClaudeApiProxy,
   dropClaudeApiProxyUpstreamSockets,
+  getClaudeApiProxyHostStatus,
+  onClaudeApiProxyHostEvent,
+  probeClaudeApiUpstream,
   startClaudeApiProxy
 } from './services/claude-api-proxy/claude-api-proxy'
+import { startThreadpoolProbe } from './services/perf-logging/threadpool-probe'
+import {
+  configureClaudeCliSessionRecovery,
+  disposeClaudeCliSessionRecovery
+} from './services/claude-cli-session-recovery'
+import { getLastClaudeCliStatus } from './services/claude-hook-server'
+import { writeClaudeCliPrompt } from './services/claude-cli-pty-prompt'
 import { scriptRunner } from './services/script-runner'
 import { cleanupScripts } from './services/script-cleanup'
 import { cleanupFileTreeWatchers, getFileTreeWatcherCount } from './services/file-tree-watcher'
@@ -463,7 +473,43 @@ app
     const claudeApiProxy = await startClaudeApiProxy()
     if (claudeApiProxy.started) {
       powerMonitor.on('resume', () => dropClaudeApiProxyUpstreamSockets())
+      // Host lifecycle (restarts, stalls, missed pings) into the app log; the perf
+      // log gets the same events as marks from the proxy module itself.
+      onClaudeApiProxyHostEvent((name, data) => {
+        if (name === 'proxy-host-start') return
+        log.warn(`Claude API proxy host event: ${name}`, data)
+      })
     }
+
+    // Sessions whose turn died of a transient API failure (a hang, a dropped
+    // link, a 5xx) are re-prompted once the API answers through the proxy
+    // again — the user would otherwise have to find and poke each one.
+    configureClaudeCliSessionRecovery({
+      hasLivePty: (sessionId) => ptyService.has(sessionId),
+      getLastStatus: (sessionId) => getLastClaudeCliStatus(sessionId),
+      getAgentSdk: (sessionId) => {
+        try {
+          return getDatabase().getSession(sessionId)?.agent_sdk ?? null
+        } catch {
+          return null
+        }
+      },
+      writePrompt: (sessionId, prompt) => writeClaudeCliPrompt(sessionId, prompt),
+      probeUpstream: (timeoutMs) => probeClaudeApiUpstream(timeoutMs),
+      isEnabled: () => {
+        try {
+          const raw = getDatabase().getSetting(APP_SETTINGS_DB_KEY)
+          if (!raw) return true
+          const settings = JSON.parse(raw) as { claudeCliAutoResumeAfterApiError?: boolean }
+          return settings.claudeCliAutoResumeAfterApiError !== false
+        } catch {
+          return true
+        }
+      },
+      publish: (channel, payload) => publishDesktopBackendEvent(channel, payload),
+      log: createLogger({ component: 'ClaudeCliSessionRecovery' }),
+      mark: (name, data) => getElectronMainPerfLogger().mark(name, data)
+    })
 
     // Cache the XDG-only config path for native terminals without probing
     // Ghostty's protected Application Support directory.
@@ -712,6 +758,40 @@ app
     mainPerfLogger.registerGauge('main.ptys', () => ptyService.getCount())
     mainPerfLogger.registerGauge('main.scripts', () => scriptRunner.getStats())
     mainPerfLogger.registerGauge('main.fileTreeWatchers', () => getFileTreeWatcherCount())
+    mainPerfLogger.registerGauge('claudeApiProxyHost', () => {
+      const status = getClaudeApiProxyHostStatus()
+      if (!status) return { running: 0 }
+      const health = status.lastHealth
+      const snapshot: Record<string, number> = {
+        running: status.state === 'running' ? 1 : 0,
+        restarts: status.restarts,
+        missedPings: status.missedPings,
+        pongAgeS: status.lastPongAt ? Math.round((Date.now() - status.lastPongAt) / 1000) : -1,
+        hostRssMb: health?.rssMb ?? 0,
+        hostInFlight: health?.stats.inFlight ?? 0,
+        hostProbeMisses: health?.probe?.consecutiveMisses ?? 0
+      }
+      return snapshot
+    })
+    // The thread-pool heartbeat runs regardless of the perf switch: a stall is
+    // the one failure that leaves every other signal looking healthy, and the
+    // app log must say so even when perf logging is off.
+    const threadpoolProbeLog = createLogger({ component: 'ThreadpoolProbe' })
+    startThreadpoolProbe({
+      log: threadpoolProbeLog,
+      onStall: (result, misses) => {
+        threadpoolProbeLog.warn(
+          'Main-process thread pool is stalled: async file I/O and getaddrinfo are not completing',
+          {
+            consecutiveMisses: misses,
+            pendingRequests: result.requests.requests,
+            requestsByType: result.requests.requestsByType,
+            pendingLookups: result.requests.pendingLookups
+          }
+        )
+        if (mainPerfLogger.isEnabled()) mainPerfLogger.dumpHandles('threadpool-stall')
+      }
+    })
     try {
       const raw = getDatabase().getSetting(APP_SETTINGS_DB_KEY)
       if (raw) {
@@ -879,6 +959,7 @@ wireQuitCleanup({
     // Terminal PTYs and Ghostty runtime
     { name: 'cleanupTerminals', run: () => cleanupTerminals() },
     { name: 'closeClaudeHookServer', run: () => closeClaudeHookServer() },
+    { name: 'sessionRecovery', run: () => disposeClaudeCliSessionRecovery() },
     { name: 'closeClaudeApiProxy', run: () => closeClaudeApiProxy() },
     { name: 'cleanupScripts', run: () => cleanupScripts() },
     { name: 'bashKillAll', run: () => bashService.killAll() },

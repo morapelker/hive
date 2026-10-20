@@ -75,6 +75,7 @@ import {
   ensureCliPromptSubmitted,
   handleClaudeCliTerminalInput
 } from '../services/terminal-pty-bridge'
+import { noteClaudeCliUserInputForRecovery } from '../services/claude-cli-session-recovery'
 import { launchClaudeCliInTmux } from '../services/remote-tmux-launcher'
 import { claudeCliTelegramBridge } from '../services/claude-cli-telegram-bridge'
 import { claudeCliDiscordBridge } from '../services/claude-cli-discord-bridge'
@@ -3147,6 +3148,7 @@ const handleDesktopBackendCommand = (
           throw new Error('Terminal not found')
         }
         handleClaudeCliTerminalInput(message.payload.terminalId, message.payload.data)
+        noteClaudeCliUserInputForRecovery(message.payload.terminalId, message.payload.data)
         ptyService.write(message.payload.terminalId, message.payload.data)
         ensureCliPromptSubmitted(message.payload.terminalId, message.payload.data)
       }

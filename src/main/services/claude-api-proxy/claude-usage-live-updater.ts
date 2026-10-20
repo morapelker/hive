@@ -126,16 +126,27 @@ const MAX_CACHED_RESOLUTIONS = 500
  * none (no unified headers) or nothing to attribute it by (neither a
  * credential nor a reported `account_uuid`).
  */
+/**
+ * An exchange as either tunnel reports it: the in-process one hands over the
+ * captured body, the utility-process host hands over the account uuid it
+ * already pulled out of the body (bodies never cross the process boundary).
+ */
+export type ClaudeProxyObservedExchange = Pick<
+  LocalApiProxyExchange,
+  'responseHeaders' | 'requestBody' | 'observedAt' | 'credentialFingerprint'
+> & { accountUuid?: string | null }
+
 export function observationFromExchange(
-  exchange: Pick<
-    LocalApiProxyExchange,
-    'responseHeaders' | 'requestBody' | 'observedAt' | 'credentialFingerprint'
-  >
+  exchange: ClaudeProxyObservedExchange
 ): ClaudeUsageObservation | null {
   const snapshot = parseUnifiedRateLimitHeaders(exchange.responseHeaders)
   if (snapshot === null || !snapshotHasUsage(snapshot)) return null
   const accountUuid =
-    exchange.requestBody === null ? null : extractClaudeAccountUuid(exchange.requestBody)
+    exchange.accountUuid !== undefined
+      ? exchange.accountUuid
+      : exchange.requestBody === null
+        ? null
+        : extractClaudeAccountUuid(exchange.requestBody)
   const credentialFingerprint = exchange.credentialFingerprint ?? null
   if (credentialFingerprint === null && accountUuid === null) return null
   return { credentialFingerprint, accountUuid, snapshot, observedAt: exchange.observedAt }
@@ -218,7 +229,7 @@ export class ClaudeUsageLiveUpdater {
   }
 
   /** Entry point for the proxy: cheap triage, then coalesced async apply. */
-  handleExchange(exchange: LocalApiProxyExchange): void {
+  handleExchange(exchange: ClaudeProxyObservedExchange): void {
     const observation = observationFromExchange(exchange)
     if (observation === null) return
     this.observe(observation)

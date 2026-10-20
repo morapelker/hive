@@ -32,7 +32,10 @@ import {
  * Everything is a no-op while disabled: hooks check one boolean.
  */
 
-export type PerfProcessRole = 'server' | 'electron-main' | 'renderer'
+export type PerfProcessRole = 'server' | 'electron-main' | 'renderer' | 'claude-proxy'
+
+/** Set on a utility process at fork time so its logger picks the right role and file. */
+export const PERF_ROLE_ENV = 'HIVE_PERF_ROLE'
 
 export type GaugeValue = number | Record<string, number>
 
@@ -396,6 +399,50 @@ export class PerfLogger {
   mark(name: string, data?: Record<string, unknown>): void {
     if (!this.enabled) return
     this.write({ kind: 'mark', name, ...(data ?? {}) })
+  }
+
+  /**
+   * One record of a custom kind (`proxy`, `probe`, …). Not rate-limited: callers
+   * emit these at most a few times per second (one per API exchange).
+   */
+  record(kind: string, data: Record<string, unknown>): void {
+    if (!this.enabled) return
+    this.write({ kind, ...data })
+  }
+
+  /**
+   * Handle dump only — no heap snapshot, no CPU profile — for moments when the
+   * question is "what is this process waiting on" (a thread-pool stall) rather
+   * than "what is it holding". Cheap enough to call from a watchdog.
+   */
+  dumpHandles(reason: string, extra?: Record<string, unknown>): string | null {
+    const stamp = nowIso().replace(/[:.]/g, '-')
+    const path = join(this.logDir, `handles-${this.role}-${stamp}.json`)
+    try {
+      writeFileSync(
+        path,
+        JSON.stringify(
+          {
+            t: nowIso(),
+            role: this.role,
+            pid: process.pid,
+            reason,
+            handles: describeHandles(),
+            timers: snapshotTimerRegistry(200),
+            gauges: this.readGauges(),
+            ...(extra ?? {})
+          },
+          null,
+          1
+        )
+      )
+    } catch (error) {
+      console.warn('[perf-logging] handle dump failed', error)
+      return null
+    }
+    this.captures.push(path)
+    if (this.enabled) this.write({ kind: 'capture', reason, files: [path] })
+    return path
   }
 
   /** One slow operation. Rate-limited per window so a storm cannot flood the log. */
@@ -795,23 +842,57 @@ const looksLikeId = (part: string): boolean =>
   (part.includes('-') && /\d/.test(part) && part.length >= 12) ||
   part.length > 40
 
+/**
+ * The pending async requests (`FSReqCallback`, `GetAddrInfoReqWrap`, …): work
+ * handed to the libuv thread pool that has not come back. These are what a
+ * wedged pool looks like from inside the process; the hostnames of pending
+ * lookups say which resolver call is stuck.
+ */
+export function describeActiveRequests(): {
+  requests: number
+  requestsByType: Record<string, number>
+  pendingLookups: string[]
+} {
+  const proc = process as NodeJS.Process & { _getActiveRequests?: () => unknown[] }
+  let requests: unknown[] = []
+  try {
+    requests = proc._getActiveRequests?.() ?? []
+  } catch {
+    // private API; ignore
+  }
+  const requestsByType: Record<string, number> = {}
+  const lookups = new Map<string, number>()
+  for (const request of requests) {
+    const name =
+      (request as { constructor?: { name?: string } } | null)?.constructor?.name ?? 'Unknown'
+    requestsByType[name] = (requestsByType[name] ?? 0) + 1
+    const hostname = (request as { hostname?: unknown } | null)?.hostname
+    if (typeof hostname === 'string') lookups.set(hostname, (lookups.get(hostname) ?? 0) + 1)
+  }
+  const pendingLookups = [...lookups.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([hostname, count]) => (count > 1 ? `${hostname} x${count}` : hostname))
+  return { requests: requests.length, requestsByType, pendingLookups }
+}
+
 export function describeHandles(): {
   active: number
   requests: number
   byType: Record<string, number>
+  requestsByType: Record<string, number>
+  pendingLookups: string[]
 } {
   const proc = process as NodeJS.Process & {
     _getActiveHandles?: () => unknown[]
-    _getActiveRequests?: () => unknown[]
   }
   let handles: unknown[] = []
-  let requests = -1
   try {
     handles = proc._getActiveHandles?.() ?? []
-    requests = proc._getActiveRequests?.()?.length ?? -1
   } catch {
     // private API; ignore
   }
+  const { requests, requestsByType, pendingLookups } = describeActiveRequests()
   const byType: Record<string, number> = {}
   for (const handle of handles) {
     const name =
@@ -832,7 +913,7 @@ export function describeHandles(): {
   } catch {
     // ignore
   }
-  return { active: handles.length, requests, byType }
+  return { active: handles.length, requests, byType, requestsByType, pendingLookups }
 }
 
 const compactTimers = (
@@ -863,8 +944,13 @@ export const resetPerfLoggerForTests = (): void => {
   instance = null
 }
 
-const inferRole = (): PerfProcessRole =>
-  (process as NodeJS.Process & { type?: string }).type === 'browser' ? 'electron-main' : 'server'
+const inferRole = (): PerfProcessRole => {
+  const type = (process as NodeJS.Process & { type?: string }).type
+  if (type === 'browser') return 'electron-main'
+  const fromEnv = process.env[PERF_ROLE_ENV]
+  if (fromEnv === 'claude-proxy' || fromEnv === 'server' || fromEnv === 'electron-main') return fromEnv
+  return 'server'
+}
 
 /** Cheap no-op facade for hot paths: every call first checks the enabled flag. */
 export const perfLog = {
@@ -878,6 +964,7 @@ export const perfLog = {
   recordEventBytes: (channel: string, bytes: number): void =>
     instance?.recordEventBytes(channel, bytes),
   mark: (name: string, data?: Record<string, unknown>): void => instance?.mark(name, data),
+  record: (kind: string, data: Record<string, unknown>): void => instance?.record(kind, data),
   slow: (what: string, ms: number, detail?: Record<string, unknown>): void =>
     instance?.slow(what, ms, detail),
   registerGauge: (name: string, read: () => GaugeValue): (() => void) =>

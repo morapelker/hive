@@ -276,6 +276,8 @@ export interface AppSettings {
 
   // Diagnostics
   perfDiagnosticsEnabled: boolean
+  /** Re-prompt a Claude CLI session whose turn died of a transient API error once the API answers again. */
+  claudeCliAutoResumeAfterApiError: boolean
   codexJsonlLoggingEnabled: boolean
   codexJsonlResetPerSession: boolean
 
@@ -378,6 +380,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   environmentVariables: [],
   customProjectCommands: [],
   perfDiagnosticsEnabled: false,
+  claudeCliAutoResumeAfterApiError: true,
   codexJsonlLoggingEnabled: false,
   codexJsonlResetPerSession: true,
   reviewPromptType: 'standard',
@@ -592,6 +595,7 @@ function extractSettings(state: SettingsState): AppSettings {
     environmentVariables: state.environmentVariables,
     customProjectCommands: state.customProjectCommands,
     perfDiagnosticsEnabled: state.perfDiagnosticsEnabled,
+        claudeCliAutoResumeAfterApiError: state.claudeCliAutoResumeAfterApiError,
     codexJsonlLoggingEnabled: state.codexJsonlLoggingEnabled,
     codexJsonlResetPerSession: state.codexJsonlResetPerSession,
     reviewPromptType: state.reviewPromptType,
@@ -1008,6 +1012,7 @@ export const useSettingsStore = create<SettingsState>()(
         environmentVariables: state.environmentVariables,
         customProjectCommands: state.customProjectCommands,
         perfDiagnosticsEnabled: state.perfDiagnosticsEnabled,
+        claudeCliAutoResumeAfterApiError: state.claudeCliAutoResumeAfterApiError,
         codexJsonlLoggingEnabled: state.codexJsonlLoggingEnabled,
         codexJsonlResetPerSession: state.codexJsonlResetPerSession,
         reviewPromptType: state.reviewPromptType,

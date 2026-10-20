@@ -20,8 +20,11 @@ import {
 } from '@shared/types/claude-cli-background-work'
 import {
   CLAUDE_CLI_API_ERROR_CHANNEL,
+  CLAUDE_CLI_AUTO_RESUME_CHANNEL,
   isClaudeCliApiErrorPayload,
-  type ClaudeCliApiErrorPayload
+  isClaudeCliAutoResumePayload,
+  type ClaudeCliApiErrorPayload,
+  type ClaudeCliAutoResumePayload
 } from '@shared/types/claude-cli-api-error'
 import {
   CLAUDE_CLI_LAUNCH_CHANNEL,
@@ -259,6 +262,13 @@ export const terminalApi = {
   ): (() => void) => {
     return getRendererRpcClient().subscribe(CLAUDE_CLI_API_ERROR_CHANNEL, (event: ServerEvent) => {
       if (isClaudeCliApiErrorPayload(event.payload)) callback(event.payload)
+    })
+  },
+  onClaudeCliAutoResume: (
+    callback: (payload: ClaudeCliAutoResumePayload) => void
+  ): (() => void) => {
+    return getRendererRpcClient().subscribe(CLAUDE_CLI_AUTO_RESUME_CHANNEL, (event: ServerEvent) => {
+      if (isClaudeCliAutoResumePayload(event.payload)) callback(event.payload)
     })
   },
   onClaudeCliLaunch: (callback: (payload: ClaudeCliLaunchPayload) => void): (() => void) => {

@@ -74,6 +74,7 @@ import {
   CLAUDE_CLI_API_ERROR_CHANNEL,
   type ClaudeCliApiErrorPayload
 } from '@shared/types/claude-cli-api-error'
+import { noteClaudeCliSessionGoneForRecovery } from './claude-cli-session-recovery'
 import {
   buildCodexTerminalTitleOverride,
   extractCodexTitles,
@@ -719,6 +720,7 @@ export function destroyNodePtyTerminal(terminalId: string): void {
   clearClaudeCliLaunchWatch(terminalId, 'destroyed')
   resetClaudeCliBackgroundWork(terminalId)
   claudeCliSessions.delete(terminalId)
+  noteClaudeCliSessionGoneForRecovery(terminalId)
   claudeCliWorktreeBasenames.delete(terminalId)
   claudeCliTranscriptSources.delete(terminalId)
   claudeCliLastStatus.delete(terminalId)

@@ -2,6 +2,7 @@ import { app, BrowserWindow, powerMonitor, webContents } from 'electron'
 import { join } from 'node:path'
 import type { PerfLoggingPayload, PerfLoggingResult } from '../../../shared/desktop-command'
 import { getPerfLogger, type PerfLogger } from './perf-logger'
+import { setClaudeApiProxyPerfLogging } from '../claude-api-proxy/claude-api-proxy'
 
 /**
  * Performance logging in the Electron main process. The server child owns the user's toggle
@@ -148,6 +149,8 @@ export const configureElectronMainPerfLogging = (enabled: boolean): void => {
     stopRendererMetrics()
     target.stop()
   }
+  // The Claude API proxy host is its own process with its own perf file.
+  setClaudeApiProxyPerfLogging(enabled)
 }
 
 /** Heap snapshots of every renderer (main window, pet, voice HUD) next to the perf logs. */

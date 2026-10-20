@@ -21,6 +21,34 @@ export interface ClaudeCliApiErrorPayload {
   lastAssistantMessage?: string
 }
 
+/**
+ * Published by the main process when the session recovery service re-prompted
+ * a Claude CLI session whose turn had died of a transient API error, once the
+ * API was reachable again.
+ */
+export const CLAUDE_CLI_AUTO_RESUME_CHANNEL = 'claude-cli:auto-resume'
+
+export interface ClaudeCliAutoResumePayload {
+  sessionId: string
+  /** The StopFailure classification that was recovered from. */
+  error: string
+  /** One-line summary of the failure, as quoted in the resume prompt. */
+  summary: string
+  /** How long the session sat idle before the API answered again. */
+  waitedMs: number
+}
+
+export function isClaudeCliAutoResumePayload(value: unknown): value is ClaudeCliAutoResumePayload {
+  if (typeof value !== 'object' || value === null) return false
+  const payload = value as Record<string, unknown>
+  return (
+    typeof payload.sessionId === 'string' &&
+    typeof payload.error === 'string' &&
+    typeof payload.summary === 'string' &&
+    typeof payload.waitedMs === 'number'
+  )
+}
+
 export function isClaudeCliApiErrorPayload(value: unknown): value is ClaudeCliApiErrorPayload {
   if (typeof value !== 'object' || value === null) return false
   const payload = value as Record<string, unknown>

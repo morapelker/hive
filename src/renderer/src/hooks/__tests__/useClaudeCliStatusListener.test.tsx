@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   onClaudeCliStatus: vi.fn(),
   onClaudeCliBackgroundWork: vi.fn().mockReturnValue(() => {}),
   onClaudeCliApiError: vi.fn().mockReturnValue(() => {}),
+  onClaudeCliAutoResume: vi.fn().mockReturnValue(() => {}),
   onClaudeCliLaunch: vi.fn().mockReturnValue(() => {}),
   toastError: vi.fn(),
   toastWarning: vi.fn(),
@@ -88,6 +89,7 @@ vi.mock('@/api/terminal-api', () => ({
     onClaudeCliStatus: mocks.onClaudeCliStatus,
     onClaudeCliBackgroundWork: mocks.onClaudeCliBackgroundWork,
     onClaudeCliApiError: mocks.onClaudeCliApiError,
+    onClaudeCliAutoResume: mocks.onClaudeCliAutoResume,
     onClaudeCliLaunch: mocks.onClaudeCliLaunch,
     setClaudeCliPlanAutoApprove: mocks.setClaudeCliPlanAutoApprove
   }
@@ -159,6 +161,8 @@ describe('useClaudeCliStatusListener', () => {
     unsubscribe.mockClear()
     mocks.onClaudeCliApiError.mockReset()
     mocks.onClaudeCliApiError.mockReturnValue(() => {})
+    mocks.onClaudeCliAutoResume.mockReset()
+    mocks.onClaudeCliAutoResume.mockReturnValue(() => {})
     mocks.onClaudeCliLaunch.mockReset()
     mocks.onClaudeCliLaunch.mockReturnValue(() => {})
     mocks.toastError.mockClear()

@@ -27,6 +27,7 @@ export function SettingsAdvanced(): React.JSX.Element {
   const {
     environmentVariables: rawEnvVars,
     perfDiagnosticsEnabled,
+    claudeCliAutoResumeAfterApiError,
     codexJsonlLoggingEnabled,
     codexJsonlResetPerSession,
     updateSetting
@@ -162,8 +163,10 @@ export function SettingsAdvanced(): React.JSX.Element {
           <label className="text-sm font-medium">Performance logging</label>
           <p className="text-xs text-muted-foreground mt-0.5">
             Every 30s, record event-loop stalls, slow RPCs and SQLite statements, memory, handles,
-            timers, renderer long tasks and store sizes for the app, backend and window to
-            ~/.hive/logs/perf/. Cheap enough to leave on. When the app starts lagging, press
+            timers, renderer long tasks and store sizes for the app, backend, window and the Claude
+            API proxy host to ~/.hive/logs/perf/ — plus every proxied API request (status, time to
+            first byte, who gave up), the thread-pool heartbeat and session auto-resumes. Cheap
+            enough to leave on. When the app starts lagging or sessions start failing, press
             Capture diagnostics before relaunching.
           </p>
         </div>
@@ -217,6 +220,37 @@ export function SettingsAdvanced(): React.JSX.Element {
           </div>
         </div>
       )}
+
+      {/* Auto-resume after API errors */}
+      <div className="flex items-center justify-between">
+        <div>
+          <label className="text-sm font-medium">Resume sessions after API errors</label>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            When a Claude session's turn dies of a transient API failure (no response, connection
+            lost, 5xx, the Mac slept), re-prompt it to continue once the API answers again. Sessions
+            you have typed into are left alone.
+          </p>
+        </div>
+        <button
+          role="switch"
+          aria-checked={claudeCliAutoResumeAfterApiError}
+          data-testid="auto-resume-toggle"
+          onClick={() =>
+            updateSetting('claudeCliAutoResumeAfterApiError', !claudeCliAutoResumeAfterApiError)
+          }
+          className={cn(
+            'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors',
+            claudeCliAutoResumeAfterApiError ? 'bg-primary' : 'bg-muted'
+          )}
+        >
+          <span
+            className={cn(
+              'pointer-events-none block h-4 w-4 rounded-full bg-background ring-0 transition-transform',
+              claudeCliAutoResumeAfterApiError ? 'translate-x-4' : 'translate-x-0'
+            )}
+          />
+        </button>
+      </div>
 
       {/* Codex JSONL Logging toggle */}
       <div className="flex items-center justify-between">
