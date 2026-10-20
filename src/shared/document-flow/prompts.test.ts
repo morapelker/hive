@@ -16,6 +16,7 @@ import {
   buildLaunchPrompt,
   buildMigrationPrompt,
   buildNudgePrompt,
+  summarizePendingWork,
   buildQuestionModeNotice,
   isQuestionModeNotice,
   statusFooterInstructions,
@@ -40,7 +41,7 @@ const launch = (overrides: Partial<LaunchPromptInput> = {}): LaunchPromptInput =
 })
 
 const WAIT_LINE =
-  'when you have to wait for checks, tests or builds you started in the background, wait with the Monitor tool rather than a background shell loop or a sleep: a monitor tells the app you are still working, a shell does not. if your tools have no monitor, run the checks in the foreground instead of stopping to wait.'
+  'when you have to wait for checks, tests or builds you started in the background, wait with the Monitor tool rather than a background shell loop or a sleep: a monitor tells the app you are still working, a shell does not. if your tools have no monitor, run the checks in the foreground instead of stopping to wait. use a monitor only for a check that will finish, never to keep watching a dev server or a log, and stop every monitor you started (TaskStop) before you report the task done: a running monitor keeps this ticket open.'
 const GUARD_LINE =
   'implement only this task, commit your work on this branch, do not push or switch branches, and do not run migrations against any database.'
 const FOLLOW_UPS_LINE =
@@ -423,6 +424,40 @@ describe('buildFixTicket', () => {
       expect(description.endsWith(`\n${STATUS_FOOTER_INSTRUCTIONS}`)).toBe(true)
       expect(description).toContain('- Commit the fix on this branch.')
     }
+  })
+})
+
+describe('buildNudgePrompt: the wrap-up question', () => {
+  const pending = { monitors: ['CI checks on the PR', ''], wakeups: 1, agents: 0 }
+
+  it('lists what the pause holds and asks whether it is still needed', () => {
+    const prompt = buildNudgePrompt({ status: 'waiting', reason: 'It waits.', pending })
+    expect(prompt).toContain(
+      'You stopped to wait, and background work you started is still running, which keeps this ticket open:'
+    )
+    expect(prompt).toContain(
+      '- a monitor: CI checks on the PR\n- a monitor (no description)\n- a scheduled wake-up'
+    )
+    expect(prompt).toContain('Do you still need it to finish this ticket?')
+    expect(prompt).toContain('stop every monitor you no longer need with TaskStop')
+    expect(prompt).toContain('STATUS: DONE | WAITING | BLOCKED')
+  })
+
+  it('says the message read as done when it did', () => {
+    expect(buildNudgePrompt({ status: 'done', reason: 'Done.', pending })).toContain(
+      'Your last message reads as done, but background work you started is still running'
+    )
+  })
+
+  it('summarizes the pending work for a status line', () => {
+    expect(summarizePendingWork({ monitors: ['CI checks'], wakeups: 0, agents: 0 })).toBe(
+      'monitor "CI checks"'
+    )
+    expect(summarizePendingWork({ monitors: [''], wakeups: 0, agents: 0 })).toBe('a monitor')
+    expect(summarizePendingWork({ monitors: ['a', '', 'b'], wakeups: 2, agents: 1 })).toBe(
+      '3 monitors (a; b) and 2 scheduled wake-ups and a subagent or workflow'
+    )
+    expect(summarizePendingWork({ monitors: [], wakeups: 0, agents: 0 })).toBe('background work')
   })
 })
 

@@ -145,6 +145,12 @@ export const WAITING_PREFIX = 'Waiting for you: '
  * it started (checks, a build): nothing is asked of the user, the agent will be woken.
  */
 export const WAITING_FOR_WORK_PREFIX = 'Waiting for background work: '
+/**
+ * `status_detail` prefix of a running item whose session paused with a Monitor, a scheduled
+ * wake-up or an agent still pending (a `waiting` Stop): the pause holds the ticket, and the
+ * runner asks the agent to wrap up once the hold runs out.
+ */
+export const PAUSED_PREFIX = 'Paused on: '
 /** `status_detail` of an item whose session the user interrupted. */
 export const USER_INTERRUPT_DETAIL =
   'You interrupted this session. Send it a message to continue, or use Retry.'

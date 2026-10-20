@@ -241,10 +241,13 @@ export function useClaudeCliStatusListener(): void {
     // badges — pure store writes, deliberately outside the status state
     // machine above.
     const unsubscribeBackgroundWork = terminalApi.onClaudeCliBackgroundWork(
-      ({ sessionId, runningShells, runningMonitors, runningSubagents }) => {
-        useWorktreeStatusStore
-          .getState()
-          .setSessionBackgroundWork(sessionId, { runningShells, runningMonitors, runningSubagents })
+      ({ sessionId, runningShells, runningMonitors, runningSubagents, monitors }) => {
+        useWorktreeStatusStore.getState().setSessionBackgroundWork(sessionId, {
+          runningShells,
+          runningMonitors,
+          runningSubagents,
+          ...(monitors ? { monitors } : {})
+        })
       }
     )
 

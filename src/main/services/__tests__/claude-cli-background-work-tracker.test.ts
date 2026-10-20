@@ -5,6 +5,7 @@ import {
   clearAllClaudeCliBackgroundWork,
   clearClaudeCliBackgroundWork,
   getClaudeCliBackgroundWorkCounts,
+  getClaudeCliMonitorDescriptions,
   getClaudeCliMonitorTaskIds,
   MONITOR_TIMEOUT_EVENT,
   parseEndedTaskNotificationIds,
@@ -34,10 +35,11 @@ function backgroundBashStart(taskId: string): ParsedClaudeHook {
   }
 }
 
-function monitorStart(taskId: string): ParsedClaudeHook {
+function monitorStart(taskId: string, description?: string): ParsedClaudeHook {
   return {
     hook_event_name: 'PostToolUse',
     tool_name: 'Monitor',
+    ...(description === undefined ? {} : { tool_input: { description } }),
     tool_response: { taskId, timeoutMs: 3600000, persistent: false }
   }
 }
@@ -114,6 +116,22 @@ describe('processClaudeCliBackgroundWorkHook', () => {
       runningSubagents: 0
     })
     expect(processClaudeCliBackgroundWorkHook(SESSION, failed)).toBeNull()
+  })
+
+  it('remembers what each live monitor watches, in start order', () => {
+    expect(getClaudeCliMonitorDescriptions(SESSION)).toEqual([])
+
+    processClaudeCliBackgroundWorkHook(SESSION, monitorStart('bmon1', ' CI checks '))
+    processClaudeCliBackgroundWorkHook(SESSION, monitorStart('bmon2'))
+    expect(getClaudeCliMonitorDescriptions(SESSION)).toEqual(['CI checks', ''])
+
+    processClaudeCliBackgroundWorkHook(SESSION, {
+      hook_event_name: 'PostToolUse',
+      tool_name: 'TaskStop',
+      tool_input: { task_id: 'bmon1' },
+      tool_response: { message: 'Successfully stopped task: bmon1', task_id: 'bmon1' }
+    })
+    expect(getClaudeCliMonitorDescriptions(SESSION)).toEqual([''])
   })
 
   it('exposes live monitor ids (not shells) for the Stop completion classifier', () => {

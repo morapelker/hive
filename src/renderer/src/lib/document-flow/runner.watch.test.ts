@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { USER_INTERRUPT_DETAIL, WAITING_FOR_WORK_PREFIX } from '@shared/document-flow/planning'
+import {
+  PAUSED_PREFIX,
+  USER_INTERRUPT_DETAIL,
+  WAITING_FOR_WORK_PREFIX
+} from '@shared/document-flow/planning'
 import { buildContinuePrompt, buildNudgePrompt } from '@shared/document-flow/prompts'
 import type { DocumentRunItem, SessionFinalMessage } from '@shared/types/document-flow'
 import {
@@ -116,7 +120,7 @@ describe('DocumentFlowRunner: watching sessions', () => {
       expect(world.ports.updateItem).not.toHaveBeenCalled()
     })
 
-    it('never checks a turn that only paused for background work', async () => {
+    it('leaves a pause alone when the Stop did not say what holds it', async () => {
       const world = createWorld({ items: [runningItem()] })
       start(world)
 
@@ -440,6 +444,194 @@ describe('DocumentFlowRunner: watching sessions', () => {
       await advance(2000)
 
       expect(world.api.classify).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('paused on a monitor', () => {
+    const MONITOR = { monitors: ['CI checks on the PR'], wakeups: 0, agents: 0 }
+    const REASON = 'It waits for the CI checks its monitor watches.'
+    const pause = (world: RunnerWorld, pending = MONITOR, at = Date.now()): void =>
+      world.endTurn(SESSION, { at, completion: 'waiting', hasBackgroundWork: true, pending })
+
+    it('judges the pause once, holds the ticket, and asks for the wrap-up when the hold runs out', async () => {
+      const world = createWorld({ items: [runningItem()] })
+      world.api.classify.mockResolvedValue(makeVerdict({ status: 'waiting', reason: REASON }))
+      start(world)
+
+      pause(world)
+      await advance(SETTLE_MS + 1000)
+      expect(world.api.classify).toHaveBeenCalledTimes(1)
+      expect(world.item('A')).toMatchObject({
+        status: 'running',
+        status_detail: `${PAUSED_PREFIX}monitor "CI checks on the PR" since ${clock(Date.now())}; asked to wrap up at ${clock(Date.now() + WAIT_FOR_WORK_MS)}`,
+        wait_timeouts: 0
+      })
+      expect(world.item('A').wait_until).not.toBeNull()
+      expect(world.followups).toEqual([])
+      expect(world.events.map((event) => event.type)).toEqual(['paused'])
+
+      await advance(WAIT_FOR_WORK_MS - 60_000)
+      expect(world.followups).toEqual([])
+      expect(world.api.classify).toHaveBeenCalledTimes(1)
+
+      await advance(70_000)
+      expect(world.followups).toEqual([
+        {
+          sessionId: SESSION,
+          ticketId: 'ticket-A',
+          prompt: buildNudgePrompt({
+            status: 'waiting',
+            reason: expect.any(String),
+            source: 'model',
+            pending: MONITOR
+          })
+        }
+      ])
+      expect(world.followups[0].prompt).toContain('- a monitor: CI checks on the PR')
+      expect(world.followups[0].prompt).toContain('Do you still need it to finish this ticket?')
+      expect(world.item('A')).toMatchObject({
+        status: 'running',
+        status_detail: 'Asked to wrap up: monitor "CI checks on the PR" still running',
+        wait_until: null,
+        wait_timeouts: 1,
+        nudge_count: 0
+      })
+      expect(world.events.map((event) => event.type)).toEqual([
+        'paused',
+        'wait_timed_out',
+        'nudged'
+      ])
+    })
+
+    it('asks a session that reads as done to stop its monitors at once', async () => {
+      const world = createWorld({ items: [runningItem()] })
+      start(world)
+
+      pause(world)
+      await advance(SETTLE_MS + 1000)
+
+      expect(world.api.classify).toHaveBeenCalledTimes(1)
+      expect(world.followups).toHaveLength(1)
+      expect(world.followups[0].prompt).toContain('Your last message reads as done')
+      expect(world.followups[0].prompt).toContain('- a monitor: CI checks on the PR')
+      expect(world.item('A')).toMatchObject({
+        status: 'running',
+        status_detail: 'Asked to wrap up: monitor "CI checks on the PR" still running',
+        wait_until: null,
+        wait_timeouts: 1,
+        nudge_count: 0
+      })
+      expect(statusWrites(world)).not.toContain('ready')
+    })
+
+    it('judges the turn that follows the wrap-up like any other', async () => {
+      const world = createWorld({ items: [runningItem()] })
+      start(world)
+      pause(world)
+      await advance(SETTLE_MS + 1000)
+      expect(world.followups).toHaveLength(1)
+
+      // The agent stops the monitor and reports done; the fake marks the session working
+      // on a follow-up, so end the turn afterwards.
+      world.endTurn(SESSION)
+      world.api.prepareMerge.mockReturnValue(new Promise(() => {}))
+      await advance(SETTLE_MS + 1000)
+      expect(world.api.classify).toHaveBeenCalledTimes(2)
+      expect(statusWrites(world)).toContain('ready')
+    })
+
+    it('counts the second wrap-up as a nudge, and merges as is once the nudges are used up', async () => {
+      const world = createWorld({
+        config: { interactive: false },
+        items: [runningItem({ wait_timeouts: 1, nudge_count: MAX_NUDGES })]
+      })
+      world.api.classify.mockResolvedValue(makeVerdict({ status: 'waiting', reason: REASON }))
+      world.api.prepareMerge.mockReturnValue(new Promise(() => {}))
+      start(world)
+
+      pause(world)
+      await advance(SETTLE_MS + WAIT_FOR_WORK_MS + 10_000)
+      expect(world.followups).toEqual([])
+      expect(world.events).toContainEqual(expect.objectContaining({ type: 'accepted_as_is' }))
+    })
+
+    it('holds a pause on a subagent or workflow without a deadline', async () => {
+      const world = createWorld({ items: [runningItem()] })
+      world.api.classify.mockResolvedValue(makeVerdict({ status: 'waiting', reason: REASON }))
+      start(world)
+
+      const since = Date.now()
+      pause(world, { monitors: [], wakeups: 0, agents: 1 })
+      await advance(SETTLE_MS + WAIT_FOR_WORK_MS + 10_000)
+
+      expect(world.api.classify).toHaveBeenCalledTimes(1)
+      expect(world.item('A')).toMatchObject({
+        status: 'running',
+        status_detail: `${PAUSED_PREFIX}a subagent or workflow since ${clock(since)}`,
+        wait_until: null
+      })
+      expect(world.followups).toEqual([])
+    })
+
+    it('does not hold a done session whose subagent is still finishing', async () => {
+      const world = createWorld({ items: [runningItem()] })
+      start(world)
+
+      pause(world, { monitors: [], wakeups: 0, agents: 1 })
+      await advance(SETTLE_MS + 1000)
+
+      expect(world.followups).toEqual([])
+      expect(statusWrites(world)).not.toContain('ready')
+      expect(world.item('A').status_detail).toContain('a subagent or workflow')
+    })
+
+    it('routes a question or partial work on a pause like a finished turn', async () => {
+      const world = createWorld({ items: [runningItem()] })
+      world.api.classify.mockResolvedValue(
+        makeVerdict({ status: 'needs_input', question: 'Which currency?' })
+      )
+      start(world)
+
+      pause(world)
+      await advance(SETTLE_MS + 1000)
+
+      expect(world.item('A')).toMatchObject({
+        status: 'needs_input',
+        status_detail: 'Which currency?'
+      })
+    })
+
+    it('asks for the wrap-up at once when the hold is expired by hand', async () => {
+      const world = createWorld({
+        items: [
+          runningItem({
+            status_detail: `${PAUSED_PREFIX}monitor "CI checks on the PR" since 09:59`,
+            last_checked_at: RECORDED_AT,
+            wait_until: new Date(Date.now() - 1000).toISOString()
+          })
+        ]
+      })
+      start(world)
+      pause(world, MONITOR, Date.parse(RECORDED_AT))
+      await advance(1000)
+
+      expect(world.api.classify).not.toHaveBeenCalled()
+      expect(world.followups).toHaveLength(1)
+      expect(world.followups[0].prompt).toContain('- a monitor: CI checks on the PR')
+      expect(world.item('A')).toMatchObject({ wait_until: null, wait_timeouts: 1 })
+    })
+
+    it('ends the hold when the session wakes', async () => {
+      const world = createWorld({ items: [runningItem()] })
+      world.api.classify.mockResolvedValue(makeVerdict({ status: 'waiting', reason: REASON }))
+      start(world)
+      pause(world)
+      await advance(SETTLE_MS + 1000)
+      expect(world.item('A').wait_until).not.toBeNull()
+
+      world.setSignal(SESSION, { kind: 'working' })
+      await advance(1000)
+      expect(world.item('A')).toMatchObject({ status_detail: null, wait_until: null })
     })
   })
 

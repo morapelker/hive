@@ -450,6 +450,7 @@ describe('ClaudeHookServer HTTP round-trip', () => {
           // A Stop without background_tasks/session_crons cannot be classified.
           completion: 'unknown',
           pendingTasks: 0,
+          pendingMonitors: 0,
           pendingWakeups: 0,
           ignoredShells: 0
         }
@@ -1280,12 +1281,19 @@ describe('background shell/monitor counts (HTTP round-trip)', () => {
     await postHook(port, SESSION, 'tool', {
       hook_event_name: 'PostToolUse',
       tool_name: 'Monitor',
+      tool_input: { command: 'gh pr checks 1 --watch', description: 'CI checks on the PR' },
       tool_response: { taskId: 'bmon1', timeoutMs: 300000, persistent: false }
     })
     await vi.waitFor(() => {
       expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledWith(
         'claude-cli:background-work',
-        { sessionId: SESSION, runningShells: 1, runningMonitors: 1, runningSubagents: 0 }
+        {
+          sessionId: SESSION,
+          runningShells: 1,
+          runningMonitors: 1,
+          runningSubagents: 0,
+          monitors: ['CI checks on the PR']
+        }
       )
     })
 
@@ -1298,7 +1306,13 @@ describe('background shell/monitor counts (HTTP round-trip)', () => {
     await vi.waitFor(() => {
       expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledWith(
         'claude-cli:background-work',
-        { sessionId: SESSION, runningShells: 0, runningMonitors: 1, runningSubagents: 0 }
+        {
+          sessionId: SESSION,
+          runningShells: 0,
+          runningMonitors: 1,
+          runningSubagents: 0,
+          monitors: ['CI checks on the PR']
+        }
       )
     })
   })

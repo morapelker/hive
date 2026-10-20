@@ -12,6 +12,8 @@ export interface ClaudeCliBackgroundWorkPayload {
   runningShells: number
   runningMonitors: number
   runningSubagents: number
+  /** What each running monitor watches (its `description`), for the badge tooltip. */
+  monitors?: string[]
 }
 
 export function isClaudeCliBackgroundWorkPayload(

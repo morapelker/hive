@@ -5,6 +5,7 @@ import {
   FileX,
   GitBranch,
   MessageCircleQuestion,
+  Radar,
   RotateCcw,
   SkipForward,
   SquareArrowOutUpRight
@@ -42,6 +43,7 @@ import {
   canSkipDocumentUpdate,
   describeItemBranches,
   isActiveRunStatus,
+  isPausedItem,
   isRequeueableItem,
   isSkippableItem,
   itemDetailDisplay,
@@ -77,6 +79,12 @@ interface RunItemActions {
    */
   retryDocumentUpdate: ((item: DocumentRunItem) => void) | null
   skipDocumentUpdate: ((item: DocumentRunItem) => void) | null
+  /**
+   * Ask a paused session now whether the monitors or wake-ups it holds the ticket with are
+   * still needed, instead of at the end of its hold: the hold is expired, and the orchestrator
+   * sends the wrap-up question on its next pass.
+   */
+  wrapUp: (item: DocumentRunItem) => void
   /** Flip one verification method of a ticket that has not launched yet. */
   toggleVerification: (item: DocumentRunItem, method: DocumentVerificationMethod) => void
   /** Change the model and effort of a ticket that has not launched yet; null = the run default. */
@@ -136,6 +144,11 @@ function useRunItemActions(run: DocumentRun): RunItemActions {
       },
       skipDocumentUpdate: (item) => {
         skipDocumentUpdate(run.id, item.id).catch(report(item, 'skip the document update of'))
+      },
+      wrapUp: (item) => {
+        updateItem(run.id, item.id, { wait_until: new Date().toISOString() }).catch(
+          report(item, 'ask for the wrap-up of')
+        )
       },
       toggleVerification: (item, method) => {
         updateItem(run.id, item.id, {
@@ -426,6 +439,16 @@ export function RunItemsTable({ run, items }: RunItemsProps): React.JSX.Element 
                       onClick={() => actions.open(item)}
                     >
                       <SquareArrowOutUpRight />
+                    </RowAction>
+                  )}
+                  {actions.enabled && isPausedItem(item) && (
+                    <RowAction
+                      label="Ask to wrap up"
+                      title="Ask the session now whether its monitors are still needed, and to stop them if not"
+                      testId={`docflow-row-wrap-up-${item.key}`}
+                      onClick={() => actions.wrapUp(item)}
+                    >
+                      <Radar />
                     </RowAction>
                   )}
                   {canRequeue && (

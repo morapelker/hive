@@ -27,6 +27,7 @@ import {
 import {
   clearAllClaudeCliBackgroundWork,
   clearClaudeCliBackgroundWork,
+  getClaudeCliMonitorDescriptions,
   getClaudeCliMonitorTaskIds,
   processClaudeCliBackgroundWorkHook
 } from './claude-cli-background-work-tracker'
@@ -108,6 +109,8 @@ export interface ParsedClaudeHook {
     questions?: unknown
     /** Bash / Monitor: the shell command about to run (PreToolUse `guard` hook). */
     command?: unknown
+    /** Monitor: what the watch is for, as the agent described it. */
+    description?: unknown
     /** Bash: true when the command was launched as a background shell. */
     run_in_background?: unknown
     /** TaskStop: the background task id being stopped. */
@@ -157,6 +160,10 @@ export interface ClaudeCliStatusPayload {
     completion?: ClaudeCliStopCompletionKind
     /** Main-agent Stop: in-flight background tasks that hold the session open (non-shell, or Monitor). */
     pendingTasks?: number
+    /** Main-agent Stop: of `pendingTasks`, the Monitor watches. */
+    pendingMonitors?: number
+    /** Main-agent Stop with monitors pending: what each one watches, as the agent described it. */
+    monitors?: string[]
     /** Main-agent Stop: scheduled wakeups at stop time. */
     pendingWakeups?: number
     /** Main-agent Stop: background shells still running that were ignored for completion. */
@@ -327,8 +334,12 @@ function buildStatusMetadata(
     })
     metadata.completion = completion.kind
     metadata.pendingTasks = completion.pendingTasks
+    metadata.pendingMonitors = completion.pendingMonitors
     metadata.pendingWakeups = completion.pendingWakeups
     metadata.ignoredShells = completion.ignoredShells
+    if (completion.pendingMonitors > 0) {
+      metadata.monitors = getClaudeCliMonitorDescriptions(sessionId)
+    }
   }
 
   const plan = extractPlanText(hook)
@@ -783,7 +794,14 @@ function processCliHook(
   // ride a dedicated channel so the status dedup can't eat them.
   const backgroundWork = processClaudeCliBackgroundWorkHook(route.sessionId, body)
   if (backgroundWork) {
-    publishClaudeCliBackgroundWork({ sessionId: route.sessionId, ...backgroundWork })
+    // The descriptions ride along only while a monitor runs: the badge drops them with the count.
+    publishClaudeCliBackgroundWork({
+      sessionId: route.sessionId,
+      ...backgroundWork,
+      ...(backgroundWork.runningMonitors > 0
+        ? { monitors: getClaudeCliMonitorDescriptions(route.sessionId) }
+        : {})
+    })
   }
   // API errors end the turn as StopFailure instead of Stop. The structured
   // classification rides its own channel so the status dedup can't eat it

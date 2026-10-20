@@ -1,6 +1,8 @@
 import { ticketPillBaseClass } from '@/components/kanban/pill'
 import type { AgentDotState } from '@/components/sidebar/agent-state'
 import {
+  PAUSED_PREFIX,
+  WAITING_FOR_WORK_PREFIX,
   awaitsLaunch,
   WAITING_FOR_WORK_PREFIX,
   countRunningAgents,
@@ -240,6 +242,7 @@ export function itemStatusDisplay(
   if (item.status === 'running' && item.status_detail?.startsWith(WAITING_FOR_WORK_PREFIX)) {
     return { ...base, label: 'Waiting for checks' }
   }
+  if (isPausedItem(item)) return { ...base, label: 'Paused', dot: 'idle' }
   if (item.status !== 'pending') return base
   const unmet = unmetDependencies(item, items)
   return unmet.length > 0 ? { ...base, label: `Waiting for ${unmet.join(', ')}` } : base
@@ -535,6 +538,14 @@ export function canSkipDocumentUpdate(
 }
 
 /** Retry / "mark done" apply to items that are waiting on the user and are not mid-merge. */
+/**
+ * A running item whose session paused on a Monitor, a scheduled wake-up or an agent (see
+ * `PAUSED_PREFIX`): the orchestrator holds it, and can be told to ask for the wrap-up now.
+ */
+export function isPausedItem(item: DocumentRunItem): boolean {
+  return item.status === 'running' && (item.status_detail ?? '').startsWith(PAUSED_PREFIX)
+}
+
 export function isRequeueableItem(item: DocumentRunItem): boolean {
   return needsUser(item) && !holdsIntegrationWorktree(item)
 }

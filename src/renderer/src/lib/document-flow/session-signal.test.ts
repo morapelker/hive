@@ -177,6 +177,38 @@ describe('getSessionSignal', () => {
     })
   })
 
+  it('says what holds a pause open when the Stop hook counted it', () => {
+    setStatus(
+      SESSION,
+      completed({
+        timestamp: 7,
+        completion: 'waiting',
+        pendingTasks: 3,
+        pendingMonitors: 2,
+        pendingWakeups: 1,
+        monitors: ['CI checks', '']
+      })
+    )
+    expect(getSessionSignal(SESSION)).toMatchObject({
+      kind: 'ended',
+      completion: 'waiting',
+      pending: { monitors: ['CI checks', ''], wakeups: 1, agents: 1 }
+    })
+
+    // Descriptions that do not line up with the count are padded to it.
+    setStatus(
+      SESSION,
+      completed({ timestamp: 8, completion: 'waiting', pendingTasks: 1, pendingMonitors: 1 })
+    )
+    expect(getSessionSignal(SESSION)).toMatchObject({
+      pending: { monitors: [''], wakeups: 0, agents: 0 }
+    })
+
+    // A completion, or a pause from a hook that gave no counts, says nothing.
+    setStatus(SESSION, completed({ timestamp: 9, completion: 'completed', pendingTasks: 0 }))
+    expect(getSessionSignal(SESSION)).not.toHaveProperty('pending')
+  })
+
   it('takes the API error from the separate error map when the entry has none', () => {
     setStatus(SESSION, completed())
     useWorktreeStatusStore.getState().setSessionApiError(SESSION, 'overloaded')

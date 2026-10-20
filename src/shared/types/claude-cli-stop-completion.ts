@@ -63,6 +63,8 @@ export interface ClaudeCliStopCompletion {
    * (everything except plain background shells).
    */
   pendingTasks: number
+  /** Of `pendingTasks`, the Monitor watches (told apart by the caller's ids). */
+  pendingMonitors: number
   /** Session-scoped scheduled wakeups reported on the Stop body. */
   pendingWakeups: number
   /**
@@ -105,10 +107,17 @@ export function classifyClaudeCliStopCompletion(
   const wakeups = Array.isArray(hook.session_crons) ? hook.session_crons : null
 
   if (tasks === null && wakeups === null) {
-    return { kind: 'unknown', pendingTasks: 0, pendingWakeups: 0, ignoredShells: 0 }
+    return {
+      kind: 'unknown',
+      pendingTasks: 0,
+      pendingMonitors: 0,
+      pendingWakeups: 0,
+      ignoredShells: 0
+    }
   }
 
   let pendingTasks = 0
+  let pendingMonitors = 0
   let ignoredShells = 0
   for (const task of tasks ?? []) {
     const id = taskField(task, 'id')
@@ -118,15 +127,36 @@ export function classifyClaudeCliStopCompletion(
       ignoredShells += 1
     } else {
       pendingTasks += 1
+      if (isMonitor) pendingMonitors += 1
     }
   }
   const pendingWakeups = wakeups?.length ?? 0
   return {
     kind: pendingTasks === 0 && pendingWakeups === 0 ? 'completed' : 'waiting',
     pendingTasks,
+    pendingMonitors,
     pendingWakeups,
     ignoredShells
   }
+}
+
+/**
+ * What holds a paused Claude CLI session open, as the ticket board and a document run see it
+ * on a `waiting` Stop: the monitors by description, the scheduled wakeups, and the agents
+ * (subagents, workflows and other tasks) that resume the main agent on their own.
+ */
+export interface ClaudeCliPendingWork {
+  /** The running Monitor watches, each as the agent described it ('' when it did not). */
+  monitors: string[]
+  /** Session-scoped scheduled wakeups (ScheduleWakeup / CronCreate / `/loop`). */
+  wakeups: number
+  /** Pending tasks that are neither shells nor monitors: subagents, workflows, … */
+  agents: number
+}
+
+/** A pause that only monitors and scheduled wakeups hold: a wrap-up can be asked for. */
+export function isHeldByWatchesOnly(pending: ClaudeCliPendingWork): boolean {
+  return pending.agents === 0 && (pending.monitors.length > 0 || pending.wakeups > 0)
 }
 
 /**

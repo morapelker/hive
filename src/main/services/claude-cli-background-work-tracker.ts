@@ -47,7 +47,8 @@ export interface ClaudeCliBackgroundWorkCounts {
 
 interface SessionWork {
   shells: Set<string>
-  monitors: Set<string>
+  /** Monitor task id -> what it watches (the tool call's `description`, '' when absent). */
+  monitors: Map<string, string>
   subagents: Set<string>
 }
 
@@ -65,7 +66,7 @@ const NOTIFICATION_BLOCK_PATTERN = /<task-notification>([\s\S]*?)<\/task-notific
 function getOrCreateWork(sessionId: string): SessionWork {
   let work = sessions.get(sessionId)
   if (!work) {
-    work = { shells: new Set(), monitors: new Set(), subagents: new Set() }
+    work = { shells: new Set(), monitors: new Map(), subagents: new Set() }
     sessions.set(sessionId, work)
   }
   return work
@@ -155,7 +156,10 @@ function observePostToolUse(work: SessionWork, hook: ParsedClaudeHook): void {
     }
     case 'Monitor': {
       const id = responseId(hook, 'taskId')
-      if (id) work.monitors.add(id)
+      if (id) {
+        const description = hook.tool_input?.description
+        work.monitors.set(id, typeof description === 'string' ? description.trim() : '')
+      }
       return
     }
     case 'TaskStop': {
@@ -187,7 +191,7 @@ function reconcileWithSnapshot(work: SessionWork, hook: ParsedClaudeHook): void 
   for (const id of work.shells) {
     if (!running.has(id)) work.shells.delete(id)
   }
-  for (const id of work.monitors) {
+  for (const id of [...work.monitors.keys()]) {
     if (!running.has(id)) work.monitors.delete(id)
   }
   // Adoption: unlike shells/monitors, snapshot entries classify subagents, so
@@ -283,7 +287,16 @@ export function getClaudeCliBackgroundWorkCounts(sessionId: string): ClaudeCliBa
  * pause — it will wake the agent) from a background shell (ignored).
  */
 export function getClaudeCliMonitorTaskIds(sessionId: string): ReadonlySet<string> {
-  return sessions.get(sessionId)?.monitors ?? new Set()
+  return new Set(sessions.get(sessionId)?.monitors.keys())
+}
+
+/**
+ * What the session's live monitors watch, as the agent described them when arming them (in
+ * start order; an undescribed monitor is ''). Shown on the ticket badge and quoted back to
+ * the agent when a document run asks it whether its monitors are still needed.
+ */
+export function getClaudeCliMonitorDescriptions(sessionId: string): string[] {
+  return [...(sessions.get(sessionId)?.monitors.values() ?? [])]
 }
 
 /** Drop a session's tracked work. Returns true when it had live counts (the

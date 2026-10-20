@@ -53,6 +53,14 @@ export interface SessionStatusEntry {
   apiError?: string
   /** Claude CLI: how a 'completed' status came about (detected completion, pause, or no Stop). */
   completion?: ClaudeCliCompletion
+  /** Claude CLI Stop: the background tasks (non-shell, or Monitor) that hold the session open. */
+  pendingTasks?: number
+  /** Claude CLI Stop: of `pendingTasks`, the Monitor watches. */
+  pendingMonitors?: number
+  /** Claude CLI Stop: the scheduled wakeups pending at stop time. */
+  pendingWakeups?: number
+  /** Claude CLI Stop with monitors pending: what each one watches. */
+  monitors?: string[]
 }
 
 export type MergeConflictFlow =
@@ -64,6 +72,8 @@ export interface SessionBackgroundWork {
   runningShells: number
   runningMonitors: number
   runningSubagents: number
+  /** What each running monitor watches, when the publisher says. */
+  monitors?: string[]
 }
 
 interface WorktreeStatusState {
@@ -119,6 +129,10 @@ interface WorktreeStatusState {
       taskNotification?: boolean
       apiError?: string
       completion?: ClaudeCliCompletion
+      pendingTasks?: number
+      pendingMonitors?: number
+      pendingWakeups?: number
+      monitors?: string[]
     }
   ) => void
   setSessionApiError: (sessionId: string, error: string) => void
@@ -178,6 +192,10 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
       taskNotification?: boolean
       apiError?: string
       completion?: ClaudeCliCompletion
+      pendingTasks?: number
+      pendingMonitors?: number
+      pendingWakeups?: number
+      monitors?: string[]
     }
   ) => {
     set((state) => {

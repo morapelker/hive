@@ -6,7 +6,10 @@ import {
   useWorktreeStatusStore,
   type SessionStatusEntry
 } from '@/stores/useWorktreeStatusStore'
-import type { ClaudeCliCompletion } from '@shared/types/claude-cli-stop-completion'
+import type {
+  ClaudeCliCompletion,
+  ClaudeCliPendingWork
+} from '@shared/types/claude-cli-stop-completion'
 
 // What a document run can observe about one agent session, reduced from the renderer's
 // status and question stores to the four cases the orchestrator acts on. Turn status is
@@ -30,6 +33,8 @@ export type SessionSignal =
       at: number
       /** Claude CLI only: `waiting` is a pause, `none` means no Stop hook ended the turn. */
       completion: ClaudeCliCompletion | undefined
+      /** What holds a `waiting` pause open, when the Stop hook said. */
+      pending?: ClaudeCliPendingWork
       apiError: string | null
       reason: string | null
       /** The CLI hook that published the end (`Stop`, `SessionStart`, `SessionEnd`, …), if any. */
@@ -101,6 +106,21 @@ function endedByUserAbort(sessionId: string, ended: SessionStatusEntry): boolean
   return abortedAt >= (lastActiveAt.get(sessionId) ?? 0)
 }
 
+/** What a paused turn waits on, from the Stop hook's counts; undefined when it gave none. */
+function pendingWork(ended: SessionStatusEntry): ClaudeCliPendingWork | undefined {
+  if (ended.completion !== 'waiting' || typeof ended.pendingTasks !== 'number') return undefined
+  const pendingMonitors = ended.pendingMonitors ?? 0
+  const described = ended.monitors ?? []
+  return {
+    monitors:
+      described.length === pendingMonitors
+        ? described
+        : Array.from({ length: pendingMonitors }, (_, index) => described[index] ?? ''),
+    wakeups: ended.pendingWakeups ?? 0,
+    agents: Math.max(0, ended.pendingTasks - pendingMonitors)
+  }
+}
+
 export function getSessionSignal(sessionId: string): SessionSignal {
   startSessionSignalLatch()
   const state = useWorktreeStatusStore.getState()
@@ -132,10 +152,12 @@ export function getSessionSignal(sessionId: string): SessionSignal {
 
   const ended = entry?.status === 'completed' ? entry : lastCompleted.get(sessionId)
   if (!ended) return { kind: 'unknown' }
+  const pending = pendingWork(ended)
   return {
     kind: 'ended',
     at: ended.timestamp,
     completion: ended.completion,
+    ...(pending ? { pending } : {}),
     apiError: ended.apiError ?? state.sessionApiErrors[sessionId] ?? null,
     reason: ended.reason ?? (endedByUserAbort(sessionId, ended) ? USER_ABORT_REASON : null),
     hookEvent: ended.hookEventName ?? null,

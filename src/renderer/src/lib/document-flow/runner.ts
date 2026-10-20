@@ -1,6 +1,7 @@
 import { parseDocumentUpdateFooter } from '@shared/document-flow/document-update'
 import {
   DOCUMENT_UPDATE_INTERRUPT_DETAIL,
+  PAUSED_PREFIX,
   USER_INTERRUPT_DETAIL,
   WAITING_FOR_WORK_PREFIX,
   WAITING_PREFIX,
@@ -25,6 +26,7 @@ import {
   buildFixTicket,
   buildLaunchPrompt,
   buildNudgePrompt,
+  summarizePendingWork,
   withRunRules,
   workspaceOfMembers,
   type ConnectionWorkspaceMember,
@@ -47,6 +49,7 @@ import {
   type DocumentRunItemStatus,
   type DocumentRunLaunchConfig,
   type DocumentRunMember,
+  type DocumentRunVerdict,
   type DocumentSourceState,
   type DocumentUpdateStatus,
   type DocumentVerificationMethod,
@@ -55,6 +58,10 @@ import {
 } from '@shared/types/document-flow'
 import type { TicketLaunchResult, TicketLaunchSpec } from '@/lib/ticket-launch'
 import type { RunnerPorts, RunnerTicket, RunnerTimer, RunnerWorktree } from './runner-ports'
+import {
+  isHeldByWatchesOnly,
+  type ClaudeCliPendingWork
+} from '@shared/types/claude-cli-stop-completion'
 import { USER_ABORT_REASON, type SessionBlockReason, type SessionSignal } from './session-signal'
 
 // The orchestrator of a launched document run. It is a level-triggered reconciliation loop:
@@ -74,7 +81,9 @@ export const BACKOFF_MINUTES = [2, 10, 30, 60, 60]
 export const MAX_NUDGES = 2
 /**
  * How long a ticket waits for background work its agent said it was waiting on (a `waiting`
- * verdict) before the agent is told to check on that work and finish.
+ * verdict) before the agent is told to check on that work and finish. The same hold applies
+ * to a session that paused on a Monitor or a scheduled wake-up: when it runs out, the agent
+ * is asked whether the watch is still needed, and to stop it if not.
  */
 export const WAIT_FOR_WORK_MS = 30 * 60_000
 /** Wait timeouts that only remind the agent; the next one counts as a nudge (MAX_NUDGES). */
@@ -205,6 +214,11 @@ type Observation =
   | { kind: 'blocked'; reason: SessionBlockReason; detail: string | null }
   /** A finished turn, newer than the last prompt and the last check, that has settled. */
   | { kind: 'turn_ended'; at: number }
+  /**
+   * A turn that paused (a `waiting` Stop) on work that will wake the agent again, newer than
+   * the last prompt and settled: what holds it is known from the Stop hook.
+   */
+  | { kind: 'paused'; at: number; pending: ClaudeCliPendingWork }
   /** A fresh turn end that is still too young to trust. */
   | { kind: 'settling'; until: number }
   | { kind: 'api_error'; error: string }
@@ -258,6 +272,7 @@ const isTransientDetail = (detail: string | null): boolean =>
   detail !== null &&
   (detail.startsWith(WAITING_PREFIX) ||
     detail.startsWith(WAITING_FOR_WORK_PREFIX) ||
+    detail.startsWith(PAUSED_PREFIX) ||
     detail.startsWith(API_ERROR_PREFIX) ||
     detail === USER_INTERRUPT_DETAIL)
 
@@ -968,8 +983,13 @@ export class DocumentFlowRunner {
     ) {
       return { kind: 'interrupted', byUser: false }
     }
-    // `waiting`: the agent paused for background work and will wake itself.
-    if (end.completion !== 'waiting' && end.at > toMs(op.item.last_checked_at)) {
+    // `waiting`: the agent paused for background work and will wake itself. A live Stop says
+    // what holds it, and the pause is handled; one the server only recorded says nothing
+    // more, and stands as nothing.
+    if (end.completion === 'waiting') {
+      return end.pending ? { kind: 'paused', at: end.at, pending: end.pending } : null
+    }
+    if (end.at > toMs(op.item.last_checked_at)) {
       return { kind: 'turn_ended', at: end.at }
     }
     return null
@@ -1030,9 +1050,101 @@ export class DocumentFlowRunner {
         return this.waitForUser(op, waitingDetail(seen))
       case 'turn_ended':
         return this.turnEnded(op)
+      case 'paused':
+        // A fix or conflict session that pauses is left to wake itself, as it always was.
+        if (item.status !== 'running') return
+        return this.paused(op, target, seen)
       default:
         return this.stalled(op, target, seen)
     }
+  }
+
+  /**
+   * The session paused on work that will wake it (a `waiting` Stop). The pause is judged once:
+   * its message can be the real completion with a monitor left behind. A judged pause is then
+   * held until its deadline, if it has one, and the agent is asked to wrap up when it passes.
+   */
+  private async paused(
+    op: ItemOp,
+    target: SessionTarget,
+    seen: Extract<Observation, { kind: 'paused' }>
+  ): Promise<void> {
+    const item = op.item
+    if (seen.at > toMs(item.last_checked_at)) return this.judgePause(op, target, seen)
+    if (!item.wait_until) return
+    const waitUntil = toMs(item.wait_until)
+    if (this.ports.now() < waitUntil) {
+      this.wakeAt(waitUntil)
+      return
+    }
+    return this.waitTimedOut(op, target, seen.pending)
+  }
+
+  /**
+   * A new pause, judged like a finished turn. "Done" with only monitors or wake-ups pending is
+   * the case the hold exists for: the agent is asked at once whether it still needs them. A
+   * message that waits for its own work holds the item; anything else (a question, part of
+   * the work, a stop) is handled as after any other turn end.
+   */
+  private async judgePause(
+    op: ItemOp,
+    target: SessionTarget,
+    seen: Extract<Observation, { kind: 'paused' }>
+  ): Promise<void> {
+    const item = op.item
+    const sessionId = target.sessionId
+    const checked: DocumentRunItemPatch = { last_checked_at: toIso(seen.at) }
+    const finalMessage = await this.ports.readFinalMessage(sessionId).catch(() => null)
+    const verdict = await this.ports.api.classify({
+      runId: op.runId,
+      itemId: item.id,
+      ...(finalMessage ? { finalMessage } : {})
+    })
+
+    // Classifying takes a while; the verdict is void if the session moved on meanwhile.
+    const after = await this.reconcile(op, sessionId, this.ports.getSessionSignal(sessionId))
+    if (await this.followMovingSession(op, after, checked)) return
+
+    const reason = verdict.reason.trim() || 'The agent did not finish the task.'
+    switch (verdict.status) {
+      case 'done':
+        if (isHeldByWatchesOnly(seen.pending)) {
+          return this.remind(op, target, { ...verdict, reason, pending: seen.pending }, checked)
+        }
+        // An agent still runs: its result is on its way, and the turn that follows is judged.
+        return this.holdPause(op, seen, checked, reason)
+      case 'waiting':
+        return this.holdPause(op, seen, checked, reason)
+      default:
+        return this.applyVerdict(op, sessionId, verdict, reason, checked)
+    }
+  }
+
+  /**
+   * Hold the item on its pause. Monitors and wake-ups get a deadline: only the agent can tell
+   * whether its watch still matters, so when the hold runs out it is asked. A subagent or a
+   * workflow resumes the agent on its own, and is only named.
+   */
+  private async holdPause(
+    op: ItemOp,
+    seen: Extract<Observation, { kind: 'paused' }>,
+    checked: DocumentRunItemPatch,
+    reason: string
+  ): Promise<void> {
+    const now = this.ports.now()
+    const until = isHeldByWatchesOnly(seen.pending) ? now + WAIT_FOR_WORK_MS : null
+    const on = summarizePendingWork(seen.pending)
+    await this.patch(op, {
+      ...checked,
+      status: 'running',
+      status_detail: `${PAUSED_PREFIX}${on} since ${clockTime(now)}${
+        until ? `; asked to wrap up at ${clockTime(until)}` : ''
+      }`,
+      retry_at: null,
+      wait_until: until === null ? null : toIso(until)
+    })
+    this.event(op, 'paused', `${op.item.key} paused on ${on}: ${reason}`)
+    if (until !== null) this.wakeAt(until)
   }
 
   private workingDetail(item: DocumentRunItem): string | null {
@@ -1209,6 +1321,18 @@ export class DocumentFlowRunner {
     if (await this.followMovingSession(op, after, checked)) return
 
     const reason = verdict.reason.trim() || 'The agent did not finish the task.'
+    return this.applyVerdict(op, sessionId, verdict, reason, checked)
+  }
+
+  /** Move the item by what the classifier made of its session's last message. */
+  private async applyVerdict(
+    op: ItemOp,
+    sessionId: string,
+    verdict: DocumentRunVerdict,
+    reason: string,
+    checked: DocumentRunItemPatch
+  ): Promise<void> {
+    const item = op.item
     // A run whose agents may not ask has nobody to hand a question or a stop to: whatever
     // the message says short of done, the session is sent back to finish on its own.
     const unattended = !this.interactive(op)
@@ -1279,28 +1403,56 @@ export class DocumentFlowRunner {
    * told to check on it and finish. The first time is a reminder; after that the reminders
    * count as nudges, so a session that only ever waits still reaches the end of the run.
    */
-  private async waitTimedOut(op: ItemOp, target: SessionTarget): Promise<void> {
+  private async waitTimedOut(
+    op: ItemOp,
+    target: SessionTarget,
+    pending?: ClaudeCliPendingWork
+  ): Promise<void> {
     const item = op.item
     const detail = item.status_detail ?? ''
-    const reason = detail.startsWith(WAITING_FOR_WORK_PREFIX)
-      ? detail.slice(WAITING_FOR_WORK_PREFIX.length)
+    const prefix = [WAITING_FOR_WORK_PREFIX, PAUSED_PREFIX].find((candidate) =>
+      detail.startsWith(candidate)
+    )
+    const reason = prefix
+      ? detail.slice(prefix.length)
       : item.verdict?.reason || 'background work it started'
     const verdict: NudgeVerdict = {
       status: 'waiting',
       reason,
-      ...(item.verdict?.source ? { source: item.verdict.source } : {})
+      ...(item.verdict?.source ? { source: item.verdict.source } : {}),
+      ...(pending ? { pending } : {})
     }
     this.event(op, 'wait_timed_out', reason)
+    return this.remind(op, target, verdict, { wait_until: null })
+  }
+
+  /**
+   * Remind the session of what it left open: a wait that ran out, or the monitors and
+   * wake-ups a pause holds (then the reminder is the wrap-up question). The first reminder is
+   * free; after that reminders count as nudges, so a session that only ever waits still
+   * reaches the end of the run.
+   */
+  private async remind(
+    op: ItemOp,
+    target: SessionTarget,
+    verdict: NudgeVerdict,
+    checked: DocumentRunItemPatch
+  ): Promise<void> {
+    const item = op.item
     if (item.wait_timeouts >= MAX_WAIT_TIMEOUTS) {
-      return this.nudge(op, target.sessionId, verdict, { wait_until: null })
+      return this.nudge(op, target.sessionId, verdict, { ...checked, wait_until: null })
     }
     this.requireActive(op)
     const sent = await this.followUp(op, target, buildNudgePrompt(verdict, this.interactive(op)), {
+      ...checked,
+      status: 'running',
       wait_until: null,
       wait_timeouts: item.wait_timeouts + 1,
-      status_detail: `Told its wait ran out: ${reason}`
+      status_detail: verdict.pending
+        ? `Asked to wrap up: ${summarizePendingWork(verdict.pending)} still running`
+        : `Told its wait ran out: ${verdict.reason}`
     })
-    if (sent) this.event(op, 'nudged', reason)
+    if (sent) this.event(op, 'nudged', verdict.reason)
   }
 
   /**

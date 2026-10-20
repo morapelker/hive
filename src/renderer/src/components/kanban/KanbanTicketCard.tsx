@@ -1993,6 +1993,11 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                       {backgroundWork.runningMonitors === 1
                         ? '1 monitor running'
                         : `${backgroundWork.runningMonitors} monitors running`}
+                      {backgroundWork.monitors?.some(Boolean) && (
+                        <span className="block max-w-xs text-muted-foreground">
+                          {backgroundWork.monitors.filter(Boolean).join(' · ')}
+                        </span>
+                      )}
                     </TooltipContent>
                   </Tooltip>
                 )}

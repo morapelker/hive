@@ -1,3 +1,4 @@
+import type { ClaudeCliPendingWork } from '../types/claude-cli-stop-completion'
 import type { HandoffAgentSdk } from '../types/agent-sdk'
 import {
   DOCUMENT_VERIFICATION_METHODS,
@@ -78,7 +79,7 @@ MIGRATIONS: migration files you added, or "none"
 MANUAL STEPS: anything a human must do after this is merged (run migrations, set env vars, data fixes), or "none"
 ASSUMPTIONS: decisions you made where the spec was silent, or "none"
 
-Use DONE only when the task is fully implemented and committed, WAITING only when you have stopped to wait for checks or builds you started in the background and will be woken when they finish (say what you wait for in SUMMARY), and BLOCKED when something outside your control stops you. Commit on this branch without waiting for my go-ahead. What you may not do here (push, deploy, run migrations, check against a live system) goes under MANUAL STEPS and does not make the task BLOCKED.`
+Use DONE only when the task is fully implemented and committed and every monitor you started is stopped, WAITING only when you have stopped to wait for checks or builds you started in the background and will be woken when they finish (say what you wait for in SUMMARY), and BLOCKED when something outside your control stops you. Commit on this branch without waiting for my go-ahead. What you may not do here (push, deploy, run migrations, check against a live system) goes under MANUAL STEPS and does not make the task BLOCKED.`
 
 /** The footer for the run's current "agents may ask" setting, which can change mid-run. */
 export function statusFooterInstructions(interactive: boolean): string {
@@ -126,7 +127,7 @@ const LAUNCH_RULES_PARAGRAPH =
  * running; a Monitor can. Agents are asked to wait with the one the app can see.
  */
 export const LAUNCH_WAIT_PARAGRAPH =
-  'when you have to wait for checks, tests or builds you started in the background, wait with the Monitor tool rather than a background shell loop or a sleep: a monitor tells the app you are still working, a shell does not. if your tools have no monitor, run the checks in the foreground instead of stopping to wait.'
+  'when you have to wait for checks, tests or builds you started in the background, wait with the Monitor tool rather than a background shell loop or a sleep: a monitor tells the app you are still working, a shell does not. if your tools have no monitor, run the checks in the foreground instead of stopping to wait. use a monitor only for a check that will finish, never to keep watching a dev server or a log, and stop every monitor you started (TaskStop) before you report the task done: a running monitor keeps this ticket open.'
 
 /**
  * A Claude CLI session gets the orchestrator's follow-ups pasted into its terminal, and the CLI
@@ -499,10 +500,83 @@ export function buildFixTicket(input: FixTicketInput): { title: string; descript
 }
 
 export type NudgeVerdict = Pick<DocumentRunVerdict, 'reason'> &
-  Partial<Pick<DocumentRunVerdict, 'status' | 'question' | 'source'>>
+  Partial<Pick<DocumentRunVerdict, 'status' | 'question' | 'source'>> & {
+    /**
+     * What held the session's last pause open (monitors, wake-ups, agents). Set, the nudge is
+     * the wrap-up question: is that work still needed, or should it be stopped?
+     */
+    pending?: ClaudeCliPendingWork
+  }
+
+/** One line per thing a paused session still has running, for the wrap-up prompt. */
+export function describePendingWork(pending: ClaudeCliPendingWork): string[] {
+  const lines = pending.monitors.map(
+    (description) => `- a monitor${description ? `: ${description}` : ' (no description)'}`
+  )
+  if (pending.wakeups > 0) {
+    lines.push(
+      `- ${pending.wakeups === 1 ? 'a scheduled wake-up' : `${pending.wakeups} scheduled wake-ups`}`
+    )
+  }
+  if (pending.agents > 0) {
+    lines.push(
+      `- ${pending.agents === 1 ? 'a subagent or workflow' : `${pending.agents} subagents or workflows`}`
+    )
+  }
+  return lines
+}
+
+/**
+ * What a paused session still has running, in a few words for a status line: `monitor "CI
+ * checks"`, `2 monitors (CI checks; build)`, `a scheduled wake-up`, `a subagent or workflow`.
+ */
+export function summarizePendingWork(pending: ClaudeCliPendingWork): string {
+  const parts: string[] = []
+  const monitors = pending.monitors
+  if (monitors.length === 1) {
+    parts.push(monitors[0] ? `monitor "${monitors[0]}"` : 'a monitor')
+  } else if (monitors.length > 1) {
+    const named = monitors.filter(Boolean)
+    parts.push(`${monitors.length} monitors${named.length > 0 ? ` (${named.join('; ')})` : ''}`)
+  }
+  if (pending.wakeups > 0) {
+    parts.push(
+      pending.wakeups === 1 ? 'a scheduled wake-up' : `${pending.wakeups} scheduled wake-ups`
+    )
+  }
+  if (pending.agents > 0) {
+    parts.push(
+      pending.agents === 1 ? 'a subagent or workflow' : `${pending.agents} subagents or workflows`
+    )
+  }
+  return parts.length > 0 ? parts.join(' and ') : 'background work'
+}
+
+/**
+ * The wrap-up question for a session that paused with monitors or wake-ups still pending: the
+ * agent itself is the best judge of whether its watch still matters, so it is asked — the
+ * way the user would — and told to stop what it no longer needs.
+ */
+function wrapUpBrief(
+  verdict: NudgeVerdict,
+  pending: ClaudeCliPendingWork
+): [lead: string, quote: string, ask: string] {
+  const lead =
+    verdict.status === 'done'
+      ? 'Your last message reads as done, but background work you started is still running, and it keeps this ticket open:'
+      : 'You stopped to wait, and background work you started is still running, which keeps this ticket open:'
+  return [
+    lead,
+    describePendingWork(pending).join('\n'),
+    'Do you still need it to finish this ticket? If a monitor waits on checks or builds whose result you need, keep it and say what it waits for. Otherwise stop every monitor you no longer need with TaskStop, cancel the wake-ups you no longer need, finish whatever is left and commit. Do not re-arm a monitor that has nothing left to wait for: a ticket whose monitors keep running never completes.'
+  ]
+}
 
 /** What the nudge says of the last message, and what to do about it. */
 function nudgeBrief(verdict: NudgeVerdict): [lead: string, quote: string, ask: string] {
+  if (verdict.pending && (verdict.status === 'waiting' || verdict.status === 'done')) {
+    return wrapUpBrief(verdict, verdict.pending)
+  }
   // Judged without the classifier: only a closing question or a wait for the agent's own
   // background work says anything about the message.
   if (

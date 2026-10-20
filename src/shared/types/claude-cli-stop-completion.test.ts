@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   classifyClaudeCliStopCompletion,
-  isClaudeCliCompletionDetected
+  isClaudeCliCompletionDetected,
+  isHeldByWatchesOnly
 } from './claude-cli-stop-completion'
 
 describe('classifyClaudeCliStopCompletion', () => {
@@ -11,7 +12,13 @@ describe('classifyClaudeCliStopCompletion', () => {
         background_tasks: [],
         session_crons: []
       })
-    ).toEqual({ kind: 'completed', pendingTasks: 0, pendingWakeups: 0, ignoredShells: 0 })
+    ).toEqual({
+      kind: 'completed',
+      pendingTasks: 0,
+      pendingMonitors: 0,
+      pendingWakeups: 0,
+      ignoredShells: 0
+    })
   })
 
   it('ignores background shells: a dev server left running is not a pause', () => {
@@ -26,7 +33,13 @@ describe('classifyClaudeCliStopCompletion', () => {
         ],
         session_crons: []
       })
-    ).toEqual({ kind: 'completed', pendingTasks: 0, pendingWakeups: 0, ignoredShells: 2 })
+    ).toEqual({
+      kind: 'completed',
+      pendingTasks: 0,
+      pendingMonitors: 0,
+      pendingWakeups: 0,
+      ignoredShells: 2
+    })
   })
 
   it('is waiting while a Monitor watch is reported (a shell whose id the caller knows as a monitor)', () => {
@@ -43,7 +56,13 @@ describe('classifyClaudeCliStopCompletion', () => {
         },
         { monitorTaskIds: new Set(['bmon1']) }
       )
-    ).toEqual({ kind: 'waiting', pendingTasks: 1, pendingWakeups: 0, ignoredShells: 1 })
+    ).toEqual({
+      kind: 'waiting',
+      pendingTasks: 1,
+      pendingMonitors: 1,
+      pendingWakeups: 0,
+      ignoredShells: 1
+    })
   })
 
   it('is waiting while a subagent or workflow is reported', () => {
@@ -55,7 +74,13 @@ describe('classifyClaudeCliStopCompletion', () => {
         ],
         session_crons: []
       })
-    ).toEqual({ kind: 'waiting', pendingTasks: 2, pendingWakeups: 0, ignoredShells: 0 })
+    ).toEqual({
+      kind: 'waiting',
+      pendingTasks: 2,
+      pendingMonitors: 0,
+      pendingWakeups: 0,
+      ignoredShells: 0
+    })
 
     // Any other (or missing) task type holds the session open too — only
     // shells are singled out.
@@ -73,7 +98,13 @@ describe('classifyClaudeCliStopCompletion', () => {
         background_tasks: [],
         session_crons: [{ id: '0512d868', schedule: '4 15 * * *', recurring: false, prompt: 'say WOKE' }]
       })
-    ).toEqual({ kind: 'waiting', pendingTasks: 0, pendingWakeups: 1, ignoredShells: 0 })
+    ).toEqual({
+      kind: 'waiting',
+      pendingTasks: 0,
+      pendingMonitors: 0,
+      pendingWakeups: 1,
+      ignoredShells: 0
+    })
   })
 
   it('treats a single present-and-empty array as a completion', () => {
@@ -85,6 +116,7 @@ describe('classifyClaudeCliStopCompletion', () => {
     expect(classifyClaudeCliStopCompletion({})).toEqual({
       kind: 'unknown',
       pendingTasks: 0,
+      pendingMonitors: 0,
       pendingWakeups: 0,
       ignoredShells: 0
     })
@@ -92,6 +124,15 @@ describe('classifyClaudeCliStopCompletion', () => {
     expect(
       classifyClaudeCliStopCompletion({ background_tasks: 'nope', session_crons: null }).kind
     ).toBe('unknown')
+  })
+})
+
+describe('isHeldByWatchesOnly', () => {
+  it('is true for monitors and wakeups alone, false once an agent is pending or nothing is', () => {
+    expect(isHeldByWatchesOnly({ monitors: ['CI checks'], wakeups: 0, agents: 0 })).toBe(true)
+    expect(isHeldByWatchesOnly({ monitors: [], wakeups: 1, agents: 0 })).toBe(true)
+    expect(isHeldByWatchesOnly({ monitors: ['CI checks'], wakeups: 0, agents: 1 })).toBe(false)
+    expect(isHeldByWatchesOnly({ monitors: [], wakeups: 0, agents: 0 })).toBe(false)
   })
 })
 
