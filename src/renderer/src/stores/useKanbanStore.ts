@@ -7,6 +7,7 @@ import type {
   KanbanTicketDuplicateOverrides,
   KanbanTicketUpdate,
   MarkdownCardDiagnostic,
+  Session,
   TicketDependency
 } from '../../../main/db/types'
 import {
@@ -27,6 +28,7 @@ import { useConnectionStore } from './useConnectionStore'
 import { usePinnedStore } from './usePinnedStore'
 import { useWorktreeStatusStore } from './useWorktreeStatusStore'
 import { kanbanApi as kanban } from '@/api/kanban-api'
+import { dbApi } from '@/api/db-api'
 import { toast } from '@/lib/toast'
 
 export interface BoardTelegramTarget {
@@ -182,6 +184,110 @@ export const transitionSortFor = (
 // (projectId is '' on pinned/connection boards, mirroring showArchivedByProject)
 export const transitionSortKey = (projectId: string, column: KanbanTicketColumn): string =>
   `${projectId}:${column}`
+
+// ── Closing a ticket's session ───────────────────────────────────
+// Statuses of a session that is doing (or about to do) work: a close then
+// would kill a live turn.
+function isLiveWorkStatus(status: string | null | undefined): boolean {
+  return (
+    status === 'working' ||
+    status === 'planning' ||
+    status === 'answering' ||
+    status === 'permission' ||
+    status === 'command_approval'
+  )
+}
+
+/**
+ * One session can serve several tickets (pre-assign attaches the worktree's
+ * session to every ticket; handoffs relink in bulk). Whether a ticket other
+ * than `ticketId` that is still live — not archived, not done or merged —
+ * rides `sessionId`: closing the session would kill that ticket's work.
+ * Rejects when the link set cannot be read; callers then skip the close.
+ */
+export async function isSessionSharedWithLiveTicket(
+  sessionId: string,
+  ticketId: string
+): Promise<boolean> {
+  const linked = await kanban.ticket.getBySession<KanbanTicket>(sessionId)
+  return linked.some(
+    (t) => t.id !== ticketId && !t.archived_at && t.column !== 'done' && t.column !== 'merged'
+  )
+}
+
+/**
+ * A deleted or archived ticket's work is over: close its session so the
+ * agent process dies with it instead of running until the app quits. Skipped
+ * — the session is left exactly as it is — while it still serves another live
+ * ticket, is working or being revived, or holds a document run's document
+ * update, and when its row is already closed (a Done move closed it: closing
+ * again would only re-stamp its completed_at). Detached: the ticket change
+ * has already happened; failures are reported, never thrown.
+ */
+function closeSessionOfRemovedTicket(ticket: KanbanTicket, action: 'deleted' | 'archived'): void {
+  closeSessionsOfRemovedTickets([ticket], action)
+}
+
+/**
+ * closeSessionOfRemovedTicket for a batch (archive all done): one close per
+ * distinct session, one at a time. A session several of the tickets share is
+ * kept when any of them holds a document update.
+ */
+function closeSessionsOfRemovedTickets(
+  tickets: readonly KanbanTicket[],
+  action: 'deleted' | 'archived'
+): void {
+  const ticketBySession = new Map<string, KanbanTicket | null>()
+  for (const ticket of tickets) {
+    const sessionId = ticket.current_session_id
+    if (!sessionId || ticketBySession.get(sessionId) === null) continue
+    ticketBySession.set(sessionId, isTicketHeldByDocumentUpdate(ticket.id) ? null : ticket)
+  }
+  const toClose = [...ticketBySession].filter(
+    (entry): entry is [string, KanbanTicket] => entry[1] !== null
+  )
+  if (toClose.length === 0) return
+  void (async () => {
+    for (const [sessionId, ticket] of toClose) {
+      try {
+        await closeSessionOfRemovedTicketNow(sessionId, ticket.id, action)
+      } catch (err) {
+        console.error(`Skipping session close of ${action} ticket:`, sessionId, err)
+      }
+    }
+  })()
+}
+
+async function closeSessionOfRemovedTicketNow(
+  sessionId: string,
+  ticketId: string,
+  action: 'deleted' | 'archived'
+): Promise<void> {
+  if (await isSessionSharedWithLiveTicket(sessionId, ticketId)) return
+  let row: Session | null = null
+  try {
+    row = await dbApi.session.get<Session>(sessionId)
+  } catch {
+    // Unknown — close as if it were open
+  }
+  if (row && row.status !== 'active') return
+  if (isLiveWorkStatus(useWorktreeStatusStore.getState().sessionStatuses[sessionId]?.status)) {
+    return
+  }
+  const { useSessionStore, isSessionReactivating } = await import('./useSessionStore')
+  if (isSessionReactivating(sessionId)) return
+  // No awaits between the guards above and the close, which re-checks the
+  // revival mark inside its lifecycle lock (abortIfRevived).
+  const result = await useSessionStore
+    .getState()
+    .closeSession(sessionId, { abortIfRevived: true, stopRemote: true })
+  if (!result.success && !result.aborted) {
+    console.error(`Failed to close session of ${action} ticket:`, sessionId, result.error)
+    toast.error(
+      `Ticket ${action}, but its session could not be closed: ${result.error ?? 'unknown error'}`
+    )
+  }
+}
 
 function findTicketByRef(
   ticketsByProject: Map<string, KanbanTicket[]>,
@@ -1073,6 +1179,7 @@ export const useKanbanStore = create<KanbanState>()(
       deleteTicket: async (ticketId: string, projectId: string) => {
         const prev = get().tickets.get(projectId) ?? []
         const snapshot = prev.map((t) => ({ ...t }))
+        const deletedTicket = prev.find((t) => t.id === ticketId)
 
         // Optimistic local delete
         set((state) => {
@@ -1091,6 +1198,7 @@ export const useKanbanStore = create<KanbanState>()(
           set((state) => {
             return { dependencyMap: removeDependencyLinksForTicket(state.dependencyMap, ticketKey(projectId, ticketId)) }
           })
+          if (deletedTicket) closeSessionOfRemovedTicket(deletedTicket, 'deleted')
         } catch (err) {
           // Revert on failure
           set((state) => {
@@ -1182,6 +1290,7 @@ export const useKanbanStore = create<KanbanState>()(
       archiveTicket: async (ticketId: string, projectId: string) => {
         const prev = get().tickets.get(projectId) ?? []
         const snapshot = prev.map((t) => ({ ...t }))
+        const archivedTicket = prev.find((t) => t.id === ticketId)
 
         const now = new Date().toISOString()
         // Optimistic local archive
@@ -1203,6 +1312,7 @@ export const useKanbanStore = create<KanbanState>()(
           set((state) => {
             return { dependencyMap: removeDependencyLinksForTicket(state.dependencyMap, ticketKey(projectId, ticketId)) }
           })
+          if (archivedTicket) closeSessionOfRemovedTicket(archivedTicket, 'archived')
         } catch (err) {
           // Revert on failure
           set((state) => {
@@ -1223,6 +1333,7 @@ export const useKanbanStore = create<KanbanState>()(
 
         const now = new Date().toISOString()
         let count = 0
+        const archived: KanbanTicket[] = []
         // Optimistic local archive of all non-archived done tickets
         set((state) => {
           const next = new Map(state.tickets)
@@ -1232,6 +1343,7 @@ export const useKanbanStore = create<KanbanState>()(
               !t.archived_at
             ) {
               count++
+              archived.push(t)
               return { ...t, archived_at: now, updated_at: now }
             }
             return t
@@ -1242,6 +1354,9 @@ export const useKanbanStore = create<KanbanState>()(
 
         try {
           await kanban.ticket.archiveAllDone(projectId, includeMerged)
+          // Like archiveTicket: merged tickets keep their sessions on the
+          // move, and a skipped Done close leaves one running.
+          closeSessionsOfRemovedTickets(archived, 'archived')
           return count
         } catch (err) {
           // Revert on failure
@@ -1424,18 +1539,12 @@ export const useKanbanStore = create<KanbanState>()(
           ) {
             const sessionIdToClose = movedTicket.current_session_id
             try {
-              // One session can serve several tickets (pre-assign attaches the
-              // worktree's session to every ticket; handoffs relink in bulk).
-              // Closing it while another live ticket still rides it would kill
+              // Closing a session another live ticket still rides would kill
               // that ticket's in-flight work — skip, and skip too when the
-              // link set cannot be verified.
-              const linked = await kanban.ticket.getBySession<KanbanTicket>(sessionIdToClose)
-              const sharedWithLiveTicket = linked.some(
-                (t) =>
-                  t.id !== ticketId &&
-                  !t.archived_at &&
-                  t.column !== 'done' &&
-                  t.column !== 'merged'
+              // link set cannot be verified (the helper rejects).
+              const sharedWithLiveTicket = await isSessionSharedWithLiveTicket(
+                sessionIdToClose,
+                ticketId
               )
               // The awaits above race two newer intents: the user dragging the
               // ticket back out of done, and a background revival (follow-up
@@ -1452,11 +1561,7 @@ export const useKanbanStore = create<KanbanState>()(
               const revivedDuringMove =
                 statusEntry != null &&
                 statusEntry.timestamp > moveStartedAtMs &&
-                (statusEntry.status === 'working' ||
-                  statusEntry.status === 'planning' ||
-                  statusEntry.status === 'answering' ||
-                  statusEntry.status === 'permission' ||
-                  statusEntry.status === 'command_approval')
+                isLiveWorkStatus(statusEntry.status)
               const { useSessionStore, isSessionReactivating } = await import('./useSessionStore')
               if (
                 !sharedWithLiveTicket &&

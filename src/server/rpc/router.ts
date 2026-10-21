@@ -66,6 +66,11 @@ import {
   type PerfDiagnosticsOpsRpcService
 } from './domains/perf-diagnostics-ops'
 import {
+  makeLiveSessionProfilerOpsRpcService,
+  makeSessionProfilerOpsRpcHandlers,
+  type SessionProfilerOpsRpcService
+} from './domains/session-profiler-ops'
+import {
   makeFavoriteTicketsRpcHandlers,
   makeLiveFavoriteTicketsRpcService,
   type FavoriteTicketsRpcService
@@ -193,6 +198,7 @@ export interface RpcContext {
   readonly loggingOps?: LoggingOpsRpcService
   readonly opencodeOps?: OpenCodeOpsRpcService
   readonly perfDiagnosticsOps?: PerfDiagnosticsOpsRpcService
+  readonly sessionProfilerOps?: SessionProfilerOpsRpcService
   readonly petOps?: PetOpsRpcService
   readonly projectOps?: ProjectOpsRpcService
   readonly remoteLaunchOps?: RemoteLaunchOpsRpcService
@@ -268,6 +274,9 @@ const makeDefaultRpcHandlers = (context: RpcContext): ReadonlyMap<string, RpcHan
     ...makeOpenCodeOpsRpcHandlers(context.opencodeOps ?? makeLiveOpenCodeOpsRpcService()),
     ...makePerfDiagnosticsOpsRpcHandlers(
       context.perfDiagnosticsOps ?? makeLivePerfDiagnosticsOpsRpcService()
+    ),
+    ...makeSessionProfilerOpsRpcHandlers(
+      context.sessionProfilerOps ?? makeLiveSessionProfilerOpsRpcService()
     ),
     ...makePetOpsRpcHandlers(context.petOps ?? makeLivePetOpsRpcService()),
     ...makeProjectOpsRpcHandlers(context.projectOps ?? makeLiveProjectOpsRpcService()),

@@ -48,6 +48,7 @@ import {
   handlePerfLoggingCommand
 } from '../services/perf-logging/electron-main-perf'
 import { sleepNow } from '../services/sleep-now'
+import { getSessionProfilerSnapshot, killSessionProfilerTarget } from '../services/session-profiler'
 import { notificationService } from '../services/notification-service'
 import { updaterService } from '../services/updater'
 import { appendResponseLog, createResponseLog } from '../services/response-logger'
@@ -2434,6 +2435,51 @@ const handleDesktopBackendCommand = (
 
   if (message.command === 'perfLogging') {
     return handlePerfLoggingCommand(message.payload)
+      .then((value) => {
+        sendDesktopBackendCommandResult(
+          child,
+          makeDesktopCommandResult(message.id, { ok: true, value }),
+          log
+        )
+      })
+      .catch((error: unknown) => {
+        sendDesktopBackendCommandResult(
+          child,
+          makeDesktopCommandResult(message.id, {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error)
+          }),
+          log
+        )
+      })
+  }
+
+  if (message.command === 'sessionProfilerSnapshot') {
+    return getSessionProfilerSnapshot()
+      .then((value) => {
+        sendDesktopBackendCommandResult(
+          child,
+          makeDesktopCommandResult(message.id, { ok: true, value }),
+          log
+        )
+      })
+      .catch((error: unknown) => {
+        sendDesktopBackendCommandResult(
+          child,
+          makeDesktopCommandResult(message.id, {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error)
+          }),
+          log
+        )
+      })
+  }
+
+  if (message.command === 'sessionProfilerKill') {
+    // The server child is a descendant of main like the agents: never a valid target.
+    return killSessionProfilerTarget(message.payload, {
+      protectedPids: child.pid ? [child.pid] : []
+    })
       .then((value) => {
         sendDesktopBackendCommandResult(
           child,

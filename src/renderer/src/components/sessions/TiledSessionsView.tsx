@@ -14,7 +14,7 @@ import { SessionView } from '@/components/sessions'
  * always-mounted terminal view alive in MainPane), register this element as
  * the portal target (the live terminal DOM moves here — no remount, no
  * respawn), and on unmount unregister + release + conditionally destroy
- * (no-op for active sessions).
+ * (only completed sessions, or processes the slot's own mount spawned).
  */
 function TiledClaudeCliSlot({ sessionId }: { sessionId: string }): React.JSX.Element {
   const { registerTarget } = useClaudeCliSessionPortal()
@@ -39,8 +39,8 @@ function TiledClaudeCliSlot({ sessionId }: { sessionId: string }): React.JSX.Ele
     return () => {
       registerTarget(sessionId, null)
       releaseSessionMount(sessionId)
-      // No-op for active sessions; kills the PTY only for completed,
-      // un-engaged sessions (same guard set as the ticket modal slot).
+      // Kills the PTY only for completed or slot-spawned, un-engaged
+      // sessions (same guard set as the ticket modal slot).
       void useSessionStore.getState().destroyCompletedSessionTerminal(sessionId)
     }
   }, [registerTarget, releaseSessionMount, requestSessionMount, sessionId])

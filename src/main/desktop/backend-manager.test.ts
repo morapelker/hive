@@ -174,6 +174,13 @@ vi.mock('../services/terminal-pty-bridge', () => ({
   handleClaudeCliTerminalInput: terminalHandlerMocks.handleClaudeCliTerminalInput
 }))
 
+const sessionProfilerMocks = vi.hoisted(() => ({
+  getSessionProfilerSnapshot: vi.fn(),
+  killSessionProfilerTarget: vi.fn()
+}))
+
+vi.mock('../services/session-profiler', () => sessionProfilerMocks)
+
 vi.mock('../services/settings-openers', () => ({
   openPathWithEditor: settingsHandlerMocks.openPathWithEditor,
   openPathWithTerminal: settingsHandlerMocks.openPathWithTerminal
@@ -3768,6 +3775,91 @@ describe('desktop backend manager', () => {
         ok: true,
         value: { terminalIds: ['session-live-1', 'session-live-2'] }
       }),
+      expect.any(Function)
+    )
+  })
+
+  it('answers backend sessionProfilerSnapshot commands with the main-process sample', async () => {
+    const child = new FakeChildProcess()
+    const snapshot = {
+      supported: true,
+      sampledAt: 1,
+      cpuWindowMs: 1500,
+      idleThresholdSeconds: 1800,
+      sessions: [],
+      totals: {
+        processCount: 3,
+        cpuPercent: 12,
+        agentCpuPercent: 0,
+        rssBytes: 1024,
+        agentRssBytes: 0,
+        cpuCount: 8
+      }
+    }
+    sessionProfilerMocks.getSessionProfilerSnapshot.mockResolvedValueOnce(snapshot)
+
+    await startDesktopBackend(
+      {
+        executablePath: '/electron',
+        entryPath: '/app/server.js',
+        cwd: '/app',
+        baseDir: mkdtempSync(join(tmpdir(), 'hive-backend-manager-')),
+        port: 0
+      },
+      {
+        spawnProcess: vi.fn(() => child as never),
+        fetch: vi.fn(async () => new Response('{}', { status: 200 })),
+        logger: makeLogger()
+      }
+    )
+
+    child.emit(
+      'message',
+      makeDesktopCommandRequest('profiler-snapshot-1', 'sessionProfilerSnapshot')
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(child.send).toHaveBeenCalledWith(
+      makeDesktopCommandResult('profiler-snapshot-1', { ok: true, value: snapshot }),
+      expect.any(Function)
+    )
+  })
+
+  it('forwards backend sessionProfilerKill commands, protecting the server child pid', async () => {
+    const child = new FakeChildProcess() as FakeChildProcess & { pid: number }
+    child.pid = 4321
+    sessionProfilerMocks.killSessionProfilerTarget.mockResolvedValueOnce({
+      ok: true,
+      method: 'pty'
+    })
+
+    await startDesktopBackend(
+      {
+        executablePath: '/electron',
+        entryPath: '/app/server.js',
+        cwd: '/app',
+        baseDir: mkdtempSync(join(tmpdir(), 'hive-backend-manager-')),
+        port: 0
+      },
+      {
+        spawnProcess: vi.fn(() => child as never),
+        fetch: vi.fn(async () => new Response('{}', { status: 200 })),
+        logger: makeLogger()
+      }
+    )
+
+    const payload = { sessionId: 'session-1', pid: 600, startedAt: 'Wed Oct 21 00:46:03 2026' }
+    child.emit(
+      'message',
+      makeDesktopCommandRequest('profiler-kill-1', 'sessionProfilerKill', payload)
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(sessionProfilerMocks.killSessionProfilerTarget).toHaveBeenCalledWith(payload, {
+      protectedPids: [4321]
+    })
+    expect(child.send).toHaveBeenCalledWith(
+      makeDesktopCommandResult('profiler-kill-1', { ok: true, value: { ok: true, method: 'pty' } }),
       expect.any(Function)
     )
   })

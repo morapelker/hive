@@ -307,6 +307,24 @@ function applyWorktreeSelectionEffects(
   }
 }
 
+// The worktree's open sessions, to close before it is removed: the store's tabs
+// plus the DB's active rows. The store only holds worktrees loaded this run, so
+// a session of one never selected (resumed from its ticket modal on the board,
+// say) would otherwise keep its agent running against a deleted cwd. Falls back
+// to the store's list when the DB read fails.
+async function getOpenWorktreeSessionIds(worktreeId: string): Promise<string[]> {
+  const ids = new Set(
+    (useSessionStore.getState().sessionsByWorktree.get(worktreeId) || []).map((s) => s.id)
+  )
+  try {
+    const rows = await dbApi.session.getActiveByWorktree<{ id: string }>(worktreeId)
+    for (const row of rows) ids.add(row.id)
+  } catch {
+    // Store-only: the sessions loaded here are still closed
+  }
+  return Array.from(ids)
+}
+
 // A worktree was just added to a project's list. If that project was never loaded,
 // the list now holds only the new worktree, so fetch the rest from the DB (no git).
 function ensureProjectLoaded(projectId: string): void {
@@ -582,10 +600,10 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       }
 
       // 3. Close all sessions so terminal PTYs and agent child processes are released before delete
-      const sessions = useSessionStore.getState().sessionsByWorktree.get(worktreeId) || []
-      for (const session of sessions) {
+      const sessionIds = await getOpenWorktreeSessionIds(worktreeId)
+      for (const sessionId of sessionIds) {
         try {
-          await useSessionStore.getState().closeSession(session.id)
+          await useSessionStore.getState().closeSession(sessionId)
         } catch {
           // Non-critical — session cleanup may already have happened
         }
@@ -701,11 +719,11 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       // processes keep running against a deleted cwd). closeSession reports
       // failures via its result rather than throwing — abort the unbranch on
       // failure instead of deleting the worktree out from under a live agent.
-      const sessions = useSessionStore.getState().sessionsByWorktree.get(worktreeId) || []
-      for (const session of sessions) {
+      const sessionIds = await getOpenWorktreeSessionIds(worktreeId)
+      for (const sessionId of sessionIds) {
         let closeResult: { success: boolean; error?: string }
         try {
-          closeResult = await useSessionStore.getState().closeSession(session.id)
+          closeResult = await useSessionStore.getState().closeSession(sessionId)
         } catch (error) {
           closeResult = {
             success: false,

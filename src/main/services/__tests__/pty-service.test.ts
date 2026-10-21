@@ -406,3 +406,48 @@ describe('ptyService.destroy kill escalation', () => {
     expect(ptyService.has('reused-id')).toBe(false)
   })
 })
+
+describe('ptyService.listInstances activity timestamps', () => {
+  let nextId = 0
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000_000)
+    nodePtyMocks.spawn.mockImplementation(() => makeFakePty(5151))
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.clearAllMocks()
+  })
+
+  it('reports pid and cwd, and stamps output and input separately', () => {
+    const id = `pty-list-test-${nextId++}`
+    ptyService.create(id, { cwd: '/repo/worktree' })
+    const fakePty = nodePtyMocks.spawn.mock.results.at(-1)?.value as {
+      onData: ReturnType<typeof vi.fn>
+    }
+    const emitData = fakePty.onData.mock.calls[0][0] as (data: string) => void
+    const info = (): unknown => ptyService.listInstances().find((entry) => entry.id === id)
+
+    expect(info()).toEqual({
+      id,
+      pid: 5151,
+      cwd: '/repo/worktree',
+      backend: 'node-pty',
+      createdAt: 1_000_000,
+      lastOutputAt: 1_000_000,
+      lastInputAt: 1_000_000
+    })
+
+    vi.setSystemTime(1_005_000)
+    emitData('hello')
+    vi.setSystemTime(1_009_000)
+    ptyService.write(id, 'ls\r')
+
+    expect(info()).toMatchObject({ lastOutputAt: 1_005_000, lastInputAt: 1_009_000 })
+
+    ptyService.destroy(id)
+    expect(info()).toBeUndefined()
+  })
+})

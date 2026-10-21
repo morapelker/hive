@@ -204,6 +204,7 @@ describe('renderer API cleanup', () => {
       ['petOps', 'pet-api.ts'],
       ['projectOps', 'project-api.ts'],
       ['scriptOps', 'script-api.ts'],
+      ['sessionProfilerOps', 'session-profiler-api.ts'],
       ['settingsOps', 'settings-api.ts'],
       ['systemOps', 'system-api.ts'],
       ['telegramOps', 'telegram-api.ts'],

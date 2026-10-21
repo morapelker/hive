@@ -1,5 +1,10 @@
 import type { PetManifest, PetPosition, PetSettings, PetStatusPayload } from './types/pet'
 import type { ShellCommandRunState } from './lib/shell-commands'
+import type {
+  SessionProfilerKillRequest,
+  SessionProfilerKillResult,
+  SessionProfilerSnapshot
+} from './types/session-profiler'
 
 export const DESKTOP_COMMAND_REQUEST_TYPE = 'hive-desktop-command'
 export const DESKTOP_COMMAND_RESULT_TYPE = 'hive-desktop-command-result'
@@ -29,6 +34,8 @@ export type DesktopCommandName =
   | 'updateMenuState'
   | 'setKeepAwake'
   | 'perfLogging'
+  | 'sessionProfilerSnapshot'
+  | 'sessionProfilerKill'
   | 'sleepNow'
   | 'setSessionQueuedState'
   | 'updaterCheckForUpdate'
@@ -162,6 +169,14 @@ export type PerfLoggingPayload =
 export interface PerfLoggingResult {
   readonly files: string[]
 }
+
+/**
+ * Session profiler (Settings → Advanced): the Electron main process samples its own
+ * process tree with `ps` on demand and stops leftover agent CLI processes.
+ */
+export type SessionProfilerSnapshotResult = SessionProfilerSnapshot
+export type SessionProfilerKillPayload = SessionProfilerKillRequest
+export type SessionProfilerKillDesktopResult = SessionProfilerKillResult
 
 export interface SetSessionQueuedStatePayload {
   readonly sessionId: string
@@ -959,6 +974,8 @@ export type DesktopCommandRequest =
   | UpdateMenuStateDesktopCommandRequest
   | SetKeepAwakeDesktopCommandRequest
   | PerfLoggingDesktopCommandRequest
+  | SessionProfilerSnapshotDesktopCommandRequest
+  | SessionProfilerKillDesktopCommandRequest
   | SleepNowDesktopCommandRequest
   | SetSessionQueuedStateDesktopCommandRequest
   | UpdaterCheckForUpdateDesktopCommandRequest
@@ -1200,6 +1217,19 @@ export interface PerfLoggingDesktopCommandRequest {
   readonly id: string
   readonly command: 'perfLogging'
   readonly payload: PerfLoggingPayload
+}
+
+export interface SessionProfilerSnapshotDesktopCommandRequest {
+  readonly type: typeof DESKTOP_COMMAND_REQUEST_TYPE
+  readonly id: string
+  readonly command: 'sessionProfilerSnapshot'
+}
+
+export interface SessionProfilerKillDesktopCommandRequest {
+  readonly type: typeof DESKTOP_COMMAND_REQUEST_TYPE
+  readonly id: string
+  readonly command: 'sessionProfilerKill'
+  readonly payload: SessionProfilerKillPayload
 }
 
 export interface SleepNowDesktopCommandRequest {
@@ -1926,6 +1956,15 @@ export function makeDesktopCommandRequest(
 ): PerfLoggingDesktopCommandRequest
 export function makeDesktopCommandRequest(
   id: string,
+  command: 'sessionProfilerSnapshot'
+): SessionProfilerSnapshotDesktopCommandRequest
+export function makeDesktopCommandRequest(
+  id: string,
+  command: 'sessionProfilerKill',
+  payload: SessionProfilerKillPayload
+): SessionProfilerKillDesktopCommandRequest
+export function makeDesktopCommandRequest(
+  id: string,
   command: 'sleepNow'
 ): SleepNowDesktopCommandRequest
 export function makeDesktopCommandRequest(
@@ -2372,6 +2411,7 @@ export function makeDesktopCommandRequest(
     | UpdateMenuStatePayload
     | SetKeepAwakePayload
     | PerfLoggingPayload
+    | SessionProfilerKillPayload
     | SetSessionQueuedStatePayload
     | UpdaterCheckForUpdatePayload
     | UpdaterSetChannelPayload
@@ -2657,6 +2697,27 @@ export function makeDesktopCommandRequest(
       command,
       payload
     } as PerfLoggingDesktopCommandRequest
+  }
+
+  if (command === 'sessionProfilerSnapshot') {
+    return {
+      type: DESKTOP_COMMAND_REQUEST_TYPE,
+      id,
+      command
+    } as SessionProfilerSnapshotDesktopCommandRequest
+  }
+
+  if (command === 'sessionProfilerKill') {
+    if (!payload) {
+      throw new Error('Missing sessionProfilerKill payload')
+    }
+
+    return {
+      type: DESKTOP_COMMAND_REQUEST_TYPE,
+      id,
+      command,
+      payload
+    } as SessionProfilerKillDesktopCommandRequest
   }
 
   if (command === 'setSessionQueuedState') {
@@ -3692,6 +3753,8 @@ export const isDesktopCommandRequest = (value: unknown): value is DesktopCommand
       (value.command === 'updateMenuState' && isUpdateMenuStatePayload(value.payload)) ||
       (value.command === 'setKeepAwake' && isSetKeepAwakePayload(value.payload)) ||
       (value.command === 'perfLogging' && isPerfLoggingPayload(value.payload)) ||
+      value.command === 'sessionProfilerSnapshot' ||
+      (value.command === 'sessionProfilerKill' && isSessionProfilerKillPayload(value.payload)) ||
       value.command === 'sleepNow' ||
       (value.command === 'setSessionQueuedState' &&
         isSetSessionQueuedStatePayload(value.payload)) ||
@@ -3914,6 +3977,15 @@ const isPerfLoggingPayload = (value: unknown): value is PerfLoggingPayload =>
   isRecord(value) &&
   ((value.action === 'configure' && typeof value.enabled === 'boolean') ||
     (value.action === 'capture' && typeof value.reason === 'string'))
+
+const isSessionProfilerKillPayload = (value: unknown): value is SessionProfilerKillPayload =>
+  isRecord(value) &&
+  (value.sessionId === undefined ||
+    value.sessionId === null ||
+    typeof value.sessionId === 'string') &&
+  (value.pid === undefined || (typeof value.pid === 'number' && Number.isInteger(value.pid))) &&
+  (value.startedAt === undefined || typeof value.startedAt === 'string') &&
+  (typeof value.sessionId === 'string' || typeof value.pid === 'number')
 
 const isSetSessionQueuedStatePayload = (value: unknown): value is SetSessionQueuedStatePayload =>
   isRecord(value) && typeof value.sessionId === 'string' && typeof value.hasQueued === 'boolean'

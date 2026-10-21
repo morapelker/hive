@@ -21,6 +21,24 @@ interface PtyInstance {
   backend: TerminalBackend
   dataListeners: Array<(data: string) => void>
   exitListeners: Array<(code: number, signal: number) => void>
+  /** Epoch ms of the spawn. */
+  createdAt: number
+  /** Epoch ms of the last output chunk from the child (createdAt until then). */
+  lastOutputAt: number
+  /** Epoch ms of the last input written to the child (createdAt until then). */
+  lastInputAt: number
+}
+
+/** Read-only view of a live PTY, for diagnostics (session profiler). */
+export interface PtyInstanceInfo {
+  id: string
+  /** Pid of the direct pty child (0 if node-pty did not report one). */
+  pid: number
+  cwd: string
+  backend: TerminalBackend
+  createdAt: number
+  lastOutputAt: number
+  lastInputAt: number
 }
 
 export interface PtyCreateOpts {
@@ -154,16 +172,21 @@ class PtyService {
     // entry belongs to the old process, not this one.
     if (ptyProcess.pid) exitedPtyPids.delete(ptyProcess.pid)
 
+    const createdAt = Date.now()
     const instance: PtyInstance = {
       pty: ptyProcess,
       cwd: opts.cwd,
       backend: opts.backend || 'node-pty',
       dataListeners: [],
-      exitListeners: []
+      exitListeners: [],
+      createdAt,
+      lastOutputAt: createdAt,
+      lastInputAt: createdAt
     }
 
     // Wire up data events
     ptyProcess.onData((data) => {
+      instance.lastOutputAt = Date.now()
       for (const listener of instance.dataListeners) {
         try {
           listener(data)
@@ -211,6 +234,7 @@ class PtyService {
       log.warn('PTY not found for write', { id })
       return
     }
+    instance.lastInputAt = Date.now()
     instance.pty.write(data)
   }
 
@@ -462,6 +486,23 @@ class PtyService {
 
   getIds(): string[] {
     return Array.from(this.ptys.keys())
+  }
+
+  /** Snapshot of every live PTY (pid, cwd, activity timestamps). */
+  listInstances(): PtyInstanceInfo[] {
+    const out: PtyInstanceInfo[] = []
+    for (const [id, instance] of this.ptys) {
+      out.push({
+        id,
+        pid: instance.pty.pid ?? 0,
+        cwd: instance.cwd,
+        backend: instance.backend,
+        createdAt: instance.createdAt,
+        lastOutputAt: instance.lastOutputAt,
+        lastInputAt: instance.lastInputAt
+      })
+    }
+    return out
   }
 
   /**

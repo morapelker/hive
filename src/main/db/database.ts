@@ -1,6 +1,7 @@
 import { deleteAttachment } from '../services/attachment-storage'
 import type { AgentSdk } from '@shared/types/agent-sdk'
 import { parseProjectShellCommands } from '@shared/lib/shell-commands'
+import type { SessionProfilerTicket } from '@shared/types/session-profiler'
 import { formatTicketKey, TICKET_KEY_PREFIX_SETTING } from '@shared/ticket-key'
 import {
   DEFAULT_DOCUMENT_RUN_CONFIG,
@@ -357,6 +358,25 @@ const DOCUMENT_RUN_ITEM_PATCH_COLUMNS: Record<
   document_update_finished_at: 'plain',
   started_at: 'plain',
   finished_at: 'plain'
+}
+
+/** One session's DB context for the session profiler (see getSessionProfilerRows). */
+export interface SessionProfilerDbRow {
+  id: string
+  /** False when no `sessions` row has this id (deleted, or the DB was reset). */
+  sessionExists: boolean
+  name: string | null
+  status: string | null
+  agentSdk: string | null
+  /** Worktree name, or the connection name for connection sessions. */
+  worktreeName: string | null
+  /** Worktree path, or the connection path for connection sessions. */
+  worktreePath: string | null
+  worktreeArchived: boolean
+  projectName: string | null
+  ticket: SessionProfilerTicket | null
+  /** A running / paused document run still needs this session (turn or document update ahead). */
+  documentRunBusy: boolean
 }
 
 // `implements DocumentFlowDb` is the compile-time check that the document-flow section below
@@ -2656,6 +2676,101 @@ export class DatabaseService implements DocumentFlowDb {
       )
       .all(worktreeId) as Record<string, unknown>[]
     return rows.map((row) => this.mapSessionRow(row))
+  }
+
+  /**
+   * Session profiler enrichment: one row per requested id (also for ids with no
+   * session row), joined to its worktree / connection, project, the ticket that
+   * points at it (non-archived first, then the most recently updated) and
+   * whether a live document run still needs the session.
+   */
+  getSessionProfilerRows(ids: readonly string[]): SessionProfilerDbRow[] {
+    const unique = [...new Set(ids)]
+    if (unique.length === 0) return []
+    const db = this.getDb()
+    const out: SessionProfilerDbRow[] = []
+    // Well under SQLite's bound-parameter limit even on old builds.
+    const CHUNK = 400
+    for (let start = 0; start < unique.length; start += CHUNK) {
+      const chunk = unique.slice(start, start + CHUNK)
+      const values = chunk.map(() => '(?)').join(', ')
+      const rows = db
+        .prepare(
+          `WITH ids(id) AS (VALUES ${values})
+           SELECT ids.id AS id,
+                  s.id AS session_row_id,
+                  s.name AS session_name,
+                  s.status AS session_status,
+                  s.agent_sdk AS agent_sdk,
+                  w.name AS worktree_name,
+                  w.path AS worktree_path,
+                  w.status AS worktree_status,
+                  c.name AS connection_name,
+                  c.path AS connection_path,
+                  p.name AS project_name,
+                  k.id AS ticket_id,
+                  k.title AS ticket_title,
+                  k."column" AS ticket_column,
+                  k.archived_at AS ticket_archived_at,
+                  k.project_id AS ticket_project_id,
+                  EXISTS (
+                    SELECT 1 FROM document_run_items di
+                    JOIN document_runs dr ON dr.id = di.run_id
+                    WHERE (di.session_id = ids.id OR di.fix_session_id = ids.id)
+                      AND dr.status IN ('running', 'paused')
+                      AND di.selected = 1
+                      AND (
+                        di.status NOT IN ('merged', 'skipped', 'cancelled')
+                        OR di.document_update_status IN ('queued', 'updating')
+                      )
+                  ) AS document_run_busy
+           FROM ids
+           LEFT JOIN sessions s ON s.id = ids.id
+           LEFT JOIN worktrees w ON w.id = s.worktree_id
+           LEFT JOIN connections c ON c.id = s.connection_id
+           LEFT JOIN projects p ON p.id = s.project_id
+           LEFT JOIN kanban_tickets k ON k.id = (
+             -- One session can serve several tickets (pre-assign, bulk handoffs): a live
+             -- ticket (not archived, not done / merged) wins, so the row only reads as
+             -- "ticket done" once no live ticket rides the session — the same rule the
+             -- renderer's Done / archive close follows (isSessionSharedWithLiveTicket).
+             SELECT kt.id FROM kanban_tickets kt
+             WHERE kt.current_session_id = ids.id
+             ORDER BY (kt.archived_at IS NOT NULL) ASC,
+                      (kt."column" IN ('done', 'merged')) ASC,
+                      kt.updated_at DESC
+             LIMIT 1
+           )`
+        )
+        .all(...chunk) as Record<string, unknown>[]
+      for (const row of rows) {
+        const str = (key: string): string | null =>
+          typeof row[key] === 'string' ? (row[key] as string) : null
+        out.push({
+          id: String(row.id),
+          sessionExists: row.session_row_id != null,
+          name: str('session_name'),
+          status: str('session_status'),
+          agentSdk: str('agent_sdk'),
+          worktreeName: str('worktree_name') ?? str('connection_name'),
+          worktreePath: str('worktree_path') ?? str('connection_path'),
+          worktreeArchived: row.worktree_status === 'archived',
+          projectName: str('project_name'),
+          ticket:
+            row.ticket_id == null
+              ? null
+              : {
+                  id: String(row.ticket_id),
+                  title: str('ticket_title') ?? '',
+                  column: str('ticket_column') ?? '',
+                  archived: row.ticket_archived_at != null,
+                  projectId: str('ticket_project_id')
+                },
+          documentRunBusy: Number(row.document_run_busy) === 1
+        })
+      }
+    }
+    return out
   }
 
   getSessionByClaudeSessionId(claudeSessionId: string): Session | null {

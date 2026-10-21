@@ -37,10 +37,12 @@ import {
   isLayoutAnimationSuppressed,
   parseTicketKey,
   ticketKey,
-  transitionSortKey
+  transitionSortKey,
+  isSessionSharedWithLiveTicket
 } from '@/stores/useKanbanStore'
 import type { MarkdownCardPlaceholder } from '@/stores/useKanbanStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
+import { useSessionStore } from '@/stores/useSessionStore'
 import { useUsageStore, resolveDefaultUsageProvider } from '@/stores/useUsageStore'
 import { useSettingsStore, resolvePreferredAgentSdk } from '@/stores/useSettingsStore'
 import { isBlockerSatisfied } from '@/lib/blocker-utils'
@@ -66,7 +68,7 @@ import { opencodeApi } from '@/api/opencode-api'
 import { remoteLaunchApi } from '@/api/remote-launch-api'
 import { useRemoteLaunchStore } from '@/stores/useRemoteLaunchStore'
 import { parseRemoteLaunch } from '@shared/types/remote-launch'
-import { isShellCommandSession } from '@shared/types/agent-sdk'
+import { isTerminalBacked } from '@shared/types/agent-sdk'
 import { visibleTicketTitle } from '@/lib/ticket-key-display'
 import { isShellCommandTicket, startShellCommandTicket } from '@/lib/shell-command-ticket'
 import { terminalApi } from '@/api/terminal-api'
@@ -939,12 +941,30 @@ export function KanbanColumn({
     try {
       // Stop the actual session
       const draggedTicket = findTicket(ticketId, ticketProjectId)
-      let shellCommandSessionToStop: string | null = null
+      let terminalSessionToStop: string | null = null
+      // Why the session was left untouched (only the ticket is unlinked and moved).
+      let sessionKept: 'shared' | 'unverified' | null = null
       if (draggedTicket?.current_session_id) {
+        // One session can serve several tickets (pre-assign, bulk handoff relinks).
+        // While another live ticket still rides it, stopping it would kill that
+        // ticket's work: leave the session alone, and do the same when the link
+        // set cannot be read.
+        sessionKept = await isSessionSharedWithLiveTicket(
+          draggedTicket.current_session_id,
+          ticketId
+        ).then(
+          (shared) => (shared ? 'shared' : null),
+          () => 'unverified' as const
+        )
+      }
+      if (draggedTicket?.current_session_id && !sessionKept) {
         // Abort the running agent process (not just the DB status)
         const session = await dbApi.session.get<Session>(draggedTicket.current_session_id)
-        if (isShellCommandSession(session)) {
-          shellCommandSessionToStop = draggedTicket.current_session_id
+        // PTY-backed sessions (shell commands, claude / codex CLIs) have no
+        // SDK abort: their process is destroyed below, or it would keep
+        // running behind a session row that now says completed.
+        if (isTerminalBacked(session?.agent_sdk)) {
+          terminalSessionToStop = draggedTicket.current_session_id
         }
         if (session?.opencode_session_id && session.worktree_id) {
           const worktree = await dbApi.worktree.get<Worktree>(session.worktree_id)
@@ -993,13 +1013,23 @@ export function KanbanColumn({
         plan_ready: false
       })
 
-      // Stop the command only now that the ticket no longer points at the session: the
-      // run's 'cancelled' event then finds neither a linked ticket nor a live status.
-      if (shellCommandSessionToStop) {
+      // Stop the process only now that the ticket no longer points at the session: a
+      // shell-command run's 'cancelled' event then finds neither a linked ticket nor a
+      // live status. Then unmount its hidden terminal view, so nothing re-attaches to it
+      // and the next open of the session resumes it.
+      if (terminalSessionToStop) {
         try {
-          unwrapEnvelope(await terminalApi.destroy(shellCommandSessionToStop))
+          unwrapEnvelope(await terminalApi.destroy(terminalSessionToStop))
         } catch {
-          // Best-effort: the run may already be over
+          // Best-effort: the process may already be gone
+        }
+        const sessionStore = useSessionStore.getState()
+        if (!sessionStore.releaseSessionTerminal(terminalSessionToStop)) {
+          // Its view is on screen (e.g. the active tab behind a toggled board): a
+          // still-shown session would remount and respawn its process, so close
+          // its tab too — the row is completed, so it would not survive a reload
+          // anyway.
+          await sessionStore.closeSession(terminalSessionToStop)
         }
       }
 
@@ -1010,7 +1040,15 @@ export function KanbanColumn({
       )
       await store.moveTicket(ticketId, ticketProjectId, 'todo', sortOrder)
 
-      toast.success('Session stopped and ticket moved to To Do')
+      if (sessionKept === 'shared') {
+        toast.success('Ticket moved to To Do — its session keeps running for another ticket')
+      } else if (sessionKept === 'unverified') {
+        toast.warning(
+          'Ticket moved to To Do — its session was left running (could not check whether another ticket uses it)'
+        )
+      } else {
+        toast.success('Session stopped and ticket moved to To Do')
+      }
     } catch {
       toast.error('Failed to move ticket')
     }

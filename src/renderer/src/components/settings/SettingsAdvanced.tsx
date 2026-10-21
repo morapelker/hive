@@ -30,6 +30,7 @@ export function SettingsAdvanced(): React.JSX.Element {
     claudeCliAutoResumeAfterApiError,
     codexJsonlLoggingEnabled,
     codexJsonlResetPerSession,
+    sessionProfilerEnabled,
     updateSetting
   } = useSettingsStore()
   const envVars = rawEnvVars ?? []
@@ -220,6 +221,36 @@ export function SettingsAdvanced(): React.JSX.Element {
           </div>
         </div>
       )}
+
+      {/* Session profiler (the header counter, HeaderSessionProfiler) */}
+      <div className="flex items-center justify-between">
+        <div>
+          <label className="text-sm font-medium">Session profiler</label>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Show a header counter of running agent sessions, sampled from the OS every minute,
+            with per-session details, CPU usage and a way to stop leftover sessions. For
+            diagnosing leaks; off has zero overhead.
+          </p>
+        </div>
+        <button
+          role="switch"
+          aria-checked={sessionProfilerEnabled}
+          aria-label="Session profiler"
+          data-testid="session-profiler-toggle"
+          onClick={() => updateSetting('sessionProfilerEnabled', !sessionProfilerEnabled)}
+          className={cn(
+            'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors',
+            sessionProfilerEnabled ? 'bg-primary' : 'bg-muted'
+          )}
+        >
+          <span
+            className={cn(
+              'pointer-events-none block h-4 w-4 rounded-full bg-background ring-0 transition-transform',
+              sessionProfilerEnabled ? 'translate-x-4' : 'translate-x-0'
+            )}
+          />
+        </button>
+      </div>
 
       {/* Auto-resume after API errors */}
       <div className="flex items-center justify-between">

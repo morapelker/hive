@@ -730,6 +730,51 @@ export function destroyNodePtyTerminal(terminalId: string): void {
   ptyService.destroy(terminalId)
 }
 
+/** Whether a live PTY is an agent CLI session (claude or codex TUI). */
+export function isAgentCliTerminal(terminalId: string): boolean {
+  return claudeCliSessions.has(terminalId) && ptyService.has(terminalId)
+}
+
+/**
+ * Whether a live agent CLI's turn ended in a pause rather than a completion: its last
+ * status is a main-agent Stop classified `waiting` (a scheduled wakeup, subagent or
+ * Monitor still pending — the agent will be woken again without the user).
+ */
+export function isClaudeCliTurnPaused(terminalId: string): boolean {
+  const last = claudeCliLastStatus.get(terminalId)
+  return last?.status === 'completed' && last.metadata?.completion === 'waiting'
+}
+
+/**
+ * Kill an agent CLI's process but leave the session resumable (the session
+ * profiler's "Stop"). Unlike destroyNodePtyTerminal the bridge's exit listener
+ * stays attached, so the exit handler does the per-session cleanup and
+ * publishes `terminal:exit:<id>` — a mounted view shows its ended state, and
+ * the next activation respawns with --resume.
+ *
+ * The turn is ended up front as a user interrupt (the user did stop it):
+ * publishClaudeCliStatus dedupes on status, so the pty_exit and any SessionEnd
+ * hook that follow collapse into it — a document run watching the turn then
+ * waits for the user instead of reading a process end and re-prompting (which
+ * would respawn the CLI). The API-error auto-resume is cancelled for the same
+ * reason. Returns false when the id is not a live agent CLI.
+ */
+export function reapCliTerminal(terminalId: string): boolean {
+  if (!isAgentCliTerminal(terminalId)) return false
+  if (cancelShellCommandRunIfLive(terminalId)) return true
+  log.info('Reaping agent CLI process (session stays resumable)', { terminalId })
+  noteClaudeCliSessionGoneForRecovery(terminalId)
+  clearClaudeCliInteractions(terminalId)
+  clearClaudeCliSubagentTracking(terminalId)
+  publishClaudeCliStatus({
+    sessionId: terminalId,
+    status: 'completed',
+    metadata: { reason: 'user_interrupt' }
+  })
+  ptyService.destroy(terminalId)
+  return true
+}
+
 function attachNodePtyListeners(terminalId: string): void {
   const existing = listenerCleanups.get(terminalId)
   if (existing) {

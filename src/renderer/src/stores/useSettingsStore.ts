@@ -280,6 +280,11 @@ export interface AppSettings {
   claudeCliAutoResumeAfterApiError: boolean
   codexJsonlLoggingEnabled: boolean
   codexJsonlResetPerSession: boolean
+  /**
+   * Header counter of the agent CLI processes the app has alive (HeaderSessionProfiler), sampled
+   * from the OS on demand. Renderer-only: main and the server never read it.
+   */
+  sessionProfilerEnabled: boolean
 
   // Review
   reviewPromptType: ReviewPromptType
@@ -383,6 +388,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   claudeCliAutoResumeAfterApiError: true,
   codexJsonlLoggingEnabled: false,
   codexJsonlResetPerSession: true,
+  sessionProfilerEnabled: false,
   reviewPromptType: 'standard',
   _boardModeMigratedToStickyTab: false
 }
@@ -598,6 +604,7 @@ function extractSettings(state: SettingsState): AppSettings {
         claudeCliAutoResumeAfterApiError: state.claudeCliAutoResumeAfterApiError,
     codexJsonlLoggingEnabled: state.codexJsonlLoggingEnabled,
     codexJsonlResetPerSession: state.codexJsonlResetPerSession,
+    sessionProfilerEnabled: state.sessionProfilerEnabled,
     reviewPromptType: state.reviewPromptType,
     _boardModeMigratedToStickyTab: state._boardModeMigratedToStickyTab
   }
@@ -1015,6 +1022,7 @@ export const useSettingsStore = create<SettingsState>()(
         claudeCliAutoResumeAfterApiError: state.claudeCliAutoResumeAfterApiError,
         codexJsonlLoggingEnabled: state.codexJsonlLoggingEnabled,
         codexJsonlResetPerSession: state.codexJsonlResetPerSession,
+        sessionProfilerEnabled: state.sessionProfilerEnabled,
         reviewPromptType: state.reviewPromptType,
         _boardModeMigratedToStickyTab: state._boardModeMigratedToStickyTab
       })

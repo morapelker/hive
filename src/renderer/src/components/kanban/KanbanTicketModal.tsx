@@ -238,9 +238,10 @@ function ClaudeCliPortalSlot({ sessionId }: { sessionId: string }): React.JSX.El
     return () => {
       registerTarget(sessionId, null)
       releaseSessionMount(sessionId)
-      // Modal-resumed sessions of Done tickets are completed and tab-less —
-      // kill their PTY when the last mount request goes away (no-op for
-      // active sessions).
+      // Kill the PTY when the last mount request goes away if this modal
+      // brought it to life (a resumed Done-ticket session, or any session
+      // with no live process when the modal opened) — the row and tabs stay;
+      // no-op for processes that a tab or the background already owned.
       void useSessionStore.getState().destroyCompletedSessionTerminal(sessionId)
     }
   }, [registerTarget, releaseSessionMount, requestSessionMount, sessionId])

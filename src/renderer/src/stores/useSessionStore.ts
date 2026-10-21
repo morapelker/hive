@@ -17,6 +17,8 @@ import { systemApi } from '@/api/system-api'
 import { dbApi } from '@/api/db-api'
 import { connectionApi } from '@/api/connection-api'
 import { terminalApi } from '@/api/terminal-api'
+import { getRendererRpcClient } from '@/api/rpc-client'
+import { isPausedSessionEntry } from '@/lib/in-progress-sessions'
 import { remoteLaunchApi } from '@/api/remote-launch-api'
 import { parseRemoteLaunch } from '@shared/types/remote-launch'
 import { opencodeApi } from '@/api/opencode-api'
@@ -88,6 +90,134 @@ function unmarkReactivating(sessionId: string): void {
   const next = (reactivatingSessionIds.get(sessionId) ?? 0) - 1
   if (next > 0) reactivatingSessionIds.set(sessionId, next)
   else reactivatingSessionIds.delete(sessionId)
+}
+
+// ─── Modal-spawned session processes ────────────────────────────────────────
+// Opening a ticket modal or a tiled slot mounts the session's terminal view,
+// and mounting spawns `claude --resume` whenever no process is alive. Nothing
+// owns that process afterwards — no tab ever showed it — so the last release
+// kills it (destroyCompletedSessionTerminal). Provenance is decided once, on
+// the first mount request: a session with no mounted view and no live PTY
+// at that moment gets its process from the mount. The probe asks the backend
+// before the view mounts; an answer that arrives after the spawn says "live",
+// which errs towards keeping the process.
+interface ModalSpawnProbe {
+  promise: Promise<void>
+  /** The session was taken over (activated, closed) while the probe was in flight. */
+  cancelled: boolean
+}
+
+const modalSpawnProbes = new Map<string, ModalSpawnProbe>()
+
+/**
+ * How long a modal-spawned process outlives the last release. Re-opening the
+ * same ticket within the window re-attaches to the running process instead of
+ * resuming the session from scratch on every tap.
+ */
+export const MODAL_SPAWNED_RELEASE_GRACE_MS = 30_000
+
+// Per-session release counter: only the newest pending grace window may act.
+const modalReleaseGenerations = new Map<string, number>()
+
+/** The session is shown (or about to be) outside any modal: a tab, the pinned board view, an inline connection tab. */
+function isSessionOnScreen(
+  state: Pick<
+    SessionState,
+    'activeSessionId' | 'activePinnedSessionId' | 'inlineConnectionSessionId'
+  >,
+  sessionId: string
+): boolean {
+  return (
+    state.activeSessionId === sessionId ||
+    state.activePinnedSessionId === sessionId ||
+    state.inlineConnectionSessionId === sessionId
+  )
+}
+
+function cancelModalSpawnProbe(sessionId: string): void {
+  const probe = modalSpawnProbes.get(sessionId)
+  if (probe) probe.cancelled = true
+}
+
+function withoutModalSpawned(ids: Set<string>, sessionId: string): Set<string> {
+  if (!ids.has(sessionId)) return ids
+  const next = new Set(ids)
+  next.delete(sessionId)
+  return next
+}
+
+/**
+ * Someone other than the mount is bringing the session's process up: a
+ * ticket launch, handoff or follow-up queues its prompt (pendingMessages /
+ * follow-ups) and flips the status to working before its createClaudeCli
+ * lands, and a revival marks itself reactivating. A modal opened meanwhile
+ * sees "not live" but only re-attaches to that spawn.
+ */
+function isSpawnOwnedElsewhere(state: SessionState, sessionId: string): boolean {
+  return (
+    isSessionReactivating(sessionId) ||
+    state.pendingMessages.has(sessionId) ||
+    (state.pendingFollowUpMessages.get(sessionId)?.length ?? 0) > 0
+  )
+}
+
+/**
+ * Record whether this (first) mount request is about to spawn the session's
+ * process. Fail-safe: any doubt — an RPC error, an unknown answer, a session
+ * that is not an agent CLI, a spawn some launch already owns — leaves the
+ * session unmarked, i.e. never killed.
+ */
+function probeModalSpawn(sessionId: string): void {
+  const state = useSessionStore.getState()
+  if (modalSpawnProbes.has(sessionId) || state.modalSpawnedSessionIds.has(sessionId)) return
+  // A mounted view (or one about to mount for a tab) already owns whatever
+  // process the session has: this mount re-attaches, it does not spawn.
+  if (state.mountedTerminalMirror.has(sessionId) || isSessionOnScreen(state, sessionId)) return
+  if (isSpawnOwnedElsewhere(state, sessionId)) return
+  const known = state.getSessionById(sessionId)
+  if (known && !isAgentCli(known.agent_sdk)) return
+
+  const probe: ModalSpawnProbe = { cancelled: false, promise: Promise.resolve() }
+  probe.promise = (async () => {
+    let liveIds: unknown
+    try {
+      // Through the RPC client rather than terminalApi.getLiveTerminalIds,
+      // which answers [] on errors — that would read as "not live" here.
+      const result = await getRendererRpcClient().request<{ terminalIds: string[] }>(
+        'terminalOps.getLiveTerminalIds',
+        {}
+      )
+      liveIds = result?.terminalIds
+    } catch {
+      return
+    }
+    if (!Array.isArray(liveIds) || liveIds.includes(sessionId) || probe.cancelled) return
+    // A launch that started while the RPC was in flight owns the spawn too;
+    // its working status outlives the queued prompt.
+    if (isSpawnOwnedElsewhere(useSessionStore.getState(), sessionId)) return
+    try {
+      const { useWorktreeStatusStore } = await import('./useWorktreeStatusStore')
+      const status = useWorktreeStatusStore.getState().sessionStatuses[sessionId]?.status
+      if (
+        status === 'working' ||
+        status === 'planning' ||
+        status === 'answering' ||
+        status === 'permission' ||
+        status === 'command_approval'
+      ) {
+        return
+      }
+    } catch {
+      return
+    }
+    if (probe.cancelled) return
+    useSessionStore.setState((s) => ({
+      modalSpawnedSessionIds: new Set([...s.modalSpawnedSessionIds, sessionId])
+    }))
+  })().finally(() => {
+    if (modalSpawnProbes.get(sessionId) === probe) modalSpawnProbes.delete(sessionId)
+  })
+  modalSpawnProbes.set(sessionId, probe)
 }
 
 export const BOARD_TAB_ID = '__board__'
@@ -241,12 +371,34 @@ interface SessionState {
   // decide whether a terminal-backed session is "already running" (tiling a
   // non-mounted terminal session would spawn its process).
   mountedTerminalMirror: Set<string>
+  // Agent-CLI sessions whose process a ticket-modal / tiled-slot mount
+  // started: no live PTY and no mounted view when the first mount request
+  // arrived. The last release kills such a process (the row stays active and
+  // the next mount resumes it) unless the session was taken over meanwhile —
+  // activating it anywhere, or closing it, drops it from this set.
+  modalSpawnedSessionIds: Set<string>
 
   // Actions
   acknowledgeClosedTerminals: (ids: Set<string>) => void
   requestSessionMount: (sessionId: string) => void
   releaseSessionMount: (sessionId: string) => void
+  /**
+   * Last-release cleanup of a modal / tiled-slot mount: kills the session's
+   * PTY when its row is completed, or when the mount itself spawned it
+   * (modalSpawnedSessionIds), unless the session was re-engaged meanwhile.
+   */
   destroyCompletedSessionTerminal: (sessionId: string) => Promise<void>
+  /**
+   * The session's process was stopped outside the renderer (e.g. the session
+   * profiler's Stop): unmount its hidden terminal view so the next activation
+   * remounts it and respawns the agent with --resume. Leaves the DB row and
+   * the tabs untouched. A view that is on screen (active / pinned / inline
+   * tab, or held by an open modal or tile) is kept mounted: pruning it would
+   * blank the pane and let the still-activated session remount — respawning
+   * the process right behind the user — so it shows its ended state instead.
+   * Returns whether the view was released.
+   */
+  releaseSessionTerminal: (sessionId: string) => boolean
   openOrphanedSession: (session: Session) => void
   closeOrphanedSessions: () => void
   loadSessions: (worktreeId: string, projectId: string) => Promise<void>
@@ -480,6 +632,7 @@ export const useSessionStore = create<SessionState>()(
       tiledSessionsTab: null,
       isTiledSessionsActive: false,
       mountedTerminalMirror: new Set<string>(),
+      modalSpawnedSessionIds: new Set<string>(),
 
       acknowledgeClosedTerminals: (ids: Set<string>) => {
         set((state) => {
@@ -490,11 +643,15 @@ export const useSessionStore = create<SessionState>()(
       },
 
       requestSessionMount: (sessionId: string) => {
+        const isFirstRequest = !get().sessionMountRequests.has(sessionId)
         set((state) => {
           const requests = new Map(state.sessionMountRequests)
           requests.set(sessionId, (requests.get(sessionId) ?? 0) + 1)
           return { sessionMountRequests: requests }
         })
+        // Decided before MainPane admits the view (and its mount spawns the
+        // process): did this mount bring the session's process to life?
+        if (isFirstRequest) probeModalSpawn(sessionId)
       },
 
       releaseSessionMount: (sessionId: string) => {
@@ -510,51 +667,126 @@ export const useSessionStore = create<SessionState>()(
         })
       },
 
-      // Kill the PTY of a completed (tab-less) session once the last mount
-      // request releases it. Ticket modals resume completed sessions of Done
-      // tickets on open; without this the respawned process would outlive the
-      // modal with no tab left to close it from. Guards: never kill a session
-      // that was re-engaged in the meantime — re-mounted by another modal,
-      // navigated to (active session), or actively working/awaiting input per
-      // its hook-driven status (a background follow-up may not have flipped
-      // the DB row back to active yet).
-      destroyCompletedSessionTerminal: async (sessionId: string) =>
-        withSessionLifecycleLock(sessionId, async () => {
-        const isReEngaged = async (): Promise<boolean> => {
-          if (isSessionReactivating(sessionId)) return true
-          if (get().sessionMountRequests.has(sessionId)) return true
-          if (get().activeSessionId === sessionId) return true
-          const { useWorktreeStatusStore } = await import('./useWorktreeStatusStore')
-          const status = useWorktreeStatusStore.getState().sessionStatuses[sessionId]?.status
-          return (
-            status === 'working' ||
-            status === 'planning' ||
-            status === 'answering' ||
-            status === 'permission' ||
-            status === 'command_approval'
-          )
+      // Kill the PTY of a tab-less session once the last mount request
+      // releases it, when either
+      // - its row is completed: ticket modals resume completed sessions of
+      //   Done tickets on open, and the respawned process would otherwise
+      //   outlive the modal with no tab left to close it from; or
+      // - the mount itself spawned the process (modalSpawnedSessionIds), as
+      //   opening the modal of a Review / Merged ticket does. Only the process
+      //   dies: the row stays active, the tabs are untouched, and the next
+      //   mount resumes the session. A short grace window lets a quick
+      //   re-open re-attach instead.
+      // Guards: never kill a session that was re-engaged in the meantime —
+      // re-mounted by another modal, navigated to (active / pinned / inline
+      // session), or actively working/awaiting input per its hook-driven
+      // status (a background follow-up may not have flipped the DB row back
+      // to active yet). A modal-spawned process is also kept while it has
+      // work the kill would lose: a queued prompt or follow-up, a pending
+      // plan, or running background work.
+      destroyCompletedSessionTerminal: async (sessionId: string) => {
+        // The provenance probe of this mount may still be in flight (a modal
+        // closed right after opening) — its answer decides the path below.
+        const probe = modalSpawnProbes.get(sessionId)
+        if (probe) await probe.promise
+        if (get().modalSpawnedSessionIds.has(sessionId)) {
+          const generation = (modalReleaseGenerations.get(sessionId) ?? 0) + 1
+          modalReleaseGenerations.set(sessionId, generation)
+          await new Promise((resolve) => setTimeout(resolve, MODAL_SPAWNED_RELEASE_GRACE_MS))
+          // A later release restarted the window — that one does the cleanup.
+          if (modalReleaseGenerations.get(sessionId) !== generation) return
+          modalReleaseGenerations.delete(sessionId)
         }
 
-        if (await isReEngaged()) return
-        let dbSession: Session | null = null
-        try {
-          dbSession = await dbApi.session.get<Session>(sessionId)
-        } catch {
-          return
-        }
-        if (dbSession?.status !== 'completed' || !isTerminalBacked(dbSession.agent_sdk)) return
-        // Re-check after the async gap — the session may have been re-engaged
-        // while the DB read was in flight.
-        if (await isReEngaged()) return
-        try {
-          unwrapEnvelope(await terminalApi.destroy(sessionId))
-        } catch {
-          // Best-effort — PTY may already be gone
-        }
-        set((state) => ({
-          closedTerminalSessionIds: new Set([...state.closedTerminalSessionIds, sessionId])
+        return withSessionLifecycleLock(sessionId, async () => {
+          const isReEngaged = async (): Promise<boolean> => {
+            if (isSessionReactivating(sessionId)) return true
+            if (get().sessionMountRequests.has(sessionId)) return true
+            if (isSessionOnScreen(get(), sessionId)) return true
+            const { useWorktreeStatusStore } = await import('./useWorktreeStatusStore')
+            const status = useWorktreeStatusStore.getState().sessionStatuses[sessionId]?.status
+            return (
+              status === 'working' ||
+              status === 'planning' ||
+              status === 'answering' ||
+              status === 'permission' ||
+              status === 'command_approval'
+            )
+          }
+          const hasPendingWork = async (): Promise<boolean> => {
+            const state = get()
+            if (state.pendingMessages.has(sessionId)) return true
+            if (state.pendingPlans.has(sessionId)) return true
+            if ((state.pendingFollowUpMessages.get(sessionId)?.length ?? 0) > 0) return true
+            const { useWorktreeStatusStore } = await import('./useWorktreeStatusStore')
+            const statusState = useWorktreeStatusStore.getState()
+            const entry = statusState.sessionStatuses[sessionId]
+            if (entry?.status === 'plan_ready') return true
+            // A turn that only paused (a scheduled wakeup, /loop, a cron, a
+            // monitor): those live in the CLI process and die with it.
+            if (isPausedSessionEntry(entry) || (entry?.pendingWakeups ?? 0) > 0) return true
+            if (sessionId in statusState.backgroundWorkBySession) return true
+            // Same pause seen from the board (the hourglass), which survives
+            // a status entry that was cleared or never arrived.
+            const { useKanbanStore } = await import('./useKanbanStore')
+            for (const tickets of useKanbanStore.getState().tickets.values()) {
+              for (const t of tickets) {
+                if (
+                  t.current_session_id === sessionId &&
+                  t.column === 'in_progress' &&
+                  t.awaiting_completion &&
+                  !t.archived_at
+                ) {
+                  return true
+                }
+              }
+            }
+            return false
+          }
+
+          if (await isReEngaged()) return
+          let dbSession: Session | null = null
+          try {
+            dbSession = await dbApi.session.get<Session>(sessionId)
+          } catch {
+            return
+          }
+          if (!dbSession || !isTerminalBacked(dbSession.agent_sdk)) return
+          const isCompleted = dbSession.status === 'completed'
+          // Re-read after the async gap: activating or closing the session
+          // meanwhile drops it from the set.
+          const isModalSpawned = (): boolean =>
+            get().modalSpawnedSessionIds.has(sessionId) && isAgentCli(dbSession?.agent_sdk)
+          if (!isCompleted && !isModalSpawned()) return
+          // Re-check after the async gap — the session may have been re-engaged
+          // while the DB read was in flight.
+          if (await isReEngaged()) return
+          if (!isCompleted && (!isModalSpawned() || (await hasPendingWork()))) return
+          try {
+            unwrapEnvelope(await terminalApi.destroy(sessionId))
+          } catch {
+            // Best-effort — PTY may already be gone
+          }
+          set((state) => ({
+            closedTerminalSessionIds: new Set([...state.closedTerminalSessionIds, sessionId]),
+            modalSpawnedSessionIds: withoutModalSpawned(state.modalSpawnedSessionIds, sessionId)
+          }))
+        })
+      },
+
+      releaseSessionTerminal: (sessionId: string) => {
+        cancelModalSpawnProbe(sessionId)
+        const state = get()
+        const shown =
+          isSessionOnScreen(state, sessionId) || state.sessionMountRequests.has(sessionId)
+        set((s) => ({
+          closedTerminalSessionIds: shown
+            ? s.closedTerminalSessionIds
+            : new Set([...s.closedTerminalSessionIds, sessionId]),
+          modalSpawnedSessionIds: withoutModalSpawned(s.modalSpawnedSessionIds, sessionId)
         }))
-        }),
+        return !shown
+      },
 
       // Load sessions for a worktree from database (only active sessions for tabs)
       loadSessions: async (worktreeId: string, _projectId: string) => {
@@ -985,6 +1217,9 @@ export const useSessionStore = create<SessionState>()(
             }
           }
 
+          // A closed session's process is gone for good: no modal release may
+          // act on it any more.
+          cancelModalSpawnProbe(sessionId)
           set((state) => {
             const newWorktreeSessionsMap = new Map(state.sessionsByWorktree)
             const newWorktreeTabOrderMap = new Map(state.tabOrderByWorktree)
@@ -1007,7 +1242,11 @@ export const useSessionStore = create<SessionState>()(
               return {
                 orphanedSessions: newOrphanedSessions,
                 activeSessionId: newActiveSessionId,
-                pendingFollowUpMessages: newPendingFollowUps
+                pendingFollowUpMessages: newPendingFollowUps,
+                modalSpawnedSessionIds: withoutModalSpawned(
+                  state.modalSpawnedSessionIds,
+                  sessionId
+                )
               }
             }
 
@@ -1109,6 +1348,7 @@ export const useSessionStore = create<SessionState>()(
               closedTerminalSessionIds: newClosedTerminals,
               pinnedSessionIds: newPinnedIds,
               pendingFollowUpMessages: newPendingFollowUps,
+              modalSpawnedSessionIds: withoutModalSpawned(state.modalSpawnedSessionIds, sessionId),
               activePinnedSessionId:
                 state.activePinnedSessionId === sessionId ? null : state.activePinnedSessionId
             }
@@ -3042,6 +3282,34 @@ useSessionStore.subscribe((state, prevState) => {
     state.activeSessionId !== prevState.activeSessionId
   ) {
     useSessionStore.setState({ isTiledSessionsActive: false })
+  }
+})
+
+// ─── Modal-spawned ownership hand-over ──────────────────────────────────────
+// A modal-spawned process becomes a regular background session once the user
+// shows the session anywhere else (a tab, the pinned board view, an inline
+// connection tab): from then on the keep-alive pool owns it and no modal
+// release may kill it. Several code paths write these ids directly, so the
+// hand-over hooks the transitions rather than each activator.
+useSessionStore.subscribe((state, prevState) => {
+  if (state.modalSpawnedSessionIds.size === 0 && modalSpawnProbes.size === 0) return
+  const shown = [
+    state.activeSessionId !== prevState.activeSessionId ? state.activeSessionId : null,
+    state.activePinnedSessionId !== prevState.activePinnedSessionId
+      ? state.activePinnedSessionId
+      : null,
+    state.inlineConnectionSessionId !== prevState.inlineConnectionSessionId
+      ? state.inlineConnectionSessionId
+      : null
+  ]
+  let remaining = state.modalSpawnedSessionIds
+  for (const sessionId of shown) {
+    if (!sessionId) continue
+    cancelModalSpawnProbe(sessionId)
+    remaining = withoutModalSpawned(remaining, sessionId)
+  }
+  if (remaining !== state.modalSpawnedSessionIds) {
+    useSessionStore.setState({ modalSpawnedSessionIds: remaining })
   }
 })
 

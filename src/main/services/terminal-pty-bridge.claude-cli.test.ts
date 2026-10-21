@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => {
     clearAllClaudeCliInteractions: vi.fn(),
     clearClaudeCliSubagentTracking: vi.fn(),
     clearAllClaudeCliSubagentTracking: vi.fn(),
+    noteClaudeCliSessionGoneForRecovery: vi.fn(),
     ensureProjectTrustCheck: vi.fn(async () => {}),
     ptyService: {
       has: vi.fn(() => false),
@@ -155,13 +156,21 @@ vi.mock('./claude-cli-subagent-tracker', async (importOriginal) => ({
   clearAllClaudeCliSubagentTracking: mocks.clearAllClaudeCliSubagentTracking
 }))
 
+vi.mock('./claude-cli-session-recovery', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./claude-cli-session-recovery')>()),
+  noteClaudeCliSessionGoneForRecovery: mocks.noteClaudeCliSessionGoneForRecovery
+}))
+
 import type { Session } from '../db/types'
 import {
   cleanupTerminals,
   destroyNodePtyTerminal,
   createClaudeCliTerminal,
   ensureCliPromptSubmitted,
-  handleClaudeCliTerminalInput
+  handleClaudeCliTerminalInput,
+  isAgentCliTerminal,
+  isClaudeCliTurnPaused,
+  reapCliTerminal
 } from './terminal-pty-bridge'
 import { externalizeGoalHandoffPlan } from './claude-cli-plan-handoff'
 import { CLAUDE_CLI_LAUNCH_TIMEOUT_MS } from './claude-cli-launch-watch'
@@ -852,6 +861,96 @@ describe('Claude CLI terminal hook status wiring', () => {
     exitCallback?.(0)
 
     expect(mocks.publishClaudeCliStatus).not.toHaveBeenCalled()
+  })
+})
+
+describe('reapCliTerminal (session profiler stop, session stays resumable)', () => {
+  const SESSION = 'hive-session-1'
+
+  beforeEach(() => {
+    mocks.exitCallbacks.clear()
+    mocks.dataCallbacks.clear()
+    vi.clearAllMocks()
+    __resetRuntimeRegistryForTests()
+    setupDb()
+    mocks.ptyService.has.mockReturnValue(false)
+    mocks.getClaudeHookServer.mockResolvedValue({ port: 45678 })
+    mocks.buildClaudeCliHookSettings.mockReturnValue('{"hooks":{"mock":true}}')
+    mocks.publishDesktopBackendEvent.mockResolvedValue(true)
+  })
+
+  afterEach(() => {
+    cleanupTerminals()
+  })
+
+  it('recognises only live agent CLI PTYs', async () => {
+    expect(isAgentCliTerminal(SESSION)).toBe(false)
+    await createClaudeCliTerminal(SESSION, {})
+    mocks.ptyService.has.mockReturnValue(true)
+    expect(isAgentCliTerminal(SESSION)).toBe(true)
+    expect(isAgentCliTerminal('plain-shell-tab')).toBe(false)
+    mocks.ptyService.has.mockReturnValue(false)
+    expect(isAgentCliTerminal(SESSION)).toBe(false)
+  })
+
+  it('reports a turn paused for a scheduled wakeup until the next status', async () => {
+    await createClaudeCliTerminal(SESSION, {})
+    const calls = mocks.subscribeClaudeCliStatus.mock.calls as unknown as Array<
+      [(payload: unknown) => void]
+    >
+    const subscriber = calls.at(-1)?.[0]
+    expect(subscriber).toBeDefined()
+    expect(isClaudeCliTurnPaused(SESSION)).toBe(false)
+    subscriber?.({
+      sessionId: SESSION,
+      status: 'completed',
+      metadata: { completion: 'waiting', pendingWakeups: 1 }
+    })
+    expect(isClaudeCliTurnPaused(SESSION)).toBe(true)
+    subscriber?.({ sessionId: SESSION, status: 'working' })
+    expect(isClaudeCliTurnPaused(SESSION)).toBe(false)
+    subscriber?.({ sessionId: SESSION, status: 'completed', metadata: { completion: 'completed' } })
+    expect(isClaudeCliTurnPaused(SESSION)).toBe(false)
+  })
+
+  it('refuses ids that are not live agent CLIs', () => {
+    mocks.ptyService.has.mockReturnValue(true)
+    expect(reapCliTerminal('plain-shell-tab')).toBe(false)
+    expect(mocks.ptyService.destroy).not.toHaveBeenCalled()
+  })
+
+  it('ends the turn as a user interrupt, kills the PTY and keeps the exit handler attached', async () => {
+    await createClaudeCliTerminal(SESSION, {})
+    mocks.ptyService.has.mockReturnValue(true)
+    const exitCallback = mocks.exitCallbacks.get(SESSION)
+    mocks.publishClaudeCliStatus.mockClear()
+
+    expect(reapCliTerminal(SESSION)).toBe(true)
+
+    // The interrupt goes out before the kill, so the process-end statuses that follow
+    // dedupe into it (a document run reads a user stop, not a crash to re-prompt).
+    expect(mocks.publishClaudeCliStatus).toHaveBeenCalledWith({
+      sessionId: SESSION,
+      status: 'completed',
+      metadata: { reason: 'user_interrupt' }
+    })
+    expect(mocks.publishClaudeCliStatus.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.ptyService.destroy.mock.invocationCallOrder[0]
+    )
+    expect(mocks.ptyService.destroy).toHaveBeenCalledWith(SESSION)
+    expect(mocks.noteClaudeCliSessionGoneForRecovery).toHaveBeenCalledWith(SESSION)
+    expect(mocks.clearClaudeCliInteractions).toHaveBeenCalledWith(SESSION)
+    expect(exitCallback).toBeDefined()
+    expect(mocks.exitCallbacks.get(SESSION)).toBe(exitCallback)
+
+    // The process dies: the bridge's own exit handler tells the renderer.
+    exitCallback?.(129)
+    await vi.waitFor(() => {
+      expect(mocks.publishDesktopBackendEvent).toHaveBeenCalledWith(`terminal:exit:${SESSION}`, 129)
+    })
+    expect(mocks.resetClaudeCliBackgroundWork).toHaveBeenCalledWith(SESSION)
+    mocks.ptyService.has.mockReturnValue(false)
+    expect(isAgentCliTerminal(SESSION)).toBe(false)
   })
 })
 
