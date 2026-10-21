@@ -90,7 +90,7 @@ export function getModelVariantKeys(model: Pick<ModelInfo, 'variants'>): string[
   return Object.keys(model.variants)
 }
 
-/** CLI-only effort: enabled via the claude `--settings` JSON, not `--effort`. */
+/** CLI-only effort: enabled via the claude `--settings` JSON plus `--effort xhigh`. */
 export const ULTRACODE_VARIANT = 'ultracode'
 
 /** claude's `ultracode` and codex's `ultra` are the special top-tier launch

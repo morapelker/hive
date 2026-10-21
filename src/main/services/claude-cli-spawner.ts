@@ -55,10 +55,12 @@ const VALID_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max'])
 
 /**
  * "ultracode" is not a valid claude `--effort` value. It is enabled through the
- * `ultracode` setting (xhigh effort plus standing dynamic-workflow
- * orchestration) injected into the `--settings` JSON instead of via `--effort`.
+ * `ultracode` setting (standing dynamic-workflow orchestration) injected into
+ * the `--settings` JSON, alongside an explicit `--effort xhigh` so the effort
+ * never depends on the setting's implied default.
  */
 const ULTRACODE = 'ultracode'
+const ULTRACODE_EFFORT = 'xhigh'
 
 export function isUltracodeEffort(value: string | null | undefined): boolean {
   return typeof value === 'string' && value.toLowerCase() === ULTRACODE
@@ -152,7 +154,9 @@ export function buildClaudeCliPtySpawn(input: ClaudeCliPtySpawnInput): ClaudeCli
       : null
     : orphanedCustomModel
       ? null
-      : normalizeClaudeCliEffort(input.session.model_variant)
+      : ultracode
+        ? ULTRACODE_EFFORT
+        : normalizeClaudeCliEffort(input.session.model_variant)
   if (effort) {
     args.push('--effort', effort)
   }
@@ -166,7 +170,8 @@ export function buildClaudeCliPtySpawn(input: ClaudeCliPtySpawnInput): ClaudeCli
   }
 
   if (ultracode) {
-    // ultracode is enabled via the settings JSON, not `--effort`. Merge it into
+    // ultracode is enabled via the settings JSON (its effort rides as
+    // `--effort xhigh` above). Merge it into
     // the hook settings (or a fresh object when there are none) so the flag is
     // always present when selected.
     args.push('--settings', withUltracodeSetting(input.hookSettingsJson))

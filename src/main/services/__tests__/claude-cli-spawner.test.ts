@@ -210,7 +210,7 @@ describe('buildClaudeCliPtySpawn', () => {
     expect(isUltracodeEffort(undefined)).toBe(false)
   })
 
-  it('enables ultracode via the settings flag, preserves hooks, and omits --effort', () => {
+  it('enables ultracode via the settings flag, preserves hooks, and sends --effort xhigh', () => {
     const hookSettingsJson = '{"hooks":{"Stop":[{"id":1}]}}'
     const spawn = buildClaudeCliPtySpawn({
       session: makeSession({ model_id: 'opus', model_variant: 'ultracode' }),
@@ -220,8 +220,9 @@ describe('buildClaudeCliPtySpawn', () => {
       hookSettingsJson
     })
 
-    // ultracode rides in --settings; it is never passed as a --effort value.
-    expect(spawn.args).not.toContain('--effort')
+    // ultracode rides in --settings; its effort is pinned to xhigh explicitly.
+    expect(spawn.args).not.toContain('ultracode')
+    expect(spawn.args[spawn.args.indexOf('--effort') + 1]).toBe('xhigh')
     // model is still forwarded as usual.
     expect(spawn.args).toContain('--model')
     expect(spawn.args).toContain('opus')
@@ -241,7 +242,7 @@ describe('buildClaudeCliPtySpawn', () => {
       claudeBinary: 'claude'
     })
 
-    expect(spawn.args).not.toContain('--effort')
+    expect(spawn.args[spawn.args.indexOf('--effort') + 1]).toBe('xhigh')
     const settingsIndex = spawn.args.indexOf('--settings')
     expect(settingsIndex).toBeGreaterThanOrEqual(0)
     expect(JSON.parse(spawn.args[settingsIndex + 1])).toEqual({ ultracode: true })
@@ -326,6 +327,7 @@ describe('buildClaudeCliPtySpawn', () => {
       const settingsIndex = spawn.args.indexOf('--settings')
       expect(settingsIndex).toBeGreaterThanOrEqual(0)
       expect(spawn.args[settingsIndex + 1]).toBe(hookSettingsJson)
+      expect(spawn.args).not.toContain('--effort')
     })
 
     it('suppresses --model and --effort so the command keeps its own model flags', () => {
@@ -451,6 +453,23 @@ describe('buildClaudeCliPtySpawn', () => {
       expect(spawn.command).toBe('/usr/local/bin/claude')
       expect(spawn.args).not.toContain('--model')
       expect(spawn.args).not.toContain('--effort')
+    })
+
+    it('suppresses ultracode and its xhigh effort when a custom-model session degrades', () => {
+      const spawn = buildClaudeCliPtySpawn({
+        session: makeSession({
+          custom_provider_id: 'prov-deleted',
+          model_provider_id: 'custom',
+          model_id: 'kimi-sonnet',
+          model_variant: 'ultracode'
+        }),
+        worktreePath: '/repo/worktree',
+        pendingPrompt: null,
+        claudeBinary: '/usr/local/bin/claude'
+      })
+
+      expect(spawn.args).not.toContain('--effort')
+      expect(spawn.args).not.toContain('--settings')
     })
 
     it('ignores declared models whose slug is blank', () => {

@@ -104,7 +104,8 @@ const MODEL_HOOK_EVENTS = new Set([
 // Mirrors the claude-cli catalog in claude-code-implementer.ts: sonnet/haiku
 // effort tops out at 'high'; only fable/opus offer xhigh/max. A degrade must
 // not leave a variant the target model cannot run ('ultracode' is exempt —
-// it is settings-injected, not an --effort value).
+// it carries the workflow-orchestration setting, and the claude CLI itself
+// downgrades its `--effort xhigh` to high on models without xhigh).
 const REDUCED_EFFORT_MODELS = new Set(['sonnet', 'haiku'])
 const EXTENDED_EFFORTS = new Set(['xhigh', 'max'])
 
