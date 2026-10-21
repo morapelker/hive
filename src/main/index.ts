@@ -1,5 +1,5 @@
 import { loadShellEnv } from './services/shell-env'
-import { app, shell, BrowserWindow, Menu, powerMonitor } from 'electron'
+import { app, shell, BrowserWindow, Menu, dialog, powerMonitor } from 'electron'
 import { join } from 'path'
 import { electronApp, is } from '@electron-toolkit/utils'
 import { getDatabase, closeDatabase } from './db'
@@ -84,6 +84,8 @@ import {
   startClaudeApiProxy
 } from './services/claude-api-proxy/claude-api-proxy'
 import { startThreadpoolProbe } from './services/perf-logging/threadpool-probe'
+import { createThreadpoolStallRecovery } from './services/perf-logging/threadpool-stall-recovery'
+import { wakeThreadpoolWorkers } from './services/perf-logging/threadpool-waker'
 import {
   configureClaudeCliSessionRecovery,
   disposeClaudeCliSessionRecovery
@@ -267,6 +269,36 @@ wireHeadlessSignalShutdown({ app, isHeadless })
 let mainWindow: BrowserWindow | null = null
 const wiredWindows = new WeakSet<BrowserWindow>()
 let allowHeadlessDockActivation = false
+
+/** Probe ticks are 15 s apart: a stall is declared after 30 s, a restart offered after 2 min. */
+const THREADPOOL_STALL_AFTER = 2
+const THREADPOOL_PROMPT_RESTART_AFTER = 8
+
+/**
+ * The last resort when waking the pool did not help. `app.exit` rather than
+ * `app.quit`: the quit cleanup awaits file I/O on the very pool that is stuck.
+ */
+function promptRestartForThreadpoolStall(): void {
+  if (isHeadless) return
+  const options: Electron.MessageBoxOptions = {
+    type: 'warning',
+    buttons: ['Restart Now', 'Later'],
+    defaultId: 0,
+    cancelId: 1,
+    message: 'Hive needs a restart',
+    detail:
+      "The app's background file access stopped responding, so terminals may not accept input. Restarting fixes it."
+  }
+  const window = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
+  void (window ? dialog.showMessageBox(window, options) : dialog.showMessageBox(options)).then(
+    ({ response }) => {
+      if (response !== 0) return
+      log.warn('Restarting after a thread-pool stall')
+      app.relaunch()
+      app.exit(0)
+    }
+  )
+}
 
 function ensureDockVisible(reason: string): void {
   if (process.platform !== 'darwin') return
@@ -777,20 +809,24 @@ app
     // the one failure that leaves every other signal looking healthy, and the
     // app log must say so even when perf logging is off.
     const threadpoolProbeLog = createLogger({ component: 'ThreadpoolProbe' })
-    startThreadpoolProbe({
+    // Every terminal keystroke is an fs.write on this pool (node-pty), so a
+    // wedged pool is "terminals stopped taking input": wake the workers at
+    // once, and offer a restart if that does not bring them back.
+    const threadpoolStallRecovery = createThreadpoolStallRecovery({
+      stallAfter: THREADPOOL_STALL_AFTER,
+      promptRestartAfter: THREADPOOL_PROMPT_RESTART_AFTER,
       log: threadpoolProbeLog,
-      onStall: (result, misses) => {
-        threadpoolProbeLog.warn(
-          'Main-process thread pool is stalled: async file I/O and getaddrinfo are not completing',
-          {
-            consecutiveMisses: misses,
-            pendingRequests: result.requests.requests,
-            requestsByType: result.requests.requestsByType,
-            pendingLookups: result.requests.pendingLookups
-          }
-        )
+      wake: wakeThreadpoolWorkers,
+      promptRestart: promptRestartForThreadpoolStall,
+      dumpHandles: () => {
         if (mainPerfLogger.isEnabled()) mainPerfLogger.dumpHandles('threadpool-stall')
       }
+    })
+    startThreadpoolProbe({
+      log: threadpoolProbeLog,
+      stallAfter: THREADPOOL_STALL_AFTER,
+      onStall: threadpoolStallRecovery.onStall,
+      onRecover: threadpoolStallRecovery.onRecover
     })
     try {
       const raw = getDatabase().getSetting(APP_SETTINGS_DB_KEY)

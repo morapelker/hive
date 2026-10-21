@@ -84,3 +84,6 @@ scripts/*
 
 # Superpowers brainstorm artifacts
 .superpowers/brainstorm/
+
+# uv-pool-waker addon build output (scripts/build-uv-pool-waker.mjs)
+src/native/uv-pool-waker/build/
