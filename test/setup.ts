@@ -140,7 +140,10 @@ const makeDefaultRendererRpcClient = (): RendererRpcClient => ({
       case 'db.setting.getAll':
       case 'db.project.getAll':
       case 'db.space.list':
+      case 'ticketLabels.list':
         return [] as T
+      case 'ticketLabels.usage':
+        return {} as T
       case 'settingsOps.getAll':
         return {} as T
       case 'settingsOps.loadCustomCommandsFile':

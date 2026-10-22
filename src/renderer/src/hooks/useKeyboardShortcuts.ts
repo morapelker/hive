@@ -33,6 +33,14 @@ import { worktreeApi } from '@/api/worktree-api'
 import type { MenuActionChannel } from '@shared/menu-events'
 
 /**
+ * Marks a dialog or popover where bare Tab / Shift+Tab move focus rather than toggle the active
+ * session's mode. `data-tab-navigates` is the generic opt-out; `data-docflow-dialog` is the
+ * document-flow dialogs' original one. A portaled popover needs its own attribute, since it is
+ * not inside the dialog's element. SessionView's window-level Tab handler checks the same pair.
+ */
+const TAB_NAVIGATES_SELECTOR = '[data-tab-navigates], [data-docflow-dialog]'
+
+/**
  * Check if the terminal panel is currently focused.
  * Returns true if the active element is inside a terminal view (.xterm) or
  * the terminal tab sidebar.
@@ -473,10 +481,11 @@ export function useKeyboardShortcuts(): void {
       // but allow Ctrl+Tab through for terminal tab cycling.
       const isXtermFocused = target.closest?.('.xterm') !== null
 
-      // The document-flow dialogs are forms over whatever session is active behind them:
-      // Tab and Shift+Tab move focus between their fields and must never flip that
-      // session's mode (which, for a CLI session, writes into its PTY).
-      const inDocflowDialog = !!target.closest?.('[data-docflow-dialog]')
+      // Dialogs and popovers laid over the session (the document-flow ones, the ticket label
+      // dialogs…) opt out with TAB_NAVIGATES_SELECTOR: Tab and Shift+Tab move focus between
+      // their fields and must never flip the mode of the session behind them (which, for a
+      // CLI session, writes into its PTY).
+      const inTabNavigatingSurface = !!target.closest?.(TAB_NAVIGATES_SELECTOR)
 
       // Ctrl+[ is the Escape equivalent in terminals (and Vim), and Ctrl+] is
       // Vim's "jump to tag/definition". Never intercept them while the
@@ -496,7 +505,7 @@ export function useKeyboardShortcuts(): void {
         if (isInputFocused && !allowInInput) continue
         if (isXtermFocused && binding.modifiers.length === 0) continue
         if (
-          (isXtermFocused || inDocflowDialog) &&
+          (isXtermFocused || inTabNavigatingSurface) &&
           binding.key?.toLowerCase() === 'tab' &&
           !binding.modifiers.includes('ctrl')
         )

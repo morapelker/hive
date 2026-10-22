@@ -1694,11 +1694,12 @@ export class DocumentFlowRunner {
 
   /**
    * The brief a ticket session is launched with. The ticket's description is the brief, sent
-   * as it reads on the board (the user may have edited it), with no ticket wrapper and no
-   * attachments: the agent reads the task in the document itself. A ticket left without a
-   * description gets the standard brief. The rules of the run are settled now, whatever the
-   * description says: it was written when the run started, under the settings and
-   * verification choice of that moment. `workspace` names the members of a connection run.
+   * as it reads on the board (the user may have edited it), with no ticket wrapper, no
+   * attachments and never the ticket's note or labels: the agent reads the task in the
+   * document itself. A ticket left without a description gets the standard brief. The rules
+   * of the run are settled now, whatever the description says: it was written when the run
+   * started, under the settings and verification choice of that moment. `workspace` names
+   * the members of a connection run.
    */
   private launchBrief(
     op: ItemOp,

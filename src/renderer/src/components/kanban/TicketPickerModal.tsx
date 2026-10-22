@@ -138,6 +138,8 @@ export function TicketPickerModal({
 
   const handleDone = () => {
     const selectedTickets = tickets.filter((t) => selectedIds.has(t.id))
+    // Field by field: an attached ticket is written into the prompt, so its note and labels
+    // (personal, display-only) must stay out.
     const result: TicketAttachmentData[] = selectedTickets.map((t) => ({
       ticketId: t.id,
       title: t.title,

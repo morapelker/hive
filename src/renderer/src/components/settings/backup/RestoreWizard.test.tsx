@@ -3,7 +3,9 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { resetRendererRpcClientForTests, setRendererRpcClient } from '@/api/rpc-client'
+import { useTicketLabelsStore } from '@/stores/useTicketLabelsStore'
 import type { BackupFile, ProjectClassification, RestoreProjectResult } from '@shared/types/backup'
+import type { SavedTicketLabel } from '@shared/lib/ticket-labels'
 import { RestoreWizard } from './RestoreWizard'
 
 function makeProject(name: string, path: string, remoteUrl: string | null): BackupFile['projects'][number] {
@@ -218,6 +220,7 @@ describe('RestoreWizard', () => {
       }
       if (method === 'db.project.getAll') return []
       if (method === 'db.worktree.getActiveByProject') return []
+      if (method === 'ticketLabels.list') return []
       throw new Error(`unexpected method ${method}`)
     })
     setRendererRpcClient({ request, subscribe: vi.fn() })
@@ -255,5 +258,94 @@ describe('RestoreWizard', () => {
       (call) => call[0] === 'db.worktree.getActiveByProject'
     )
     expect(worktreeRefreshCalls).toEqual([['db.worktree.getActiveByProject', { projectId: 'project-a' }]])
+  })
+
+  describe('the label catalog', () => {
+    const singleBackup: BackupFile = {
+      version: 1,
+      kind: 'hive-backup',
+      created_at: '2026-07-09T00:00:00.000Z',
+      app_version: '1.2.12',
+      projects: [makeProject('proj-a', '/Users/me/proj-a', 'git@github.com:a/a.git')]
+    }
+    const singleClassification: ProjectClassification[] = [
+      {
+        path: '/Users/me/proj-a',
+        classification: 'exists-match',
+        alreadyInHive: false,
+        hiveProjectId: null,
+        effectivePath: '/Users/me/proj-a',
+        localRemoteUrl: 'git@github.com:a/a.git'
+      }
+    ]
+    const savedLabel = (id: string, name: string): SavedTicketLabel => ({
+      id,
+      name,
+      color: 'yellow',
+      sort_order: 0,
+      created_at: '2026-10-01T00:00:00.000Z',
+      updated_at: '2026-10-01T00:00:00.000Z'
+    })
+    const joy = savedLabel('l-joy', 'Waiting for Joy')
+    const blocked = savedLabel('l-blocked', 'Blocked')
+
+    afterEach(() => {
+      useTicketLabelsStore.setState({ labels: [], loaded: false, dialog: null })
+    })
+
+    async function restoreWith(result: RestoreProjectResult): Promise<ReturnType<typeof vi.fn>> {
+      const user = userEvent.setup()
+      const request: ReturnType<typeof vi.fn> = vi.fn(async (method: string) => {
+        if (method === 'backupOps.classifyProjects') return singleClassification
+        if (method === 'backupOps.restoreProject') return result
+        if (method === 'db.project.getAll') return []
+        if (method === 'db.worktree.getActiveByProject') return []
+        // The restore added "Blocked" to the catalog.
+        if (method === 'ticketLabels.list') return [joy, blocked]
+        throw new Error(`unexpected method ${method}`)
+      })
+      setRendererRpcClient({ request, subscribe: vi.fn() })
+
+      render(<RestoreWizard backup={singleBackup} open={true} onOpenChange={vi.fn()} />)
+      await screen.findByText('proj-a')
+      await user.click(screen.getByRole('button', { name: 'Continue' }))
+      await screen.findByText('Restore complete.', {}, { timeout: 3000 })
+      return request
+    }
+
+    it('reloads the catalog after a successful restore, even when a board already loaded it', async () => {
+      // A board loaded the catalog earlier in the session: ensureLoaded would do nothing.
+      useTicketLabelsStore.setState({ labels: [joy], loaded: true })
+
+      const request = await restoreWith({
+        success: true,
+        projectId: 'project-a',
+        projectName: 'proj-a',
+        action: 'pulled',
+        warnings: [],
+        worktrees: [],
+        tickets: { restored: 2, dependencyErrors: 0, skipped: false }
+      })
+
+      expect(request.mock.calls.filter((call) => call[0] === 'ticketLabels.list')).toHaveLength(1)
+      expect(useTicketLabelsStore.getState().labels).toEqual([joy, blocked])
+    })
+
+    it('leaves the catalog alone when no restore succeeded', async () => {
+      useTicketLabelsStore.setState({ labels: [joy], loaded: true })
+
+      const request = await restoreWith({
+        success: false,
+        projectName: 'proj-a',
+        action: 'failed',
+        warnings: [],
+        worktrees: [],
+        tickets: null,
+        error: 'clone failed'
+      })
+
+      expect(request.mock.calls.filter((call) => call[0] === 'ticketLabels.list')).toHaveLength(0)
+      expect(useTicketLabelsStore.getState().labels).toEqual([joy])
+    })
   })
 })

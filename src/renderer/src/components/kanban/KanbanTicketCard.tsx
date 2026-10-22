@@ -55,6 +55,9 @@ import { UpdateStatusModal } from './UpdateStatusModal'
 import { RemoteTerminalDialog } from './RemoteTerminalDialog'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { NoteEditorModal } from './NoteEditorModal'
+import { TicketLabelRow } from './TicketLabelChip'
+import { TicketLabelsSubmenu } from './TicketLabelsMenuItems'
+import { useTicketLabelSession } from './useTicketLabelSession'
 import { MoveToProjectModal } from './MoveToProjectModal'
 import { cn, parseColorQuad } from '@/lib/utils'
 import { visibleTicketTitle } from '@/lib/ticket-key-display'
@@ -138,6 +141,7 @@ import { useTimerTickStore } from '@/stores/useTimerTickStore'
 import { canToggleAutoApprovePlan } from '@/lib/plan-auto-approve'
 import { isAgentCli } from '@shared/types/agent-sdk'
 import { documentRunIdOf } from '@shared/document-flow/run-ticket'
+import { copyTicketLabelsForNewTicket, ticketLabelsOf } from '@shared/lib/ticket-labels'
 import { DocumentRunTicketBody } from '@/components/document-flow/DocumentRunTicketBody'
 import { DocumentRunPRLinks } from '@/components/document-flow/DocumentRunPRActions'
 import { useDocumentRunPRs } from '@/components/document-flow/useDocumentRunPRs'
@@ -243,6 +247,17 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   const activeRemoteLaunch =
     remoteLaunchInfo && !remoteLaunchInfo.stoppedAt ? remoteLaunchInfo : null
   const hasNote = !!ticket.note && ticket.note.trim().length > 0
+  // Labels: display-only chips under the title (another Mac's older build sends none). The
+  // Labels submenu remembers the one-offs unticked while the menu is open — that memory belongs
+  // to the root context menu (see useTicketLabelSession) and is dropped when it closes.
+  const ticketLabels = ticketLabelsOf(ticket)
+  const { session: labelSession, onMenuOpenChange: handleLabelMenuOpenChange } =
+    useTicketLabelSession({
+      projectId: ticket.project_id,
+      ticketId: ticket.id,
+      labels: ticket.labels,
+      enabled: true
+    })
   // The ticket of a document run: a ticket like any other on the board (drag, merge on Done),
   // but it shows the run and opens the run dashboard; it has no session to launch or continue.
   const documentRunId = documentRunIdOf(ticket)
@@ -250,7 +265,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   const documentRunView = useDocumentRunTicket(documentRunId, ticket.column)
   const documentRunToneClass = documentRunView ? documentRunTicketToneClass(documentRunView) : null
   // The PRs from the run's integration branch(es) into their base; nothing for a remote ticket
-  const documentRunPRs = useDocumentRunPRs(remoteOrigin ? '' : (documentRunId ?? ''), ticket)
+  const documentRunPRs = useDocumentRunPRs(documentRunId ?? '', ticket)
   // The document the run was made from: on the ticket row itself (so it is known even once the
   // run record is gone), else from the run for tickets created before it was stored there.
   const runSourcePath = useDocumentFlowStore((s) =>
@@ -1330,6 +1345,8 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         title: ticket.title,
         description: ticket.description,
         column: 'todo',
+        // Every label comes along; each one-off is re-issued so the two tickets' are independent
+        labels: copyTicketLabelsForNewTicket(ticketLabelsOf(ticket), () => crypto.randomUUID()),
         ...(shellCommandId
           ? { external_provider: SHELL_COMMAND_TICKET_PROVIDER, external_id: shellCommandId }
           : {})
@@ -1669,7 +1686,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   return (
     <>
       <Popover open={showPRPicker} onOpenChange={setShowPRPicker}>
-        <ContextMenu>
+        <ContextMenu onOpenChange={handleLabelMenuOpenChange}>
           <ContextMenuTrigger asChild>
             <PopoverAnchor asChild>
               <div
@@ -1826,6 +1843,14 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
               </div>
             </div>
 
+            {/* Labels: their own full-width row right under the title, every one shown (they
+                wrap), apart from the system pills below. Read-only on another Mac's ticket. */}
+            <TicketLabelRow
+              labels={ticketLabels}
+              // Above the dragon too, which reaches past the title on a run's ticket
+              className={isDocumentRunTicket ? 'relative z-[3]' : undefined}
+            />
+
             {/* Document run: marker, progress and state of the run this ticket stands for */}
             {documentRunId && documentRunView && (
               <DocumentRunTicketBody
@@ -1836,7 +1861,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
               />
             )}
             {/* Document run: its PRs (one per repository); the dashboard has the button that makes them */}
-            {documentRunId && documentRunView && !remoteOrigin && (
+            {documentRunId && documentRunView && (
               <DocumentRunPRLinks runId={documentRunId} prs={documentRunPRs} />
             )}
 
@@ -2653,6 +2678,12 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
               Remove note
             </ContextMenuItem>
           )}
+          <TicketLabelsSubmenu
+            projectId={ticket.project_id}
+            ticketId={ticket.id}
+            labels={ticketLabels}
+            session={labelSession}
+          />
 
           {canToggleAutoApprove && !isDocumentRunTicket && (
             <ContextMenuItem

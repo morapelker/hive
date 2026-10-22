@@ -76,6 +76,11 @@ import {
   type FavoriteTicketsRpcService
 } from './domains/favorite-tickets'
 import {
+  makeLiveTicketLabelsRpcService,
+  makeTicketLabelsRpcHandlers,
+  type TicketLabelsRpcService
+} from './domains/ticket-labels'
+import {
   makeFileTreeOpsRpcHandlers,
   makeLiveFileTreeOpsRpcService,
   type FileTreeOpsRpcService
@@ -209,6 +214,7 @@ export interface RpcContext {
   readonly terminalOps?: TerminalOpsRpcService
   readonly ticketAutocomplete?: TicketAutocompleteRpcService
   readonly ticketImport?: TicketImportRpcService
+  readonly ticketLabels?: TicketLabelsRpcService
   readonly telegramOps?: TelegramOpsRpcService
   readonly teleportOps?: TeleportOpsRpcService
   readonly updaterOps?: UpdaterOpsRpcService
@@ -294,6 +300,7 @@ const makeDefaultRpcHandlers = (context: RpcContext): ReadonlyMap<string, RpcHan
       context.ticketAutocomplete ?? makeLiveTicketAutocompleteRpcService()
     ),
     ...makeTicketImportRpcHandlers(context.ticketImport ?? makeLiveTicketImportRpcService()),
+    ...makeTicketLabelsRpcHandlers(context.ticketLabels ?? makeLiveTicketLabelsRpcService()),
     ...makeTelegramOpsRpcHandlers(
       context.telegramOps ?? makeLiveTelegramOpsRpcService(context.eventBus)
     ),

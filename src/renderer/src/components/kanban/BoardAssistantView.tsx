@@ -170,7 +170,17 @@ async function resolveProjectRuntime(
   return fallback?.path ? { worktreeId: fallback.id, path: fallback.path } : null
 }
 
-function buildBoardPrompt(input: string, scope: BoardChatScope, targetProjectId: string): string {
+/**
+ * The Board Assistant's prompt: its rules, the board as context and the user's request. Each
+ * ticket is projected to its title, a truncated description and its column, field by field:
+ * never the whole row, so the ticket's note and labels (personal, display-only) stay out of
+ * the model's input. Exported for lib/__tests__/labels-never-in-prompts.test.ts.
+ */
+export function buildBoardPrompt(
+  input: string,
+  scope: BoardChatScope,
+  targetProjectId: string
+): string {
   const projectStore = useProjectStore.getState()
   const kanbanStore = useKanbanStore.getState()
   const targetProject = projectStore.projects.find((project) => project.id === targetProjectId)

@@ -51,6 +51,7 @@ export { useConnectionStore } from './useConnectionStore'
 export { useRecentStore } from './useRecentStore'
 export { usePinnedStore } from './usePinnedStore'
 export { useFavoriteTicketsStore } from './useFavoriteTicketsStore'
+export { useTicketLabelsStore, type TicketLabelDialog } from './useTicketLabelsStore'
 export { useDocumentFlowStore } from './useDocumentFlowStore'
 export {
   useUsageStore,

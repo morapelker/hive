@@ -215,6 +215,7 @@ describe('duplicating a ticket', () => {
       title: 'Build',
       description: 'Runs make',
       column: 'todo',
+      labels: [],
       external_provider: 'shell-command',
       external_id: 'cmd-build'
     })
@@ -230,6 +231,7 @@ describe('duplicating a ticket', () => {
       title: 'Build',
       description: 'Runs make',
       column: 'todo',
+      labels: [],
       external_provider: 'shell-command',
       external_id: 'cmd-deploy'
     })
@@ -260,7 +262,8 @@ describe('duplicating a ticket', () => {
       project_id: 'project-1',
       title: 'Build',
       description: 'Runs make',
-      column: 'todo'
+      column: 'todo',
+      labels: []
     })
   })
 
@@ -299,7 +302,8 @@ describe('duplicating a ticket', () => {
       project_id: 'project-1',
       title: 'Build',
       description: 'Runs make',
-      column: 'todo'
+      column: 'todo',
+      labels: []
     })
   })
 })

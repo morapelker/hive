@@ -126,6 +126,10 @@ export interface ResolvedConnectionInstance {
 }
 
 // ── Prompt composition (mirrors WorktreePickerModal/ticket-launch) ──
+/**
+ * A ticket's launch prompt: the title, description and attachments only. The ticket's note
+ * and labels are personal, display-only fields and must never reach the model.
+ */
 export function buildTicketPrompt(mode: LaunchMode, ticket: ConnectionProjectTicket): string {
   const prefix =
     baseMode(mode) === 'build'

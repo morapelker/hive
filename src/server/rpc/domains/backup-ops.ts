@@ -8,12 +8,18 @@ import YAML from 'yaml'
 import { z } from 'zod'
 import type { CustomProjectCommand } from '@shared/lib/custom-commands'
 import { parseProjectShellCommands } from '../../../shared/lib/shell-commands'
+import {
+  normalizeTicketLabelName,
+  ticketLabelsOf,
+  TICKET_LABELS_MAX
+} from '../../../shared/lib/ticket-labels'
 import { isDesktopCommandResult, makeDesktopCommandRequest } from '../../../shared/desktop-command'
 import type {
   BackupExportResult,
   BackupFile,
   BackupOpenResult,
   BackupProject,
+  BackupTicketLabel,
   ProjectClassification,
   RestoreProjectResult,
   RestoreWorktreeResult
@@ -25,7 +31,9 @@ import type {
   Project,
   ProjectCreate,
   ProjectUpdate,
+  SavedTicketLabel,
   TicketDependency,
+  TicketLabel,
   TicketMark,
   Worktree,
   WorktreeCreate
@@ -76,6 +84,8 @@ interface BackupOpsDb {
     dependentId: string,
     blockerId: string
   ) => { success: boolean; error?: string }
+  /** The saved label of this name (case-insensitively), added to the catalog when missing. */
+  readonly resolveOrCreateSavedTicketLabel: (name: string, color: string) => SavedTicketLabel
   readonly transaction: <T>(fn: () => T) => T
 }
 
@@ -178,7 +188,9 @@ const backupTicketSchema = z
     archived_at: z.string().nullable(),
     worktree_branch: z.string().nullable(),
     external_provider: z.string().nullable().optional(),
-    external_id: z.string().nullable().optional()
+    external_id: z.string().nullable().optional(),
+    // Saved labels only; absent in backups written before labels existed.
+    labels: z.array(z.object({ name: z.string(), color: z.string() }).passthrough()).optional()
   })
   .passthrough()
 
@@ -329,6 +341,49 @@ async function readCustomIcon(
   }
 }
 
+/**
+ * The ticket's saved labels by name and colour (`{}` when it has none, so the key is omitted).
+ * One-off labels are left out on purpose: once removed from the ticket there must be no record
+ * of them anywhere, and a backup file would be one.
+ */
+function backupTicketLabelsField(ticket: KanbanTicket): { labels?: BackupTicketLabel[] } {
+  const labels = ticketLabelsOf(ticket)
+    .filter((label) => label.kind === 'saved')
+    .map(({ name, color }) => ({ name, color }))
+  return labels.length > 0 ? { labels } : {}
+}
+
+/**
+ * A backed-up ticket's labels on this Mac: each matched by name in the catalog, or added to it
+ * with the backed-up colour, so they are saved labels again. Blank names and repeats (two names
+ * that land on one entry) are skipped, at most TICKET_LABELS_MAX are kept, and a label the
+ * catalog refuses (it is full) is skipped with a warning instead of failing the ticket.
+ */
+function restoredTicketLabels(
+  db: Pick<BackupOpsDb, 'resolveOrCreateSavedTicketLabel'>,
+  entries: readonly BackupTicketLabel[] | undefined,
+  warnings: string[]
+): TicketLabel[] {
+  const labels: TicketLabel[] = []
+  const seen = new Set<string>()
+  for (const entry of entries ?? []) {
+    if (labels.length >= TICKET_LABELS_MAX) break
+    const name = normalizeTicketLabelName(entry.name)
+    if (!name) continue
+    let saved: SavedTicketLabel
+    try {
+      saved = db.resolveOrCreateSavedTicketLabel(name, entry.color)
+    } catch (error) {
+      warnings.push(`Could not restore the label "${name}": ${errorMessage(error)}`)
+      continue
+    }
+    if (seen.has(saved.id)) continue
+    seen.add(saved.id)
+    labels.push({ id: saved.id, kind: 'saved', name: saved.name, color: saved.color })
+  }
+  return labels
+}
+
 function buildTicketsAndDependencies(
   deps: BackupOpsDeps,
   project: Project
@@ -361,7 +416,8 @@ function buildTicketsAndDependencies(
       // Which project command a shell command's ticket runs (project commands are
       // backed up with the project)
       external_provider: ticket.external_provider,
-      external_id: ticket.external_id
+      external_id: ticket.external_id,
+      ...backupTicketLabelsField(ticket)
     }
   })
 
@@ -1016,6 +1072,7 @@ async function restoreProject(
 
       deps.db.transaction(() => {
         for (const ticketEntry of ticketList) {
+          const labels = restoredTicketLabels(deps.db, ticketEntry.labels, warnings)
           const created = deps.db.createKanbanTicket({
             project_id: projectId,
             title: ticketEntry.title,
@@ -1029,7 +1086,8 @@ async function restoreProject(
             mode: ticketEntry.mode,
             mark: ticketEntry.mark as TicketMark | null,
             external_provider: ticketEntry.external_provider ?? null,
-            external_id: ticketEntry.external_id ?? null
+            external_id: ticketEntry.external_id ?? null,
+            labels
           })
           if (ticketEntry.archived_at) {
             deps.db.updateKanbanTicket(created.id, { archived_at: ticketEntry.archived_at })
@@ -1249,6 +1307,8 @@ async function createLiveDeps(): Promise<BackupOpsDeps> {
       addTicketTokens: (ticketId, tokens) => db.addTicketTokens(ticketId, tokens),
       addTicketDependency: (dependentId, blockerId) =>
         db.addTicketDependency(dependentId, blockerId),
+      resolveOrCreateSavedTicketLabel: (name, color) =>
+        db.resolveOrCreateSavedTicketLabel(name, color),
       transaction: (fn) => db.transaction(fn)
     },
     git: {

@@ -22,6 +22,11 @@ import {
 import { CUSTOM_MODEL_PROVIDER_ID } from '@shared/types/custom-provider'
 import { documentRunIdOf, isDocumentRunTicket } from '@shared/document-flow/run-ticket'
 import { shellCommandIdOfTicket } from '@shared/lib/shell-commands'
+import {
+  applySavedTicketLabelChange,
+  ticketLabelsOf,
+  type SavedTicketLabelChange
+} from '@shared/lib/ticket-labels'
 import { isClaudeCliCompletionDetected } from '@shared/types/claude-cli-stop-completion'
 import { isPlanLike } from '../lib/constants'
 import { useConnectionStore } from './useConnectionStore'
@@ -752,6 +757,15 @@ interface KanbanState {
   attachPRToTicket: (ticketId: string, projectId: string, prNumber: number, prUrl: string) => void
   detachPRFromTicket: (ticketId: string, projectId: string) => void
 
+  // ── Ticket labels ──────────────────────────────────────────────────
+  /**
+   * Mirrors a saved-label catalog edit (rename, recolour, reorder, delete) on every loaded
+   * ticket that carries the label. The DB has already rewritten the rows; this renderer
+   * ignores the db:changed events it caused itself, so the cards need the local patch.
+   * Untouched tickets and projects keep their object identity, so their cards do not re-render.
+   */
+  applySavedLabelChange: (change: SavedTicketLabelChange) => void
+
   // ── Helpers ────────────────────────────────────────────────────────
   computeSortOrder: (tickets: KanbanTicket[], targetIndex: number) => number
 
@@ -790,6 +804,65 @@ const pendingExplicitReopens = new Map<string, Set<string>>()
 // the reopen. The auto_approve_plan exclusion is applied at reconcile time,
 // when the ticket is available to check. Same lifecycle as above.
 const pendingImplementReopens = new Map<string, Set<string>>()
+
+
+// ── Saved-label edits vs. ticket loads ─────────────────────────────────
+// applySavedLabelChange patches the loaded tickets once the DB has rewritten their label
+// snapshots. A ticket load answered before that rewrite but stored after the patch would put
+// the old name (or a deleted label) back, and nothing would correct it: the rewrite's
+// db:changed events are this renderer's own, so they are ignored. So every patch made while a
+// load is in flight is logged with a number, and each load replays the ones made since it began
+// onto its response before storing it. Replaying an edit the response already has changes
+// nothing (applySavedTicketLabelChange returns the same labels). The log only has to outlive
+// the loads in flight: it is emptied whenever none is.
+let savedLabelChangeSeq = 0
+const savedLabelChangeLog: Array<{ seq: number; change: SavedTicketLabelChange }> = []
+let ticketLoadsInFlight = 0
+
+/** A project's tickets after a catalog edit; the same array when no ticket carries the label. */
+function applySavedLabelChangeToTickets(
+  projectTickets: KanbanTicket[],
+  change: SavedTicketLabelChange
+): KanbanTicket[] {
+  let updated: KanbanTicket[] | null = null
+  for (let index = 0; index < projectTickets.length; index++) {
+    const t = projectTickets[index]
+    const labels = ticketLabelsOf(t)
+    const next = applySavedTicketLabelChange(labels, change)
+    if (next === labels) continue
+    updated ??= [...projectTickets]
+    updated[index] = { ...t, labels: [...next] }
+  }
+  return updated ?? projectTickets
+}
+
+interface TicketLoadLabelReplay {
+  /** The fetched tickets with every saved-label edit made since the load began. */
+  replay: (tickets: KanbanTicket[]) => KanbanTicket[]
+  /** The load is over (stored, or failed). */
+  end: () => void
+}
+
+/** Call before a ticket load's first fetch; replay inside its set(), end in its finally. */
+function beginTicketLoad(): TicketLoadLabelReplay {
+  ticketLoadsInFlight++
+  const since = savedLabelChangeSeq
+  let ended = false
+  return {
+    replay: (tickets) =>
+      savedLabelChangeLog.reduce(
+        (result, { seq, change }) =>
+          seq > since ? applySavedLabelChangeToTickets(result, change) : result,
+        tickets
+      ),
+    end: () => {
+      if (ended) return
+      ended = true
+      ticketLoadsInFlight--
+      if (ticketLoadsInFlight === 0) savedLabelChangeLog.length = 0
+    }
+  }
+}
 
 // ── Store ──────────────────────────────────────────────────────────────
 export const useKanbanStore = create<KanbanState>()(
@@ -862,6 +935,7 @@ export const useKanbanStore = create<KanbanState>()(
       // ── loadTickets ──────────────────────────────────────────────
       loadTickets: async (projectId: string) => {
         set({ isLoading: true })
+        const labelEdits = beginTicketLoad()
         try {
           const includeArchived = get().showArchivedByProject[projectId] ?? false
           const { tickets, diagnostics } = await loadProjectTicketsSnapshot(
@@ -872,7 +946,7 @@ export const useKanbanStore = create<KanbanState>()(
             const next = new Map(state.tickets)
             const nextDiagnostics = new Map(state.markdownDiagnostics)
             const nextPlaceholders = new Map(state.markdownPlaceholders)
-            next.set(projectId, tickets)
+            next.set(projectId, labelEdits.replay(tickets))
             nextDiagnostics.set(projectId, diagnostics)
             nextPlaceholders.set(
               projectId,
@@ -891,11 +965,14 @@ export const useKanbanStore = create<KanbanState>()(
           get().reconcileFinishedSessions(projectId)
         } catch {
           set({ isLoading: false })
+        } finally {
+          labelEdits.end()
         }
       },
 
       loadTicketsWithArchiveVisibility: async (projectId: string, includeArchived: boolean) => {
         set({ isLoading: true })
+        const labelEdits = beginTicketLoad()
         try {
           const { tickets, diagnostics } = await loadProjectTicketsSnapshot(
             projectId,
@@ -905,7 +982,7 @@ export const useKanbanStore = create<KanbanState>()(
             const next = new Map(state.tickets)
             const nextDiagnostics = new Map(state.markdownDiagnostics)
             const nextPlaceholders = new Map(state.markdownPlaceholders)
-            next.set(projectId, tickets)
+            next.set(projectId, labelEdits.replay(tickets))
             nextDiagnostics.set(projectId, diagnostics)
             nextPlaceholders.set(
               projectId,
@@ -922,6 +999,8 @@ export const useKanbanStore = create<KanbanState>()(
           get().reconcileFinishedSessions(projectId)
         } catch {
           set({ isLoading: false })
+        } finally {
+          labelEdits.end()
         }
       },
 
@@ -1030,6 +1109,7 @@ export const useKanbanStore = create<KanbanState>()(
 
       loadTicketsForProjectInAggregate: async (projectId: string) => {
         set({ isLoading: true })
+        const labelEdits = beginTicketLoad()
         try {
           const includeArchived = get().showArchivedByProject[projectId] ?? get().showArchivedByProject[''] ?? false
           const tickets = await kanban.ticket.getByProject<KanbanTicket>(
@@ -1043,7 +1123,7 @@ export const useKanbanStore = create<KanbanState>()(
             const next = new Map(state.tickets)
             const nextDiagnostics = new Map(state.markdownDiagnostics)
             const nextPlaceholders = new Map(state.markdownPlaceholders)
-            next.set(projectId, tickets)
+            next.set(projectId, labelEdits.replay(tickets))
             nextDiagnostics.set(projectId, diagnostics)
             nextPlaceholders.set(
               projectId,
@@ -1060,6 +1140,8 @@ export const useKanbanStore = create<KanbanState>()(
           get().reconcileFinishedSessions(projectId)
         } catch {
           set({ isLoading: false })
+        } finally {
+          labelEdits.end()
         }
       },
 
@@ -2304,6 +2386,7 @@ export const useKanbanStore = create<KanbanState>()(
         }
 
         set({ isLoading: true })
+        const labelEdits = beginTicketLoad()
         try {
           const includeArchived = (pid: string) =>
             get().showArchivedByProject[pid] ?? get().showArchivedByProject[''] ?? false
@@ -2330,7 +2413,7 @@ export const useKanbanStore = create<KanbanState>()(
             const newPlaceholders = new Map(state.markdownPlaceholders)
             results.forEach((result) => {
               const diagnostics = diagnosticsMap.get(result.projectId) ?? []
-              newTickets.set(result.projectId, result.tickets)
+              newTickets.set(result.projectId, labelEdits.replay(result.tickets))
               newDiagnostics.set(result.projectId, diagnostics)
               newPlaceholders.set(
                 result.projectId,
@@ -2351,6 +2434,7 @@ export const useKanbanStore = create<KanbanState>()(
         } catch (error) {
           console.error('Failed to load tickets for connection:', error)
         } finally {
+          labelEdits.end()
           set({ isLoading: false })
         }
       },
@@ -2407,6 +2491,7 @@ export const useKanbanStore = create<KanbanState>()(
         }
 
         set({ isLoading: true })
+        const labelEdits = beginTicketLoad()
         try {
           const includeArchived = (pid: string) =>
             get().showArchivedByProject[pid] ?? get().showArchivedByProject[''] ?? false
@@ -2433,7 +2518,7 @@ export const useKanbanStore = create<KanbanState>()(
             const newPlaceholders = new Map(state.markdownPlaceholders)
             results.forEach((result) => {
               const diagnostics = diagnosticsMap.get(result.projectId) ?? []
-              newTickets.set(result.projectId, result.tickets)
+              newTickets.set(result.projectId, labelEdits.replay(result.tickets))
               newDiagnostics.set(result.projectId, diagnostics)
               newPlaceholders.set(
                 result.projectId,
@@ -2454,6 +2539,7 @@ export const useKanbanStore = create<KanbanState>()(
         } catch (error) {
           console.error('Failed to load tickets for pinned projects:', error)
         } finally {
+          labelEdits.end()
           set({ isLoading: false })
         }
       },
@@ -2552,6 +2638,29 @@ export const useKanbanStore = create<KanbanState>()(
           const newTickets = new Map(state.tickets)
           newTickets.set(projectId, updated)
           return { tickets: newTickets }
+        })
+      },
+
+      // ── applySavedLabelChange ────────────────────────────────────
+      // Every board (project, connection, pinned, aggregate) reads its tickets from `tickets`,
+      // so this one map is all there is to patch. Not a kanban mutation: the DB write already
+      // happened, and nothing is sent from here. A load still in flight replays it (see
+      // beginTicketLoad), as its response may predate the rewrite.
+      applySavedLabelChange: (change: SavedTicketLabelChange) => {
+        savedLabelChangeSeq++
+        if (ticketLoadsInFlight > 0) {
+          savedLabelChangeLog.push({ seq: savedLabelChangeSeq, change })
+        }
+        set((state) => {
+          let newTickets: Map<string, KanbanTicket[]> | null = null
+          for (const [projectId, projectTickets] of state.tickets) {
+            const updated = applySavedLabelChangeToTickets(projectTickets, change)
+            if (updated !== projectTickets) {
+              newTickets ??= new Map(state.tickets)
+              newTickets.set(projectId, updated)
+            }
+          }
+          return newTickets ? { tickets: newTickets } : state
         })
       },
 

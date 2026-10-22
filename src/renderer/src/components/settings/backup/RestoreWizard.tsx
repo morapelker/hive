@@ -21,7 +21,7 @@ import {
 } from '@/components/ui/dialog'
 import { backupApi } from '@/api/backup-api'
 import { projectApi } from '@/api/project-api'
-import { useProjectStore, useWorktreeStore } from '@/stores'
+import { useProjectStore, useTicketLabelsStore, useWorktreeStore } from '@/stores'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 
@@ -253,6 +253,13 @@ export function RestoreWizard({ backup, open, onOpenChange }: RestoreWizardProps
       if (result.success && result.projectId) {
         await useWorktreeStore.getState().loadWorktrees(result.projectId, { force: true })
       }
+    }
+    // A restored ticket's saved labels join this Mac's catalog. The restore's db:changed event
+    // carries this window's own origin (it ran on this window's request), so the sync hook
+    // ignores it, and ensureLoaded does nothing once a board has loaded the catalog: fetch it
+    // here (load never rejects).
+    if (results.some((result) => result.success)) {
+      await useTicketLabelsStore.getState().load()
     }
   }, [])
 

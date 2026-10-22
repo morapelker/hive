@@ -1,6 +1,14 @@
 import { deleteAttachment } from '../services/attachment-storage'
 import type { AgentSdk } from '@shared/types/agent-sdk'
 import { parseProjectShellCommands } from '@shared/lib/shell-commands'
+import {
+  SAVED_TICKET_LABELS_MAX,
+  applySavedTicketLabelChange,
+  isTicketLabelColor,
+  normalizeTicketLabelName,
+  parseTicketLabels,
+  ticketLabelNameKey
+} from '@shared/lib/ticket-labels'
 import type { SessionProfilerTicket } from '@shared/types/session-profiler'
 import { formatTicketKey, TICKET_KEY_PREFIX_SETTING } from '@shared/ticket-key'
 import {
@@ -44,7 +52,12 @@ import { existsSync, mkdirSync, statSync } from 'fs'
 import { randomUUID } from 'crypto'
 import { homedir } from 'os'
 import { Worker as NodeWorker } from 'node:worker_threads'
-import { DOCUMENT_FLOW_TABLES_SQL, MIGRATIONS, VOICE_HISTORY_TABLES_SQL } from './schema'
+import {
+  DOCUMENT_FLOW_TABLES_SQL,
+  MIGRATIONS,
+  TICKET_LABELS_TABLES_SQL,
+  VOICE_HISTORY_TABLES_SQL
+} from './schema'
 import type {
   Project,
   ProjectCreate,
@@ -82,6 +95,12 @@ import type {
   FavoriteTicket,
   FavoriteTicketCreate,
   FavoriteTicketUpdate,
+  SavedTicketLabel,
+  SavedTicketLabelChange,
+  SavedTicketLabelCreate,
+  SavedTicketLabelMutationResult,
+  SavedTicketLabelUpdate,
+  TicketLabelColor,
   KanbanTicket,
   KanbanTicketCreate,
   KanbanTicketBatchCreate,
@@ -108,6 +127,19 @@ import type {
 /** Escape `%`, `_` and `\` for a LIKE pattern used with `ESCAPE '\'`. */
 function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, (ch) => `\\${ch}`)
+}
+
+/**
+ * LIKE pattern (with `ESCAPE '\'`) that pre-selects the tickets whose labels JSON mentions a
+ * label id: the id as JSON.stringify writes it, quotes included.
+ */
+function ticketLabelIdPattern(id: string): string {
+  return `%${escapeLike(JSON.stringify(id))}%`
+}
+
+/** A palette colour as is; anything else (never expected past the RPC schemas) as gray. */
+function ticketLabelColorOrGray(color: string): TicketLabelColor {
+  return isTicketLabelColor(color) ? color : 'gray'
 }
 
 // Every other Hive process runs the server bundle as plain node
@@ -544,6 +576,7 @@ export class DatabaseService implements DocumentFlowDb {
       goal_mode: row.goal_mode === 1,
       goal_success_criteria: (row.goal_success_criteria as string) ?? null,
       note: (row.note as string) ?? null,
+      labels: parseTicketLabels(row.labels),
       created_from_session: row.created_from_session === 1,
       auto_approve_plan: row.auto_approve_plan === 1,
       unread: row.unread === 1,
@@ -751,6 +784,7 @@ export class DatabaseService implements DocumentFlowDb {
     this.ensureDocumentFlowTables()
     // After the document-flow tables: the key backfill reads document_runs / document_run_items.
     this.ensureTicketKeys()
+    this.ensureTicketLabelTables()
   }
 
   /** Idempotently ensure the voice dictation history table exists (repair for the v48 migration). */
@@ -759,7 +793,15 @@ export class DatabaseService implements DocumentFlowDb {
   }
 
   /**
-   * Idempotently ensure the "Implement document" tables exist (repair for the v55 migration):
+   * Idempotently ensure the saved ticket-label catalog exists (repair for v59). The per-ticket
+   * `labels` columns are repaired in ensureConnectionTables(), next to `note`.
+   */
+  private ensureTicketLabelTables(): void {
+    this.getDb().exec(TICKET_LABELS_TABLES_SQL)
+  }
+
+  /**
+   * Idempotently ensure the "Implement document" tables exist (repair for the v52 migration):
    * runs, their items and events, and the per-session final messages. IF NOT EXISTS only.
    */
   private ensureDocumentFlowTables(): void {
@@ -928,6 +970,7 @@ export class DatabaseService implements DocumentFlowDb {
     this.safeAddColumn('kanban_tickets', 'github_pr_url', 'TEXT DEFAULT NULL')
     this.safeAddColumn('kanban_tickets', 'mark', 'TEXT DEFAULT NULL')
     this.safeAddColumn('kanban_tickets', 'note', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('kanban_tickets', 'labels', "TEXT NOT NULL DEFAULT '[]'")
     this.safeAddColumn('kanban_tickets', 'goal_mode', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('kanban_tickets', 'goal_success_criteria', 'TEXT DEFAULT NULL')
     this.safeAddColumn('kanban_tickets', 'created_from_session', 'INTEGER NOT NULL DEFAULT 0')
@@ -1056,6 +1099,7 @@ export class DatabaseService implements DocumentFlowDb {
         ON markdown_kanban_card_state(project_id, card_id);
     `)
     this.safeAddColumn('markdown_kanban_card_state', 'note', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('markdown_kanban_card_state', 'labels', "TEXT NOT NULL DEFAULT '[]'")
     this.safeAddColumn('markdown_kanban_card_state', 'attachments', "TEXT NOT NULL DEFAULT '[]'")
     this.safeAddColumn('markdown_kanban_card_state', 'plan_ready', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('markdown_kanban_card_state', 'total_tokens', 'INTEGER NOT NULL DEFAULT 0')
@@ -3815,6 +3859,7 @@ export class DatabaseService implements DocumentFlowDb {
     const mark = data.mark ?? null
     const createdFromSession = data.created_from_session ? 1 : 0
     const note = data.note ?? null
+    const labelsJson = JSON.stringify(parseTicketLabels(data.labels ?? []))
     const modelProviderId = data.model_provider_id ?? null
     const modelId = data.model_id ?? null
     const modelVariant = data.model_variant ?? null
@@ -3832,8 +3877,8 @@ export class DatabaseService implements DocumentFlowDb {
       : undefined
 
     db.prepare(
-      `INSERT INTO kanban_tickets (id, project_id, title, description, attachments, "column", sort_order, current_session_id, worktree_id, mode, plan_ready, external_provider, external_id, external_url, github_pr_number, github_pr_url, mark, created_from_session, note, model_provider_id, model_id, model_variant, variant_group_id, ticket_prefix, ticket_number, parent_ticket_id, created_at, updated_at, column_changed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO kanban_tickets (id, project_id, title, description, attachments, "column", sort_order, current_session_id, worktree_id, mode, plan_ready, external_provider, external_id, external_url, github_pr_number, github_pr_url, mark, created_from_session, note, labels, model_provider_id, model_id, model_variant, variant_group_id, ticket_prefix, ticket_number, parent_ticket_id, created_at, updated_at, column_changed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       id,
       data.project_id,
@@ -3854,6 +3899,7 @@ export class DatabaseService implements DocumentFlowDb {
       mark,
       createdFromSession,
       note,
+      labelsJson,
       modelProviderId,
       modelId,
       modelVariant,
@@ -3886,6 +3932,7 @@ export class DatabaseService implements DocumentFlowDb {
       mark,
       created_from_session: createdFromSession,
       note,
+      labels: labelsJson,
       model_provider_id: modelProviderId,
       model_id: modelId,
       model_variant: modelVariant,
@@ -4137,6 +4184,7 @@ export class DatabaseService implements DocumentFlowDb {
           github_pr_url: draft.github_pr_url,
           mark: draft.mark,
           note: draft.note,
+          labels: draft.labels,
           model_provider_id: draft.model_provider_id,
           model_id: draft.model_id,
           model_variant: draft.model_variant,
@@ -4222,7 +4270,8 @@ export class DatabaseService implements DocumentFlowDb {
    * model: titles and descriptions. Imported tickets (Jira, GitHub), tickets
    * generated from a session and mega-plan tickets were not typed by the user
    * and would teach someone else's phrasing, so they are left out. `note` is
-   * private and never leaves the ticket, so it is left out too.
+   * private and never leaves the ticket, so it is left out too, and so are
+   * `labels` (display-only tags that must never reach a model).
    */
   getTicketAutocompleteCorpus(): string[] {
     const rows = this.getDb()
@@ -4319,6 +4368,10 @@ export class DatabaseService implements DocumentFlowDb {
     if (data.note !== undefined) {
       updates.push('note = ?')
       values.push(data.note)
+    }
+    if (data.labels !== undefined) {
+      updates.push('labels = ?')
+      values.push(JSON.stringify(parseTicketLabels(data.labels)))
     }
     if (data.auto_approve_plan !== undefined) {
       updates.push('auto_approve_plan = ?')
@@ -4495,6 +4548,335 @@ export class DatabaseService implements DocumentFlowDb {
     const db = this.getDb()
     const result = db.prepare('DELETE FROM favorite_tickets WHERE id = ?').run(id)
     return result.changes > 0
+  }
+
+  // Saved ticket labels (global, cross-project catalog; shared/lib/ticket-labels.ts)
+  //
+  // Tickets carry snapshots of their labels (kanban_tickets.labels and, on markdown boards,
+  // markdown_kanban_card_state.labels), so renaming, recolouring, reordering or deleting a
+  // catalog entry rewrites every snapshot of it in the same transaction. Those rewrites leave
+  // the tickets' updated_at alone: a catalog edit is not an edit of the ticket. One-off labels
+  // never get a row here.
+
+  private mapSavedTicketLabelRow(row: Record<string, unknown>): SavedTicketLabel {
+    return {
+      id: row.id as string,
+      name: row.name as string,
+      color: row.color as string,
+      sort_order: row.sort_order as number,
+      created_at: row.created_at as string,
+      updated_at: row.updated_at as string
+    }
+  }
+
+  /** The catalog in display order (the order a ticket's saved labels are drawn in). */
+  getSavedTicketLabels(): SavedTicketLabel[] {
+    const rows = this.getDb()
+      .prepare('SELECT * FROM ticket_labels ORDER BY sort_order ASC, created_at ASC, id ASC')
+      .all() as Record<string, unknown>[]
+    return rows.map((row) => this.mapSavedTicketLabelRow(row))
+  }
+
+  getSavedTicketLabel(id: string): SavedTicketLabel | null {
+    const row = this.getDb().prepare('SELECT * FROM ticket_labels WHERE id = ?').get(id) as
+      Record<string, unknown> | undefined
+    return row ? this.mapSavedTicketLabelRow(row) : null
+  }
+
+  /**
+   * Adds a label at the end of the catalog. The name is normalised and must be unique
+   * case-insensitively; a colour outside the palette is stored as gray. Throws a user-facing
+   * Error on an empty name, a name clash or a full catalog.
+   */
+  createSavedTicketLabel(data: SavedTicketLabelCreate): SavedTicketLabel {
+    const label = this.transaction(() => this.insertSavedTicketLabel(data.name, data.color))
+    emitDbChanged({ entity: 'ticketLabel', op: 'create', id: label.id, projectId: null })
+    return label
+  }
+
+  /**
+   * Renames and/or recolours a catalog label and rewrites every ticket snapshot of it, in one
+   * transaction. `label` is null when the id is unknown; nothing is written (and no event is
+   * emitted) when neither the name nor the colour changes. Throws the same name errors as
+   * createSavedTicketLabel.
+   */
+  updateSavedTicketLabel(id: string, data: SavedTicketLabelUpdate): SavedTicketLabelMutationResult {
+    const outcome = withDbChangeBatch(() =>
+      this.transaction(() => {
+        const existing = this.getSavedTicketLabel(id)
+        if (!existing) return { changed: false, label: null, affectedProjectIds: [] }
+        const name =
+          data.name !== undefined ? this.requireTicketLabelName(data.name) : existing.name
+        const color = data.color !== undefined ? ticketLabelColorOrGray(data.color) : existing.color
+        if (name === existing.name && color === existing.color) {
+          return { changed: false, label: existing, affectedProjectIds: [] }
+        }
+        const nameKey = ticketLabelNameKey(name)
+        this.assertTicketLabelNameFree(nameKey, id)
+
+        const now = new Date().toISOString()
+        this.getDb()
+          .prepare(
+            'UPDATE ticket_labels SET name = ?, name_key = ?, color = ?, updated_at = ? WHERE id = ?'
+          )
+          .run(name, nameKey, color, now, id)
+        const affectedProjectIds = this.rewriteTicketLabelSnapshots(
+          { type: 'update', label: { id, name, color } },
+          ticketLabelIdPattern(id)
+        )
+        const label: SavedTicketLabel = { ...existing, name, color, updated_at: now }
+        return { changed: true, label, affectedProjectIds }
+      })
+    )
+    if (outcome.changed) {
+      this.emitTicketLabelChange('update', id, outcome.affectedProjectIds)
+    }
+    return { label: outcome.label, affectedProjectIds: outcome.affectedProjectIds }
+  }
+
+  /**
+   * Puts the catalog in the given order: unknown ids are ignored, and catalog labels missing
+   * from the list keep their relative order after the listed ones. Every ticket carrying saved
+   * labels has them re-sorted to the new order, in the same transaction.
+   */
+  reorderSavedTicketLabels(ids: string[]): SavedTicketLabelMutationResult {
+    const outcome = withDbChangeBatch(() =>
+      this.transaction(() => {
+        const catalog = this.getSavedTicketLabels()
+        const sortOrderById = new Map(catalog.map((label) => [label.id, label.sort_order]))
+        const listed = [...new Set(ids)].filter((id) => sortOrderById.has(id))
+        const listedSet = new Set(listed)
+        const order = [
+          ...listed,
+          ...catalog.map((label) => label.id).filter((id) => !listedSet.has(id))
+        ]
+
+        // Positions are renumbered 0..n-1; rows already in place are not written.
+        const now = new Date().toISOString()
+        const setOrder = this.getDb().prepare(
+          'UPDATE ticket_labels SET sort_order = ?, updated_at = ? WHERE id = ?'
+        )
+        let changed = false
+        order.forEach((id, index) => {
+          if (sortOrderById.get(id) === index) return
+          setOrder.run(index, now, id)
+          changed = true
+        })
+        if (!changed) return { changed: false, affectedProjectIds: [] as string[] }
+
+        const affectedProjectIds = this.rewriteTicketLabelSnapshots(
+          { type: 'reorder', ids: order },
+          '%"saved"%'
+        )
+        return { changed: true, affectedProjectIds }
+      })
+    )
+    if (outcome.changed) {
+      this.emitTicketLabelChange('reorder', null, outcome.affectedProjectIds)
+    }
+    return { label: null, affectedProjectIds: outcome.affectedProjectIds }
+  }
+
+  /**
+   * Deletes a catalog label and removes it from every ticket, in one transaction. `label` is
+   * the deleted row, or null when the id was not in the catalog; snapshots of the id are swept
+   * either way (one may outlive its row by a moment when another window deletes it).
+   */
+  deleteSavedTicketLabel(id: string): SavedTicketLabelMutationResult {
+    const result = withDbChangeBatch(() =>
+      this.transaction((): SavedTicketLabelMutationResult => {
+        const existing = this.getSavedTicketLabel(id)
+        if (existing) this.getDb().prepare('DELETE FROM ticket_labels WHERE id = ?').run(id)
+        const affectedProjectIds = this.rewriteTicketLabelSnapshots(
+          { type: 'delete', id },
+          ticketLabelIdPattern(id)
+        )
+        return { label: existing, affectedProjectIds }
+      })
+    )
+    this.emitTicketLabelChange(result.label ? 'delete' : null, id, result.affectedProjectIds)
+    return result
+  }
+
+  /**
+   * Saved label id -> number of tickets carrying it, across every project: board tickets
+   * (archived included) and markdown cards (runtime rows of cards whose file has vanished are
+   * not counted). Only `kind: 'saved'` entries count; a malformed `labels` value counts as none.
+   */
+  getSavedTicketLabelUsage(): Record<string, number> {
+    const rows = this.getDb()
+      .prepare(
+        `SELECT json_extract(src.labels, je.fullkey || '.id') AS label_id,
+                COUNT(DISTINCT src.ticket) AS tickets
+         FROM (
+           SELECT 'kanban:' || id AS ticket, labels
+             FROM kanban_tickets
+             WHERE labels LIKE '%"saved"%'
+           UNION ALL
+           SELECT 'markdown:' || project_id || ':' || card_id AS ticket, labels
+             FROM markdown_kanban_card_state
+             WHERE labels LIKE '%"saved"%' AND orphaned_at IS NULL
+         ) src,
+         json_each(
+           CASE WHEN json_valid(src.labels) THEN
+             CASE json_type(src.labels) WHEN 'array' THEN src.labels END
+           END
+         ) je
+         WHERE json_extract(src.labels, je.fullkey || '.kind') = 'saved'
+         GROUP BY label_id`
+      )
+      .all() as { label_id: unknown; tickets: number }[]
+    const usage: Record<string, number> = {}
+    for (const row of rows) {
+      if (typeof row.label_id === 'string' && row.label_id.length > 0) {
+        usage[row.label_id] = row.tickets
+      }
+    }
+    return usage
+  }
+
+  /**
+   * The catalog label with this name (case-insensitively), created with `color` (gray when it
+   * is not a palette colour) when there is none. Used when labels arrive from elsewhere (a
+   * ticket moved from another Mac, a backup). Throws like createSavedTicketLabel on an empty
+   * name or a full catalog.
+   */
+  resolveOrCreateSavedTicketLabel(name: string, color: string): SavedTicketLabel {
+    const outcome = this.transaction(() => {
+      const existing = this.getDb()
+        .prepare('SELECT * FROM ticket_labels WHERE name_key = ?')
+        .get(ticketLabelNameKey(name)) as Record<string, unknown> | undefined
+      if (existing) return { created: false, label: this.mapSavedTicketLabelRow(existing) }
+      return { created: true, label: this.insertSavedTicketLabel(name, color) }
+    })
+    if (outcome.created) {
+      emitDbChanged({ entity: 'ticketLabel', op: 'create', id: outcome.label.id, projectId: null })
+    }
+    return outcome.label
+  }
+
+  /** Inserts a catalog row after every existing one. Call inside a transaction. */
+  private insertSavedTicketLabel(rawName: string, rawColor: string): SavedTicketLabel {
+    const db = this.getDb()
+    const name = this.requireTicketLabelName(rawName)
+    const nameKey = ticketLabelNameKey(name)
+    this.assertTicketLabelNameFree(nameKey, null)
+    const stats = db
+      .prepare('SELECT COUNT(*) AS count, MAX(sort_order) AS max_sort FROM ticket_labels')
+      .get() as { count: number; max_sort: number | null }
+    if (stats.count >= SAVED_TICKET_LABELS_MAX) throw new Error('Too many labels')
+
+    const now = new Date().toISOString()
+    const label: SavedTicketLabel = {
+      id: randomUUID(),
+      name,
+      color: ticketLabelColorOrGray(rawColor),
+      sort_order: (stats.max_sort ?? -1) + 1,
+      created_at: now,
+      updated_at: now
+    }
+    db.prepare(
+      `INSERT INTO ticket_labels (id, name, name_key, color, sort_order, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      label.id,
+      label.name,
+      nameKey,
+      label.color,
+      label.sort_order,
+      label.created_at,
+      label.updated_at
+    )
+    return label
+  }
+
+  /** The normalised name; throws the user-facing error when nothing is left of it. */
+  private requireTicketLabelName(rawName: string): string {
+    const name = normalizeTicketLabelName(rawName)
+    if (name.length === 0) throw new Error('Label name is required')
+    return name
+  }
+
+  /** Throws the user-facing clash error when another catalog label has this name key. */
+  private assertTicketLabelNameFree(nameKey: string, exceptId: string | null): void {
+    const clash = this.getDb()
+      .prepare('SELECT name FROM ticket_labels WHERE name_key = ? AND id IS NOT ?')
+      .get(nameKey, exceptId) as { name: string } | undefined
+    if (clash) throw new Error(`A label named "${clash.name}" already exists`)
+  }
+
+  /**
+   * Applies a catalog edit to every ticket snapshot: board tickets and markdown runtime rows
+   * of every project, archived and orphaned ones included. `candidatePattern` is a LIKE
+   * pattern that pre-selects rows (a superset); each candidate is parsed and only rewritten
+   * when the edit changes it. updated_at is left alone. Call inside a transaction. Returns the
+   * ids of the projects whose tickets changed, sorted.
+   */
+  private rewriteTicketLabelSnapshots(
+    change: SavedTicketLabelChange,
+    candidatePattern: string
+  ): string[] {
+    const db = this.getDb()
+    const affected = new Set<string>()
+
+    const tickets = db
+      .prepare(`SELECT id, project_id, labels FROM kanban_tickets WHERE labels LIKE ? ESCAPE '\\'`)
+      .all(candidatePattern) as { id: string; project_id: string; labels: string | null }[]
+    const setTicketLabels = db.prepare('UPDATE kanban_tickets SET labels = ? WHERE id = ?')
+    for (const row of tickets) {
+      const current = parseTicketLabels(row.labels)
+      const next = applySavedTicketLabelChange(current, change)
+      if (next === current) continue
+      setTicketLabels.run(JSON.stringify(next), row.id)
+      affected.add(row.project_id)
+    }
+
+    const cards = db
+      .prepare(
+        `SELECT project_id, card_id, labels FROM markdown_kanban_card_state WHERE labels LIKE ? ESCAPE '\\'`
+      )
+      .all(candidatePattern) as { project_id: string; card_id: string; labels: string | null }[]
+    const setCardLabels = db.prepare(
+      'UPDATE markdown_kanban_card_state SET labels = ? WHERE project_id = ? AND card_id = ?'
+    )
+    let cardsRewritten = false
+    for (const row of cards) {
+      const current = parseTicketLabels(row.labels)
+      const next = applySavedTicketLabelChange(current, change)
+      if (next === current) continue
+      setCardLabels.run(JSON.stringify(next), row.project_id, row.card_id)
+      affected.add(row.project_id)
+      cardsRewritten = true
+    }
+    if (cardsRewritten) this.markdownLabelSnapshotGeneration += 1
+
+    return [...affected].sort()
+  }
+
+  /**
+   * Moves (in this process) whenever a catalog edit rewrote label snapshots in
+   * markdown_kanban_card_state. The markdown kanban backend caches each board's runtime rows
+   * and reloads a cached board whose generation is older, so it never serves stale labels.
+   */
+  get ticketLabelSnapshotGeneration(): number {
+    return this.markdownLabelSnapshotGeneration
+  }
+
+  private markdownLabelSnapshotGeneration = 0
+
+  /**
+   * After a catalog edit has committed: the catalog event (skipped when `op` is null) and one
+   * coarse ticket `batch` event per project whose ticket snapshots were rewritten.
+   */
+  private emitTicketLabelChange(
+    op: 'update' | 'reorder' | 'delete' | null,
+    id: string | null,
+    affectedProjectIds: readonly string[]
+  ): void {
+    if (op) emitDbChanged({ entity: 'ticketLabel', op, id, projectId: null })
+    for (const projectId of affectedProjectIds) {
+      emitDbChanged({ entity: 'ticket', op: 'batch', id: null, projectId })
+    }
   }
 
   archiveAllDoneKanbanTickets(projectId: string, includeMerged = false): number {

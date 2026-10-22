@@ -8,6 +8,7 @@ import { useProjectStore } from '@/stores/useProjectStore'
 import { useBoardChatStore } from '@/stores/useBoardChatStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useFavoriteTicketsStore } from '@/stores/useFavoriteTicketsStore'
+import { useTicketLabelsStore } from '@/stores/useTicketLabelsStore'
 import { KanbanColumn } from '@/components/kanban/KanbanColumn'
 import { KanbanTicketModal } from '@/components/kanban/KanbanTicketModal'
 import { BoardChatLauncher } from '@/components/kanban/BoardChatLauncher'
@@ -15,6 +16,8 @@ import { BoardSearchBar } from '@/components/kanban/BoardSearchBar'
 import { FavoriteTicketsPane } from '@/components/kanban/FavoriteTicketsPane'
 import { MergeOnDoneDialog } from './MergeOnDoneDialog'
 import { RenameTicketDialog } from './RenameTicketModal'
+import { TicketLabelDialog } from './TicketLabelDialog'
+import { ManageTicketLabelsDialog } from './ManageTicketLabelsDialog'
 import { cn } from '@/lib/utils'
 import { toast } from '@/lib/toast'
 import { useMarkdownKanbanWatcher } from '@/hooks/useMarkdownKanbanWatcher'
@@ -158,6 +161,14 @@ export function KanbanBoard({ projectId, connectionId, isPinnedMode }: KanbanBoa
       loadTickets(projectId)
     }
   }, [projectId, connectionId, isConnectionMode, isPinnedMode, pinnedProjectIds, showArchivedAll, loadTickets, loadTicketsForConnection, loadTicketsForPinnedProjects])
+
+  // The saved-label catalog (one per Mac, shared by every board): loaded with the board so a
+  // card's Labels menu opens with it in hand. A label dialog left open closes with the board
+  // rather than popping up again the next time a board mounts.
+  useEffect(() => {
+    useTicketLabelsStore.getState().ensureLoaded().catch(() => undefined)
+    return () => useTicketLabelsStore.getState().closeDialog()
+  }, [])
 
   // ESC key handler for dependency mode
   useEffect(() => {
@@ -536,6 +547,10 @@ export function KanbanBoard({ projectId, connectionId, isPinnedMode }: KanbanBoa
             })()}
             <KanbanTicketModal />
             <RenameTicketDialog />
+            {/* The label dialogs the cards' Labels menus open. MainPane mounts one board at a
+                time, so each renders once. */}
+            <TicketLabelDialog />
+            <ManageTicketLabelsDialog />
             <MergeOnDoneDialog />
             {/* SVG dependency lines */}
             {svgPaths.length > 0 && (

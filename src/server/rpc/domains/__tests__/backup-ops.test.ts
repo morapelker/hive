@@ -7,8 +7,15 @@ import { Effect } from 'effect'
 import YAML from 'yaml'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { KanbanTicket, Project, TicketDependency, Worktree } from '../../../../main/db'
-import type { BackupFile, BackupProject } from '../../../../shared/types/backup'
+import type {
+  KanbanTicket,
+  Project,
+  SavedTicketLabel,
+  TicketDependency,
+  TicketLabel,
+  Worktree
+} from '../../../../main/db'
+import type { BackupFile, BackupOpenResult, BackupProject } from '../../../../shared/types/backup'
 import {
   makeBackupOpsRpcHandlers,
   makeBackupOpsRpcService,
@@ -129,6 +136,10 @@ function ticket(overrides: Partial<KanbanTicket> = {}): KanbanTicket {
   }
 }
 
+function savedLabel(id: string, name: string, color: string): SavedTicketLabel {
+  return { id, name, color, sort_order: 0, created_at: now, updated_at: now }
+}
+
 /** Builds real fs-backed deps for exportBackup tests: writeFile/readFile/stat hit disk. */
 function makeFsDeps(): BackupOpsDeps['fs'] {
   return {
@@ -163,6 +174,9 @@ function makeDeps(overrides: Partial<BackupOpsDeps> = {}): BackupOpsDeps {
       updateKanbanTicket: vi.fn(() => null),
       addTicketTokens: vi.fn(),
       addTicketDependency: vi.fn(() => ({ success: true })),
+      resolveOrCreateSavedTicketLabel: vi.fn((name: string, color: string) =>
+        savedLabel(`label-${name.toLowerCase()}`, name, color)
+      ),
       transaction: vi.fn((fn) => fn())
     },
     git: {
@@ -1677,5 +1691,193 @@ describe('backupOps handler param validation', () => {
       Effect.runPromise(handler({ unexpected: true }, { eventBus: {} as never }))
     ).rejects.toBeTruthy()
     expect(exportBackup).not.toHaveBeenCalled()
+  })
+})
+
+describe('backupOps ticket labels', () => {
+  const labels: TicketLabel[] = [
+    { id: 'lbl-joy', kind: 'saved', name: 'Waiting for Joy', color: 'yellow' },
+    { id: 'once-1', kind: 'once', name: 'Waiting until 21/10', color: 'purple' },
+    { id: 'lbl-qa', kind: 'saved', name: 'QA', color: 'teal' }
+  ]
+
+  const exportTickets = async (tickets: KanbanTicket[]): Promise<BackupFile> => {
+    const outPath = join(makeTempDir(), 'out.yaml')
+    const deps = makeDeps({
+      db: {
+        ...makeDeps().db,
+        getAllProjects: () => [project()],
+        getKanbanTicketsByProject: () => tickets
+      },
+      requestSaveFileDialog: vi.fn(async () => outPath)
+    })
+    expect(await Effect.runPromise(makeBackupOpsRpcService(deps).exportBackup())).toMatchObject({
+      success: true
+    })
+    return YAML.parse(readFileSync(outPath, 'utf-8')) as BackupFile
+  }
+
+  const restoreTickets = async (
+    tickets: NonNullable<BackupProject['tickets']>,
+    db: Partial<BackupOpsDeps['db']> = {}
+  ) => {
+    const deps = makeDeps({
+      fs: mockFs(['/repo']),
+      isGitRepository: vi.fn(() => true),
+      git: { ...makeDeps().git, getRemoteUrl: vi.fn(async () => null) },
+      db: {
+        ...makeDeps().db,
+        createKanbanTicket: vi.fn((data) => ticket({ ...data, id: `created-${data.title}` })),
+        ...db
+      },
+      execGit: execGitScript()
+    })
+    const result = await Effect.runPromise(
+      makeBackupOpsRpcService(deps).restoreProject({
+        project: backupProject({ path: '/repo', tickets }),
+        options: { cloneParentDir: null }
+      })
+    )
+    return { deps, result }
+  }
+
+  const backupTicket = (key: string, extra: Record<string, unknown> = {}) => ({
+    key,
+    title: `Ticket ${key}`,
+    description: null,
+    column: 'todo' as const,
+    sort_order: 0,
+    mode: null,
+    mark: null,
+    total_tokens: 0,
+    archived_at: null,
+    worktree_branch: null,
+    ...extra
+  })
+
+  it('exports saved labels by name and colour, never one-offs, and no key without any', async () => {
+    const written = await exportTickets([
+      ticket({ id: 'a', title: 'Mixed', labels }),
+      ticket({ id: 'b', title: 'One-off only', labels: [labels[1]!] }),
+      ticket({ id: 'c', title: 'None', labels: [] }),
+      ticket({ id: 'd', title: 'Older row' })
+    ])
+    const [mixed, onceOnly, none, older] = written.projects[0].tickets ?? []
+    expect(written.version).toBe(1)
+    expect(mixed?.labels).toEqual([
+      { name: 'Waiting for Joy', color: 'yellow' },
+      { name: 'QA', color: 'teal' }
+    ])
+    for (const entry of [onceOnly, none, older]) expect(entry).not.toHaveProperty('labels')
+    // No id, and no trace of the one-off anywhere in the file.
+    const text = YAML.stringify(written)
+    expect(text).not.toContain('lbl-joy')
+    expect(text).not.toContain('Waiting until 21/10')
+  })
+
+  it('opens a backup with labels, and one written before labels existed', async () => {
+    const dir = makeTempDir()
+    const filePath = join(dir, 'labels.yaml')
+    const file: BackupFile = {
+      version: 1,
+      kind: 'hive-backup',
+      created_at: now,
+      app_version: '1.2.3',
+      projects: [
+        backupProject({
+          tickets: [
+            backupTicket('t1', { labels: [{ name: 'QA', color: 'teal' }] }),
+            backupTicket('t2')
+          ]
+        })
+      ]
+    }
+    writeFileSync(filePath, YAML.stringify(file), 'utf-8')
+    const deps = makeDeps({ requestOpenFileDialog: vi.fn(async () => filePath) })
+    const result = await Effect.runPromise(makeBackupOpsRpcService(deps).openBackupFile())
+    expect(result.error).toBeUndefined()
+    expect(result.backup?.projects[0].tickets?.[0]?.labels).toEqual([{ name: 'QA', color: 'teal' }])
+    expect(result.backup?.projects[0].tickets?.[1]).not.toHaveProperty('labels')
+  })
+
+  it('restores labels as saved ones matched or added by name, skipping blanks and repeats', async () => {
+    const { deps, result } = await restoreTickets([
+      backupTicket('t1', {
+        labels: [
+          { name: 'Waiting for Joy', color: 'yellow' },
+          { name: '   ', color: 'red' },
+          { name: 'waiting  for joy', color: 'red' },
+          { name: 'QA', color: 'not-a-palette-colour' }
+        ]
+      }),
+      backupTicket('t2')
+    ])
+    expect(result.success).toBe(true)
+    expect(deps.db.resolveOrCreateSavedTicketLabel).toHaveBeenCalledTimes(3)
+    expect(deps.db.createKanbanTicket).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Ticket t1',
+        labels: [
+          { id: 'label-waiting for joy', kind: 'saved', name: 'Waiting for Joy', color: 'yellow' },
+          { id: 'label-qa', kind: 'saved', name: 'QA', color: 'not-a-palette-colour' }
+        ]
+      })
+    )
+    expect(deps.db.createKanbanTicket).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Ticket t2', labels: [] })
+    )
+  })
+
+  it('round-trips: saved labels come back through the catalog, one-offs are gone', async () => {
+    const written = await exportTickets([ticket({ title: 'Labelled', labels })])
+    const catalog = [savedLabel('local-joy', 'Waiting for Joy', 'orange')]
+    const resolve = vi.fn((name: string, color: string) => {
+      const match = catalog.find((entry) => entry.name.toLowerCase() === name.toLowerCase())
+      if (match) return match
+      const created = savedLabel(`local-${catalog.length + 1}`, name, color)
+      catalog.push(created)
+      return created
+    })
+    const { deps, result } = await restoreTickets(written.projects[0].tickets ?? [], {
+      resolveOrCreateSavedTicketLabel: resolve
+    })
+    expect(result.success).toBe(true)
+    expect(deps.db.createKanbanTicket).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Labelled',
+        labels: [
+          { id: 'local-joy', kind: 'saved', name: 'Waiting for Joy', color: 'orange' },
+          { id: 'local-2', kind: 'saved', name: 'QA', color: 'teal' }
+        ]
+      })
+    )
+    expect(catalog.map((entry) => entry.name)).toEqual(['Waiting for Joy', 'QA'])
+  })
+
+  it('skips a label the catalog refuses with a warning and still restores the ticket', async () => {
+    const { deps, result } = await restoreTickets(
+      [
+        backupTicket('t1', {
+          labels: [
+            { name: 'QA', color: 'teal' },
+            { name: 'New', color: 'red' }
+          ]
+        })
+      ],
+      {
+        resolveOrCreateSavedTicketLabel: vi.fn((name: string, color: string) => {
+          if (name === 'New') throw new Error('Too many labels')
+          return savedLabel('label-qa', name, color)
+        })
+      }
+    )
+    expect(result.success).toBe(true)
+    expect(result.tickets).toEqual({ restored: 1, dependencyErrors: 0, skipped: false })
+    expect(result.warnings).toContain('Could not restore the label "New": Too many labels')
+    expect(deps.db.createKanbanTicket).toHaveBeenCalledWith(
+      expect.objectContaining({
+        labels: [{ id: 'label-qa', kind: 'saved', name: 'QA', color: 'teal' }]
+      })
+    )
   })
 })

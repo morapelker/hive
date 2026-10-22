@@ -13,8 +13,10 @@ import type {
   KanbanTicketDuplicateOverrides,
   KanbanTicketUpdate,
   MarkdownCardDiagnostic,
-  TicketDependency
+  TicketDependency,
+  TicketLabel
 } from '../../../main/db'
+import { isTicketLabelColorToken, TICKET_LABELS_MAX } from '../../../shared/lib/ticket-labels'
 import type { RpcHandler } from '../router'
 
 interface KanbanBoardImportTicket {
@@ -208,6 +210,26 @@ export interface KanbanRpcService {
 const ticketColumnSchema = z.enum(['todo', 'in_progress', 'review', 'merged', 'done'])
 const sessionModeSchema = z.enum(['build', 'plan', 'super-plan', 'super-build'])
 const ticketMarkSchema = z.enum(['common', 'rare', 'epic', 'legendary'])
+/**
+ * One label as a ticket carries it (shared/lib/ticket-labels.ts). The bounds are generous on
+ * purpose: the DB parser (parseTicketLabels) normalises the name and cuts it to
+ * TICKET_LABEL_NAME_MAX, so this only turns away malformed or absurd input. The colour is a
+ * token rather than the palette enum so a colour from a newer build, already on the ticket,
+ * survives the renderer sending the whole list back on the next toggle.
+ */
+const ticketLabelSchema = z
+  .object({
+    id: z.string().min(1).max(64),
+    kind: z.enum(['saved', 'once']),
+    name: z
+      .string()
+      .max(64)
+      .refine((name) => name.trim().length > 0, 'Label name is required'),
+    color: z.string().refine(isTicketLabelColorToken, 'Invalid label colour')
+  })
+  .strict() satisfies z.ZodType<TicketLabel>
+/** A ticket's labels: always the full list (an update replaces the stored one). */
+const ticketLabelsSchema = z.array(ticketLabelSchema).max(TICKET_LABELS_MAX)
 
 const kanbanTicketCreateSchema = z
   .object({
@@ -230,6 +252,7 @@ const kanbanTicketCreateSchema = z
     mark: ticketMarkSchema.nullable().optional(),
     created_from_session: z.boolean().optional(),
     note: z.string().nullable().optional(),
+    labels: ticketLabelsSchema.optional(),
     model_provider_id: z.string().nullable().optional(),
     model_id: z.string().nullable().optional(),
     model_variant: z.string().nullable().optional(),
@@ -293,6 +316,7 @@ const kanbanTicketUpdateSchema = z
     goal_mode: z.boolean().optional(),
     goal_success_criteria: z.string().nullable().optional(),
     note: z.string().nullable().optional(),
+    labels: ticketLabelsSchema.optional(),
     archived_at: z.string().nullable().optional(),
     auto_approve_plan: z.boolean().optional(),
     unread: z.boolean().optional(),

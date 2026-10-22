@@ -55,7 +55,8 @@ export const buildMessageParts = (attachments: Attachment[], promptText: string,
     parts.push({ type: 'text', text: xmlBlock })
   }
 
-  // Ticket attachments -> each becomes an XML <ticket> block
+  // Ticket attachments -> each becomes an XML <ticket> block: title and description only,
+  // never the ticket's note or labels.
   const ticketAttachments = attachments.filter(
     (a): a is Extract<Attachment, { kind: 'ticket' }> => a.kind === 'ticket'
   )

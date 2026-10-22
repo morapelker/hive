@@ -193,7 +193,16 @@ function swapModePrefix(text: string, fromMode: PickerMode, toMode: PickerMode):
   return text // prefix not found: don't touch
 }
 
-function buildPrompt(mode: PickerMode, ticket: KanbanTicket): string {
+/**
+ * The prefilled launch prompt of a ticket (the picker's textarea, quick launch, a queued
+ * launch config). Built from the title, description and attachments only: the ticket's note
+ * and labels are personal, display-only fields and must never reach the model. Exported for
+ * the regression test that pins this (lib/__tests__/labels-never-in-prompts.test.ts).
+ */
+export function buildPrompt(
+  mode: PickerMode,
+  ticket: Pick<KanbanTicket, 'title' | 'description' | 'attachments'>
+): string {
   const prefix = getModePrefix(mode)
   const description = ticket.description ?? ''
   const attachments = (ticket.attachments ?? []) as Array<{
@@ -277,7 +286,7 @@ export function buildRemotePrompt(
   const prefilled = buildPrompt(mode, ticket)
   const basePrompt =
     editedPrompt === prefilled
-      ? buildPrompt(mode, { ...ticket, attachments: [] })
+      ? buildPrompt(mode, { title: ticket.title, description: ticket.description, attachments: [] })
       : stripAttachmentsBlock(editedPrompt)
 
   return (

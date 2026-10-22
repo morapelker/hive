@@ -56,6 +56,15 @@ export interface BackupTicket {
   worktree_branch: string | null // branch_name of assigned worktree
   external_provider?: string | null // e.g. 'shell-command' (absent in older backups)
   external_id?: string | null
+  // The ticket's saved labels by name and colour, re-matched against (or added to) the restoring
+  // Mac's catalog. One-off labels are never backed up: once removed they leave no record, and a
+  // backup must not become one. Absent in older backups and when the ticket has no saved label.
+  labels?: BackupTicketLabel[]
+}
+
+export interface BackupTicketLabel {
+  name: string
+  color: string // a TICKET_LABEL_COLORS token; anything else restores as gray
 }
 
 export interface BackupTicketDependency {

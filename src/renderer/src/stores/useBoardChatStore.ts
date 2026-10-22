@@ -450,7 +450,10 @@ async function cleanupRuntime(
   }
 }
 
-/** One board line for the assistant. A document run's ticket is not a task to plan around. */
+/**
+ * One board line for the assistant: the column and the title only, never the ticket's note or
+ * labels (personal, display-only). A document run's ticket is not a task to plan around.
+ */
 const boardTicketLine = (ticket: KanbanTicket): string =>
   `- [${ticket.column}] ${ticket.title}${
     isDocumentRunTicket(ticket) ? ' (document run: tracks the tickets of a spec, not a task)' : ''

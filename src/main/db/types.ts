@@ -1,5 +1,6 @@
 import type { CustomProjectCommand } from '@shared/lib/custom-commands'
 import type { ProjectShellCommand } from '@shared/lib/shell-commands'
+import type { TicketLabel } from '@shared/lib/ticket-labels'
 import type { AgentSdk } from '@shared/types/agent-sdk'
 
 /** Project discriminator: 'git' = a regular repo project, 'connection' = a saved connection project. */
@@ -525,6 +526,16 @@ export interface SessionSearchOptions {
 // Kanban ticket types
 export type KanbanTicketColumn = 'todo' | 'in_progress' | 'review' | 'merged' | 'done'
 export type TicketMark = 'common' | 'rare' | 'epic' | 'legendary'
+export type {
+  TicketLabel,
+  TicketLabelColor,
+  TicketLabelKind,
+  SavedTicketLabel,
+  SavedTicketLabelCreate,
+  SavedTicketLabelUpdate,
+  SavedTicketLabelChange,
+  SavedTicketLabelMutationResult
+} from '@shared/lib/ticket-labels'
 
 export interface KanbanTicket {
   id: string
@@ -555,6 +566,13 @@ export interface KanbanTicket {
   goal_success_criteria: string | null
   /** Personal annotation. MUST NOT be included in any LLM prompt. */
   note: string | null
+  /**
+   * Coloured tags drawn on the card (shared/lib/ticket-labels.ts). Display-only: MUST NOT be
+   * included in any LLM prompt, the markdown card file or the autocomplete corpus. Always set
+   * on rows this build reads; optional because a row from another Mac's older build has none
+   * (read it with ticketLabelsOf).
+   */
+  labels?: TicketLabel[]
   /** True when auto-created by the "automatically create ticket" setting on a session's first message. */
   created_from_session: boolean
   /** One-shot: auto-approve the next claude-cli ExitPlanMode plan, then self-clears. */
@@ -612,6 +630,7 @@ export interface KanbanTicketCreate {
   mark?: TicketMark | null
   created_from_session?: boolean
   note?: string | null
+  labels?: TicketLabel[]
   model_provider_id?: string | null
   model_id?: string | null
   model_variant?: string | null
@@ -637,6 +656,8 @@ export interface KanbanTicketUpdate {
   goal_mode?: boolean
   goal_success_criteria?: string | null
   note?: string | null
+  /** The full list (replaces the stored one). */
+  labels?: TicketLabel[]
   auto_approve_plan?: boolean
   unread?: boolean
   awaiting_completion?: boolean
@@ -711,6 +732,7 @@ export interface KanbanTicketBatchCreateItem {
   github_pr_url?: string | null
   mark?: TicketMark | null
   note?: string | null
+  labels?: TicketLabel[]
   model_provider_id?: string | null
   model_id?: string | null
   model_variant?: string | null

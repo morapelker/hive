@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 58
+export const CURRENT_SCHEMA_VERSION = 59
 
 /**
  * "Implement document" flow (v55). `document_runs` is one spec document turned into tickets
@@ -172,6 +172,33 @@ export const VOICE_HISTORY_TABLES_DROP_SQL = `
   DROP TABLE IF EXISTS voice_history;
 `
 
+/**
+ * Saved ticket labels (v66): the machine-wide catalog behind the coloured tags on kanban cards
+ * (shared/lib/ticket-labels.ts), one list for every project on this Mac. `name` is stored as
+ * typed (normalised, never upper-cased); `name_key` is its case-insensitive identity, computed
+ * in JS (ticketLabelNameKey) because SQLite's NOCASE only folds ASCII, and is unique. `color` is
+ * a palette token. A ticket carries snapshots of its labels in its own `labels` JSON column
+ * (kanban_tickets.labels, markdown_kanban_card_state.labels, both added by safeAddColumn), so a
+ * catalog edit rewrites those snapshots. One-off labels never get a row here. CREATE TABLE IF
+ * NOT EXISTS, replayed by ensureTicketLabelTables() in database.ts.
+ */
+export const TICKET_LABELS_TABLES_SQL = `
+  CREATE TABLE IF NOT EXISTS ticket_labels (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    name_key   TEXT NOT NULL,
+    color      TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_ticket_labels_name_key ON ticket_labels(name_key);
+`
+
+export const TICKET_LABELS_TABLES_DROP_SQL = `
+  DROP INDEX IF EXISTS idx_ticket_labels_name_key;
+  DROP TABLE IF EXISTS ticket_labels;
+`
 export const SCHEMA_SQL = `
 -- Projects table
 CREATE TABLE IF NOT EXISTS projects (
@@ -1032,5 +1059,15 @@ DROP TABLE IF EXISTS diff_comments;`
          -- document_run_items.document_update_finished_at is handled idempotently by
          -- safeAddColumn() in database.ts to avoid "duplicate column" errors.`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 59,
+    name: 'add_ticket_labels',
+    // The saved ticket-label catalog. CREATE TABLE IF NOT EXISTS, replayed by
+    // ensureTicketLabelTables() in database.ts. The per-ticket snapshot columns
+    // kanban_tickets.labels and markdown_kanban_card_state.labels are handled idempotently by
+    // safeAddColumn() in database.ts to avoid "duplicate column" errors.
+    up: TICKET_LABELS_TABLES_SQL,
+    down: TICKET_LABELS_TABLES_DROP_SQL
   }
 ]

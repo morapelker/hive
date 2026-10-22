@@ -14,6 +14,11 @@ import { basename, dirname, extname, join } from 'node:path'
 import YAML from 'yaml'
 import { isDocumentRunTicket } from '@shared/document-flow/run-ticket'
 import { shellCommandIdOfTicket } from '@shared/lib/shell-commands'
+import {
+  copyTicketLabelsForNewTicket,
+  parseTicketLabels,
+  type TicketLabel
+} from '@shared/lib/ticket-labels'
 
 import { getDatabase } from '../db'
 import { normalizeKanbanBatchDrafts } from '../db/kanban-batch'
@@ -118,12 +123,22 @@ interface MarkdownIndex {
   pathsById: Map<string, string[]>
   diagnostics: MarkdownCardDiagnostic[]
   loadedAt: number
+  /**
+   * DatabaseService.ticketLabelSnapshotGeneration when the index was built: a saved-label
+   * catalog edit rewrites label snapshots straight in the runtime table, behind this cache.
+   */
+  labelSnapshotGeneration: number | undefined
 }
 
 interface MarkdownRuntimeState {
   current_session_id: string | null
   worktree_id: string | null
   note: string | null
+  /**
+   * Display-only label snapshots. Like note they live only in this local runtime row, never in
+   * the card's frontmatter: agents read the .md files, and labels must not reach a model.
+   */
+  labels: TicketLabel[]
   attachments: unknown[]
   plan_ready: boolean
   auto_approve_plan: boolean
@@ -158,6 +173,7 @@ function emptyRuntimeState(): MarkdownRuntimeState {
     current_session_id: null,
     worktree_id: null,
     note: null,
+    labels: [],
     attachments: [],
     plan_ready: false,
     auto_approve_plan: false,
@@ -280,6 +296,8 @@ class InternalKanbanBackend implements KanbanBackend {
       attachments: source.attachments,
       mark: source.mark,
       note: source.note,
+      // Every label, one-offs included; each one-off gets a new id so the copies are independent.
+      labels: copyTicketLabelsForNewTicket(source.labels ?? [], () => randomUUID()),
       ...overrides,
       project_id: projectId,
       column: overrides?.column ?? source.column
@@ -578,6 +596,7 @@ class MarkdownKanbanBackend implements KanbanBackend {
         worktree_id: data.worktree_id ?? null,
         plan_ready: data.plan_ready ?? false,
         note: data.note ?? null,
+        labels: data.labels ?? [],
         model_provider_id: data.model_provider_id ?? null,
         model_id: data.model_id ?? null,
         model_variant: data.model_variant ?? null,
@@ -606,6 +625,8 @@ class MarkdownKanbanBackend implements KanbanBackend {
       attachments: source.attachments,
       mark: source.mark,
       note: source.note,
+      // Every label, one-offs included; each one-off gets a new id so the copies are independent.
+      labels: copyTicketLabelsForNewTicket(source.labels ?? [], () => randomUUID()),
       ...overrides,
       project_id: projectId,
       column: overrides?.column ?? source.column
@@ -681,6 +702,7 @@ class MarkdownKanbanBackend implements KanbanBackend {
           worktree_id: draft.worktree_id ?? null,
           plan_ready: draft.plan_ready ?? false,
           note: draft.note ?? null,
+          labels: draft.labels ?? [],
           model_provider_id: draft.model_provider_id ?? null,
           model_id: draft.model_id ?? null,
           model_variant: draft.model_variant ?? null,
@@ -796,6 +818,8 @@ class MarkdownKanbanBackend implements KanbanBackend {
     if (data.pending_launch_config !== undefined)
       runtimeUpdates.pending_launch_config = data.pending_launch_config
     if (data.note !== undefined) runtimeUpdates.note = data.note
+    // Runtime row only, never publicUpdates: labels must stay out of the card file.
+    if (data.labels !== undefined) runtimeUpdates.labels = data.labels
     if (data.model_provider_id !== undefined)
       runtimeUpdates.model_provider_id = data.model_provider_id
     if (data.model_id !== undefined) runtimeUpdates.model_id = data.model_id
@@ -1457,10 +1481,16 @@ class MarkdownKanbanBackend implements KanbanBackend {
   }
 
   private async ensureIndex(projectId: string): Promise<MarkdownIndex> {
-    return this.indexes.get(projectId) ?? this.reloadIndex(projectId)
+    const cached = this.indexes.get(projectId)
+    if (cached && cached.labelSnapshotGeneration === getDatabase().ticketLabelSnapshotGeneration) {
+      return cached
+    }
+    return this.reloadIndex(projectId)
   }
 
   private async reloadIndex(projectId: string): Promise<MarkdownIndex> {
+    // Read before the runtime rows: a rewrite landing mid-scan leaves the index outdated.
+    const labelSnapshotGeneration = getDatabase().ticketLabelSnapshotGeneration
     const project = requireProject(projectId)
     const config = parseMarkdownConfig(project)
     const diagnostics: MarkdownCardDiagnostic[] = []
@@ -1547,7 +1577,8 @@ class MarkdownKanbanBackend implements KanbanBackend {
       cardsById,
       pathsById,
       diagnostics,
-      loadedAt: Date.now()
+      loadedAt: Date.now(),
+      labelSnapshotGeneration
     }
     this.indexes.set(projectId, index)
     return index
@@ -1610,6 +1641,7 @@ class MarkdownKanbanBackend implements KanbanBackend {
       goal_mode: asBoolean(frontmatter.goal_mode) ?? false,
       goal_success_criteria: nullableString(frontmatter.goal_success_criteria),
       note: runtime.note,
+      labels: runtime.labels,
       created_from_session: false,
       auto_approve_plan: runtime.auto_approve_plan,
       unread: runtime.unread,
@@ -1671,6 +1703,7 @@ class MarkdownKanbanBackend implements KanbanBackend {
       total_tokens: runtime.total_tokens,
       pending_launch_config: runtime.pending_launch_config,
       note: runtime.note,
+      labels: runtime.labels,
       model_provider_id: runtime.model_provider_id,
       model_id: runtime.model_id,
       model_variant: runtime.model_variant,
@@ -1767,6 +1800,7 @@ class MarkdownKanbanBackend implements KanbanBackend {
           current_session_id: string | null
           worktree_id: string | null
           note: string | null
+          labels: string | null
           attachments: string | null
           plan_ready: number
           auto_approve_plan: number
@@ -1790,6 +1824,7 @@ class MarkdownKanbanBackend implements KanbanBackend {
       current_session_id: row.current_session_id,
       worktree_id: row.worktree_id,
       note: row.note,
+      labels: parseTicketLabels(row.labels),
       attachments: parseJsonArray(row.attachments),
       plan_ready: row.plan_ready === 1,
       auto_approve_plan: row.auto_approve_plan === 1,
@@ -1839,6 +1874,10 @@ class MarkdownKanbanBackend implements KanbanBackend {
     if (data.note !== undefined) {
       updates.push('note = ?')
       values.push(data.note)
+    }
+    if (data.labels !== undefined) {
+      updates.push('labels = ?')
+      values.push(JSON.stringify(parseTicketLabels(data.labels)))
     }
     if (data.attachments !== undefined) {
       updates.push('attachments = ?')
@@ -2050,6 +2089,8 @@ export async function moveKanbanTicketToProject(
         goal_mode: sourceTicket.goal_mode,
         goal_success_criteria: sourceTicket.goal_success_criteria,
         note: sourceTicket.note,
+        // The same ticket, so its labels (one-offs included) keep their ids.
+        labels: sourceTicket.labels ?? [],
         // Badge/group metadata survives internal→internal moves untouched —
         // keep the cross-backend recreate path consistent.
         model_provider_id: sourceTicket.model_provider_id,
