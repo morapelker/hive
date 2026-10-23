@@ -31,6 +31,12 @@
 // LOCK TABLES locks, so while the user holds table locks the sandbox is the session's
 // transaction_read_only flag instead (set for the statement, restored after it), which leaves
 // the locks alone and still fails writes with 1792.
+//
+// ProxySQL: a SET of a variable it does not track (information_schema_stats_expiry, MariaDB's
+// SET STATEMENT … FOR) pins the connection to the hostgroup that ran it, and the next query its
+// rules route elsewhere (catalog SELECTs → readers) fails with 9006 "connection is locked to
+// hostgroup". The control connection sends such SETs only as optional tuning: on the first 9006
+// it is reopened without them, for the rest of this driver's life.
 
 import net from 'node:net'
 import { readFile } from 'node:fs/promises'
@@ -94,6 +100,8 @@ const ER_CANT_EXECUTE_IN_READ_ONLY_TRANSACTION = 1792
 const ER_KILL_DENIED = 1095
 const ER_NO_SUCH_THREAD = 1094
 const ER_UNKNOWN_SYSTEM_VARIABLE = 1193
+/** ProxySQL: the connection is locked to a hostgroup and the query was routed to another. */
+const ER_PROXYSQL_HOSTGROUP_LOCKED = 9006
 
 // Column type codes (mysql2 constants/types).
 const T = {
@@ -293,6 +301,14 @@ const isFatal = (error: unknown): boolean =>
       String((error as { code?: unknown }).code)
     ))
 
+const isHostgroupLocked = (error: unknown): boolean =>
+  !!error &&
+  typeof error === 'object' &&
+  ((error as { errno?: unknown }).errno === ER_PROXYSQL_HOSTGROUP_LOCKED ||
+    /connection is locked to hostgroup/i.test(
+      String((error as { message?: unknown }).message ?? '')
+    ))
+
 const closedError = (): DataDriverError =>
   new DataDriverError('The connection was closed.', { code: 'CONNECTION_LOST' })
 
@@ -431,6 +447,11 @@ class MysqlDriver implements DataDriver {
   private control: Connection | null = null
   private controlPromise: Promise<Connection> | null = null
   private controlThreadId = 0
+  /**
+   * A proxy (ProxySQL) locked a control connection to one hostgroup after an untracked SET:
+   * control connections skip the optional session SETs and statement hints from then on.
+   */
+  private hostgroupLocking = false
   private readonly streamConnections = new Set<Connection>()
   private serverVersion = ''
   private mariaDb = false
@@ -766,7 +787,7 @@ class MysqlDriver implements DataDriver {
     )
     opened = conn
     if (epoch === this.epoch) {
-      if (!this.mariaDb && this.majorVersion >= 8) {
+      if (!this.mariaDb && this.majorVersion >= 8 && !this.hostgroupLocking) {
         // Otherwise TABLE_ROWS / sizes come from a cache up to 24 h old.
         await this.query(conn, 'SET SESSION information_schema_stats_expiry = 0').catch(
           () => undefined
@@ -807,6 +828,14 @@ class MysqlDriver implements DataDriver {
         return await this.query<R>(conn, sql, values)
       } catch (error) {
         if (attempt === 0 && isFatal(error)) {
+          if (this.control === conn) this.control = null
+          conn.destroy()
+          continue
+        }
+        // Rejected by the proxy before reaching a server, so running it again is safe. The locked
+        // connection is replaced every time: a hint sent before the flag was set may lock it again.
+        if (attempt === 0 && isHostgroupLocked(error)) {
+          this.hostgroupLocking = true
           if (this.control === conn) this.control = null
           conn.destroy()
           continue
@@ -1258,7 +1287,8 @@ class MysqlDriver implements DataDriver {
     const system = new Set(['information_schema', 'mysql', 'performance_schema', 'sys'])
     let rows: Array<{ name: string; size: string | number | null }>
     try {
-      const hint = this.mariaDb ? 'SET STATEMENT max_statement_time = 5 FOR ' : ''
+      const hint =
+        this.mariaDb && !this.hostgroupLocking ? 'SET STATEMENT max_statement_time = 5 FOR ' : ''
       const mysqlHint = this.mariaDb ? '' : '/*+ MAX_EXECUTION_TIME(5000) */ '
       rows = await this.controlQuery(
         `${hint}SELECT ${mysqlHint}s.SCHEMA_NAME AS name, t.size AS size FROM information_schema.SCHEMATA s ` +
