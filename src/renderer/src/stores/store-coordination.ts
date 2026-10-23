@@ -31,6 +31,41 @@ export function clearConnectionSelection(): void {
   _clearConnectionSelection?.()
 }
 
+// ── Data projects ↔ git projects / worktrees / connections ────────────
+// A data project (database connection, useDataProjectStore) is the main-pane content instead of
+// a git project, worktree or connection. Selecting any of those clears the data project
+// selection through this callback; the data store registers it when its module loads (until
+// then nothing can be selected, so a missing callback is a no-op). With table edits staged the
+// data project stays on screen until the user chose to discard them or keep editing.
+let _clearDataProjectSelection: (() => void) | null = null
+
+export function registerDataProjectClear(fn: () => void): void {
+  _clearDataProjectSelection = fn
+}
+
+export function clearDataProjectSelection(): void {
+  _clearDataProjectSelection?.()
+}
+
+// Staged (unsaved) table edits of the open data project live in its view, which unmounts when
+// another selection replaces it. Entry points that replace it (a git project, worktree,
+// connection, the Pinned Board or board view) run their change through `leaveDataProjectThen`:
+// at once, in the same tick, when no data project is open or nothing is staged; otherwise only
+// after the user chose to discard the staged edits (never after "Keep editing"). The data store
+// registers the guard; it returns true when it took the change over (it asks first).
+type DataProjectLeaveGuard = (proceed: () => void) => boolean
+
+let _dataProjectLeaveGuard: DataProjectLeaveGuard | null = null
+
+export function registerDataProjectLeaveGuard(fn: DataProjectLeaveGuard): void {
+  _dataProjectLeaveGuard = fn
+}
+
+export function leaveDataProjectThen(proceed: () => void): void {
+  if (_dataProjectLeaveGuard?.(proceed)) return
+  proceed()
+}
+
 // ── Kanban ↔ Session coordination ──────────────────────────────────────
 // Breaks the circular dependency between useKanbanStore and the stores /
 // components that change session status.  The kanban store registers its

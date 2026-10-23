@@ -3,6 +3,7 @@ import { useLayoutStore } from '@/stores/useLayoutStore'
 import { LAYOUT_CONSTRAINTS } from '@/stores/useLayoutStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
+import { useDataProjectStore } from '@/stores/useDataProjectStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { ResizeHandle } from './ResizeHandle'
 import { FileSidebar } from '@/components/file-tree'
@@ -23,6 +24,9 @@ export function RightSidebar(): React.JSX.Element {
   const toggleBottomPanel = useLayoutStore((s) => s.toggleBottomPanel)
 
   const { selectedWorktreeId, worktreesByProject } = useWorktreeStore()
+  // A data project (database client) has no files or terminal: the sidebar steps aside (hidden,
+  // not unmounted, for the same terminal-portal reason as the collapsed state below).
+  const dataProjectOpen = useDataProjectStore((s) => s.selectedDataProjectId !== null)
   const selectedConnectionId = useConnectionStore((s) => s.selectedConnectionId)
   const selectedConnection = useConnectionStore((s) =>
     s.selectedConnectionId ? s.connections.find((c) => c.id === s.selectedConnectionId) : null
@@ -103,7 +107,7 @@ export function RightSidebar(): React.JSX.Element {
     <div
       className={cn(
         'flex flex-shrink-0',
-        rightSidebarCollapsed && 'hidden'
+        (rightSidebarCollapsed || dataProjectOpen) && 'hidden'
       )}
       data-testid={rightSidebarCollapsed ? 'right-sidebar-collapsed' : 'right-sidebar-container'}
     >

@@ -10,7 +10,11 @@ import type { SelectedModel } from './useSettingsStore'
 import { toast } from '@/lib/toast'
 import { deleteBuffer } from '@/lib/output-ring-buffer'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
-import { registerWorktreeClear, clearConnectionSelection } from './store-coordination'
+import {
+  registerWorktreeClear,
+  clearConnectionSelection,
+  clearDataProjectSelection
+} from './store-coordination'
 import { connectionApi } from '@/api/connection-api'
 import { dbApi } from '@/api/db-api'
 import { scriptApi } from '@/api/script-api'
@@ -487,6 +491,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
           creatingForProjectId: null
         }
       })
+      clearDataProjectSelection()
       ensureProjectLoaded(projectId)
 
       // Clear file tabs from the previous worktree
@@ -547,6 +552,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
           creatingForProjectId: null
         }
       })
+      if (select) clearDataProjectSelection()
       ensureProjectLoaded(projectId)
 
       // Clear file tabs from the previous worktree
@@ -807,6 +813,8 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
   selectWorktree: (id: string | null, options?: WorktreeSelectionOptions) => {
     const previousWorktreeId = get().selectedWorktreeId
     set({ selectedWorktreeId: id })
+    // A worktree replaces an open data project (database client) in the main pane.
+    if (id) clearDataProjectSelection()
     applyWorktreeSelectionEffects(previousWorktreeId, id, {
       clearConnectionSelection: Boolean(id),
       closePinnedBoard: Boolean(id) && !options?.preservePinnedBoard,

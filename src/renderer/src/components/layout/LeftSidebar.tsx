@@ -5,6 +5,7 @@ import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { useShortcutStore } from '@/stores/useShortcutStore'
+import { leaveDataProjectThen, useDataProjectStore } from '@/stores/useDataProjectStore'
 import { useInProgressSessionCount } from '@/hooks/useInProgressSessionCount'
 import { formatBinding, getShortcutDefinition } from '@/lib/keyboard-shortcuts'
 import { ResizeHandle } from './ResizeHandle'
@@ -93,7 +94,9 @@ function SidebarNavRow({
 
 export function LeftSidebar(): React.JSX.Element {
   const { leftSidebarWidth, leftSidebarCollapsed, setLeftSidebarWidth } = useLayoutStore()
-  const projectCount = useProjectStore((s) => s.projects.length)
+  // Git projects and data projects (database connections) share the list and its filter.
+  const projectCount =
+    useProjectStore((s) => s.projects.length) + useDataProjectStore((s) => s.projects.length)
   const usageIndicatorMode = useSettingsStore((s) => s.usageIndicatorMode)
   const usageIndicatorProviders = useSettingsStore((s) => s.usageIndicatorProviders)
   const shouldShowUsageIndicator =
@@ -135,14 +138,18 @@ export function LeftSidebar(): React.JSX.Element {
   const pinnedBoardShortcut = pinnedBoardBinding ? formatBinding(pinnedBoardBinding) : undefined
 
   const handlePinnedBoardClick = useCallback((): void => {
-    if (!isPinnedBoardActive) {
-      const fileStore = useFileViewerStore.getState()
-      fileStore.setActiveFile(null)
-      fileStore.clearActiveDiff()
-      fileStore.closeContextEditor()
-    }
-    togglePinnedBoard()
-  }, [isPinnedBoardActive, togglePinnedBoard])
+    // The board replaces an open data project: its staged table edits ask before anything
+    // (file overlays included) changes.
+    leaveDataProjectThen(() => {
+      if (!useKanbanStore.getState().isPinnedBoardActive) {
+        const fileStore = useFileViewerStore.getState()
+        fileStore.setActiveFile(null)
+        fileStore.clearActiveDiff()
+        fileStore.closeContextEditor()
+      }
+      togglePinnedBoard()
+    })
+  }, [togglePinnedBoard])
 
   const canFinalize = connectionModeSelectedIds.size >= 2
 

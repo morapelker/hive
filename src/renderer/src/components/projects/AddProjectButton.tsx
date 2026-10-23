@@ -1,13 +1,15 @@
 import { useState, useCallback, useEffect } from 'react'
-import { Loader2, FolderPlus, FolderOpen, Github } from 'lucide-react'
+import { Loader2, FolderPlus, FolderOpen, Github, Database } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { useProjectStore } from '@/stores'
+import { useDataProjectStore } from '@/stores/useDataProjectStore'
 import { projectToast, toast } from '@/lib/toast'
 import { GitInitDialog } from './GitInitDialog'
 import { CreateProjectDialog } from './CreateProjectDialog'
@@ -139,6 +141,15 @@ export function AddProjectButton(): React.JSX.Element {
           >
             <Github className="h-4 w-4 mr-2" />
             Add repository
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          {/* Data project: a database connection in the sidebar (wizard mounted in AppLayout) */}
+          <DropdownMenuItem
+            onSelect={() => useDataProjectStore.getState().openWizard({ mode: 'create' })}
+            data-testid="add-project-menu-database"
+          >
+            <Database className="h-4 w-4 mr-2" />
+            Add database…
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

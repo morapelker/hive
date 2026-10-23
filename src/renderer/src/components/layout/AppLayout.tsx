@@ -57,6 +57,7 @@ import { fileApi } from '@/api/file-api'
 import { MAX_ATTACHMENTS, isImageMime } from '@/lib/file-attachment-utils'
 import type { AttachmentInput } from '@/components/sessions/AttachmentPreview'
 import { QuitConfirmationOverlay } from './QuitConfirmationOverlay'
+import { DataProjectDialogs } from '@/components/data-projects/wizard/DataProjectDialogs'
 
 function GlobalProjectSettings(): React.JSX.Element | null {
   const settingsProjectId = useProjectStore((s) => s.settingsProjectId)
@@ -344,6 +345,10 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
           )}
           <ErrorBoundary componentName="ImplementDocumentWizard" fallback={null}>
             <ImplementDocumentWizard />
+          </ErrorBoundary>
+          {/* Data projects: add/edit wizard, credentials prompt, change-icon dialog */}
+          <ErrorBoundary componentName="DataProjectDialogs" fallback={null}>
+            <DataProjectDialogs />
           </ErrorBoundary>
           <ErrorBoundary componentName="DocumentRunDashboard" fallback={null}>
             <DocumentRunDashboard />

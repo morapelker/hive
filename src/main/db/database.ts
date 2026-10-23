@@ -1,6 +1,7 @@
 import { deleteAttachment } from '../services/attachment-storage'
 import type { AgentSdk } from '@shared/types/agent-sdk'
 import { parseProjectShellCommands } from '@shared/lib/shell-commands'
+import { emitDbChanged } from '../services/db-change-events'
 import {
   SAVED_TICKET_LABELS_MAX,
   applySavedTicketLabelChange,
@@ -34,6 +35,25 @@ import type {
   DocumentRunRowPatch,
   SessionFinalMessageUpsert
 } from '../services/document-flow/db-port'
+import type {
+  DataProjectRecord,
+  DataProjectRecordCreate,
+  DataProjectRecordPatch,
+  DataProjectsRepository
+} from '../services/data-projects/contracts'
+import {
+  DATA_ENVIRONMENTS,
+  DATA_SAFE_MODES,
+  DEFAULT_DATA_ROW_LIMIT,
+  isDataEngine,
+  type DataEnvironment,
+  type DataHistoryEntry,
+  type DataProjectIcon,
+  type DataSafeMode,
+  type DataSavedQuery,
+  type DataSecretState,
+  type SidebarOrderEntry
+} from '@shared/data-projects/types'
 import Database from 'better-sqlite3'
 import { instrumentDatabase } from '../services/perf-logging/db-instrumentation'
 
@@ -53,6 +73,7 @@ import { randomUUID } from 'crypto'
 import { homedir } from 'os'
 import { Worker as NodeWorker } from 'node:worker_threads'
 import {
+  DATA_PROJECT_TABLES_SQL,
   DOCUMENT_FLOW_TABLES_SQL,
   MIGRATIONS,
   TICKET_LABELS_TABLES_SQL,
@@ -182,6 +203,97 @@ export function resolveDatabasePath(options?: {
   const homeDir = options?.homeDir ?? homedir()
   return join(homeDir, '.hive', 'hive.db')
 }
+
+/** A `data_projects` row as stored (JSON TEXT and 0/1 columns), before mapping. */
+interface DataProjectRow {
+  id: string
+  name: string
+  engine: string
+  config: string | null
+  icon: string | null
+  icon_color: string | null
+  environment: string
+  color: string | null
+  safe_mode: string
+  default_limit: number
+  allow_ai_data_access: number
+  pinned: number
+  secret_ciphertext: string | null
+  secret_state: string
+  sort_order: number
+  created_at: string
+  last_accessed_at: string
+}
+
+interface DataQueryHistoryRow {
+  id: string
+  data_project_id: string
+  database_name: string | null
+  text: string
+  status: string
+  duration_ms: number | null
+  row_count: number | null
+  error: string | null
+  executed_at: string
+}
+
+interface DataSavedQueryRow {
+  id: string
+  data_project_id: string
+  name: string
+  text: string
+  database_name: string | null
+  created_at: string
+  updated_at: string
+}
+
+/** History keeps the newest N statements per data project (pruned on insert). */
+export const DATA_QUERY_HISTORY_LIMIT = 1000
+/**
+ * Stored history text / error caps: a pasted multi-megabyte dump must not turn the 1000-row
+ * history into gigabytes of app database. The cut is marked so "open from history" is honest.
+ */
+const DATA_HISTORY_TEXT_MAX = 100_000
+const DATA_HISTORY_ERROR_MAX = 4_000
+const DATA_HISTORY_STATUSES: ReadonlySet<string> = new Set(['ok', 'error', 'cancelled', 'blocked'])
+const DATA_ICON_KINDS: ReadonlySet<string> = new Set(['engine', 'emoji', 'lucide', 'image'])
+
+const truncateStored = (text: string, max: number): string =>
+  text.length > max
+    ? `${text.slice(0, max)}\n-- [truncated: ${text.length - max} more characters]`
+    : text
+
+const parseJsonObject = (raw: string | null): Record<string, unknown> | null => {
+  if (!raw) return null
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null
+  } catch {
+    return null
+  }
+}
+
+/** A stored icon JSON, or null when it is missing or not one of the known shapes. */
+const parseDataProjectIcon = (raw: string | null): DataProjectIcon | null => {
+  const value = parseJsonObject(raw)
+  if (!value || typeof value.kind !== 'string' || !DATA_ICON_KINDS.has(value.kind)) return null
+  switch (value.kind) {
+    case 'engine':
+      return isDataEngine(value.engine) ? { kind: 'engine', engine: value.engine } : null
+    case 'emoji':
+      return typeof value.emoji === 'string' ? { kind: 'emoji', emoji: value.emoji } : null
+    case 'lucide':
+      return typeof value.name === 'string' ? { kind: 'lucide', name: value.name } : null
+    default:
+      return typeof value.fileName === 'string' ? { kind: 'image', fileName: value.fileName } : null
+  }
+}
+
+/** Integer auto-limit ≥ 0 (0 = none); anything unusable falls back to the default. */
+const normalizeDataLimit = (value: number): number =>
+  Number.isFinite(value) && value >= 0 ? Math.floor(value) : DEFAULT_DATA_ROW_LIMIT
 
 type ProjectRow = Omit<
   Project,
@@ -413,7 +525,7 @@ export interface SessionProfilerDbRow {
 
 // `implements DocumentFlowDb` is the compile-time check that the document-flow section below
 // still matches the port its service and tests are written against (services/document-flow).
-export class DatabaseService implements DocumentFlowDb {
+export class DatabaseService implements DocumentFlowDb, DataProjectsRepository {
   private db: Database.Database | null = null
   private dbPath: string
   private compactionInProgress = false
@@ -785,6 +897,15 @@ export class DatabaseService implements DocumentFlowDb {
     // After the document-flow tables: the key backfill reads document_runs / document_run_items.
     this.ensureTicketKeys()
     this.ensureTicketLabelTables()
+    this.ensureDataProjectTables()
+  }
+
+  /**
+   * Idempotently ensure the data-project tables exist (repair for v60): a database stamped 60 by
+   * another build that never created them, or one whose tables were dropped, gets them back.
+   */
+  private ensureDataProjectTables(): void {
+    this.getDb().exec(DATA_PROJECT_TABLES_SQL)
   }
 
   /** Idempotently ensure the voice dictation history table exists (repair for the v48 migration). */
@@ -1906,8 +2027,9 @@ export class DatabaseService implements DocumentFlowDb {
   createProject(data: ProjectCreate): Project {
     const db = this.getDb()
     const now = new Date().toISOString()
-    // New projects get sort_order 0 (top), bump all others down
-    db.prepare('UPDATE projects SET sort_order = sort_order + 1').run()
+    // New projects get sort_order 0 (top), bump all others down — data projects too: both
+    // tables share one sidebar order (see DATA_PROJECT_TABLES_SQL).
+    this.shiftSidebarOrder()
 
     const project: Project = {
       id: randomUUID(),
@@ -1967,8 +2089,9 @@ export class DatabaseService implements DocumentFlowDb {
   }): Project {
     const db = this.getDb()
     const now = new Date().toISOString()
-    // New projects get sort_order 0 (top), bump all others down
-    db.prepare('UPDATE projects SET sort_order = sort_order + 1').run()
+    // New projects get sort_order 0 (top), bump all others down — data projects too: both
+    // tables share one sidebar order (see DATA_PROJECT_TABLES_SQL).
+    this.shiftSidebarOrder()
 
     const id = randomUUID()
     const memberIdsJson = JSON.stringify(data.member_project_ids)
@@ -2151,6 +2274,360 @@ export class DatabaseService implements DocumentFlowDb {
     const db = this.getDb()
     const now = new Date().toISOString()
     db.prepare('UPDATE projects SET last_accessed_at = ? WHERE id = ?').run(now, id)
+  }
+
+  // Data projects (DataProjectsRepository, src/main/services/data-projects/contracts.ts).
+  // Rows of their own table; only the sidebar order is shared with `projects`.
+
+  /**
+   * Moves every git project and data project down one slot so a new item lands on top; the
+   * counts tell the caller whether the other kind moved (and needs a reorder event).
+   */
+  private shiftSidebarOrder(): { projects: number; dataProjects: number } {
+    const db = this.getDb()
+    const projects = db.prepare('UPDATE projects SET sort_order = sort_order + 1').run().changes
+    const dataProjects = db
+      .prepare('UPDATE data_projects SET sort_order = sort_order + 1')
+      .run().changes
+    return { projects, dataProjects }
+  }
+
+  /**
+   * Row → record. Unknown enum values from a newer build degrade to the conservative choice
+   * (safe mode 'safe'), never to something that would run writes unconfirmed.
+   */
+  private mapDataProjectRow(row: DataProjectRow): DataProjectRecord | null {
+    if (!isDataEngine(row.engine)) return null
+    const environment: DataEnvironment = (DATA_ENVIRONMENTS as readonly string[]).includes(
+      row.environment
+    )
+      ? (row.environment as DataEnvironment)
+      : 'development'
+    const safeMode: DataSafeMode = (DATA_SAFE_MODES as readonly string[]).includes(row.safe_mode)
+      ? (row.safe_mode as DataSafeMode)
+      : 'safe'
+    const secretState: DataSecretState =
+      row.secret_state === 'none' || row.secret_state === 'stored' || row.secret_state === 'session'
+        ? row.secret_state
+        : row.secret_ciphertext
+          ? 'stored'
+          : 'none'
+    return {
+      id: row.id,
+      name: row.name,
+      engine: row.engine,
+      config: parseJsonObject(row.config) ?? {},
+      icon: parseDataProjectIcon(row.icon),
+      iconColor: row.icon_color ?? null,
+      environment,
+      color: row.color ?? null,
+      safeMode,
+      defaultLimit: normalizeDataLimit(row.default_limit),
+      allowAiDataAccess: Boolean(row.allow_ai_data_access),
+      pinned: Boolean(row.pinned),
+      secretCiphertext: row.secret_ciphertext ?? null,
+      secretState,
+      sortOrder: row.sort_order,
+      createdAt: row.created_at,
+      lastAccessedAt: row.last_accessed_at
+    }
+  }
+
+  getDataProjects(): DataProjectRecord[] {
+    const rows = this.getDb()
+      .prepare('SELECT * FROM data_projects ORDER BY sort_order ASC, last_accessed_at DESC')
+      .all() as DataProjectRow[]
+    const records: DataProjectRecord[] = []
+    for (const row of rows) {
+      const record = this.mapDataProjectRow(row)
+      if (record) records.push(record)
+    }
+    return records
+  }
+
+  getDataProject(id: string): DataProjectRecord | null {
+    const row = this.getDb().prepare('SELECT * FROM data_projects WHERE id = ?').get(id) as
+      DataProjectRow | undefined
+    return row ? this.mapDataProjectRow(row) : null
+  }
+
+  createDataProject(data: DataProjectRecordCreate): DataProjectRecord {
+    const db = this.getDb()
+    const now = new Date().toISOString()
+    const id = data.id ?? randomUUID()
+    let shiftedProjects = 0
+    // One transaction: a failed insert must not leave the whole sidebar shifted by one.
+    db.transaction(() => {
+      shiftedProjects = this.shiftSidebarOrder().projects
+      db.prepare(
+        `INSERT INTO data_projects (id, name, engine, config, icon, icon_color, environment, color,
+           safe_mode, default_limit, allow_ai_data_access, pinned, secret_ciphertext, secret_state,
+           sort_order, created_at, last_accessed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`
+      ).run(
+        id,
+        data.name,
+        data.engine,
+        JSON.stringify(data.config ?? {}),
+        data.icon ? JSON.stringify(data.icon) : null,
+        data.iconColor,
+        data.environment,
+        data.color,
+        data.safeMode,
+        normalizeDataLimit(data.defaultLimit),
+        data.allowAiDataAccess ? 1 : 0,
+        data.pinned ? 1 : 0,
+        data.secretCiphertext,
+        data.secretState,
+        now,
+        now
+      )
+    })()
+    const created = this.getDataProject(id)
+    if (!created) throw new Error('Failed to create data project')
+    emitDbChanged({ entity: 'dataProject', op: 'create', id, projectId: null })
+    // Every git project moved down one slot too.
+    if (shiftedProjects > 0) {
+      emitDbChanged({ entity: 'project', op: 'reorder', id: null, projectId: null })
+    }
+    return created
+  }
+
+  updateDataProject(id: string, patch: DataProjectRecordPatch): DataProjectRecord | null {
+    const db = this.getDb()
+    const existing = this.getDataProject(id)
+    if (!existing) return null
+
+    const updates: string[] = []
+    const values: (string | number | null)[] = []
+    const set = (column: string, value: string | number | null): void => {
+      updates.push(`${column} = ?`)
+      values.push(value)
+    }
+    if (patch.name !== undefined) set('name', patch.name)
+    if (patch.config !== undefined) set('config', JSON.stringify(patch.config ?? {}))
+    if (patch.icon !== undefined) set('icon', patch.icon ? JSON.stringify(patch.icon) : null)
+    if (patch.iconColor !== undefined) set('icon_color', patch.iconColor)
+    if (patch.environment !== undefined) set('environment', patch.environment)
+    if (patch.color !== undefined) set('color', patch.color)
+    if (patch.safeMode !== undefined) set('safe_mode', patch.safeMode)
+    if (patch.defaultLimit !== undefined)
+      set('default_limit', normalizeDataLimit(patch.defaultLimit))
+    if (patch.allowAiDataAccess !== undefined) {
+      set('allow_ai_data_access', patch.allowAiDataAccess ? 1 : 0)
+    }
+    if (patch.pinned !== undefined) set('pinned', patch.pinned ? 1 : 0)
+    if (patch.secretCiphertext !== undefined) set('secret_ciphertext', patch.secretCiphertext)
+    if (patch.secretState !== undefined) set('secret_state', patch.secretState)
+
+    if (updates.length === 0) return existing
+    values.push(id)
+    db.prepare(`UPDATE data_projects SET ${updates.join(', ')} WHERE id = ?`).run(...values)
+    emitDbChanged({ entity: 'dataProject', op: 'update', id, projectId: null })
+    return this.getDataProject(id)
+  }
+
+  /** Deletes the row; its history and saved queries go with it (ON DELETE CASCADE). */
+  deleteDataProject(id: string): boolean {
+    const result = this.getDb().prepare('DELETE FROM data_projects WHERE id = ?').run(id)
+    if (result.changes > 0) {
+      emitDbChanged({ entity: 'dataProject', op: 'delete', id, projectId: null })
+    }
+    return result.changes > 0
+  }
+
+  touchDataProject(id: string): void {
+    const now = new Date().toISOString()
+    const result = this.getDb()
+      .prepare('UPDATE data_projects SET last_accessed_at = ? WHERE id = ?')
+      .run(now, id)
+    if (result.changes > 0) {
+      emitDbChanged({ entity: 'dataProject', op: 'update', id, projectId: null })
+    }
+  }
+
+  /**
+   * The merged sidebar order: `sort_order = index` across both tables in one transaction (ids
+   * are UUIDs, so a git project and a data project never collide).
+   */
+  reorderSidebar(entries: SidebarOrderEntry[]): void {
+    const db = this.getDb()
+    const projectStmt = db.prepare('UPDATE projects SET sort_order = ? WHERE id = ?')
+    const dataStmt = db.prepare('UPDATE data_projects SET sort_order = ? WHERE id = ?')
+    db.transaction(() => {
+      entries.forEach((entry, index) => {
+        if (entry.kind === 'data') dataStmt.run(index, entry.id)
+        else projectStmt.run(index, entry.id)
+      })
+    })()
+    emitDbChanged({ entity: 'project', op: 'reorder', id: null, projectId: null })
+    emitDbChanged({ entity: 'dataProject', op: 'reorder', id: null, projectId: null })
+  }
+
+  private mapDataHistoryRow(row: DataQueryHistoryRow): DataHistoryEntry {
+    return {
+      id: row.id,
+      dataProjectId: row.data_project_id,
+      database: row.database_name ?? null,
+      text: row.text,
+      status: DATA_HISTORY_STATUSES.has(row.status)
+        ? (row.status as DataHistoryEntry['status'])
+        : 'error',
+      durationMs: row.duration_ms ?? null,
+      rowCount: row.row_count ?? null,
+      error: row.error ?? null,
+      executedAt: row.executed_at
+    }
+  }
+
+  /**
+   * Appends one history entry and prunes the project's history to the newest
+   * DATA_QUERY_HISTORY_LIMIT rows in the same transaction. No db:changed: history is written on
+   * every run and has no cross-client consumer.
+   */
+  addDataQueryHistory(entry: Omit<DataHistoryEntry, 'id'>): DataHistoryEntry {
+    const db = this.getDb()
+    const stored: DataHistoryEntry = {
+      id: randomUUID(),
+      dataProjectId: entry.dataProjectId,
+      database: entry.database ?? null,
+      text: truncateStored(entry.text, DATA_HISTORY_TEXT_MAX),
+      status: entry.status,
+      durationMs:
+        entry.durationMs === null || !Number.isFinite(entry.durationMs)
+          ? null
+          : Math.round(entry.durationMs),
+      rowCount:
+        entry.rowCount === null || !Number.isFinite(entry.rowCount)
+          ? null
+          : Math.round(entry.rowCount),
+      error: entry.error === null ? null : truncateStored(entry.error, DATA_HISTORY_ERROR_MAX),
+      executedAt: entry.executedAt || new Date().toISOString()
+    }
+    db.transaction(() => {
+      db.prepare(
+        `INSERT INTO data_query_history (id, data_project_id, database_name, text, status,
+           duration_ms, row_count, error, executed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        stored.id,
+        stored.dataProjectId,
+        stored.database,
+        stored.text,
+        stored.status,
+        stored.durationMs,
+        stored.rowCount,
+        stored.error,
+        stored.executedAt
+      )
+      db.prepare(
+        `DELETE FROM data_query_history WHERE rowid IN (
+           SELECT rowid FROM data_query_history WHERE data_project_id = ?
+           ORDER BY executed_at DESC, rowid DESC LIMIT -1 OFFSET ?)`
+      ).run(stored.dataProjectId, DATA_QUERY_HISTORY_LIMIT)
+    })()
+    return stored
+  }
+
+  listDataQueryHistory(
+    dataProjectId: string,
+    options: { search?: string; limit?: number } = {}
+  ): DataHistoryEntry[] {
+    const limit =
+      options.limit !== undefined && Number.isFinite(options.limit)
+        ? Math.min(Math.max(Math.floor(options.limit), 1), DATA_QUERY_HISTORY_LIMIT)
+        : 200
+    const search = options.search?.trim() ?? ''
+    const rows = (
+      search
+        ? this.getDb()
+            .prepare(
+              `SELECT * FROM data_query_history
+               WHERE data_project_id = ? AND text LIKE ? ESCAPE '\\'
+               ORDER BY executed_at DESC, rowid DESC LIMIT ?`
+            )
+            .all(dataProjectId, `%${escapeLike(search)}%`, limit)
+        : this.getDb()
+            .prepare(
+              `SELECT * FROM data_query_history WHERE data_project_id = ?
+               ORDER BY executed_at DESC, rowid DESC LIMIT ?`
+            )
+            .all(dataProjectId, limit)
+    ) as DataQueryHistoryRow[]
+    return rows.map((row) => this.mapDataHistoryRow(row))
+  }
+
+  clearDataQueryHistory(dataProjectId: string): void {
+    this.getDb()
+      .prepare('DELETE FROM data_query_history WHERE data_project_id = ?')
+      .run(dataProjectId)
+  }
+
+  private mapDataSavedQueryRow(row: DataSavedQueryRow): DataSavedQuery {
+    return {
+      id: row.id,
+      dataProjectId: row.data_project_id,
+      name: row.name,
+      text: row.text,
+      database: row.database_name ?? null,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    }
+  }
+
+  listDataSavedQueries(dataProjectId: string): DataSavedQuery[] {
+    const rows = this.getDb()
+      .prepare(
+        `SELECT * FROM data_saved_queries WHERE data_project_id = ?
+         ORDER BY name COLLATE NOCASE ASC, created_at ASC`
+      )
+      .all(dataProjectId) as DataSavedQueryRow[]
+    return rows.map((row) => this.mapDataSavedQueryRow(row))
+  }
+
+  /**
+   * Updates the saved query `query.id` when it belongs to this data project, otherwise inserts a
+   * new one under a fresh id (an id from another project is never reused or overwritten).
+   */
+  saveDataSavedQuery(
+    dataProjectId: string,
+    query: { id?: string; name: string; text: string; database?: string | null }
+  ): DataSavedQuery {
+    const db = this.getDb()
+    const now = new Date().toISOString()
+    const database = query.database ?? null
+    let id: string | null = null
+    if (query.id) {
+      const result = db
+        .prepare(
+          `UPDATE data_saved_queries SET name = ?, text = ?, database_name = ?, updated_at = ?
+           WHERE id = ? AND data_project_id = ?`
+        )
+        .run(query.name, query.text, database, now, query.id, dataProjectId)
+      if (result.changes > 0) id = query.id
+    }
+    if (!id) {
+      id = randomUUID()
+      db.prepare(
+        `INSERT INTO data_saved_queries (id, data_project_id, name, text, database_name,
+           created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).run(id, dataProjectId, query.name, query.text, database, now, now)
+    }
+    const row = db.prepare('SELECT * FROM data_saved_queries WHERE id = ?').get(id) as
+      DataSavedQueryRow | undefined
+    if (!row) throw new Error('Failed to save the query')
+    emitDbChanged({ entity: 'dataProject', op: 'update', id: dataProjectId, projectId: null })
+    return this.mapDataSavedQueryRow(row)
+  }
+
+  deleteDataSavedQuery(dataProjectId: string, savedId: string): void {
+    const result = this.getDb()
+      .prepare('DELETE FROM data_saved_queries WHERE id = ? AND data_project_id = ?')
+      .run(savedId, dataProjectId)
+    if (result.changes > 0) {
+      emitDbChanged({ entity: 'dataProject', op: 'update', id: dataProjectId, projectId: null })
+    }
   }
 
   // Worktree operations

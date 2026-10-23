@@ -53,6 +53,18 @@ export interface GenerateTextOptions {
   timeoutMs?: number
   /** Extra attempts after the first failure; defaults to 1. */
   maxRetries?: number
+  /**
+   * Stops the call from outside (the database assistant's Stop button): aborts the Claude query
+   * or kills the spawned CLI, skips the remaining retries and rejects with an `AbortError`.
+   */
+  signal?: AbortSignal
+}
+
+/** What an aborted call rejects with (callers tell cancellation apart by `name`). */
+function generationCancelledError(): Error {
+  const error = new Error('AI generation was cancelled')
+  error.name = 'AbortError'
+  return error
 }
 
 const CLAUDE_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
@@ -117,7 +129,8 @@ export async function generateText(
   provider: AgentSdkId,
   options: GenerateTextOptions = {}
 ): Promise<string | null> {
-  const { modelOverride, effort, outputSchema, cwd } = options
+  const { modelOverride, effort, outputSchema, cwd, signal } = options
+  if (signal?.aborted) throw generationCancelledError()
   const readRepository = options.readRepository === true
   const timeoutMs = options.timeoutMs ?? TIMEOUT_MS
   const maxRetries = options.maxRetries ?? MAX_RETRIES
@@ -137,6 +150,7 @@ export async function generateText(
 
   let lastError: Error | null = null
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (signal?.aborted) throw generationCancelledError()
     try {
       const result = await generateWithProvider(
         resolvedProvider,
@@ -147,7 +161,8 @@ export async function generateText(
         outputSchema,
         cwd,
         timeoutMs,
-        readRepository
+        readRepository,
+        signal
       )
       if (result !== null) {
         log.info('Text generation succeeded', {
@@ -168,6 +183,8 @@ export async function generateText(
         cwd
       })
     } catch (err: unknown) {
+      // A cancelled call is not a failure to retry.
+      if (signal?.aborted) throw generationCancelledError()
       lastError = err instanceof Error ? err : new Error(String(err))
       log.warn('Text generation attempt failed', {
         requestedProvider: provider,
@@ -231,7 +248,8 @@ function generateWithProvider(
   outputSchema?: string,
   cwd?: string,
   timeoutMs: number = TIMEOUT_MS,
-  readRepository = false
+  readRepository = false,
+  signal?: AbortSignal
 ): Promise<string | null> {
   switch (provider) {
     case 'claude-code':
@@ -243,7 +261,8 @@ function generateWithProvider(
         effort,
         cwd,
         timeoutMs,
-        readRepository
+        readRepository,
+        signal
       )
     case 'codex':
     case 'codex-cli':
@@ -255,7 +274,8 @@ function generateWithProvider(
         effort,
         outputSchema,
         cwd,
-        timeoutMs
+        timeoutMs,
+        signal
       )
     case 'opencode':
       return generateWithOpenCode(
@@ -264,7 +284,8 @@ function generateWithProvider(
         modelOverride,
         cwd,
         timeoutMs,
-        readRepository
+        readRepository,
+        signal
       )
     case 'terminal':
       return Promise.resolve(null)
@@ -281,7 +302,8 @@ async function generateWithClaude(
   effort?: string,
   cwd?: string,
   timeoutMs: number = TIMEOUT_MS,
-  readRepository = false
+  readRepository = false,
+  signal?: AbortSignal
 ): Promise<string | null> {
   const sdk = await loadClaudeSDK()
   // Only the app's main process is handed the path at startup; the desktop backend runs this
@@ -291,6 +313,9 @@ async function generateWithClaude(
 
   const abortController = new AbortController()
   const timeout = setTimeout(() => abortController.abort(), timeoutMs)
+  const abortFromCaller = (): void => abortController.abort()
+  if (signal?.aborted) abortController.abort()
+  else signal?.addEventListener('abort', abortFromCaller, { once: true })
   let streamedText = ''
 
   try {
@@ -354,6 +379,8 @@ async function generateWithClaude(
 
     return resultText || null
   } catch (err) {
+    // Cancelled by the caller: half a reply is not an answer.
+    if (signal?.aborted) throw generationCancelledError()
     // If we collected streamed text before the error, use it as fallback
     if (streamedText) {
       log.warn('Using streamed text after error', {
@@ -370,6 +397,7 @@ async function generateWithClaude(
     throw err
   } finally {
     clearTimeout(timeout)
+    signal?.removeEventListener('abort', abortFromCaller)
   }
 }
 
@@ -384,7 +412,8 @@ async function generateWithCodex(
   effort?: string,
   outputSchema?: string,
   cwd?: string,
-  timeoutMs: number = TIMEOUT_MS
+  timeoutMs: number = TIMEOUT_MS,
+  signal?: AbortSignal
 ): Promise<string | null> {
   const resolvedBinary = resolveCodexBinaryPath()
   const binary = codexBinaryPath || resolvedBinary || 'codex'
@@ -417,7 +446,7 @@ async function generateWithCodex(
     }
     args.push('--output-last-message', outputFile, '-')
 
-    await spawnWithStdin(binary, args, fullPrompt, cwd, spawnEnv, timeoutMs)
+    await spawnWithStdin(binary, args, fullPrompt, cwd, spawnEnv, timeoutMs, signal)
     const output = await readFile(outputFile, 'utf-8')
     return output.trim() || null
   } finally {
@@ -447,7 +476,8 @@ async function generateWithOpenCode(
   modelOverride?: string,
   cwd?: string,
   timeoutMs: number = TIMEOUT_MS,
-  readRepository = false
+  readRepository = false,
+  signal?: AbortSignal
 ): Promise<string | null> {
   const model = modelOverride ?? 'claude-haiku'
   const fullPrompt = `${systemPrompt}\n\n${prompt}`
@@ -459,7 +489,8 @@ async function generateWithOpenCode(
     fullPrompt,
     cwd,
     undefined,
-    timeoutMs
+    timeoutMs,
+    signal
   )
 
   // Parse newline-delimited JSON events, collecting text from "text" type events
@@ -491,7 +522,8 @@ function spawnWithStdin(
   input: string,
   cwd?: string,
   env?: NodeJS.ProcessEnv,
-  timeoutMs: number = TIMEOUT_MS
+  timeoutMs: number = TIMEOUT_MS,
+  signal?: AbortSignal
 ): Promise<string> {
   return getRuntime()
     .runPromise(
@@ -504,12 +536,15 @@ function spawnWithStdin(
           maxOutputBytes: MAX_OUTPUT_SIZE,
           collectStderr: true,
           env: env ?? process.env,
-          cwd
+          cwd,
+          // Node kills the child when the caller aborts.
+          ...(signal ? { signal } : {})
         })
       )
     )
     .then((result) => result.stdout)
     .catch((error: unknown) => {
+      if (signal?.aborted) throw generationCancelledError()
       throw spawnErrorToError(error, command)
     })
 }

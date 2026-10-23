@@ -4,7 +4,8 @@ import { toast } from '@/lib/toast'
 import {
   registerConnectionClear,
   registerConnectionSavedProjectResolver,
-  clearWorktreeSelection
+  clearWorktreeSelection,
+  clearDataProjectSelection
 } from './store-coordination'
 import { useKanbanStore } from './useKanbanStore'
 import { connectionApi } from '@/api/connection-api'
@@ -146,6 +147,7 @@ export const useConnectionStore = create<ConnectionState>()(
           }))
           // Deconflict: clear worktree selection synchronously (same tick)
           clearWorktreeSelection()
+          clearDataProjectSelection()
 
           toast.success(`Connection "${connection.name}" created`)
           return connection.id
@@ -324,6 +326,7 @@ export const useConnectionStore = create<ConnectionState>()(
         set({ selectedConnectionId: result.connectionId, connectionGitView: 'connection' })
         // Deconflict: clear worktree selection synchronously (same tick)
         clearWorktreeSelection()
+        clearDataProjectSelection()
         toast.success(`Connection "${result.connectionName}" created`)
         return result.connectionId
       },
@@ -509,6 +512,7 @@ export const useConnectionStore = create<ConnectionState>()(
         if (id) {
           // Deconflict: clear worktree selection synchronously (same tick)
           clearWorktreeSelection()
+          clearDataProjectSelection()
           // Close pinned board when entering connection mode (matches worktree
           // behavior); idempotent close, not a toggle, so it can't race other
           // queued closes back to active.

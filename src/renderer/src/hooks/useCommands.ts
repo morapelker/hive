@@ -16,6 +16,8 @@ import { BOARD_TAB_ID } from '@/stores/useSessionStore'
 import { useGitStore } from '@/stores/useGitStore'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { useShortcutStore } from '@/stores/useShortcutStore'
+import { leaveDataProjectThen, useDataProjectStore } from '@/stores/useDataProjectStore'
+import { describeDataProjectTarget } from '@/components/data-projects/data-project-ui'
 import { useCommandPaletteStore, type Command } from '@/stores/useCommandPaletteStore'
 import { commandRegistry, fuzzySearch } from '@/lib/command-registry'
 import { isForceBoardMode } from '@/api/hive-enterprise/client'
@@ -40,13 +42,18 @@ export function useCommands() {
   const { projects, selectedProjectId, selectProject, toggleProjectExpanded } = useProjectStore()
   const { worktreesByProject, selectWorktree, getWorktreesForProject } = useWorktreeStore()
   const {
-    activeWorktreeId,
-    activeSessionId,
+    activeWorktreeId: storeWorktreeId,
+    activeSessionId: storeSessionId,
     createSession,
     closeSession,
     setActiveSession,
     getSessionsForWorktree
   } = useSessionStore()
+  // A data project on screen keeps the last worktree's session in useSessionStore, hidden: the
+  // palette's session, worktree and git commands act on what is shown, so they see none then.
+  const dataProjectOpen = useDataProjectStore((s) => s.selectedDataProjectId !== null)
+  const activeWorktreeId = dataProjectOpen ? null : storeWorktreeId
+  const activeSessionId = dataProjectOpen ? null : storeSessionId
   const { themeId, setTheme, previewTheme, cancelPreview } = useThemeStore()
   const { togglePanel: toggleSessionHistory } = useSessionHistoryStore()
   const { stageAll, unstageAll, refreshStatuses, push, pull, isPushing, isPulling } = useGitStore()
@@ -55,6 +62,8 @@ export function useCommands() {
   const { getDisplayString } = useShortcutStore()
   const selectedConnectionId = useConnectionStore((s) => s.selectedConnectionId)
   const connections = useConnectionStore((s) => s.connections)
+  // Data projects (database connections): "Switch to database ▸" and "Add database connection".
+  const dataProjects = useDataProjectStore((s) => s.projects)
   const {
     searchQuery,
     recentCommandIds,
@@ -91,6 +100,20 @@ export function useCommands() {
     const documentFlowProjectId =
       selectedProject?.id ?? selectedConnection?.saved_project_id ?? null
 
+    const dataProjectChildren = (): Command[] =>
+      dataProjects.map((project) => ({
+        id: `nav:database:${project.id}`,
+        label: project.name,
+        description: describeDataProjectTarget(project),
+        category: 'navigation' as const,
+        icon: 'Database',
+        keywords: [project.engine, project.environment],
+        action: () => {
+          useDataProjectStore.getState().select(project.id)
+          closeCommandPalette()
+        }
+      }))
+
     const commands: Command[] = [
       // =====================
       // NAVIGATION COMMANDS
@@ -124,10 +147,13 @@ export function useCommands() {
             category: 'navigation' as const,
             icon: 'Folder',
             action: () => {
-              selectProject(project.id)
-              toggleProjectExpanded(project.id)
+              // Replaces an open data project: its staged table edits ask first.
+              leaveDataProjectThen(() => {
+                selectProject(project.id)
+                toggleProjectExpanded(project.id)
+                toast.success(`Switched to ${project.name}`)
+              })
               closeCommandPalette()
-              toast.success(`Switched to ${project.name}`)
             }
           })),
         action: () => {
@@ -139,10 +165,12 @@ export function useCommands() {
               category: 'navigation' as const,
               icon: 'Folder',
               action: () => {
-                selectProject(project.id)
-                toggleProjectExpanded(project.id)
+                leaveDataProjectThen(() => {
+                  selectProject(project.id)
+                  toggleProjectExpanded(project.id)
+                  toast.success(`Switched to ${project.name}`)
+                })
                 closeCommandPalette()
-                toast.success(`Switched to ${project.name}`)
               }
             })) || []
           pushCommandLevel(children, {
@@ -243,8 +271,11 @@ export function useCommands() {
             const { isBoardViewActive } = useKanbanStore.getState()
             const fileStore = useFileViewerStore.getState()
             if (!isBoardViewActive) {
-              fileStore.clearActiveViews()
-              toggleBoardView()
+              // Opening the board replaces an open data project: staged table edits ask first.
+              leaveDataProjectThen(() => {
+                fileStore.clearActiveViews()
+                toggleBoardView()
+              })
             } else if (fileStore.hasActiveOverlay()) {
               fileStore.clearActiveViews()
             } else {
@@ -264,11 +295,14 @@ export function useCommands() {
         shortcut: getDisplayString('nav:toggle-pinned-board'),
         keywords: ['kanban', 'board', 'pinned', 'pinboard', 'toggle'],
         action: () => {
-          const kanban = useKanbanStore.getState()
-          if (!kanban.isPinnedBoardActive) {
-            useFileViewerStore.getState().clearActiveViews()
-          }
-          kanban.togglePinnedBoard()
+          // The board replaces an open data project: staged table edits ask first.
+          leaveDataProjectThen(() => {
+            const kanban = useKanbanStore.getState()
+            if (!kanban.isPinnedBoardActive) {
+              useFileViewerStore.getState().clearActiveViews()
+            }
+            kanban.togglePinnedBoard()
+          })
           closeCommandPalette()
         },
         isVisible: () => true
@@ -403,7 +437,8 @@ export function useCommands() {
         icon: 'X',
         keywords: ['close', 'session', 'tab'],
         action: async () => {
-          if (!activeSessionId) return
+          // Re-checked at execution: the registered list can predate opening a data project.
+          if (!activeSessionId || useDataProjectStore.getState().selectedDataProjectId) return
           const result = await closeSession(activeSessionId)
           if (result.success) {
             toast.success('Session closed')
@@ -450,6 +485,49 @@ export function useCommands() {
             }
           }
         }
+      },
+      {
+        id: 'action:add-database',
+        label: 'Add database connection',
+        description: 'MySQL, MariaDB, PostgreSQL, SQLite, ClickHouse or MongoDB',
+        category: 'action',
+        icon: 'Database',
+        keywords: [
+          'database',
+          'db',
+          'sql',
+          'mysql',
+          'mariadb',
+          'postgres',
+          'sqlite',
+          'clickhouse',
+          'mongodb',
+          'connection',
+          'add'
+        ],
+        action: () => {
+          closeCommandPalette()
+          useDataProjectStore.getState().openWizard({ mode: 'create' })
+        }
+      },
+      {
+        id: 'nav:switch-database',
+        label: 'Switch to database',
+        description: 'Open a database connection',
+        category: 'navigation',
+        icon: 'Database',
+        keywords: ['database', 'db', 'sql', 'query', 'connection', 'switch'],
+        hasChildren: true,
+        getChildren: () => dataProjectChildren(),
+        action: () => {
+          pushCommandLevel(dataProjectChildren(), {
+            id: 'nav:switch-database',
+            label: 'Switch to database',
+            category: 'navigation',
+            action: () => {}
+          })
+        },
+        isVisible: () => dataProjects.length > 0
       },
       {
         id: 'action:open-in-editor',
@@ -781,7 +859,8 @@ export function useCommands() {
     closeCommandPalette,
     pushCommandLevel,
     isPackaged,
-    toggleBoardView
+    toggleBoardView,
+    dataProjects
   ])
 
   // Handle custom command execution events
@@ -828,9 +907,10 @@ export function useCommands() {
 
       if (existingSessions.length > 0) {
         // Use the active session or the first one
-        targetSessionId = activeSessionId && existingSessions.find(s => s.id === activeSessionId)
-          ? activeSessionId
-          : existingSessions[0].id
+        targetSessionId =
+          storeSessionId && existingSessions.find((s) => s.id === storeSessionId)
+            ? storeSessionId
+            : existingSessions[0].id
       } else {
         // Create a new session
         const result = await createSession(worktree.id, projectId)
@@ -867,7 +947,7 @@ export function useCommands() {
     getWorktreesForProject,
     selectWorktree,
     getSessionsForWorktree,
-    activeSessionId,
+    storeSessionId,
     createSession,
     setActiveSession
   ])

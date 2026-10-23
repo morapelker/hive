@@ -8,6 +8,15 @@ import { useSessionStore } from '@/stores/useSessionStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { dispatchHintAction } from '@/lib/hint-utils'
 
+/** Inside a data project's query editor or result grid (same markers as useKeyboardShortcuts). */
+export function isDataClientTarget(target: EventTarget | null): boolean {
+  const element = target as Element | null
+  return (
+    typeof element?.closest === 'function' &&
+    element.closest('[data-db-editor], [data-db-grid]') !== null
+  )
+}
+
 const SIDEBAR_SCROLL_STEP = 80
 const TABS_SCROLL_STEP = 150
 const SCROLL_AFTER_NAVIGATE_DELAY = 50
@@ -87,6 +96,9 @@ export function useVimNavigation(): void {
 
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (event.metaKey || event.ctrlKey || event.altKey) return
+      // A data project's query editor / result grid owns its keys: Escape closes the editor's
+      // completion popup and h/j/k/l move in the grid, never vim normal mode.
+      if (isDataClientTarget(event.target)) return
       if (isInputElement(document.activeElement) && event.key !== 'Escape') return
 
       const vim = useVimModeStore.getState()

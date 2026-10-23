@@ -34,6 +34,21 @@ import {
   makeLiveCodexDebugLoggerOpsRpcService,
   type CodexDebugLoggerOpsRpcService
 } from './domains/codex-debug-logger-ops'
+import {
+  makeDataAssistantRpcHandlers,
+  makeLiveDataAssistantRpcService,
+  type DataAssistantRpcService
+} from './domains/data-assistant'
+import {
+  makeDataConsoleRpcHandlers,
+  makeLiveDataConsoleRpcService,
+  type DataConsoleRpcService
+} from './domains/data-console'
+import {
+  makeDataProjectsRpcHandlers,
+  makeLiveDataProjectsRpcService,
+  type DataProjectsRpcService
+} from './domains/data-projects'
 import { makeDbRpcHandlers, makeLiveDbRpcService, type DbRpcService } from './domains/db'
 import {
   makeDiscordOpsRpcHandlers,
@@ -190,6 +205,12 @@ export interface RpcContext {
   readonly bash?: BashRpcService
   readonly codexDebugLoggerOps?: CodexDebugLoggerOpsRpcService
   readonly connectionOps?: ConnectionOpsRpcService
+  /** Desktop-only: never in the remote-access policy (see remote-policy.test.ts). */
+  readonly dataAssistant?: DataAssistantRpcService
+  /** `dataProjects.console.*` — desktop-only like every `dataProjects.*` method. */
+  readonly dataConsole?: DataConsoleRpcService
+  /** Desktop-only: never in the remote-access policy (see remote-policy.test.ts). */
+  readonly dataProjects?: DataProjectsRpcService
   readonly cliToolsOps?: CliToolsOpsRpcService
   readonly db?: DbRpcService
   readonly discordOps?: DiscordOpsRpcService
@@ -254,6 +275,15 @@ const makeDefaultRpcHandlers = (context: RpcContext): ReadonlyMap<string, RpcHan
       context.codexDebugLoggerOps ?? makeLiveCodexDebugLoggerOpsRpcService()
     ),
     ...makeConnectionOpsRpcHandlers(context.connectionOps ?? makeLiveConnectionOpsRpcService()),
+    ...makeDataAssistantRpcHandlers(
+      context.dataAssistant ?? makeLiveDataAssistantRpcService({ eventBus: context.eventBus })
+    ),
+    ...makeDataProjectsRpcHandlers(
+      context.dataProjects ?? makeLiveDataProjectsRpcService({ eventBus: context.eventBus })
+    ),
+    ...makeDataConsoleRpcHandlers(
+      context.dataConsole ?? makeLiveDataConsoleRpcService({ eventBus: context.eventBus })
+    ),
     ...makeDbRpcHandlers(context.db ?? makeLiveDbRpcService()),
     ...makeCliToolsOpsRpcHandlers(
       context.cliToolsOps ?? makeLiveCliToolsOpsRpcService(context.eventBus)

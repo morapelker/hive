@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 59
+export const CURRENT_SCHEMA_VERSION = 60
 
 /**
  * "Implement document" flow (v55). `document_runs` is one spec document turned into tickets
@@ -199,6 +199,78 @@ export const TICKET_LABELS_TABLES_DROP_SQL = `
   DROP INDEX IF EXISTS idx_ticket_labels_name_key;
   DROP TABLE IF EXISTS ticket_labels;
 `
+
+/**
+ * Data projects (v66): database connections shown in the sidebar next to git projects
+ * (src/shared/data-projects/types.ts). A table of their own, never rows in `projects`: the
+ * relay / peer / mobile protocols and every `projects` consumer stay untouched, and an older
+ * build sharing this file simply ignores it. `sort_order` shares one integer space with
+ * `projects.sort_order` so the sidebar is one ordered list (createProject /
+ * createConnectionProject / createDataProject shift both tables; reorderSidebar writes both).
+ * `config` and `icon` are JSON TEXT (non-secret connection fields only); booleans are 0/1.
+ * `secret_ciphertext` is the `v1:<base64>` Electron safeStorage blob of the JSON secrets, never
+ * plaintext; `secret_state` is what was last written ('none' | 'stored' | 'session').
+ * `data_query_history` is capped to the newest 1000 rows per project on insert (the index
+ * serves both the newest-first listing and the prune); `data_saved_queries` are the user's
+ * named queries. Both cascade with their data project. CREATE TABLE IF NOT EXISTS, replayed by
+ * ensureDataProjectTables() in database.ts.
+ */
+export const DATA_PROJECT_TABLES_SQL = `
+  CREATE TABLE IF NOT EXISTS data_projects (
+    id                   TEXT PRIMARY KEY,
+    name                 TEXT NOT NULL,
+    engine               TEXT NOT NULL,
+    config               TEXT NOT NULL DEFAULT '{}',
+    icon                 TEXT DEFAULT NULL,
+    icon_color           TEXT DEFAULT NULL,
+    environment          TEXT NOT NULL DEFAULT 'development',
+    color                TEXT DEFAULT NULL,
+    safe_mode            TEXT NOT NULL DEFAULT 'half-safe',
+    default_limit        INTEGER NOT NULL DEFAULT 1000,
+    allow_ai_data_access INTEGER NOT NULL DEFAULT 0,
+    pinned               INTEGER NOT NULL DEFAULT 0,
+    secret_ciphertext    TEXT DEFAULT NULL,
+    secret_state         TEXT NOT NULL DEFAULT 'none',
+    sort_order           INTEGER NOT NULL DEFAULT 0,
+    created_at           TEXT NOT NULL,
+    last_accessed_at     TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_data_projects_sort ON data_projects(sort_order);
+  CREATE TABLE IF NOT EXISTS data_query_history (
+    id              TEXT PRIMARY KEY,
+    data_project_id TEXT NOT NULL REFERENCES data_projects(id) ON DELETE CASCADE,
+    database_name   TEXT DEFAULT NULL,
+    text            TEXT NOT NULL,
+    status          TEXT NOT NULL,
+    duration_ms     INTEGER DEFAULT NULL,
+    row_count       INTEGER DEFAULT NULL,
+    error           TEXT DEFAULT NULL,
+    executed_at     TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_data_query_history_project
+    ON data_query_history(data_project_id, executed_at DESC);
+  CREATE TABLE IF NOT EXISTS data_saved_queries (
+    id              TEXT PRIMARY KEY,
+    data_project_id TEXT NOT NULL REFERENCES data_projects(id) ON DELETE CASCADE,
+    name            TEXT NOT NULL,
+    text            TEXT NOT NULL,
+    database_name   TEXT DEFAULT NULL,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_data_saved_queries_project
+    ON data_saved_queries(data_project_id);
+`
+
+export const DATA_PROJECT_TABLES_DROP_SQL = `
+  DROP INDEX IF EXISTS idx_data_saved_queries_project;
+  DROP TABLE IF EXISTS data_saved_queries;
+  DROP INDEX IF EXISTS idx_data_query_history_project;
+  DROP TABLE IF EXISTS data_query_history;
+  DROP INDEX IF EXISTS idx_data_projects_sort;
+  DROP TABLE IF EXISTS data_projects;
+`
+
 export const SCHEMA_SQL = `
 -- Projects table
 CREATE TABLE IF NOT EXISTS projects (
@@ -1069,5 +1141,13 @@ DROP TABLE IF EXISTS diff_comments;`
     // safeAddColumn() in database.ts to avoid "duplicate column" errors.
     up: TICKET_LABELS_TABLES_SQL,
     down: TICKET_LABELS_TABLES_DROP_SQL
+  },
+  {
+    version: 60,
+    name: 'add_data_projects',
+    // Data projects (database clients in the sidebar), their query history and saved queries.
+    // CREATE TABLE IF NOT EXISTS, replayed by ensureDataProjectTables() in database.ts.
+    up: DATA_PROJECT_TABLES_SQL,
+    down: DATA_PROJECT_TABLES_DROP_SQL
   }
 ]

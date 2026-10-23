@@ -7,6 +7,8 @@ dist/
 out/
 .dev-server/
 *.tsbuildinfo
+# Seed files for the data-projects test databases (scripts/data-projects-test-dbs/up.sh)
+.test-dbs/
 
 # Environment
 .env

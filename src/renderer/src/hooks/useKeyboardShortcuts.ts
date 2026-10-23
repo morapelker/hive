@@ -13,7 +13,6 @@ import {
   useSpaceStore,
   useFilterStore
 } from '@/stores'
-import { subsequenceMatch } from '@/lib/subsequence-match'
 import { useGitStore } from '@/stores/useGitStore'
 import { useShortcutStore } from '@/stores/useShortcutStore'
 import { useWorktreeStore, getOrderedProjectWorktrees } from '@/stores/useWorktreeStore'
@@ -38,7 +37,63 @@ import type { MenuActionChannel } from '@shared/menu-events'
  * document-flow dialogs' original one. A portaled popover needs its own attribute, since it is
  * not inside the dialog's element. SessionView's window-level Tab handler checks the same pair.
  */
-const TAB_NAVIGATES_SELECTOR = '[data-tab-navigates], [data-docflow-dialog]'
+const TAB_NAVIGATES_SELECTOR = '[data-tab-navigates], [data-docflow-dialog], [data-db-dialog]'
+import { useDataProjectStore } from '@/stores/useDataProjectStore'
+import { filterSidebarEntries, mergeSidebarEntries } from '@/lib/project-filter'
+import { describeDataProjectTarget } from '@/components/data-projects/data-project-ui'
+
+/**
+ * Data projects' database clients: inside their query editor (`[data-db-editor]`, CodeMirror)
+ * or result grid (`[data-db-grid]`) every key belongs to the client — Tab accepts a completion,
+ * Cmd+[ / Cmd+] indent, the grid moves and copies — so only these app-level shortcuts stay
+ * global there: command palette, session history, settings and the Pinned Board toggle. Keyed
+ * on the element, not on key names, because users rebind keys. Cmd+T / Cmd+D / Cmd+W never
+ * arrive as keydowns in Electron (the main process forwards them): DataProjectView turns them
+ * into a new tab and the editor's select-next-occurrence, the workspaces close their tab.
+ */
+export const DATA_CLIENT_GLOBAL_SHORTCUTS: ReadonlySet<string> = new Set([
+  'nav:command-palette',
+  'nav:session-history',
+  'settings:open',
+  'nav:toggle-pinned-board'
+])
+
+export function isDataClientTarget(target: EventTarget | null): boolean {
+  const element = target as Element | null
+  return (
+    typeof element?.closest === 'function' &&
+    element.closest('[data-db-editor], [data-db-grid]') !== null
+  )
+}
+
+/**
+ * Shortcuts that act on the session, worktree or file tabs behind the main pane. While a data
+ * project (database client) owns the pane none of those is on screen — selecting it clears the
+ * worktree, but the session store still points at the hidden worktree's session — so they never
+ * fire there: Tab / Shift+Tab move focus through the client's forms and dialogs instead of
+ * flipping the hidden session's mode (for a CLI session that writes into its PTY), Cmd+T opens a
+ * query tab (DataProjectView) instead of a session, and git keys never push or pull a worktree
+ * the user cannot see.
+ */
+export const SESSION_SCOPED_SHORTCUTS: ReadonlySet<string> = new Set([
+  'session:new',
+  'session:next',
+  'session:previous',
+  'session:mode-toggle',
+  'session:super-plan-toggle',
+  'project:run',
+  'model:cycle-variant',
+  'nav:file-search',
+  'git:commit',
+  'git:push',
+  'git:pull',
+  'terminal:next-tab',
+  'terminal:prev-tab'
+])
+
+/** A data project (database client) owns the main pane: no session, worktree or file is shown. */
+const isDataProjectOpen = (): boolean =>
+  useDataProjectStore.getState().selectedDataProjectId !== null
 
 /**
  * Check if the terminal panel is currently focused.
@@ -293,60 +348,53 @@ function cycleWorktree(direction: 1 | -1): void {
 
 /**
  * Cycles to the next/previous item in the sidebar — connections first (as
- * displayed above projects), then projects — as one unified list, wrapping
- * around at the ends. Landing on a connection selects it; landing on a
- * project selects it and its top worktree so the jump lands somewhere useful.
+ * displayed above projects), then projects and data projects (database
+ * connections) in their shared sidebar order — as one unified list, wrapping
+ * around at the ends. Landing on a connection or a data project selects it;
+ * landing on a project selects it and its top worktree so the jump lands
+ * somewhere useful.
  */
 function cycleProject(direction: 1 | -1): void {
   const projectState = useProjectStore.getState()
   const connectionState = useConnectionStore.getState()
+  const dataState = useDataProjectStore.getState()
   const { projects, selectedProjectId } = projectState
   const { connections, selectedConnectionId } = connectionState
+  const { selectedDataProjectId } = dataState
 
   // Respect the active Space, language, and text filters so cycling stays
   // within the visible sidebar list (mirrors ProjectList's filtering)
   const { activeSpaceId, projectSpaceMap } = useSpaceStore.getState()
   const { activeLanguages, filterQuery } = useFilterStore.getState()
-  let visibleProjects =
-    activeSpaceId === null
-      ? projects
-      : projects.filter((p) => projectSpaceMap[p.id]?.includes(activeSpaceId))
-  if (activeLanguages.length > 0) {
-    const langSet = new Set(activeLanguages)
-    visibleProjects = visibleProjects.filter((p) => p.language && langSet.has(p.language))
-  }
-  if (filterQuery.trim()) {
-    // Filter and sort by match score, mirroring ProjectList's display order
-    visibleProjects = visibleProjects
-      .map((p) => ({
-        project: p,
-        nameMatch: subsequenceMatch(filterQuery, p.name),
-        pathMatch: subsequenceMatch(filterQuery, p.path)
-      }))
-      .filter(({ nameMatch, pathMatch }) => nameMatch.matched || pathMatch.matched)
-      .sort((a, b) => {
-        const aScore = a.nameMatch.matched ? a.nameMatch.score : a.pathMatch.score + 1000
-        const bScore = b.nameMatch.matched ? b.nameMatch.score : b.pathMatch.score + 1000
-        return aScore - bScore
-      })
-      .map(({ project }) => project)
-  }
+  const visibleEntries = filterSidebarEntries(
+    mergeSidebarEntries(projects, dataState.projects),
+    { filterQuery, activeLanguages, activeSpaceId, projectSpaceMap },
+    describeDataProjectTarget
+  )
 
-  // Unified sidebar order: connections section first, then projects
-  type SidebarItem = { kind: 'connection' | 'project'; id: string }
+  // Unified sidebar order: connections section first, then projects / data projects
+  type SidebarItem = { kind: 'connection' | 'project' | 'data'; id: string }
   const items: SidebarItem[] = [
     ...connections.map((c): SidebarItem => ({ kind: 'connection', id: c.id })),
-    ...visibleProjects.map((p): SidebarItem => ({ kind: 'project', id: p.id }))
+    ...visibleEntries.map(({ project: row }): SidebarItem => ({
+      kind: row.entry.kind,
+      id: row.entry.id
+    }))
   ]
   if (items.length === 0) return
 
-  // Current position: an explicitly selected connection wins (it clears
-  // worktree/project selection); otherwise the selected project.
-  const currentIndex = selectedConnectionId
-    ? items.findIndex((i) => i.kind === 'connection' && i.id === selectedConnectionId)
-    : selectedProjectId
-      ? items.findIndex((i) => i.kind === 'project' && i.id === selectedProjectId)
-      : -1
+  // Current position: an explicitly selected connection or data project wins
+  // (each clears worktree/project selection); otherwise the selected project.
+  const current: SidebarItem | null = selectedConnectionId
+    ? { kind: 'connection', id: selectedConnectionId }
+    : selectedDataProjectId
+      ? { kind: 'data', id: selectedDataProjectId }
+      : selectedProjectId
+        ? { kind: 'project', id: selectedProjectId }
+        : null
+  const currentIndex = current
+    ? items.findIndex((i) => i.kind === current.kind && i.id === current.id)
+    : -1
   const nextIndex =
     currentIndex === -1
       ? direction === 1
@@ -355,6 +403,12 @@ function cycleProject(direction: 1 | -1): void {
       : (currentIndex + direction + items.length) % items.length
   const next = items[nextIndex]
   if (!next || nextIndex === currentIndex) return
+
+  if (next.kind === 'data') {
+    // Clears the project, worktree and connection selection itself.
+    dataState.select(next.id)
+    return
+  }
 
   if (next.kind === 'connection') {
     connectionState.selectConnection(next.id)
@@ -482,10 +536,12 @@ export function useKeyboardShortcuts(): void {
       const isXtermFocused = target.closest?.('.xterm') !== null
 
       // Dialogs and popovers laid over the session (the document-flow ones, the ticket label
-      // dialogs…) opt out with TAB_NAVIGATES_SELECTOR: Tab and Shift+Tab move focus between
-      // their fields and must never flip the mode of the session behind them (which, for a
-      // CLI session, writes into its PTY).
+      // dialogs, the data project dialogs…) opt out with TAB_NAVIGATES_SELECTOR: Tab and Shift+Tab
+      // move focus between their fields and must never flip the mode of the session behind them
+      // (which, for a CLI session, writes into its PTY).
       const inTabNavigatingSurface = !!target.closest?.(TAB_NAVIGATES_SELECTOR)
+      const inDataClient = isDataClientTarget(target)
+      const dataProjectOpen = isDataProjectOpen()
 
       // Ctrl+[ is the Escape equivalent in terminals (and Vim), and Ctrl+] is
       // Vim's "jump to tag/definition". Never intercept them while the
@@ -500,8 +556,10 @@ export function useKeyboardShortcuts(): void {
         return
       }
 
-      for (const { binding, handler, allowInInput } of shortcuts) {
+      for (const { id, binding, handler, allowInInput } of shortcuts) {
         if (!binding) continue
+        if (inDataClient && !DATA_CLIENT_GLOBAL_SHORTCUTS.has(id)) continue
+        if (dataProjectOpen && SESSION_SCOPED_SHORTCUTS.has(id)) continue
         if (isInputFocused && !allowInInput) continue
         if (isXtermFocused && binding.modifiers.length === 0) continue
         if (
@@ -531,6 +589,8 @@ export function useKeyboardShortcuts(): void {
   // Listen for Cmd+T / Ctrl+T forwarded from the main process via WebSocket
   useEffect(() => {
     const cleanup = systemApi.onNewSessionShortcut(() => {
+      // An open data project opens a query tab instead (DataProjectView listens too).
+      if (isDataProjectOpen()) return
       if (isTerminalFocused()) {
         const worktreeId = useWorktreeStore.getState().selectedWorktreeId
         if (worktreeId) {
@@ -547,6 +607,9 @@ export function useKeyboardShortcuts(): void {
   // Listen for Cmd+D / Ctrl+D forwarded from the main process via WebSocket
   useEffect(() => {
     const cleanup = systemApi.onFileSearchShortcut(() => {
+      // A data project has no files to search: DataProjectView hands the key to its editor
+      // (select next occurrence) instead.
+      if (isDataProjectOpen()) return
       useFileSearchStore.getState().toggle()
     })
 
@@ -564,6 +627,10 @@ export function useKeyboardShortcuts(): void {
     const cleanup = systemApi.onCloseSessionShortcut(() => {
       // Priority 0: Close any open modal/dialog
       if (tryCloseOpenModal()) return
+
+      // An open data project: its workspace closes the active query / table tab itself; the
+      // hidden worktree's terminal, file and diff tabs are left alone.
+      if (isDataProjectOpen()) return
 
       // Priority 0.5: Close active terminal tab when terminal is focused
       if (isTerminalFocused()) {
@@ -654,6 +721,9 @@ function getShortcutHandlers(
       handler: () => {
         // Priority 0: Close any open modal/dialog
         if (tryCloseOpenModal()) return
+
+        // Nothing behind an open data project is closed (see the Cmd+W listener above).
+        if (isDataProjectOpen()) return
 
         // Priority 0.5: Close active terminal tab when terminal is focused
         if (isTerminalFocused()) {
@@ -1049,6 +1119,8 @@ function getShortcutHandlers(
  * Get the file path of the currently active worktree.
  */
 function getActiveWorktreePath(): string | null {
+  // The session store keeps the hidden worktree while a data project is open: not a target.
+  if (isDataProjectOpen()) return null
   const { activeWorktreeId } = useSessionStore.getState()
   if (!activeWorktreeId) return null
 
@@ -1087,15 +1159,17 @@ function useMenuActionListeners(): void {
 
     on('menu:toggle-mode', () => {
       const { activeSessionId } = useSessionStore.getState()
-      if (!activeSessionId) return
+      if (!activeSessionId || isDataProjectOpen()) return
       useSessionStore.getState().toggleSessionMode(activeSessionId)
     })
 
     on('menu:cycle-model', () => {
+      if (isDataProjectOpen()) return
       window.dispatchEvent(new CustomEvent('hive:cycle-variant'))
     })
 
     on('menu:run-project', () => {
+      if (isDataProjectOpen()) return
       handleRunProject()
     })
 
@@ -1230,7 +1304,10 @@ function useMenuActionListeners(): void {
  * whether a session and worktree are currently active.
  */
 function useMenuStateUpdater(): void {
-  const activeSessionId = useSessionStore((s) => s.activeSessionId)
+  // The session behind an open data project is not on screen: its menu items are disabled.
+  const dataProjectOpen = useDataProjectStore((s) => s.selectedDataProjectId !== null)
+  const sessionId = useSessionStore((s) => s.activeSessionId)
+  const activeSessionId = dataProjectOpen ? null : sessionId
   const selectedWorktreeId = useWorktreeStore((s) => s.selectedWorktreeId)
 
   const opencodeSessionId = useSessionStore((state) => {

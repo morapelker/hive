@@ -17,6 +17,7 @@ import {
   registerKanbanRenameSync,
   registerKanbanModelSync,
   isTicketHeldByDocumentUpdate,
+  leaveDataProjectThen,
   type KanbanSessionEvent
 } from './store-coordination'
 import { CUSTOM_MODEL_PROVIDER_ID } from '@shared/types/custom-provider'
@@ -743,9 +744,21 @@ interface KanbanState {
 
   // ── Pinned board accessors ──────────────────────────────────────────
   isPinnedBoardActive: boolean
+  /**
+   * Pinned mode is on but other main-pane content (a data project) is shown in front of the
+   * board; the Board tab, the sidebar row and Cmd+P bring it back.
+   */
+  isPinnedBoardBehindSession: boolean
   togglePinnedBoard: () => void
   /** Close the pinned board unconditionally (navigation intent) — idempotent, unlike togglePinnedBoard. */
   closePinnedBoard: () => void
+  /**
+   * Keep pinned board mode on but show other main-pane content in front of it (a session, a
+   * data project); the Board tab, the sidebar row and Cmd+P bring the board back.
+   */
+  showContentOverPinnedBoard: () => void
+  /** Bring the pinned board back in front of content selected over it. */
+  revealPinnedBoard: () => void
   loadTicketsForPinnedProjects: () => Promise<void>
   getTicketsByColumnForPinned: (column: KanbanTicketColumn) => KanbanTicket[]
   getInvalidPlaceholdersForPinned: () => MarkdownCardPlaceholder[]
@@ -872,6 +885,7 @@ export const useKanbanStore = create<KanbanState>()(
       isLoading: false,
       isBoardViewActive: false,
       isPinnedBoardActive: false,
+      isPinnedBoardBehindSession: false,
       simpleModeByProject: {} as Record<string, boolean>,
       transitionSortByColumn: {} as Record<string, boolean>,
       pinnedBoardLastCreateProjectId: null,
@@ -1822,11 +1836,16 @@ export const useKanbanStore = create<KanbanState>()(
         // "show the board": deactivate the tiled tab and force the board ON
         // (toggling would flip an already-true persisted flag to false with
         // no visible change). Dynamic import avoids a store dependency cycle.
-        void import('./useSessionStore').then(({ useSessionStore }) => {
-          const wasTiled = useSessionStore.getState().isTiledSessionsActive
-          if (wasTiled) useSessionStore.getState().deactivateTiledSessions()
-          set((state) => ({ isBoardViewActive: wasTiled ? true : !state.isBoardViewActive }))
-        })
+        const toggle = (): void => {
+          void import('./useSessionStore').then(({ useSessionStore }) => {
+            const wasTiled = useSessionStore.getState().isTiledSessionsActive
+            if (wasTiled) useSessionStore.getState().deactivateTiledSessions()
+            set((state) => ({ isBoardViewActive: wasTiled ? true : !state.isBoardViewActive }))
+          })
+        }
+        // Opening the board replaces an open data project: staged table edits ask first.
+        if (get().isBoardViewActive) toggle()
+        else leaveDataProjectThen(toggle)
       },
 
       // ── closeBoardView ───────────────────────────────────────────
@@ -2462,11 +2481,21 @@ export const useKanbanStore = create<KanbanState>()(
 
       // ── togglePinnedBoard ────────────────────────────────────────
       togglePinnedBoard: () => {
-        // Same intent resolution as toggleBoardView (see comment there).
-        void import('./useSessionStore').then(({ useSessionStore }) => {
-          const wasTiled = useSessionStore.getState().isTiledSessionsActive
-          if (wasTiled) useSessionStore.getState().deactivateTiledSessions()
-          set((state) => ({ isPinnedBoardActive: wasTiled ? true : !state.isPinnedBoardActive }))
+        // Same intent resolution as toggleBoardView (see comment there). An open data project
+        // always has the board behind it, so the toggle replaces it: staged table edits ask first.
+        leaveDataProjectThen(() => {
+          void import('./useSessionStore').then(({ useSessionStore }) => {
+            const wasTiled = useSessionStore.getState().isTiledSessionsActive
+            if (wasTiled) useSessionStore.getState().deactivateTiledSessions()
+            set((state) => {
+              const wasBehindSession = state.isPinnedBoardActive && state.isPinnedBoardBehindSession
+              return {
+                isPinnedBoardActive:
+                  wasTiled || wasBehindSession ? true : !state.isPinnedBoardActive,
+                isPinnedBoardBehindSession: false
+              }
+            })
+          })
         })
       },
 
@@ -2475,7 +2504,37 @@ export const useKanbanStore = create<KanbanState>()(
       // togglePinnedBoard is async (dynamic import) and tiled-aware, so two
       // queued "close" toggles cancel out and leave the board active.
       closePinnedBoard: () => {
-        set((state) => (state.isPinnedBoardActive ? { isPinnedBoardActive: false } : state))
+        set((state) =>
+          state.isPinnedBoardActive || state.isPinnedBoardBehindSession
+            ? { isPinnedBoardActive: false, isPinnedBoardBehindSession: false }
+            : state
+        )
+      },
+
+      // ── showContentOverPinnedBoard ───────────────────────────────
+      // The "behind" flag is generic: whatever the main pane shows in front (a data project) the
+      // board stays on and togglePinnedBoard reveals it again.
+      showContentOverPinnedBoard: () => {
+        set((state) =>
+          state.isPinnedBoardActive && !state.isPinnedBoardBehindSession
+            ? { isPinnedBoardBehindSession: true }
+            : state
+        )
+      },
+
+      // ── revealPinnedBoard ────────────────────────────────────────
+      revealPinnedBoard: () => {
+        const reveal = (): void => {
+          set((state) =>
+            state.isPinnedBoardBehindSession ? { isPinnedBoardBehindSession: false } : state
+          )
+        }
+        // In front of an open data project: staged table edits ask first.
+        if (get().isPinnedBoardActive && get().isPinnedBoardBehindSession) {
+          leaveDataProjectThen(reveal)
+        } else {
+          reveal()
+        }
       },
 
       // ── loadTicketsForPinnedProjects ─────────────────────────────

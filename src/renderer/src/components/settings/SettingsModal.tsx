@@ -17,6 +17,7 @@ import {
   Zap,
   Database,
   DatabaseBackup,
+  DatabaseZap,
   Hash,
   RadioTower,
   Building2,
@@ -51,6 +52,7 @@ import { SettingsCustomCommands } from './SettingsCustomCommands'
 import { SettingsCustomProviders } from './SettingsCustomProviders'
 import { SettingsStorage } from './SettingsStorage'
 import { SettingsBackup } from './SettingsBackup'
+import { SettingsDatabases } from './SettingsDatabases'
 import { cn } from '@/lib/utils'
 
 const SECTIONS = [
@@ -64,6 +66,8 @@ const SECTIONS = [
   { id: 'pet', label: 'Pet', icon: Bug },
   { id: 'editor', label: 'Editor', icon: Code },
   { id: 'terminal', label: 'Terminal', icon: Terminal },
+  // Data projects: defaults for new database connections (own setting key).
+  { id: 'databases', label: 'Databases', icon: DatabaseZap },
   { id: 'integrations', label: 'Integrations', icon: Plug },
   { id: 'telegram', label: 'Telegram', icon: Send },
   { id: 'discord', label: 'Discord', icon: Hash },
@@ -148,6 +152,7 @@ export function SettingsModal(): React.JSX.Element {
             {activeSection === 'pet' && <SettingsPet />}
             {activeSection === 'editor' && <SettingsEditor />}
             {activeSection === 'terminal' && <SettingsTerminal />}
+            {activeSection === 'databases' && <SettingsDatabases />}
             {activeSection === 'integrations' && <SettingsIntegrations />}
             {activeSection === 'telegram' && <SettingsTelegram />}
             {activeSection === 'discord' && <SettingsDiscord />}

@@ -11,7 +11,16 @@ import {
   useConnectionStore
 } from '@/stores'
 import { ProjectItem } from './ProjectItem'
-import { filterProjects } from '@/lib/project-filter'
+import {
+  filterProjects,
+  mergeSidebarEntries,
+  moveSidebarEntry,
+  type SidebarEntry
+} from '@/lib/project-filter'
+import { useDataProjectStore } from '@/stores/useDataProjectStore'
+import { DataProjectItem } from '@/components/data-projects/DataProjectItem'
+import { describeDataProjectTarget } from '@/components/data-projects/data-project-ui'
+import type { DataProject } from '@shared/data-projects/types'
 import { sidebarPerfFlags } from '@/lib/sidebar-perf-flags'
 import { pickSearchAutoExpandIds } from '@/lib/search-auto-expand'
 import {
@@ -51,6 +60,15 @@ export function ProjectList({
   const pinnedWorktreeIds = usePinnedStore((s) => s.pinnedWorktreeIds)
   const pinnedConnectionIds = usePinnedStore((s) => s.pinnedConnectionIds)
   const connections = useConnectionStore((s) => s.connections)
+  // Data projects (database connections) live in the same list, ordered by the shared
+  // sort_order; they belong to every space and have no worktrees, hints or expansion.
+  const dataProjects = useDataProjectStore((s) => s.projects)
+  const loadDataProjects = useDataProjectStore((s) => s.load)
+  const applySidebarOrder = useDataProjectStore((s) => s.applySidebarOrder)
+  const mergedEntries = useMemo(
+    () => mergeSidebarEntries(projects, dataProjects),
+    [projects, dataProjects]
+  )
 
   // Drag state for project reordering
   const [draggedProjectId, setDraggedProjectId] = useState<string | null>(null)
@@ -78,6 +96,20 @@ export function ProjectList({
       e.preventDefault()
       if (!draggedProjectId || draggedProjectId === targetProjectId) return
 
+      // With data projects in the list the move spans both kinds: one merged order, written
+      // to both tables (dataProjects.reorderSidebar).
+      if (dataProjects.length > 0) {
+        const next = moveSidebarEntry(
+          mergedEntries.map(({ kind, id }) => ({ kind, id })),
+          draggedProjectId,
+          targetProjectId
+        )
+        if (next) applySidebarOrder(next)
+        setDraggedProjectId(null)
+        setDragOverProjectId(null)
+        return
+      }
+
       const fromIndex = projects.findIndex((p) => p.id === draggedProjectId)
       const toIndex = projects.findIndex((p) => p.id === targetProjectId)
 
@@ -93,7 +125,14 @@ export function ProjectList({
       setDraggedProjectId(null)
       setDragOverProjectId(null)
     },
-    [draggedProjectId, projects, reorderProjects]
+    [
+      draggedProjectId,
+      projects,
+      reorderProjects,
+      dataProjects.length,
+      mergedEntries,
+      applySidebarOrder
+    ]
   )
 
   const handleDragEnd = useCallback(() => {
@@ -106,20 +145,57 @@ export function ProjectList({
   const hydrateAllWorktrees = useWorktreeStore((s) => s.hydrateAllWorktrees)
   useEffect(() => {
     loadProjects()
+    void loadDataProjects()
     loadSpaces()
     // One DB query for every project's worktrees, so filtering shows complete,
     // uniformly expanded results instead of whatever happened to be loaded.
     hydrateAllWorktrees()
-  }, [loadProjects, loadSpaces, hydrateAllWorktrees])
+  }, [loadProjects, loadDataProjects, loadSpaces, hydrateAllWorktrees])
 
   // Space filtering: restrict to projects in the active space
   const activeSpaceId = useSpaceStore((s) => s.activeSpaceId)
   const projectSpaceMap = useSpaceStore((s) => s.projectSpaceMap)
 
+  // One filter pass over both kinds: a data project matches on its name or host/database and
+  // its engine counts as its "language"; it is listed in every space.
+  const filteredEntries = useMemo(() => {
+    const rows = mergedEntries.map((entry) =>
+      entry.kind === 'project'
+        ? {
+            id: entry.id,
+            name: entry.item.name,
+            path: entry.item.path,
+            language: entry.item.language,
+            entry
+          }
+        : {
+            id: entry.id,
+            name: entry.item.name,
+            path: describeDataProjectTarget(entry.item),
+            language: entry.item.engine as string | null,
+            entry
+          }
+    )
+    let spaceMap = projectSpaceMap
+    if (activeSpaceId !== null && dataProjects.length > 0) {
+      spaceMap = { ...projectSpaceMap }
+      for (const dataProject of dataProjects) spaceMap[dataProject.id] = [activeSpaceId]
+    }
+    return filterProjects(rows, {
+      filterQuery,
+      activeLanguages,
+      activeSpaceId,
+      projectSpaceMap: spaceMap
+    })
+  }, [mergedEntries, dataProjects, filterQuery, activeSpaceId, projectSpaceMap, activeLanguages])
+
+  // Git projects only: worktree expansion, hint targets and search auto-expand are theirs.
   const filteredProjects = useMemo(
     () =>
-      filterProjects(projects, { filterQuery, activeLanguages, activeSpaceId, projectSpaceMap }),
-    [projects, filterQuery, activeSpaceId, projectSpaceMap, activeLanguages]
+      filteredEntries.flatMap((row) =>
+        row.project.entry.kind === 'project' ? [{ ...row, project: row.project.entry.item }] : []
+      ),
+    [filteredEntries]
   )
 
   // A filter expands only its best-ranked matches (see SEARCH_AUTO_EXPAND_LIMIT).
@@ -229,7 +305,7 @@ export function ProjectList({
   }, [])
 
   // Loading state
-  if (isLoading && projects.length === 0) {
+  if (isLoading && projects.length === 0 && dataProjects.length === 0) {
     return (
       <div className="flex items-center justify-center py-8">
         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -248,7 +324,7 @@ export function ProjectList({
   }
 
   // Empty state
-  if (projects.length === 0) {
+  if (projects.length === 0 && dataProjects.length === 0) {
     return (
       <div
         className="mx-1 mt-1 flex cursor-pointer flex-col items-center justify-center rounded-md border border-dashed border-worktree-sidebar-border px-2 py-8 text-center transition-colors hover:bg-worktree-sidebar-accent/40"
@@ -257,7 +333,9 @@ export function ProjectList({
       >
         <FolderPlus className="h-8 w-8 text-muted-foreground mb-2" />
         <p className="text-[13px] text-muted-foreground">No projects added yet.</p>
-        <p className="text-[11px] text-muted-foreground mt-1">Click + to add a project.</p>
+        <p className="text-[11px] text-muted-foreground mt-1">
+          Click + to add a project or a database.
+        </p>
       </div>
     )
   }
@@ -265,7 +343,7 @@ export function ProjectList({
   // Space has no assigned projects
   if (
     activeSpaceId !== null &&
-    filteredProjects.length === 0 &&
+    filteredEntries.length === 0 &&
     !filterQuery.trim() &&
     activeLanguages.length === 0
   ) {
@@ -289,26 +367,45 @@ export function ProjectList({
     // 4px header spacer when another section (Pinned/Recent/Connections)
     // renders above it. Non-first groups add their own pt-1 (ProjectItem).
     <div data-testid="project-list" className="flex flex-col gap-1.5 [&:not(:first-child)]:pt-1">
-      {filteredProjects.map((item, index) => (
-        <ProjectItem
-          key={item.project.id}
-          project={item.project}
-          isFirst={index === 0}
-          searchAutoExpand={searchAutoExpandIds.has(item.project.id)}
-          nameMatchIndices={item.nameMatch?.matched ? item.nameMatch.indices : undefined}
-          pathMatchIndices={
-            item.pathMatch?.matched && !item.nameMatch?.matched ? item.pathMatch.indices : undefined
-          }
-          isDraggable={isDraggable}
-          isDragging={isDraggable && draggedProjectId === item.project.id}
-          isDragOver={isDraggable && dragOverProjectId === item.project.id}
-          onDragStart={handleDragStart}
-          onDragOver={handleDragOver}
-          onDrop={handleDrop}
-          onDragEnd={handleDragEnd}
-        />
-      ))}
-      {(filterQuery || activeLanguages.length > 0) && filteredProjects.length === 0 && (
+      {filteredEntries.map((item, index) => {
+        const entry: SidebarEntry<(typeof projects)[number], DataProject> = item.project.entry
+        const nameMatchIndices = item.nameMatch?.matched ? item.nameMatch.indices : undefined
+        const pathMatchIndices =
+          item.pathMatch?.matched && !item.nameMatch?.matched ? item.pathMatch.indices : undefined
+        return entry.kind === 'data' ? (
+          <DataProjectItem
+            key={`data-${entry.id}`}
+            project={entry.item}
+            isFirst={index === 0}
+            nameMatchIndices={nameMatchIndices}
+            pathMatchIndices={pathMatchIndices}
+            isDraggable={isDraggable}
+            isDragging={isDraggable && draggedProjectId === entry.id}
+            isDragOver={isDraggable && dragOverProjectId === entry.id}
+            onDragStart={handleDragStart}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
+            onDragEnd={handleDragEnd}
+          />
+        ) : (
+          <ProjectItem
+            key={entry.id}
+            project={entry.item}
+            isFirst={index === 0}
+            searchAutoExpand={searchAutoExpandIds.has(entry.id)}
+            nameMatchIndices={nameMatchIndices}
+            pathMatchIndices={pathMatchIndices}
+            isDraggable={isDraggable}
+            isDragging={isDraggable && draggedProjectId === entry.id}
+            isDragOver={isDraggable && dragOverProjectId === entry.id}
+            onDragStart={handleDragStart}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
+            onDragEnd={handleDragEnd}
+          />
+        )
+      })}
+      {(filterQuery || activeLanguages.length > 0) && filteredEntries.length === 0 && (
         <div className="text-[11px] text-muted-foreground text-center py-4">
           No matching projects
         </div>

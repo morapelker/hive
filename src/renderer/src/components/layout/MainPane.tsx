@@ -37,8 +37,11 @@ import { BoardAssistantView } from '@/components/kanban/BoardAssistantView'
 import { TiledSessionsView } from '@/components/sessions/TiledSessionsView'
 import { PRNotificationStack } from '@/components/pr/PRNotificationStack'
 import { MainPaneTerminalPanel } from './MainPaneTerminalPanel'
+import { useDataProjectStore } from '@/stores/useDataProjectStore'
 
 const MonacoDiffView = lazy(() => import('@/components/diff/MonacoDiffView'))
+// Database client of a data project: its own chunk (CodeMirror, grid, dialects).
+const DataProjectView = lazy(() => import('@/components/data-projects/DataProjectView'))
 const WorktreeContextEditor = lazy(() =>
   import('@/components/worktrees/WorktreeContextEditor').then((m) => ({
     default: m.WorktreeContextEditor
@@ -104,6 +107,8 @@ function ClaudeCliSessionPortal({
 export function MainPane({ children }: MainPaneProps): React.JSX.Element {
   const selectedWorktreeId = useWorktreeStore((state) => state.selectedWorktreeId)
   const selectedConnectionId = useConnectionStore((state) => state.selectedConnectionId)
+  // An open data project (database client) owns the pane, in front of every board.
+  const selectedDataProjectId = useDataProjectStore((state) => state.selectedDataProjectId)
   const activeSessionId = useSessionStore((state) => state.activeSessionId)
   const isLoading = useSessionStore((state) => state.isLoading)
   const inlineConnectionSessionId = useSessionStore((state) => state.inlineConnectionSessionId)
@@ -306,6 +311,7 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
     // pane, hide all stateful terminal sessions — otherwise the always-mounted
     // terminal would render as flex-1 alongside the board and split the pane.
     if (
+      selectedDataProjectId ||
       isBoardViewActive ||
       isPinnedBoardActive ||
       activeBoardAssistantProjectId ||
@@ -338,6 +344,7 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
     inlineConnectionSessionAgentSdk,
     activeDiff,
     activeFilePath,
+    selectedDataProjectId,
     isBoardViewActive,
     isPinnedBoardActive,
     activeBoardAssistantProjectId,
@@ -357,6 +364,22 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
   const renderContent = () => {
     if (children) {
       return children
+    }
+
+    // Data project (database client): before every board branch, so it shows even while the
+    // Pinned Board is on (useDataProjectStore.select puts the board "behind" it).
+    if (selectedDataProjectId) {
+      return (
+        <Suspense
+          fallback={
+            <div className="flex-1 flex items-center justify-center">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          }
+        >
+          <DataProjectView key={selectedDataProjectId} projectId={selectedDataProjectId} />
+        </Suspense>
+      )
     }
 
     // Board assistant tab is active — render BoardAssistantView in main pane
@@ -579,7 +602,8 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
       data-testid="main-pane"
     >
       <PRNotificationStack />
-      {(selectedWorktreeId || selectedConnectionId || tiledSessionsTab != null) && <SessionTabs />}
+      {!selectedDataProjectId &&
+        (selectedWorktreeId || selectedConnectionId || tiledSessionsTab != null) && <SessionTabs />}
       <div className="flex-1 flex flex-col min-h-0">
         {renderContent()}
         {/* Always-mounted terminal sessions — kept alive to preserve PTY state across tab switches */}

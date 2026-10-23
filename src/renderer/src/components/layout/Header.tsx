@@ -66,6 +66,8 @@ import { usePinAndActivateSession } from '@/hooks/usePinAndActivateSession'
 import { useConflictFixFlow } from '@/hooks/useConflictFixFlow'
 import { useInProgressSessionCount } from '@/hooks/useInProgressSessionCount'
 import hiveLogo from '@/assets/icon.png'
+import { selectSelectedDataProject, useDataProjectStore } from '@/stores/useDataProjectStore'
+import { DataProjectHeaderLabel } from '@/components/data-projects/DataProjectItem'
 
 // Orca titlebar icon button — 24px in the 36px bar
 const tbIconBtn = 'size-6 rounded-md text-muted-foreground hover:bg-accent hover:text-foreground'
@@ -77,6 +79,9 @@ export function Header(): React.JSX.Element {
   const openSettings = useSettingsStore((s) => s.openSettings)
   const selectedProjectId = useProjectStore((s) => s.selectedProjectId)
   const projects = useProjectStore((s) => s.projects)
+  // An open data project (database client): its own label, and none of the git/worktree
+  // controls, quick actions, board toggle or right-sidebar toggle (they act on worktrees).
+  const selectedDataProject = useDataProjectStore(selectSelectedDataProject)
   const { selectedWorktreeId, worktreesByProject } = useWorktreeStore()
   const selectedWorktreePath = useMemo(() => {
     if (!selectedWorktreeId) return null
@@ -254,7 +259,9 @@ export function Header(): React.JSX.Element {
       {/* Spacer for macOS traffic lights when the left segment is hidden */}
       {isMac() && leftSidebarCollapsed && <div className="w-[70px] flex-shrink-0" />}
       <div className="flex items-center gap-2 flex-1 min-w-0">
-        {isConnectionMode && selectedConnection ? (
+        {selectedDataProject ? (
+          <DataProjectHeaderLabel project={selectedDataProject} />
+        ) : isConnectionMode && selectedConnection ? (
           <span
             className="text-[12px] font-medium text-foreground truncate"
             data-testid="header-connection-info"
@@ -336,8 +343,11 @@ export function Header(): React.JSX.Element {
           </span>
         )}
       </div>
-      {/* Center: Quick Actions */}
-      <div style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+      {/* Center: Quick Actions (hidden while a data project owns the main pane) */}
+      <div
+        className={cn(selectedDataProject && 'hidden')}
+        style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+      >
         <QuickActions />
       </div>
       {!isConnectionMode && showFixConflictsButton && (
@@ -784,7 +794,7 @@ export function Header(): React.JSX.Element {
         )}
         <HeaderSessionProfiler />
         <HeaderVoiceToggle />
-        {boardMode === 'toggle' && (
+        {boardMode === 'toggle' && !selectedDataProject && (
           <Tip
             tipId={kanbanIconSeen ? 'kanban-reenter' : 'kanban-icon'}
             enabled={kanbanIconSeen ? justExitedKanban : hasProjects}
@@ -842,7 +852,7 @@ export function Header(): React.JSX.Element {
           onClick={toggleRightSidebar}
           variant="ghost"
           size="icon"
-          className={tbIconBtn}
+          className={cn(tbIconBtn, selectedDataProject && 'hidden')}
           title={rightSidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
           data-testid="right-sidebar-toggle"
         >

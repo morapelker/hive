@@ -38,6 +38,7 @@ import {
   type OpenCodeUndoResult,
   type TerminalAttachShellCommandResult
 } from '../../shared/desktop-command'
+import { isDataProjectDesktopCommand, runDataProjectDesktopCommand } from './data-project-commands'
 import { openInApp } from '../services/open-in-app'
 import { openInChrome } from '../services/open-in-chrome'
 import { createLogger } from '../services/logger'
@@ -801,6 +802,29 @@ const handleDesktopBackendCommand = (
   options: { readonly headless?: boolean } = {}
 ): Promise<void> | void => {
   if (!isDesktopCommandRequest(message)) return
+
+  // Data projects: safeStorage vault + native file dialogs (data-project-commands.ts).
+  if (isDataProjectDesktopCommand(message)) {
+    return runDataProjectDesktopCommand(message, options).then(
+      (value) => {
+        sendDesktopBackendCommandResult(
+          child,
+          makeDesktopCommandResult(message.id, { ok: true, value }),
+          log
+        )
+      },
+      (error: unknown) => {
+        sendDesktopBackendCommandResult(
+          child,
+          makeDesktopCommandResult(message.id, {
+            ok: false,
+            error: error instanceof Error ? error.message : 'Data project command failed'
+          }),
+          log
+        )
+      }
+    )
+  }
 
   if (message.command === 'quitApp') {
     sendDesktopBackendCommandResult(child, makeDesktopCommandResult(message.id, { ok: true }), log)

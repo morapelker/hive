@@ -6,6 +6,8 @@ import { getAuthSessionStatus, makeAuthSessionManager } from './auth/session'
 import { makeEventBus } from './events/event-bus'
 import { resolveServerConfig, type ServerConfig, type ServerConfigInput } from './config'
 import { makeRpcRouter } from './rpc/router'
+import { makeLiveDataAssistantRpcService } from './rpc/domains/data-assistant'
+import { makeLiveDataProjectsRpcService } from './rpc/domains/data-projects'
 import { attachWebSocketRpcServer } from './rpc/ws-server'
 import { resolveStaticFile, serveStaticFile } from './static'
 import { isDesktopBackendEventMessage } from '../shared/desktop-command'
@@ -95,7 +97,16 @@ export const startHiveServer = (
       )
     )
     const authSessions = makeAuthSessionManager()
-    const router = makeRpcRouter({ eventBus })
+    const dataProjectsService = makeLiveDataProjectsRpcService({ eventBus })
+    const dataAssistantService = makeLiveDataAssistantRpcService({ eventBus })
+    const dataAssistantLifecycle = dataAssistantService as {
+      readonly shutdown?: () => void | Promise<void>
+    }
+    const router = makeRpcRouter({
+      eventBus,
+      dataAssistant: dataAssistantService,
+      dataProjects: dataProjectsService
+    })
 
     return yield* Effect.tryPromise({
       try: () =>
@@ -259,6 +270,15 @@ export const startHiveServer = (
               wsBaseUrl: `ws://${config.host}:${port}/ws`,
               close: async () => {
                 wsServer.closeAll()
+                // Close every open database connection / SQLite worker / SSH tunnel; capped so a
+                // driver that hangs on close never holds up the rest of the shutdown.
+                await Promise.race([
+                  Promise.all([
+                    (async () => dataAssistantLifecycle.shutdown?.())().catch(() => undefined),
+                    dataProjectsService.shutdown().catch(() => undefined)
+                  ]),
+                  new Promise<void>((resolveCap) => setTimeout(resolveCap, 3_000).unref())
+                ])
                 await new Promise<void>((closeResolve, closeReject) => {
                   server.close((error) => {
                     if (error) closeReject(error)

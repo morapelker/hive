@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, useRef } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { revealLabel } from '@/lib/platform'
 import {
   AlertCircle,
@@ -57,6 +58,8 @@ import {
 import { HintBadge } from '@/components/ui/HintBadge'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useScriptStore } from '@/stores/useScriptStore'
+import { leaveDataProjectThen, useDataProjectStore } from '@/stores/useDataProjectStore'
+import { PinnedDataProjectItem } from '@/components/data-projects/DataProjectItem'
 import { useGitStore } from '@/stores/useGitStore'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { toast, gitToast, clipboardToast } from '@/lib/toast'
@@ -125,6 +128,11 @@ export function PinnedList(): React.JSX.Element | null {
   const pinnedWorktreeIds = usePinnedStore((s) => s.pinnedWorktreeIds)
   const pinnedConnectionIds = usePinnedStore((s) => s.pinnedConnectionIds)
   const loaded = usePinnedStore((s) => s.loaded)
+  // Pinned data projects (database connections): one click opens the client, in front of the
+  // Pinned Board when that is on. Their own flag, not part of the pinned board's scope.
+  const pinnedDataProjects = useDataProjectStore(
+    useShallow((s) => s.projects.filter((p) => p.pinned))
+  )
 
   // Load pinned items on mount
   useEffect(() => {
@@ -139,7 +147,8 @@ export function PinnedList(): React.JSX.Element | null {
     items.push({ kind: 'connection', id })
   }
 
-  if (!loaded || items.length === 0) {
+  const showGitItems = loaded && items.length > 0
+  if (!showGitItems && pinnedDataProjects.length === 0) {
     return null
   }
 
@@ -152,15 +161,19 @@ export function PinnedList(): React.JSX.Element | null {
         sticky
         icon={<Pin className={SECTION_HEADER_ICON} />}
         label="Pinned"
-        count={items.length}
+        count={(showGitItems ? items.length : 0) + pinnedDataProjects.length}
       />
-      {items.map((item) =>
-        item.kind === 'worktree' ? (
-          <PinnedWorktreeItem key={`wt-${item.id}`} worktreeId={item.id} />
-        ) : (
-          <PinnedConnectionItem key={`conn-${item.id}`} connectionId={item.id} />
-        )
-      )}
+      {showGitItems &&
+        items.map((item) =>
+          item.kind === 'worktree' ? (
+            <PinnedWorktreeItem key={`wt-${item.id}`} worktreeId={item.id} />
+          ) : (
+            <PinnedConnectionItem key={`conn-${item.id}`} connectionId={item.id} />
+          )
+        )}
+      {pinnedDataProjects.map((project) => (
+        <PinnedDataProjectItem key={`data-${project.id}`} project={project} />
+      ))}
     </div>
   )
 }
@@ -507,13 +520,16 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
   const isUnread = worktreeStatus === 'unread'
 
   const handleClick = (): void => {
-    selectWorktree(worktreeId)
-    selectProject(project.id)
-    const expanded = useProjectStore.getState().expandedProjectIds
-    if (!expanded.has(project.id)) {
-      useProjectStore.getState().toggleProjectExpanded(project.id)
-    }
-    useWorktreeStatusStore.getState().clearWorktreeUnread(worktreeId)
+    // Replaces an open data project: its staged table edits ask before anything changes.
+    leaveDataProjectThen(() => {
+      selectWorktree(worktreeId)
+      selectProject(project.id)
+      const expanded = useProjectStore.getState().expandedProjectIds
+      if (!expanded.has(project.id)) {
+        useProjectStore.getState().toggleProjectExpanded(project.id)
+      }
+      useWorktreeStatusStore.getState().clearWorktreeUnread(worktreeId)
+    })
   }
 
   const handleOpenInTerminal = async (): Promise<void> => {
@@ -1154,7 +1170,8 @@ function PinnedConnectionItem({
   const isUnread = connectionStatus === 'unread'
 
   const handleClick = (): void => {
-    selectConnection(connectionId)
+    // Replaces an open data project: its staged table edits ask before anything changes.
+    leaveDataProjectThen(() => selectConnection(connectionId))
   }
 
   /* eslint-disable @typescript-eslint/no-explicit-any */

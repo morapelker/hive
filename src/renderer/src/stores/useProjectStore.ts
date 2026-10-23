@@ -1,7 +1,9 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { useKanbanStore } from './useKanbanStore'
+import { clearDataProjectSelection } from './store-coordination'
 import { LANGUAGE_MAP } from '@/components/projects/LanguageIcon'
+import { mergeSidebarEntries, reorderGitEntries } from '@/lib/project-filter'
 import { dbApi } from '@/api/db-api'
 import { projectApi } from '@/api/project-api'
 import type { CustomProjectCommand } from '@/lib/custom-commands'
@@ -201,6 +203,9 @@ export const useProjectStore = create<ProjectState>()(
             selectedProjectId: project.id,
             expandedProjectIds: new Set([...state.expandedProjectIds, project.id])
           }))
+          // The new project is the selection: it replaces an open data project (database
+          // client) in the main pane, like selectProject.
+          clearDataProjectSelection()
 
           import('./useWorktreeStore')
             .then(({ useWorktreeStore }) =>
@@ -341,6 +346,8 @@ export const useProjectStore = create<ProjectState>()(
       selectProject: (id: string | null, options?: ProjectSelectionOptions) => {
         set({ selectedProjectId: id })
         if (id) {
+          // A git project replaces an open data project (database client) in the main pane.
+          clearDataProjectSelection()
           // Close pinned board when navigating to a specific project — unless
           // that project is already in the pinned scope (its tickets are on the
           // pinned board, so staying there shows them). Dynamic import avoids a
@@ -454,6 +461,26 @@ export const useProjectStore = create<ProjectState>()(
       sortProjectsByLastMessage: async () => {
         try {
           const orderedIds = await dbApi.project.sortByLastMessage()
+
+          // Git projects and data projects share one sort_order space (one sidebar list):
+          // the git projects take the git slots of the merged list in their new order, every
+          // data project keeps its slot, and both tables get the merged order. (Lazy import:
+          // the data project store imports this one.)
+          const dataStore = await import('./useDataProjectStore').then(
+            (m) => m.useDataProjectStore.getState(),
+            () => null
+          )
+          if (dataStore && dataStore.projects.length > 0) {
+            const merged = mergeSidebarEntries(get().projects, dataStore.projects)
+            dataStore.applySidebarOrder(
+              reorderGitEntries(
+                merged.map(({ kind, id }) => ({ kind, id })),
+                orderedIds
+              )
+            )
+            return
+          }
+
           await dbApi.project.reorder(orderedIds)
 
           set((state) => {

@@ -26,6 +26,11 @@ export type DesktopCommandName =
   | 'kanbanSaveBoardExportDialog'
   | 'backupOpenFileDialog'
   | 'backupSaveFileDialog'
+  | 'dataSecretAvailable'
+  | 'dataSecretEncrypt'
+  | 'dataSecretDecrypt'
+  | 'dataSaveFileDialog'
+  | 'dataOpenFileDialog'
   | 'systemGetAppVersion'
   | 'systemGetAppPaths'
   | 'systemIsPackaged'
@@ -247,6 +252,53 @@ export interface BackupSaveFileDialogPayload {
 }
 
 export interface BackupSaveFileDialogResult {
+  readonly filePath: string | null
+}
+
+/**
+ * Data-project secrets (src/main/services/data-projects/secrets.ts): main encrypts/decrypts with
+ * Electron safeStorage; the server child stores only the `v1:<base64>` ciphertext. Plaintext
+ * crosses the private parent↔child IPC pipe only, never the WS/HTTP surface.
+ */
+export const DATA_SECRET_CIPHERTEXT_PREFIX = 'v1:'
+/** Upper bound for one encrypted secrets blob (a few passwords as JSON). */
+export const DATA_SECRET_MAX_LENGTH = 64 * 1024
+
+export interface DataSecretAvailableResult {
+  readonly available: boolean
+}
+
+export interface DataSecretEncryptPayload {
+  readonly plaintext: string
+}
+
+export interface DataSecretEncryptResult {
+  readonly ciphertext: string
+}
+
+export interface DataSecretDecryptPayload {
+  readonly ciphertext: string
+}
+
+export interface DataSecretDecryptResult {
+  readonly plaintext: string
+}
+
+/** Native save dialog for data-project exports (extensions without dots, e.g. ['csv']). */
+export interface DataSaveFileDialogPayload {
+  readonly defaultName: string
+  readonly extensions: readonly string[]
+}
+
+export type DataOpenFileDialogPurpose = 'sqlite' | 'certificate' | 'ssh-key'
+
+/** Native open dialog for the connection wizard; `allowCreate` (SQLite) = pick a new file name. */
+export interface DataOpenFileDialogPayload {
+  readonly purpose: DataOpenFileDialogPurpose
+  readonly allowCreate?: boolean
+}
+
+export interface DataFileDialogResult {
   readonly filePath: string | null
 }
 
@@ -966,6 +1018,11 @@ export type DesktopCommandRequest =
   | KanbanSaveBoardExportDialogDesktopCommandRequest
   | BackupOpenFileDialogDesktopCommandRequest
   | BackupSaveFileDialogDesktopCommandRequest
+  | DataSecretAvailableDesktopCommandRequest
+  | DataSecretEncryptDesktopCommandRequest
+  | DataSecretDecryptDesktopCommandRequest
+  | DataSaveFileDialogDesktopCommandRequest
+  | DataOpenFileDialogDesktopCommandRequest
   | SystemGetAppVersionDesktopCommandRequest
   | SystemGetAppPathsDesktopCommandRequest
   | SystemIsPackagedDesktopCommandRequest
@@ -1164,6 +1221,40 @@ export interface BackupSaveFileDialogDesktopCommandRequest {
   readonly id: string
   readonly command: 'backupSaveFileDialog'
   readonly payload: BackupSaveFileDialogPayload
+}
+
+export interface DataSecretAvailableDesktopCommandRequest {
+  readonly type: typeof DESKTOP_COMMAND_REQUEST_TYPE
+  readonly id: string
+  readonly command: 'dataSecretAvailable'
+}
+
+export interface DataSecretEncryptDesktopCommandRequest {
+  readonly type: typeof DESKTOP_COMMAND_REQUEST_TYPE
+  readonly id: string
+  readonly command: 'dataSecretEncrypt'
+  readonly payload: DataSecretEncryptPayload
+}
+
+export interface DataSecretDecryptDesktopCommandRequest {
+  readonly type: typeof DESKTOP_COMMAND_REQUEST_TYPE
+  readonly id: string
+  readonly command: 'dataSecretDecrypt'
+  readonly payload: DataSecretDecryptPayload
+}
+
+export interface DataSaveFileDialogDesktopCommandRequest {
+  readonly type: typeof DESKTOP_COMMAND_REQUEST_TYPE
+  readonly id: string
+  readonly command: 'dataSaveFileDialog'
+  readonly payload: DataSaveFileDialogPayload
+}
+
+export interface DataOpenFileDialogDesktopCommandRequest {
+  readonly type: typeof DESKTOP_COMMAND_REQUEST_TYPE
+  readonly id: string
+  readonly command: 'dataOpenFileDialog'
+  readonly payload: DataOpenFileDialogPayload
 }
 
 export interface SystemGetAppVersionDesktopCommandRequest {
@@ -1919,6 +2010,30 @@ export function makeDesktopCommandRequest(
 ): BackupSaveFileDialogDesktopCommandRequest
 export function makeDesktopCommandRequest(
   id: string,
+  command: 'dataSecretAvailable'
+): DataSecretAvailableDesktopCommandRequest
+export function makeDesktopCommandRequest(
+  id: string,
+  command: 'dataSecretEncrypt',
+  payload: DataSecretEncryptPayload
+): DataSecretEncryptDesktopCommandRequest
+export function makeDesktopCommandRequest(
+  id: string,
+  command: 'dataSecretDecrypt',
+  payload: DataSecretDecryptPayload
+): DataSecretDecryptDesktopCommandRequest
+export function makeDesktopCommandRequest(
+  id: string,
+  command: 'dataSaveFileDialog',
+  payload: DataSaveFileDialogPayload
+): DataSaveFileDialogDesktopCommandRequest
+export function makeDesktopCommandRequest(
+  id: string,
+  command: 'dataOpenFileDialog',
+  payload: DataOpenFileDialogPayload
+): DataOpenFileDialogDesktopCommandRequest
+export function makeDesktopCommandRequest(
+  id: string,
   command: 'systemGetAppVersion'
 ): SystemGetAppVersionDesktopCommandRequest
 export function makeDesktopCommandRequest(
@@ -2407,6 +2522,10 @@ export function makeDesktopCommandRequest(
     | GitShowInFinderPayload
     | KanbanSaveBoardExportDialogPayload
     | BackupSaveFileDialogPayload
+    | DataSecretEncryptPayload
+    | DataSecretDecryptPayload
+    | DataSaveFileDialogPayload
+    | DataOpenFileDialogPayload
     | OpenInChromePayload
     | UpdateMenuStatePayload
     | SetKeepAwakePayload
@@ -2595,6 +2714,28 @@ export function makeDesktopCommandRequest(
       command,
       payload
     } as BackupSaveFileDialogDesktopCommandRequest
+  }
+
+  if (
+    command === 'dataSecretEncrypt' ||
+    command === 'dataSecretDecrypt' ||
+    command === 'dataSaveFileDialog' ||
+    command === 'dataOpenFileDialog'
+  ) {
+    if (!payload) {
+      throw new Error(`Missing ${command} payload`)
+    }
+
+    return {
+      type: DESKTOP_COMMAND_REQUEST_TYPE,
+      id,
+      command,
+      payload
+    } as
+      | DataSecretEncryptDesktopCommandRequest
+      | DataSecretDecryptDesktopCommandRequest
+      | DataSaveFileDialogDesktopCommandRequest
+      | DataOpenFileDialogDesktopCommandRequest
   }
 
   if (command === 'systemGetAppVersion') {
@@ -3743,8 +3884,12 @@ export const isDesktopCommandRequest = (value: unknown): value is DesktopCommand
       (value.command === 'kanbanSaveBoardExportDialog' &&
         isKanbanSaveBoardExportDialogPayload(value.payload)) ||
       value.command === 'backupOpenFileDialog' ||
-      (value.command === 'backupSaveFileDialog' &&
-        isBackupSaveFileDialogPayload(value.payload)) ||
+      (value.command === 'backupSaveFileDialog' && isBackupSaveFileDialogPayload(value.payload)) ||
+      value.command === 'dataSecretAvailable' ||
+      (value.command === 'dataSecretEncrypt' && isDataSecretEncryptPayload(value.payload)) ||
+      (value.command === 'dataSecretDecrypt' && isDataSecretDecryptPayload(value.payload)) ||
+      (value.command === 'dataSaveFileDialog' && isDataSaveFileDialogPayload(value.payload)) ||
+      (value.command === 'dataOpenFileDialog' && isDataOpenFileDialogPayload(value.payload)) ||
       value.command === 'systemGetAppVersion' ||
       value.command === 'systemGetAppPaths' ||
       value.command === 'systemIsPackaged' ||
@@ -4031,6 +4176,30 @@ const isBackupSaveFileDialogPayload = (
   value: unknown
 ): value is BackupSaveFileDialogPayload =>
   isRecord(value) && typeof value.defaultFileName === 'string'
+
+const isDataSecretEncryptPayload = (value: unknown): value is DataSecretEncryptPayload =>
+  isRecord(value) &&
+  typeof value.plaintext === 'string' &&
+  value.plaintext.length <= DATA_SECRET_MAX_LENGTH
+
+const isDataSecretDecryptPayload = (value: unknown): value is DataSecretDecryptPayload =>
+  isRecord(value) &&
+  typeof value.ciphertext === 'string' &&
+  value.ciphertext.startsWith(DATA_SECRET_CIPHERTEXT_PREFIX) &&
+  value.ciphertext.length <= DATA_SECRET_MAX_LENGTH * 2
+
+const isDataSaveFileDialogPayload = (value: unknown): value is DataSaveFileDialogPayload =>
+  isRecord(value) &&
+  typeof value.defaultName === 'string' &&
+  value.defaultName.length <= 255 &&
+  Array.isArray(value.extensions) &&
+  value.extensions.length <= 16 &&
+  value.extensions.every((ext) => typeof ext === 'string' && /^[A-Za-z0-9]{1,16}$/.test(ext))
+
+const isDataOpenFileDialogPayload = (value: unknown): value is DataOpenFileDialogPayload =>
+  isRecord(value) &&
+  (value.purpose === 'sqlite' || value.purpose === 'certificate' || value.purpose === 'ssh-key') &&
+  (value.allowCreate === undefined || typeof value.allowCreate === 'boolean')
 
 const isUpdaterCheckForUpdatePayload = (value: unknown): value is UpdaterCheckForUpdatePayload =>
   isRecord(value) && (value.manual === undefined || typeof value.manual === 'boolean')
