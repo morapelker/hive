@@ -17,6 +17,7 @@ import {
   registerKanbanRenameSync,
   registerKanbanModelSync,
   isTicketHeldByDocumentUpdate,
+  isTicketInDocumentUpdateLane,
   leaveDataProjectThen,
   type KanbanSessionEvent
 } from './store-coordination'
@@ -192,6 +193,13 @@ export const transitionSortKey = (projectId: string, column: KanbanTicketColumn)
   `${projectId}:${column}`
 
 // ── Closing a ticket's session ───────────────────────────────────
+/** Done and merged: a ticket's work is over there, and the move in closes its session. */
+function isTerminalColumn(
+  column: KanbanTicketColumn | null | undefined
+): column is 'done' | 'merged' {
+  return column === 'done' || column === 'merged'
+}
+
 // Statuses of a session that is doing (or about to do) work: a close then
 // would kill a live turn.
 function isLiveWorkStatus(status: string | null | undefined): boolean {
@@ -225,10 +233,11 @@ export async function isSessionSharedWithLiveTicket(
  * A deleted or archived ticket's work is over: close its session so the
  * agent process dies with it instead of running until the app quits. Skipped
  * — the session is left exactly as it is — while it still serves another live
- * ticket, is working or being revived, or holds a document run's document
- * update, and when its row is already closed (a Done move closed it: closing
- * again would only re-stamp its completed_at). Detached: the ticket change
- * has already happened; failures are reported, never thrown.
+ * ticket, is working or being revived, or is still to update (or updating) a
+ * document run's document, and when its row is already closed (a Done or
+ * Merged move closed it: closing again would only re-stamp its completed_at).
+ * Detached: the ticket change has already happened; failures are reported,
+ * never thrown.
  */
 function closeSessionOfRemovedTicket(ticket: KanbanTicket, action: 'deleted' | 'archived'): void {
   closeSessionsOfRemovedTickets([ticket], action)
@@ -237,7 +246,7 @@ function closeSessionOfRemovedTicket(ticket: KanbanTicket, action: 'deleted' | '
 /**
  * closeSessionOfRemovedTicket for a batch (archive all done): one close per
  * distinct session, one at a time. A session several of the tickets share is
- * kept when any of them holds a document update.
+ * kept when any of them is still in a document run's document edit lane.
  */
 function closeSessionsOfRemovedTickets(
   tickets: readonly KanbanTicket[],
@@ -247,7 +256,7 @@ function closeSessionsOfRemovedTickets(
   for (const ticket of tickets) {
     const sessionId = ticket.current_session_id
     if (!sessionId || ticketBySession.get(sessionId) === null) continue
-    ticketBySession.set(sessionId, isTicketHeldByDocumentUpdate(ticket.id) ? null : ticket)
+    ticketBySession.set(sessionId, isTicketInDocumentUpdateLane(ticket.id) ? null : ticket)
   }
   const toClose = [...ticketBySession].filter(
     (entry): entry is [string, KanbanTicket] => entry[1] !== null
@@ -256,7 +265,7 @@ function closeSessionsOfRemovedTickets(
   void (async () => {
     for (const [sessionId, ticket] of toClose) {
       try {
-        await closeSessionOfRemovedTicketNow(sessionId, ticket.id, action)
+        await closeSessionOfFinishedTicket(sessionId, ticket.id, action)
       } catch (err) {
         console.error(`Skipping session close of ${action} ticket:`, sessionId, err)
       }
@@ -264,11 +273,37 @@ function closeSessionsOfRemovedTickets(
   })()
 }
 
-async function closeSessionOfRemovedTicketNow(
+/**
+ * What became of a ticket whose session is being closed, for the error toast:
+ * removed from the board, or settled in a terminal column (a document run
+ * closes the session of a merged ticket once its document update is over).
+ */
+export type FinishedTicketContext = 'deleted' | 'archived' | 'merged' | 'done'
+
+/**
+ * Close the session of a ticket whose work is over, now. Skipped — the session
+ * is left exactly as it is — while the ticket is still in a document run's
+ * document edit lane (the run closes the session once the document is
+ * updated), while the session still serves another live ticket, is working or
+ * being revived, and when its row is already closed. Rejects when the link set
+ * cannot be read; a close failure is reported, never thrown.
+ */
+export async function closeSessionOfFinishedTicket(
   sessionId: string,
   ticketId: string,
-  action: 'deleted' | 'archived'
+  context: FinishedTicketContext,
+  opts: {
+    /**
+     * The caller moved the ticket into the terminal column itself, at this time (a PR merge
+     * on a board that was never loaded): then, as for a drop on the board, only a status
+     * stamped after the move counts as a revival, and a session that was merely still working
+     * when the ticket moved is closed all the same — that is the feature. Without it, a
+     * working session is always left alone.
+     */
+    movedAtMs?: number
+  } = {}
 ): Promise<void> {
+  if (isTicketInDocumentUpdateLane(ticketId)) return
   if (await isSessionSharedWithLiveTicket(sessionId, ticketId)) return
   let row: Session | null = null
   try {
@@ -277,7 +312,12 @@ async function closeSessionOfRemovedTicketNow(
     // Unknown — close as if it were open
   }
   if (row && row.status !== 'active') return
-  if (isLiveWorkStatus(useWorktreeStatusStore.getState().sessionStatuses[sessionId]?.status)) {
+  const statusEntry = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
+  if (
+    statusEntry != null &&
+    isLiveWorkStatus(statusEntry.status) &&
+    (opts.movedAtMs === undefined || statusEntry.timestamp > opts.movedAtMs)
+  ) {
     return
   }
   const { useSessionStore, isSessionReactivating } = await import('./useSessionStore')
@@ -288,9 +328,9 @@ async function closeSessionOfRemovedTicketNow(
     .getState()
     .closeSession(sessionId, { abortIfRevived: true, stopRemote: true })
   if (!result.success && !result.aborted) {
-    console.error(`Failed to close session of ${action} ticket:`, sessionId, result.error)
+    console.error(`Failed to close session of ${context} ticket:`, sessionId, result.error)
     toast.error(
-      `Ticket ${action}, but its session could not be closed: ${result.error ?? 'unknown error'}`
+      `Ticket ${context}, but its session could not be closed: ${result.error ?? 'unknown error'}`
     )
   }
 }
@@ -664,9 +704,18 @@ interface KanbanState {
       /**
        * Restoring a prior column, not completing work — don't fire
        * terminal-move side effects (dependent auto-launch / follow-up
-       * trigger).
+       * trigger, the revival of a closed session on leaving a terminal
+       * column).
        */
       skipCompletionEffects?: boolean
+      /**
+       * Leave the ticket's session open on a move into Done or Merged: the
+       * caller still has work for it (a document run's own move to Merged,
+       * with the document update still to come) or is only restoring a
+       * column the ticket was in. Every other move into a terminal column
+       * closes the session.
+       */
+      keepSession?: boolean
     }
   ) => Promise<void>
   reorderTicket: (ticketId: string, projectId: string, newSortOrder: number) => Promise<void>
@@ -1580,7 +1629,7 @@ export const useKanbanStore = create<KanbanState>()(
         projectId: string,
         column: KanbanTicketColumn,
         sortOrder: number,
-        opts?: { skipCompletionEffects?: boolean }
+        opts?: { skipCompletionEffects?: boolean; keepSession?: boolean }
       ) => {
         const prev = get().tickets.get(projectId) ?? []
         const snapshot = prev.map((t) => ({ ...t }))
@@ -1619,36 +1668,49 @@ export const useKanbanStore = create<KanbanState>()(
         try {
           await kanban.ticket.move(projectId, ticketId, column, sortOrder)
 
-          // Entering the done column ends the ticket's work: close the attached
-          // session so its agent process dies now and the tab is not restored on
-          // the next worktree selection or app launch. Done only — a merged
-          // move must NOT close the session (user decision). Lives in the
-          // renderer because it is the only production caller of this RPC and
-          // the server child cannot reach main-process PTYs — a future
+          // Entering a terminal column — done or merged — ends the ticket's
+          // work: close the attached session so its agent process dies now and
+          // the tab is not restored on the next worktree selection or app
+          // launch. It is the move itself that stops the session: a tap on the
+          // card afterwards still opens it (the modal respawns the process for
+          // as long as it is open), and a move back out revives it (below).
+          // Not for a ticket still in a document run's document edit lane: the
+          // run has one more prompt for that session (update the run's
+          // document) and closes it once that is over — its own move to merged
+          // asks to keep the session, as does a move that only restores a
+          // column (keepSession). Batch moves that skip the completion effects
+          // (a run's tickets moved along with its own) still close. Lives in
+          // the renderer because it is the only production caller of this RPC
+          // and the server child cannot reach main-process PTYs — a future
           // non-renderer mover (bots, automations) needs its own server-side
           // hook.
           if (
-            !opts?.skipCompletionEffects &&
-            column === 'done' &&
+            !opts?.keepSession &&
+            isTerminalColumn(column) &&
             movedTicket?.current_session_id &&
-            movedTicket.column !== column
+            movedTicket.column !== column &&
+            !isTicketInDocumentUpdateLane(ticketId)
           ) {
             const sessionIdToClose = movedTicket.current_session_id
             try {
               // Closing a session another live ticket still rides would kill
               // that ticket's in-flight work — skip, and skip too when the
-              // link set cannot be verified (the helper rejects).
-              const sharedWithLiveTicket = await isSessionSharedWithLiveTicket(
-                sessionIdToClose,
-                ticketId
-              )
+              // link set cannot be verified (the helper rejects). A row that is
+              // already closed (a merged → done move after the merged move
+              // closed it) is left alone: closing again would only re-stamp its
+              // completed_at. A row that cannot be read counts as open.
+              const [sharedWithLiveTicket, row] = await Promise.all([
+                isSessionSharedWithLiveTicket(sessionIdToClose, ticketId),
+                dbApi.session.get<Session>(sessionIdToClose).catch(() => null)
+              ])
               // The awaits above race two newer intents: the user dragging the
-              // ticket back out of done, and a background revival (follow-up
-              // send, plan approval) putting the session back to work. Re-check
-              // both from current state right before closing — the newer intent
-              // wins. Only status transitions stamped AFTER this move count as
-              // revivals: a session that was merely still working when the user
-              // dragged to done must still be closed (that is the feature).
+              // ticket back out of the terminal column, and a background
+              // revival (follow-up send, plan approval) putting the session
+              // back to work. Re-check both from current state right before
+              // closing — the newer intent wins. Only status transitions
+              // stamped AFTER this move count as revivals: a session that was
+              // merely still working when the user dragged to done or merged
+              // must still be closed (that is the feature).
               const ticketNow = get()
                 .tickets.get(projectId)
                 ?.find((t) => t.id === ticketId)
@@ -1661,7 +1723,8 @@ export const useKanbanStore = create<KanbanState>()(
               const { useSessionStore, isSessionReactivating } = await import('./useSessionStore')
               if (
                 !sharedWithLiveTicket &&
-                ticketNow?.column === 'done' &&
+                (!row || row.status === 'active') &&
+                isTerminalColumn(ticketNow?.column) &&
                 !revivedDuringMove &&
                 // A revival can start before its status stamp lands — never
                 // close while a reactivation/reopen is in flight.
@@ -1684,22 +1747,22 @@ export const useKanbanStore = create<KanbanState>()(
                       result.error
                     )
                     toast.error(
-                      `Ticket is done, but its session could not be closed: ${result.error ?? 'unknown error'}`
+                      `Ticket is ${column}, but its session could not be closed: ${result.error ?? 'unknown error'}`
                     )
                   }
                   if (result.success) {
-                    // A drag back out of Done during the close (which does not
-                    // mark the session reactivating) means the newer intent is
-                    // to keep working — undo: restore active status and tab.
-                    // Only when the ticket still references this session; the
-                    // backward-drag-to-todo flow completes and unlinks it on
-                    // purpose and must not be undone.
+                    // A drag back out of the terminal columns during the close
+                    // (which does not mark the session reactivating) means the
+                    // newer intent is to keep working — undo: restore active
+                    // status and tab. Only when the ticket still references
+                    // this session; the backward-drag-to-todo flow completes
+                    // and unlinks it on purpose and must not be undone.
                     const ticketAfter = get()
                       .tickets.get(projectId)
                       ?.find((t) => t.id === ticketId)
                     if (
                       ticketAfter &&
-                      ticketAfter.column !== 'done' &&
+                      !isTerminalColumn(ticketAfter.column) &&
                       ticketAfter.current_session_id === sessionIdToClose
                     ) {
                       await useSessionStore.getState().reactivateSession(sessionIdToClose)
@@ -1718,23 +1781,23 @@ export const useKanbanStore = create<KanbanState>()(
             }
           }
 
-          // Leaving the done column resumes the ticket's work. The done-move
-          // above closed its session (completed, tab-less), and a modal that
-          // opens a completed session respawns the process only for the
-          // modal-release cleanup to kill it again on close — so every tap on
-          // the ticket resumed the session from scratch. Revive it once here
-          // (active status + tab restored, no focus change): later modal
-          // opens re-attach to the same process, and the cleanup leaves it
-          // alone. A merged target is terminal too and stays closed. No-op
-          // for a session that is not completed (reactivateSession checks the
-          // DB row), so a move back that races the in-flight close above is
-          // fine: the close aborts on the reactivation mark, or its own undo
-          // path and this one both land on an active session.
+          // Leaving the terminal columns resumes the ticket's work. The move
+          // into done or merged above closed its session (completed, tab-less),
+          // and a modal that opens a completed session respawns the process
+          // only for the modal-release cleanup to kill it again on close — so
+          // every tap on the ticket resumed the session from scratch. Revive it
+          // once here (active status + tab restored, no focus change): later
+          // modal opens re-attach to the same process, and the cleanup leaves
+          // it alone. A move between the two terminal columns stays closed.
+          // No-op for a session that is not completed (reactivateSession
+          // checks the DB row), so a move back that races the in-flight close
+          // above is fine: the close aborts on the reactivation mark, or its
+          // own undo path and this one both land on an active session.
           if (
             !opts?.skipCompletionEffects &&
-            movedTicket?.column === 'done' &&
-            column !== 'done' &&
-            column !== 'merged' &&
+            movedTicket &&
+            isTerminalColumn(movedTicket.column) &&
+            !isTerminalColumn(column) &&
             movedTicket.current_session_id
           ) {
             const sessionIdToRevive = movedTicket.current_session_id
@@ -1744,7 +1807,7 @@ export const useKanbanStore = create<KanbanState>()(
               )
               .catch((err) => {
                 console.error(
-                  'Failed to reactivate session for a ticket moved out of done:',
+                  'Failed to reactivate session for a ticket moved out of done or merged:',
                   sessionIdToRevive,
                   err
                 )

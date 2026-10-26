@@ -56,6 +56,7 @@ import {
   type DocumentVerifyResult,
   type SessionFinalMessage
 } from '@shared/types/document-flow'
+import { isActiveRunStatus, isEndedRunStatus } from '@shared/document-flow/run-ticket'
 import type { TicketLaunchResult, TicketLaunchSpec } from '@/lib/ticket-launch'
 import type { RunnerPorts, RunnerTicket, RunnerTimer, RunnerWorktree } from './runner-ports'
 import {
@@ -92,6 +93,17 @@ export const MAX_CONFLICT_ATTEMPTS = 2
 export const MAX_FIX_ATTEMPTS = 2
 /** "The document is unchanged" reminders a document update gets before it counts as failed. */
 export const MAX_DOCUMENT_UPDATE_NUDGES = 1
+
+/** A merged (or already implemented) ticket whose document update ended, however it ended. */
+function isDocumentUpdateOver(item: DocumentRunItem): boolean {
+  return (
+    item.selected &&
+    (item.status === 'merged' || item.status === 'skipped') &&
+    (item.document_update_status === 'done' ||
+      item.document_update_status === 'failed' ||
+      item.document_update_status === 'skipped')
+  )
+}
 
 const LEASE_RENEW_MS = 5_000
 const SESSION_TURN_POLL_MS = 5_000
@@ -378,6 +390,21 @@ export class DocumentFlowRunner {
    */
   private readonly documentsStarting = new Set<string>()
   /**
+   * Items whose session this runner closed once their document update was over: the per-tick
+   * catch-up and the run-end sweep (`sweepRun`) pass them over.
+   */
+  private readonly releasedItems = new Set<string>()
+  /** Each run's status as the last tick saw it: a run that goes from on to over is swept. */
+  private readonly runStatuses = new Map<string, DocumentRun['status']>()
+  /** Ended runs whose merged tickets' sessions are still to be swept (`sweepRun`). */
+  private readonly pendingSweeps = new Set<string>()
+  private readonly sweeping = new Set<string>()
+  /**
+   * When this runner started: a document update that ended before (one a previous runner
+   * closed the session of, which the user may have reopened since) is not its to close.
+   */
+  private startedAt = 0
+  /**
    * Sessions this runner told to edit a document (item id → where), kept beyond what the store
    * shows: a re-read older than the `updating` write can show the item queued again, and an
    * update the user skipped mid-edit leaves its session at the edit until its turn ends. Either
@@ -401,6 +428,7 @@ export class DocumentFlowRunner {
   start(): void {
     if (this.started) return
     this.started = true
+    this.startedAt = this.ports.now()
     this.unsubscribe = this.ports.subscribe(() => this.requestTick())
     this.armInterval()
     this.requestTick()
@@ -456,11 +484,69 @@ export class DocumentFlowRunner {
   private runTick(): void {
     const present = new Set<string>()
     for (const detail of this.ports.getRuns()) {
-      present.add(detail.run.id)
-      if (detail.run.status === 'running') void this.tickRun(detail.run.id)
+      const runId = detail.run.id
+      present.add(runId)
+      const status = detail.run.status
+      const before = this.runStatuses.get(runId)
+      this.runStatuses.set(runId, status)
+      if (status === 'running') {
+        void this.tickRun(runId)
+      } else if (isEndedRunStatus(status)) {
+        // Seen on (running or paused) by this runner and over now: its sessions are swept. A
+        // run that was over already when this runner first saw it is not: a previous runner
+        // closed its sessions, and the user may have reopened some since.
+        if (before !== undefined && isActiveRunStatus(before)) this.pendingSweeps.add(runId)
+        if (this.pendingSweeps.has(runId)) void this.sweepRun(detail)
+      }
     }
     for (const runId of this.runs.keys()) {
       if (!present.has(runId)) this.runs.delete(runId)
+    }
+    for (const runId of this.runStatuses.keys()) {
+      if (present.has(runId)) continue
+      this.runStatuses.delete(runId)
+      this.pendingSweeps.delete(runId)
+    }
+  }
+
+  /**
+   * A run this runner saw on has ended. The sessions of its merged tickets were closed one by
+   * one as their document updates ended (`releaseSession`), except where the end of the run
+   * took an update out of the lane first: a cancel, or an early finish, skips every queued
+   * update on the server, and no step of this runner sees it. Close those now. A session still
+   * at its edit (the cancel does not stop it) is not settled: the sweep is tried again on a
+   * later tick, its turn end being one. A run paused across an app restart was never ticked,
+   * so its board is loaded first: a ticket missing from the store reads as gone. The close
+   * itself leaves a session the user is talking to, or one closed already, alone.
+   */
+  private async sweepRun(detail: DocumentRunDetail): Promise<void> {
+    const { run } = detail
+    if (this.sweeping.has(run.id)) return
+    this.sweeping.add(run.id)
+    try {
+      if (!this.runs.get(run.id)?.loaded) {
+        if (isConnectionRun(run)) {
+          await this.ports.loadProject(
+            run.project_id,
+            run.members.map((member) => member.project_id)
+          )
+        } else {
+          await this.ports.loadProject(run.project_id)
+        }
+        this.stateFor(run.id).loaded = true
+      }
+      let settled = true
+      for (const item of detail.items) {
+        if (!item.selected || !item.session_id || !item.ticket_id) continue
+        if (this.releasedItems.has(item.id) || !this.updateEndedSinceStart(item)) continue
+        if (!(await this.releaseSession(run.project_id, item))) settled = false
+      }
+      if (settled) this.pendingSweeps.delete(run.id)
+    } catch (error) {
+      // Tried again on a later tick.
+      this.ports.warn(`could not close the sessions of run ${run.id}`, error)
+    } finally {
+      this.sweeping.delete(run.id)
     }
   }
 
@@ -554,6 +640,10 @@ export class DocumentFlowRunner {
           // A merged (or already implemented) ticket whose session is updating the document.
           if (isDocumentUpdatePending(item) && item.document_update_status === 'updating') {
             this.spawn(runId, item, (op) => this.watchDocumentUpdate(op))
+          } else if (this.updateEndedSinceStart(item) && !this.releasedItems.has(item.id)) {
+            // Its update ended past this runner's own finish step (the user skipped it from
+            // the dashboard, say): close its session as that step would have.
+            void this.releaseSession(run.project_id, item)
           }
           break
       }
@@ -2328,9 +2418,14 @@ export class DocumentFlowRunner {
     })
     if (projectId && item.ticket_id) {
       // A plain move to merged would fire the board's completion effects (dependent
-      // auto-launch); the run schedules its own dependents.
+      // auto-launch); the run schedules its own dependents. And it would close the ticket's
+      // session, which the run still has to ask to update the document: the session is kept,
+      // and closed by `releaseSession` once that update is over.
       await this.ports
-        .moveTicket(projectId, item.ticket_id, 'merged', { skipCompletionEffects: true })
+        .moveTicket(projectId, item.ticket_id, 'merged', {
+          skipCompletionEffects: true,
+          keepSession: true
+        })
         .catch((error) => this.ports.warn(`could not move ${item.key} to merged`, error))
     }
     this.event(op, 'merged', `Merged ${item.key}`)
@@ -2788,13 +2883,13 @@ export class DocumentFlowRunner {
     if (report?.outcome === 'unchanged') {
       // The agent found the document already saying what it should (an earlier run marked the
       // task): nothing to remind it of. Its prompt may have moved the ticket all the same.
-      await this.finishDocumentUpdate(
+      return this.finishDocumentUpdate(
         op,
         'skipped',
         report.notes ?? DOCUMENT_UP_TO_DATE_DETAIL,
-        checked
+        checked,
+        { returnTicket: true }
       )
-      return this.returnTicketToMerged(op)
     }
     // `document_update_attempts` counts the continues too, which `continue_attempts` counts
     // on their own since the update started: the difference is the reminders sent.
@@ -2843,11 +2938,17 @@ export class DocumentFlowRunner {
    * ticket out of the merged column (a prompt reads as the user's, a turn end as a review);
    * it goes back there. A skipped update was never prompted (but see `documentTurnEnded`).
    */
+  /**
+   * End the update. The ticket goes back to Merged where the edit's turn pulled it out
+   * (`returnTicket`: whenever the session was prompted, which a pre-prompt skip was not), then
+   * its session is closed — in that order, so the close sees the ticket where it belongs.
+   */
   private async finishDocumentUpdate(
     op: ItemOp,
     status: Extract<DocumentUpdateStatus, 'done' | 'failed' | 'skipped'>,
     detail: string | null,
-    extra: DocumentRunItemPatch = {}
+    extra: DocumentRunItemPatch = {},
+    { returnTicket = status !== 'skipped' }: { returnTicket?: boolean } = {}
   ): Promise<void> {
     await this.patch(op, {
       ...extra,
@@ -2864,7 +2965,9 @@ export class DocumentFlowRunner {
         message: `${op.item.key} could not update the document: ${firstLine(detail ?? '')}`
       })
     }
-    if (status !== 'skipped') await this.returnTicketToMerged(op)
+    if (returnTicket) await this.returnTicketToMerged(op)
+    const projectId = this.currentItem(op)?.run.project_id
+    if (projectId) await this.releaseSession(projectId, op.item)
   }
 
   private async returnTicketToMerged(op: ItemOp): Promise<void> {
@@ -2874,9 +2977,48 @@ export class DocumentFlowRunner {
     const ticket = this.ports.getTicket(projectId, ticketId)
     // Only where the session's own events take a ticket: one the user put in Done stays there.
     if (!ticket || (ticket.column !== 'in_progress' && ticket.column !== 'review')) return
+    // The session is `releaseSession`'s to close, right after this.
     await this.ports
-      .moveTicket(projectId, ticketId, 'merged', { skipCompletionEffects: true })
+      .moveTicket(projectId, ticketId, 'merged', {
+        skipCompletionEffects: true,
+        keepSession: true
+      })
       .catch((error) => this.ports.warn(`could not move ${key} back to merged`, error))
+  }
+
+  /**
+   * The document update was the last thing the run had to ask of the ticket's session: close
+   * it, as a move to Merged closes any ticket's session (the run's own move to merged skipped
+   * that, with the update still to come, and the board left the session to the run while it
+   * was in the lane). Only where the ticket's work is over: in Merged or Done, or gone from the
+   * board. One the user took back up — out of those columns, by hand — keeps its session. The
+   * close itself leaves a working, shared, revived or closed session alone.
+   */
+  private async releaseSession(projectId: string, item: DocumentRunItem): Promise<boolean> {
+    const { session_id: sessionId, ticket_id: ticketId, key } = item
+    if (!sessionId || !ticketId) return true
+    const ticket = this.ports.getTicket(projectId, ticketId)
+    if (ticket && ticket.column !== 'merged' && ticket.column !== 'done') return true
+    // Still at the edit (an update the user skipped mid-way, a run cancelled under it), or
+    // stopped in it for the user: not settled — looked at again on a later tick, its turn end
+    // being one.
+    const signal = this.ports.getSessionSignal(sessionId).kind
+    if (signal === 'working' || signal === 'blocked') return false
+    this.releasedItems.add(item.id)
+    await this.ports
+      .closeTicketSession(projectId, ticketId, sessionId)
+      .catch((error) => this.ports.warn(`could not close the session of ${key}`, error))
+    return true
+  }
+
+  /**
+   * The item's document update ended, and since this runner started: an earlier end was a
+   * previous runner's to act on (it closed the session then; the user may have reopened it).
+   */
+  private updateEndedSinceStart(item: DocumentRunItem): boolean {
+    return (
+      isDocumentUpdateOver(item) && toMs(item.document_update_finished_at) >= this.startedAt
+    )
   }
 
   // ── Finishing ────────────────────────────────────────────────────────────

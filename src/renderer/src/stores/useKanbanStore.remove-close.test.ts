@@ -11,13 +11,13 @@ const {
   closeSession,
   isSessionReactivating,
   toastError,
-  isTicketHeldByDocumentUpdate,
+  isTicketInDocumentUpdateLane,
   sessionGet
 } = vi.hoisted(() => ({
   closeSession: vi.fn().mockResolvedValue({ success: true }),
   isSessionReactivating: vi.fn(() => false),
   toastError: vi.fn(),
-  isTicketHeldByDocumentUpdate: vi.fn((_ticketId: string) => false),
+  isTicketInDocumentUpdateLane: vi.fn((_ticketId: string) => false),
   sessionGet: vi.fn()
 }))
 
@@ -44,14 +44,14 @@ vi.mock('./useSessionStore', () => ({
 
 vi.mock('./store-coordination', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./store-coordination')>()),
-  isTicketHeldByDocumentUpdate
+  isTicketInDocumentUpdateLane
 }))
 
 vi.mock('@/lib/toast', () => ({
   toast: { error: toastError, success: vi.fn(), info: vi.fn() }
 }))
 
-import { useKanbanStore } from './useKanbanStore'
+import { closeSessionOfFinishedTicket, useKanbanStore } from './useKanbanStore'
 import { useWorktreeStatusStore } from './useWorktreeStatusStore'
 import { kanbanApi } from '@/api/kanban-api'
 
@@ -125,7 +125,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   closeSession.mockResolvedValue({ success: true })
   isSessionReactivating.mockReturnValue(false)
-  isTicketHeldByDocumentUpdate.mockReturnValue(false)
+  isTicketInDocumentUpdateLane.mockReturnValue(false)
   vi.mocked(kanbanApi.ticket.getBySession).mockResolvedValue([])
   sessionGet.mockImplementation(async (id: string) => ({ id, status: 'active' }))
   useKanbanStore.setState({ tickets: new Map(), dependencyMap: new Map() })
@@ -230,7 +230,7 @@ describe.each(['deleteTicket', 'archiveTicket'] as const)(
 
     it("keeps a session that holds a document run's document update", async () => {
       seed(makeTicket())
-      isTicketHeldByDocumentUpdate.mockReturnValue(true)
+      isTicketInDocumentUpdateLane.mockReturnValue(true)
 
       await remove(action)
       await flush()
@@ -337,7 +337,7 @@ describe("archiveAllDone closes the archived tickets' sessions", () => {
   })
 
   it('keeps a shared session when any of its archived tickets holds a document update', async () => {
-    isTicketHeldByDocumentUpdate.mockImplementation((id: string) => id === 't-2')
+    isTicketInDocumentUpdateLane.mockImplementation((id: string) => id === 't-2')
     useKanbanStore.setState({
       tickets: new Map([
         [
@@ -361,6 +361,93 @@ describe("archiveAllDone closes the archived tickets' sessions", () => {
     await flush()
 
     expect(closeSession).not.toHaveBeenCalled()
+  })
+})
+
+// The same close, called directly: by a document run once a merged ticket's document update is
+// over (through the runner's closeTicketSession port), and by the PR merge for a ticket of a
+// board that was never loaded.
+describe('closeSessionOfFinishedTicket', () => {
+  it('closes the session of a merged ticket with the same guards as the board moves', async () => {
+    await closeSessionOfFinishedTicket(SESSION_ID, 'ticket-1', 'merged')
+
+    expect(closeSession).toHaveBeenCalledTimes(1)
+    expect(closeSession).toHaveBeenCalledWith(SESSION_ID, {
+      abortIfRevived: true,
+      stopRemote: true
+    })
+    expect(toastError).not.toHaveBeenCalled()
+  })
+
+  it("leaves the session to the run while the ticket is still in its document edit lane", async () => {
+    isTicketInDocumentUpdateLane.mockImplementation((id: string) => id === 'ticket-1')
+
+    await closeSessionOfFinishedTicket(SESSION_ID, 'ticket-1', 'merged')
+
+    expect(closeSession).not.toHaveBeenCalled()
+    expect(kanbanApi.ticket.getBySession).not.toHaveBeenCalled()
+  })
+
+  it('leaves an already closed session alone', async () => {
+    sessionGet.mockImplementation(async (id: string) => ({ id, status: 'completed' }))
+
+    await closeSessionOfFinishedTicket(SESSION_ID, 'ticket-1', 'done')
+
+    expect(closeSession).not.toHaveBeenCalled()
+  })
+
+  it('leaves a working session alone', async () => {
+    useWorktreeStatusStore.setState({
+      sessionStatuses: { [SESSION_ID]: { status: 'working', timestamp: Date.now() } }
+    })
+
+    await closeSessionOfFinishedTicket(SESSION_ID, 'ticket-1', 'merged')
+
+    expect(closeSession).not.toHaveBeenCalled()
+  })
+
+  it('closes a session that was merely still working when the caller moved the ticket (movedAtMs), like a drop on the board', async () => {
+    const movedAtMs = Date.now()
+    useWorktreeStatusStore.setState({
+      sessionStatuses: { [SESSION_ID]: { status: 'working', timestamp: movedAtMs - 1000 } }
+    })
+
+    await closeSessionOfFinishedTicket(SESSION_ID, 'ticket-1', 'merged', { movedAtMs })
+
+    expect(closeSession).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves a session revived after the caller moved the ticket (a status newer than movedAtMs)', async () => {
+    const movedAtMs = Date.now()
+    useWorktreeStatusStore.setState({
+      sessionStatuses: { [SESSION_ID]: { status: 'working', timestamp: movedAtMs + 1000 } }
+    })
+
+    await closeSessionOfFinishedTicket(SESSION_ID, 'ticket-1', 'merged', { movedAtMs })
+
+    expect(closeSession).not.toHaveBeenCalled()
+  })
+
+  it('rejects when the link set cannot be read, so the caller skips the close', async () => {
+    vi.mocked(kanbanApi.ticket.getBySession).mockRejectedValue(new Error('db down'))
+
+    await expect(closeSessionOfFinishedTicket(SESSION_ID, 'ticket-1', 'merged')).rejects.toThrow(
+      'db down'
+    )
+
+    expect(closeSession).not.toHaveBeenCalled()
+  })
+
+  it('names what became of the ticket when the close fails', async () => {
+    closeSession.mockResolvedValue({ success: false, error: 'pty gone' })
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await closeSessionOfFinishedTicket(SESSION_ID, 'ticket-1', 'merged')
+
+    expect(toastError).toHaveBeenCalledWith(
+      'Ticket merged, but its session could not be closed: pty gone'
+    )
+    consoleError.mockRestore()
   })
 })
 

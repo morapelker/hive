@@ -466,7 +466,13 @@ export function deriveIrrelevantReasons(
     if (!dbRow.sessionExists) reasons.push('no_session_row')
     if (dbRow.status === 'completed' || dbRow.status === 'error') reasons.push('session_completed')
     if (dbRow.worktreeArchived) reasons.push('worktree_archived')
-    if (dbRow.ticket && (dbRow.ticket.column === 'done' || dbRow.ticket.archived)) {
+    // Done and Merged both end a ticket's work (the board closes the session on entering
+    // either); a merged ticket a document run still has to ask for its document update is
+    // kept by `documentRunBusy` above.
+    if (
+      dbRow.ticket &&
+      (dbRow.ticket.column === 'done' || dbRow.ticket.column === 'merged' || dbRow.ticket.archived)
+    ) {
       reasons.push('ticket_done')
     }
   }

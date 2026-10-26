@@ -523,6 +523,23 @@ describe('irrelevance rules', () => {
         })
       })
     ).toEqual(['ticket_done'])
+    // Merged ends a ticket's work like Done does (the board closes the session on entering it)
+    expect(
+      deriveIrrelevantReasons({
+        ...base,
+        dbRow: dbRow(UUID_A, {
+          ticket: { id: 't', title: 'T', column: 'merged', archived: false, projectId: 'p' }
+        })
+      })
+    ).toEqual(['ticket_done'])
+    expect(
+      deriveIrrelevantReasons({
+        ...base,
+        dbRow: dbRow(UUID_A, {
+          ticket: { id: 't', title: 'T', column: 'review', archived: false, projectId: 'p' }
+        })
+      })
+    ).toEqual([])
     expect(deriveIrrelevantReasons({ ...base, dbRow: dbRow(UUID_A, { status: 'error' }) })).toEqual(
       ['session_completed']
     )

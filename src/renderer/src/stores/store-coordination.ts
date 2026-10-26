@@ -209,24 +209,38 @@ export function resolveConnectionSavedProjectId(connectionId: string): string | 
   return _resolveConnectionSavedProjectId?.(connectionId) ?? null
 }
 
-// ── Kanban ↔ Document flow: tickets held by a document update ──
+// ── Kanban ↔ Document flow: tickets in a document run's document edit lane ──
 // Once a document run merged a ticket, the run sends that ticket's own session one more
-// prompt: update the document the run was made from. The kanban store must not read that
-// session's work as the ticket's (no reopen of the merged ticket, no move to Review), so it
-// asks the document flow store, which registers the lookup. It never imports it:
+// prompt: update the document the run was made from. The kanban store asks the document flow
+// store where a ticket stands in that lane, which registers the lookup. It never imports it:
 // useDocumentFlowStore → … → useWorktreeStore → useKanbanStore would cycle.
-type DocumentUpdateHoldFn = (ticketId: string) => boolean
+//   - `updating`: the session is at the edit. The kanban store must not read that session's
+//     work as the ticket's (no reopen of the merged ticket, no move to Review).
+//   - `queued`: the session is still to be prompted. Its ticket moves as usual, but the
+//     session must stay open for the prompt: a move to Merged or Done, an archive or a delete
+//     leave it to the run, which closes it once the document is updated.
+export type DocumentUpdateLane = 'queued' | 'updating'
+type DocumentUpdateLaneFn = (ticketId: string) => DocumentUpdateLane | null
 
-let _documentUpdateHold: DocumentUpdateHoldFn | null = null
+let _documentUpdateLane: DocumentUpdateLaneFn | null = null
 
-export function registerDocumentUpdateHold(fn: DocumentUpdateHoldFn): void {
-  _documentUpdateHold = fn
+export function registerDocumentUpdateLane(fn: DocumentUpdateLaneFn): void {
+  _documentUpdateLane = fn
 }
 
 /**
- * The ticket holds a document run's document edit lane. False until the document
+ * The ticket's session is at the edit of its document run's document. False until the document
  * flow store registers its lookup: with that store not loaded there are no runs either.
  */
 export function isTicketHeldByDocumentUpdate(ticketId: string): boolean {
-  return _documentUpdateHold?.(ticketId) ?? false
+  return _documentUpdateLane?.(ticketId) === 'updating'
+}
+
+/**
+ * The ticket's session is still to update, or is updating, its document run's document: the
+ * run has one more prompt for it, and closes it once that is over. False until the document
+ * flow store registers its lookup.
+ */
+export function isTicketInDocumentUpdateLane(ticketId: string): boolean {
+  return (_documentUpdateLane?.(ticketId) ?? null) !== null
 }

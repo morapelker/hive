@@ -91,8 +91,10 @@ describe('DocumentFlowRunner: merging', () => {
       status_detail: null,
       finished_at: '2026-05-04T10:00:00.100Z'
     })
+    // The board must not close the session: the run still has to ask it to update the document.
     expect(world.ports.moveTicket).toHaveBeenCalledWith(PROJECT_ID, 'ticket-A', 'merged', {
-      skipCompletionEffects: true
+      skipCompletionEffects: true,
+      keepSession: true
     })
     expect(world.tickets.get('ticket-A')?.column).toBe('merged')
     expect(world.events.map((event) => event.type)).toContain('merged')

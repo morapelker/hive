@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { KanbanTicket } from '../../../../main/db/types'
 
-const { moveTicket, rpcMove, rpcGetByProject } = vi.hoisted(() => ({
-  moveTicket: vi.fn().mockResolvedValue(undefined),
-  rpcMove: vi.fn().mockResolvedValue(undefined),
-  rpcGetByProject: vi.fn().mockResolvedValue([])
-}))
+const { moveTicket, closeSessionOfFinishedTicket, rpcMove, rpcGetByProject } = vi.hoisted(
+  () => ({
+    moveTicket: vi.fn().mockResolvedValue(undefined),
+    closeSessionOfFinishedTicket: vi.fn().mockResolvedValue(undefined),
+    rpcMove: vi.fn().mockResolvedValue(undefined),
+    rpcGetByProject: vi.fn().mockResolvedValue([])
+  })
+)
 
 vi.mock('@/api/kanban-api', () => ({
   kanbanApi: {
@@ -22,7 +25,8 @@ vi.mock('@/stores/useKanbanStore', () => {
     useKanbanStore: {
       getState: () => state,
       setState: (partial: Partial<typeof state>) => Object.assign(state, partial)
-    }
+    },
+    closeSessionOfFinishedTicket
   }
 })
 
@@ -170,6 +174,47 @@ describe('moveWorktreeTicketsToMerged', () => {
     expect(moveTicket).not.toHaveBeenCalled()
     expect(rpcGetByProject).toHaveBeenCalledWith(PROJECT_ID, false)
     expect(rpcMove).toHaveBeenCalledWith(PROJECT_ID, 'db-ticket', 'merged', 3)
+  })
+
+  it("closes a DB-path ticket's session once the RPC accepted the move, as a store move does on entering Merged", async () => {
+    seedWorktreeProject()
+    rpcGetByProject.mockResolvedValue([
+      makeTicket({ id: 'db-with-session', current_session_id: 'sess-1' }),
+      makeTicket({ id: 'db-no-session', current_session_id: null })
+    ])
+
+    await moveWorktreeTicketsToMerged(WORKTREE_ID, 42)
+
+    expect(closeSessionOfFinishedTicket).toHaveBeenCalledTimes(1)
+    // Stamped with the move, like a drop on the board: a session merely still working when
+    // the PR merged is closed too, only a status newer than the move counts as a revival.
+    expect(closeSessionOfFinishedTicket).toHaveBeenCalledWith(
+      'sess-1',
+      'db-with-session',
+      'merged',
+      { movedAtMs: expect.any(Number) }
+    )
+  })
+
+  it('closes nothing for a DB-path move the RPC rejected, and survives a close that rejects', async () => {
+    seedWorktreeProject()
+    rpcGetByProject.mockResolvedValue([
+      makeTicket({ id: 'db-fails', current_session_id: 'sess-fails' }),
+      makeTicket({ id: 'db-moves', current_session_id: 'sess-moves' })
+    ])
+    rpcMove.mockRejectedValueOnce(new Error('boom'))
+    closeSessionOfFinishedTicket.mockRejectedValueOnce(new Error('link set unreadable'))
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await expect(moveWorktreeTicketsToMerged(WORKTREE_ID, 42)).resolves.toBeUndefined()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(closeSessionOfFinishedTicket).toHaveBeenCalledTimes(1)
+    expect(closeSessionOfFinishedTicket).toHaveBeenCalledWith('sess-moves', 'db-moves', 'merged', {
+      movedAtMs: expect.any(Number)
+    })
+    expect(consoleError).toHaveBeenCalled()
+    consoleError.mockRestore()
   })
 
   it('skips the DB fallback when the worktree project is already loaded', async () => {

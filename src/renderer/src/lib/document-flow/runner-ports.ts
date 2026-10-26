@@ -24,7 +24,11 @@ import {
 } from '@/lib/ticket-launch'
 import { toast } from '@/lib/toast'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
-import { useKanbanStore, whenKanbanMutationsSettled } from '@/stores/useKanbanStore'
+import {
+  closeSessionOfFinishedTicket,
+  useKanbanStore,
+  whenKanbanMutationsSettled
+} from '@/stores/useKanbanStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
 import { useScriptStore } from '@/stores/useScriptStore'
 import { useSessionStore } from '@/stores/useSessionStore'
@@ -119,7 +123,7 @@ export interface RunnerPorts {
     projectId: string,
     ticketId: string,
     column: KanbanTicketColumn,
-    options: { skipCompletionEffects: boolean }
+    options: { skipCompletionEffects: boolean; keepSession?: boolean }
   ): Promise<void>
   /** The sort order that puts a ticket at the top of `column`. */
   topSortOrder(projectId: string, column: KanbanTicketColumn): number
@@ -143,6 +147,13 @@ export interface RunnerPorts {
   launchTicket(spec: TicketLaunchSpec): Promise<TicketLaunchResult>
   /** A launch failed after its session row existed: close it so it does not linger as working. */
   completeOrphanSession(sessionId: string): Promise<void>
+  /**
+   * The run has nothing more to ask of a merged ticket's session (its document update is
+   * over): close it, as a move to Merged closes any ticket's session. Left alone while it is
+   * working, serves another live ticket, is being revived, or is closed already. Never
+   * rejects for a close that failed; that is reported to the user.
+   */
+  closeTicketSession(projectId: string, ticketId: string, sessionId: string): Promise<void>
   resetTicketToTodo(projectId: string, ticketId: string): Promise<void>
   /** Rejects when the prompt could not be delivered. */
   sendFollowup(target: { sessionId: string; ticketId: string; prompt: string }): Promise<void>
@@ -396,6 +407,17 @@ export function createLiveRunnerPorts(): RunnerPorts {
         completed_at: new Date().toISOString()
       })
       useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'completed')
+    },
+    closeTicketSession: (projectId, ticketId, sessionId) => {
+      const ticket = useKanbanStore
+        .getState()
+        .tickets.get(projectId)
+        ?.find((candidate) => candidate.id === ticketId)
+      return closeSessionOfFinishedTicket(
+        sessionId,
+        ticketId,
+        ticket?.column === 'done' ? 'done' : 'merged'
+      )
     },
     resetTicketToTodo: (projectId, ticketId) => {
       const store = useKanbanStore.getState()

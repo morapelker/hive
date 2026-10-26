@@ -2,8 +2,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { KanbanTicket } from '../../../../main/db/types'
 import { makeDetail } from '@/components/document-flow/test-fixtures'
 import type { DocumentUpdateStatus } from '@shared/types/document-flow'
-import { notifyKanbanSessionSync } from '../store-coordination'
-import { isTicketInDocumentUpdate, useDocumentFlowStore } from '../useDocumentFlowStore'
+import {
+  isTicketHeldByDocumentUpdate,
+  isTicketInDocumentUpdateLane,
+  notifyKanbanSessionSync
+} from '../store-coordination'
+import {
+  documentUpdateLaneOf,
+  isTicketInDocumentUpdate,
+  useDocumentFlowStore
+} from '../useDocumentFlowStore'
 import { useKanbanStore } from '../useKanbanStore'
 import { useWorktreeStatusStore } from '../useWorktreeStatusStore'
 
@@ -141,6 +149,43 @@ describe('isTicketInDocumentUpdate', () => {
     expect(isTicketInDocumentUpdate(useDocumentFlowStore.getState().runsById, 'ticket-x')).toBe(
       false
     )
+  })
+})
+
+describe('documentUpdateLaneOf', () => {
+  const laneOf = (ticketId = 'ticket-a1'): string | null =>
+    documentUpdateLaneOf(useDocumentFlowStore.getState().runsById, ticketId)
+
+  it('tells a ticket still waiting for the update prompt from one whose session is at the edit', () => {
+    seedRun('queued')
+    expect(laneOf()).toBe('queued')
+    seedRun('updating')
+    expect(laneOf()).toBe('updating')
+    seedRun('queued', 'paused')
+    expect(laneOf()).toBe('queued')
+  })
+
+  it('is over once the update ended, the run ended, or for another ticket', () => {
+    for (const status of ['done', 'failed', 'skipped', null] as const) {
+      seedRun(status)
+      expect(laneOf(), String(status)).toBeNull()
+    }
+    seedRun('queued', 'completed')
+    expect(laneOf()).toBeNull()
+    seedRun('queued')
+    expect(laneOf('ticket-x')).toBeNull()
+  })
+
+  it('is what the kanban store asks to keep the session open for the run', () => {
+    seedRun('queued')
+    expect(isTicketInDocumentUpdateLane('ticket-a1')).toBe(true)
+    expect(isTicketHeldByDocumentUpdate('ticket-a1')).toBe(false)
+    seedRun('updating')
+    expect(isTicketInDocumentUpdateLane('ticket-a1')).toBe(true)
+    expect(isTicketHeldByDocumentUpdate('ticket-a1')).toBe(true)
+    seedRun('done')
+    expect(isTicketInDocumentUpdateLane('ticket-a1')).toBe(false)
+    expect(isTicketHeldByDocumentUpdate('ticket-a1')).toBe(false)
   })
 })
 

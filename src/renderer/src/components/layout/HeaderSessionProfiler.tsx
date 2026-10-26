@@ -82,7 +82,7 @@ const REASON_LABELS: Record<SessionProfilerIrrelevantReason, { label: string; ti
     label: 'worktree archived',
     title: "The session's worktree was archived."
   },
-  ticket_done: { label: 'ticket done', title: 'The ticket is in Done or archived.' },
+  ticket_done: { label: 'ticket done', title: 'The ticket is in Done or Merged, or archived.' },
   untracked: {
     label: 'untracked',
     title: "The process is not in the app's terminal registry: it leaked out of it."

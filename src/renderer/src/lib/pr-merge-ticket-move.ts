@@ -1,4 +1,4 @@
-import { useKanbanStore } from '@/stores/useKanbanStore'
+import { closeSessionOfFinishedTicket, useKanbanStore } from '@/stores/useKanbanStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { kanbanApi } from '@/api/kanban-api'
@@ -62,14 +62,28 @@ export async function moveWorktreeTicketsToMerged(
 
     // The worktree's board may never have been opened this session — its
     // tickets then only exist in the DB, so move them through the RPC
-    // directly (no store state to keep in sync).
+    // directly (no store state to keep in sync). The ticket's session is closed
+    // as a store move closes it on entering Merged (detached; the close reports
+    // its own failures).
     const projectId = resolveProjectIdForWorktree(worktreeId)
     if (!projectId || loadedProjectIds.has(projectId)) return
     const dbTickets = await kanbanApi.ticket.getByProject<KanbanTicket>(projectId, false)
     await Promise.all(
-      dbTickets
-        .filter(shouldMove)
-        .map((t) => kanbanApi.ticket.move(projectId, t.id, 'merged', t.sort_order).catch(() => {}))
+      dbTickets.filter(shouldMove).map(async (t) => {
+        const movedAtMs = Date.now()
+        try {
+          await kanbanApi.ticket.move(projectId, t.id, 'merged', t.sort_order)
+        } catch {
+          return
+        }
+        if (t.current_session_id) {
+          closeSessionOfFinishedTicket(t.current_session_id, t.id, 'merged', { movedAtMs }).catch(
+            (err) => {
+              console.error('Skipping session close of merged ticket:', t.current_session_id, err)
+            }
+          )
+        }
+      })
     )
   } catch {
     // Best-effort: a failed board sync must never surface as a merge failure.

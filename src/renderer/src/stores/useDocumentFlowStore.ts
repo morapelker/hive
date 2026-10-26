@@ -7,7 +7,7 @@ import { resolvePreferredAgentSdk, useSettingsStore } from '@/stores/useSettings
 import { isDocumentUpdatePending, isTerminalItemStatus } from '@shared/document-flow/planning'
 import { isActiveRunStatus, isUnlaunchedRunStatus } from '@shared/document-flow/run-ticket'
 import type { DocumentFlowUpdatedEvent } from '@shared/document-flow-events'
-import { registerDocumentUpdateHold } from './store-coordination'
+import { registerDocumentUpdateLane, type DocumentUpdateLane } from './store-coordination'
 import {
   DEFAULT_DOCUMENT_RUN_CONFIG,
   DOCUMENT_RUN_MAX_PARALLEL_LIMIT,
@@ -477,30 +477,44 @@ export const useDocumentFlowStore = create<DocumentFlowState>()(
 )
 
 /**
+ * Where the ticket's run item stands in the document edit lane of a run that is on: `updating`
+ * while its session edits the run's document (the item turns `updating` before the prompt is
+ * sent), `queued` while that prompt is still to come, null once the update is over (or there
+ * is none). The run has one more prompt for the ticket's session in either state, so the
+ * kanban store leaves that session open — a move to Merged or Done, an archive or a delete
+ * would otherwise close it — and the run closes it once the document is updated.
+ */
+export function documentUpdateLaneOf(
+  runsById: Record<string, DocumentRunDetail>,
+  ticketId: string
+): DocumentUpdateLane | null {
+  for (const detail of Object.values(runsById)) {
+    if (!isActiveRunStatus(detail.run.status)) continue
+    for (const item of detail.items) {
+      if (item.ticket_id !== ticketId || !isDocumentUpdatePending(item)) continue
+      return item.document_update_status === 'updating' ? 'updating' : 'queued'
+    }
+  }
+  return null
+}
+
+/**
  * The ticket's run item holds the document edit lane of a run that is on: its session was told
- * to update the run's document (the item turns `updating` before the prompt is sent), so what
- * the session does is the run's work, not the ticket's. One still queued is not held: the user
- * may give its session real work meanwhile, and the runner leaves a busy session alone.
+ * to update the run's document, so what the session does is the run's work, not the ticket's.
+ * One still queued is not held: the user may give its session real work meanwhile, and the
+ * runner leaves a busy session alone.
  */
 export function isTicketInDocumentUpdate(
   runsById: Record<string, DocumentRunDetail>,
   ticketId: string
 ): boolean {
-  return Object.values(runsById).some(
-    (detail) =>
-      isActiveRunStatus(detail.run.status) &&
-      detail.items.some(
-        (item) =>
-          item.ticket_id === ticketId &&
-          isDocumentUpdatePending(item) &&
-          item.document_update_status === 'updating'
-      )
-  )
+  return documentUpdateLaneOf(runsById, ticketId) === 'updating'
 }
 
-// The kanban store keeps a ticket in place while its session updates the run's document.
-registerDocumentUpdateHold((ticketId) =>
-  isTicketInDocumentUpdate(useDocumentFlowStore.getState().runsById, ticketId)
+// The kanban store keeps a ticket in place while its session updates the run's document, and
+// keeps the session open while the run still has that prompt for it.
+registerDocumentUpdateLane((ticketId) =>
+  documentUpdateLaneOf(useDocumentFlowStore.getState().runsById, ticketId)
 )
 
 /** Runs of a project, newest first. */

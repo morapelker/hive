@@ -1,11 +1,29 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { KanbanTicket, KanbanTicketColumn } from '../../../main/db/types'
 
-const { closeSession, reactivateSession, isSessionReactivating, toastError } = vi.hoisted(() => ({
+const {
+  closeSession,
+  reactivateSession,
+  isSessionReactivating,
+  isTicketInDocumentUpdateLane,
+  sessionGet,
+  toastError
+} = vi.hoisted(() => ({
   closeSession: vi.fn().mockResolvedValue({ success: true }),
   reactivateSession: vi.fn().mockResolvedValue(undefined),
   isSessionReactivating: vi.fn(() => false),
+  isTicketInDocumentUpdateLane: vi.fn((_ticketId: string) => false),
+  sessionGet: vi.fn(),
   toastError: vi.fn()
+}))
+
+// The close reads the session row to leave an already closed session alone.
+vi.mock('@/api/db-api', () => ({ dbApi: { session: { get: sessionGet } } }))
+
+// A ticket still in a document run's document edit lane keeps its session for the run.
+vi.mock('./store-coordination', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./store-coordination')>()),
+  isTicketInDocumentUpdateLane
 }))
 
 // Mock the kanban RPC API so moveTicket doesn't hit a real client.
@@ -112,6 +130,8 @@ beforeEach(() => {
   vi.clearAllMocks()
   closeSession.mockResolvedValue({ success: true })
   isSessionReactivating.mockReturnValue(false)
+  isTicketInDocumentUpdateLane.mockReturnValue(false)
+  sessionGet.mockResolvedValue({ id: SESSION_ID, status: 'active' })
   useKanbanStore.setState({ tickets: new Map(), dependencyMap: new Map() })
   useWorktreeStatusStore.setState({ sessionStatuses: {} })
 })
@@ -121,7 +141,7 @@ afterEach(() => {
   useWorktreeStatusStore.setState({ sessionStatuses: {} })
 })
 
-describe('moveTicket — close attached session on the done column', () => {
+describe('moveTicket — close attached session on the done and merged columns', () => {
   it('closes the attached session when a ticket moves to done', async () => {
     seed(makeTicket())
 
@@ -135,13 +155,129 @@ describe('moveTicket — close attached session on the done column', () => {
     })
   })
 
-  it('does not close the session when a ticket moves to merged', async () => {
+  it.each(['review', 'in_progress'] as const)(
+    'closes the attached session when a ticket moves from %s to merged',
+    async (from) => {
+      seed(makeTicket({ column: from }))
+
+      await useKanbanStore.getState().moveTicket('ticket-1', PROJECT_ID, 'merged', 0)
+      await flush()
+
+      expect(closeSession).toHaveBeenCalledTimes(1)
+      expect(closeSession).toHaveBeenCalledWith(SESSION_ID, {
+        abortIfRevived: true,
+        stopRemote: true
+      })
+      expect(columnOf('ticket-1')).toBe('merged')
+    }
+  )
+
+  it('closes a session the user reopened on a merged ticket again when it goes on to done', async () => {
+    // A tap on the merged card respawned its session (row active again): the next move into a
+    // terminal column stops it, like the first one did.
+    seed(makeTicket({ column: 'merged' }))
+
+    await useKanbanStore.getState().moveTicket('ticket-1', PROJECT_ID, 'done', 0)
+    await flush()
+
+    expect(closeSession).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not close again a session the merged move already closed when the ticket goes on to done', async () => {
+    seed(makeTicket({ column: 'merged' }))
+    sessionGet.mockResolvedValue({ id: SESSION_ID, status: 'completed' })
+
+    await useKanbanStore.getState().moveTicket('ticket-1', PROJECT_ID, 'done', 0)
+    await flush()
+
+    expect(closeSession).not.toHaveBeenCalled()
+    expect(columnOf('ticket-1')).toBe('done')
+  })
+
+  it('still closes when the session row cannot be read', async () => {
     seed(makeTicket())
+    sessionGet.mockRejectedValue(new Error('db down'))
 
     await useKanbanStore.getState().moveTicket('ticket-1', PROJECT_ID, 'merged', 0)
     await flush()
 
-    expect(closeSession).not.toHaveBeenCalled()
+    expect(closeSession).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['merged', 'done'] as const)(
+    "leaves the session of a ticket still in a document run's document edit lane to the run (move to %s)",
+    async (column) => {
+      // The run has one more prompt for that session — update the run's document — and
+      // closes it once that is over.
+      seed(makeTicket())
+      isTicketInDocumentUpdateLane.mockImplementation((id: string) => id === 'ticket-1')
+
+      await useKanbanStore.getState().moveTicket('ticket-1', PROJECT_ID, column, 0)
+      await flush()
+
+      expect(closeSession).not.toHaveBeenCalled()
+      expect(sessionGet).not.toHaveBeenCalled()
+      expect(columnOf('ticket-1')).toBe(column)
+    }
+  )
+
+  it('names the column in the toast when a merged move cannot close the session', async () => {
+    seed(makeTicket())
+    closeSession.mockResolvedValue({ success: false, error: 'pty gone' })
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await useKanbanStore.getState().moveTicket('ticket-1', PROJECT_ID, 'merged', 0)
+    await flush()
+
+    expect(toastError).toHaveBeenCalledWith(
+      'Ticket is merged, but its session could not be closed: pty gone'
+    )
+    consoleError.mockRestore()
+  })
+
+  it('reactivates the session when the ticket was dragged back out of merged mid-close', async () => {
+    seed(makeTicket())
+    closeSession.mockImplementation(async () => {
+      // The user dragged the ticket back to review while the close was in flight
+      useKanbanStore.setState((state) => {
+        const next = new Map(state.tickets)
+        next.set(
+          PROJECT_ID,
+          (next.get(PROJECT_ID) ?? []).map((t) =>
+            t.id === 'ticket-1' ? { ...t, column: 'review' as const } : t
+          )
+        )
+        return { tickets: next }
+      })
+      return { success: true }
+    })
+
+    await useKanbanStore.getState().moveTicket('ticket-1', PROJECT_ID, 'merged', 0)
+    await flush()
+
+    expect(reactivateSession).toHaveBeenCalledWith(SESSION_ID)
+  })
+
+  it('does not undo the close when the ticket went on from merged to done mid-close', async () => {
+    seed(makeTicket())
+    closeSession.mockImplementation(async () => {
+      useKanbanStore.setState((state) => {
+        const next = new Map(state.tickets)
+        next.set(
+          PROJECT_ID,
+          (next.get(PROJECT_ID) ?? []).map((t) =>
+            t.id === 'ticket-1' ? { ...t, column: 'done' as const } : t
+          )
+        )
+        return { tickets: next }
+      })
+      return { success: true }
+    })
+
+    await useKanbanStore.getState().moveTicket('ticket-1', PROJECT_ID, 'merged', 0)
+    await flush()
+
+    expect(reactivateSession).not.toHaveBeenCalled()
   })
 
   it('does not close the session for non-terminal columns', async () => {
@@ -162,16 +298,37 @@ describe('moveTicket — close attached session on the done column', () => {
     expect(closeSession).not.toHaveBeenCalled()
   })
 
-  it('skips the close when completion effects are suppressed (handoff rollback)', async () => {
-    seed(makeTicket())
+  it.each(['done', 'merged'] as const)(
+    'skips the close when the caller keeps the session (a restore, a run’s own move to %s)',
+    async (column) => {
+      seed(makeTicket())
 
-    await useKanbanStore
-      .getState()
-      .moveTicket('ticket-1', PROJECT_ID, 'done', 0, { skipCompletionEffects: true })
-    await flush()
+      await useKanbanStore
+        .getState()
+        .moveTicket('ticket-1', PROJECT_ID, column, 0, {
+          skipCompletionEffects: true,
+          keepSession: true
+        })
+      await flush()
 
-    expect(closeSession).not.toHaveBeenCalled()
-  })
+      expect(closeSession).not.toHaveBeenCalled()
+      expect(sessionGet).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['done', 'merged'] as const)(
+    'still closes when only the completion effects are suppressed (a run’s tickets moved along to %s)',
+    async (column) => {
+      seed(makeTicket())
+
+      await useKanbanStore
+        .getState()
+        .moveTicket('ticket-1', PROJECT_ID, column, 0, { skipCompletionEffects: true })
+      await flush()
+
+      expect(closeSession).toHaveBeenCalledTimes(1)
+    }
+  )
 
   it('does not re-close on a move within the done column', async () => {
     seed(makeTicket({ column: 'done' }))
@@ -383,7 +540,7 @@ describe('moveTicket — close attached session on the done column', () => {
   })
 })
 
-describe('moveTicket — revive the closed session when a ticket leaves done', () => {
+describe('moveTicket — revive the closed session when a ticket leaves done or merged', () => {
   it.each(['review', 'in_progress', 'todo'] as const)(
     'reactivates the attached session when a done ticket moves back to %s',
     async (column) => {
@@ -399,10 +556,34 @@ describe('moveTicket — revive the closed session when a ticket leaves done', (
     }
   )
 
+  it.each(['review', 'in_progress', 'todo'] as const)(
+    'reactivates the attached session when a merged ticket moves back to %s',
+    async (column) => {
+      seed(makeTicket({ column: 'merged' }))
+
+      await useKanbanStore.getState().moveTicket('ticket-1', PROJECT_ID, column, 0)
+      await flush()
+
+      expect(reactivateSession).toHaveBeenCalledTimes(1)
+      expect(reactivateSession).toHaveBeenCalledWith(SESSION_ID)
+      expect(closeSession).not.toHaveBeenCalled()
+      expect(columnOf('ticket-1')).toBe(column)
+    }
+  )
+
   it('does not reactivate on a move from done to merged', async () => {
     seed(makeTicket({ column: 'done' }))
 
     await useKanbanStore.getState().moveTicket('ticket-1', PROJECT_ID, 'merged', 0)
+    await flush()
+
+    expect(reactivateSession).not.toHaveBeenCalled()
+  })
+
+  it('does not reactivate on a move from merged to done', async () => {
+    seed(makeTicket({ column: 'merged' }))
+
+    await useKanbanStore.getState().moveTicket('ticket-1', PROJECT_ID, 'done', 0)
     await flush()
 
     expect(reactivateSession).not.toHaveBeenCalled()

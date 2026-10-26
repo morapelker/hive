@@ -2177,10 +2177,12 @@ function PlanReviewModeContent({
         .tickets.get(ticket.project_id)
         ?.find((t) => t.id === ticket.id)
       if (current?.column !== 'in_progress') return
+      // A restore, not a move into the column: the session stays as it is.
       useKanbanStore
         .getState()
         .moveTicket(ticket.id, ticket.project_id, columnBeforeImplement, ticket.sort_order, {
-          skipCompletionEffects: true
+          skipCompletionEffects: true,
+          keepSession: true
         })
         .catch(() => {})
     }

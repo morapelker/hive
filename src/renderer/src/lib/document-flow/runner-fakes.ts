@@ -687,7 +687,7 @@ export function createWorld(options: WorldOptions = {}) {
         _projectId: string,
         ticketId: string,
         column: RunnerTicket['column'],
-        _options: { skipCompletionEffects: boolean }
+        _options: { skipCompletionEffects: boolean; keepSession?: boolean }
       ) => {
         const ticket = tickets.get(ticketId)
         if (ticket) tickets.set(ticketId, { ...ticket, column })
@@ -718,6 +718,9 @@ export function createWorld(options: WorldOptions = {}) {
       return launchOk(spec)
     }),
     completeOrphanSession: vi.fn(async (_sessionId: string) => {}),
+    closeTicketSession: vi.fn(
+      async (_projectId: string, _ticketId: string, _sessionId: string) => {}
+    ),
     resetTicketToTodo: vi.fn(async (_projectId: string, ticketId: string) => {
       const ticket = tickets.get(ticketId)
       if (ticket) {
