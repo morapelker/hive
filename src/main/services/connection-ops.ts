@@ -808,6 +808,131 @@ export async function addConnectionProjectMemberOp(
   }
 }
 
+/**
+ * Replace the member set of a connection project (`projects.member_project_ids`) — the "edit
+ * connection project" op. Every FUTURE instance (ticket launches, "+", document runs, the base)
+ * is built from the new member set; instances that already exist keep the members they were
+ * created with (their rows own their member lists), so running sessions are never touched.
+ *
+ * On disk the project directory is reconciled with the symlink set `saveConnectionAsProjectOp`
+ * would have produced for the new member order: removed (or renamed) member links are dropped,
+ * new ones created, AGENTS.md regenerated. The base instance is then rebuilt over the new
+ * members' default worktrees (a stale base is demoted to an ordinary, deletable instance — any
+ * session on it keeps working).
+ */
+export async function updateConnectionProjectMembersOp(
+  db: DatabaseService,
+  projectId: string,
+  memberProjectIds: string[]
+): Promise<{ success: boolean; project?: Project; error?: string }> {
+  log.info('Updating connection project members', { projectId, memberProjectIds })
+  try {
+    const project = db.getProject(projectId)
+    if (!project) return { success: false, error: 'Connection project not found' }
+    if (project.kind !== 'connection') {
+      return { success: false, error: 'Not a connection project' }
+    }
+
+    const desiredIds = [...new Set(memberProjectIds.filter((id) => id.length > 0))]
+    if (desiredIds.length < 2) {
+      return { success: false, error: 'A connection project needs at least 2 member projects' }
+    }
+    const desiredMembers: Project[] = []
+    for (const id of desiredIds) {
+      const member = db.getProject(id)
+      if (!member) return { success: false, error: 'Member project not found' }
+      if (member.kind === 'connection') {
+        return { success: false, error: 'A connection project cannot be a member of another' }
+      }
+      desiredMembers.push(member)
+    }
+
+    const currentIds = parseMemberProjectIds(project.member_project_ids)
+    if (currentIds.join('\0') === desiredIds.join('\0')) return { success: true, project }
+
+    // Symlink names are derived in member order (collisions get a -2 suffix), so compute the
+    // old and new name per member id and reconcile the directory by diffing the two maps.
+    const currentNames = deriveMemberSymlinkNames(db, currentIds)
+    const desiredNames = new Map<string, string>()
+    const existingNames: string[] = []
+    const agentsMdMembers: {
+      symlinkName: string
+      projectName: string
+      branchName: string
+      worktreePath: string
+    }[] = []
+    for (const member of desiredMembers) {
+      const symlinkName = deriveSymlinkName(member.name, existingNames)
+      existingNames.push(symlinkName)
+      desiredNames.set(member.id, symlinkName)
+      const defaultWorktree = db.getWorktreesByProject(member.id).find((w) => w.is_default)
+      agentsMdMembers.push({
+        symlinkName,
+        projectName: member.name,
+        branchName: defaultWorktree?.branch_name || 'default',
+        worktreePath: member.path
+      })
+    }
+
+    // Removes first so a renamed member never collides with its own old link.
+    for (const [id, name] of currentNames) {
+      if (desiredNames.get(id) !== name) removeSymlink(join(project.path, name))
+    }
+    for (const member of desiredMembers) {
+      const name = desiredNames.get(member.id)!
+      if (currentNames.get(member.id) !== name) {
+        createSymlink(member.path, join(project.path, name))
+      }
+    }
+    try {
+      generateConnectionInstructions(project.path, agentsMdMembers)
+    } catch (error) {
+      log.warn('Could not regenerate the connection project instructions', {
+        projectId,
+        error: error instanceof Error ? error.message : String(error)
+      })
+    }
+
+    const updated = db.updateConnectionProjectMembers(projectId, desiredIds)
+    if (!updated) return { success: false, error: 'Connection project not found' }
+    // Base instance over the new members' default worktrees. Never fatal — the next
+    // connection listing heals a missing base.
+    await ensureBaseInstanceForConnectionProjectOp(db, updated)
+    log.info('Connection project members updated', {
+      projectId,
+      added: desiredIds.filter((id) => !currentIds.includes(id)),
+      removed: currentIds.filter((id) => !desiredIds.includes(id))
+    })
+    return { success: true, project: updated }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    log.error(
+      'Update connection project members failed',
+      error instanceof Error ? error : new Error(message)
+    )
+    return { success: false, error: message }
+  }
+}
+
+/**
+ * The symlink name each member id currently has inside a connection project directory —
+ * `deriveSymlinkName` replayed over the stored member order, exactly as the save/add ops
+ * assigned them. Members whose project row is gone are skipped (their link, if any, is
+ * left alone: its name can no longer be derived).
+ */
+function deriveMemberSymlinkNames(db: DatabaseService, memberIds: string[]): Map<string, string> {
+  const names = new Map<string, string>()
+  const existing: string[] = []
+  for (const id of memberIds) {
+    const member = db.getProject(id)
+    if (!member) continue
+    const name = deriveSymlinkName(member.name, existing)
+    existing.push(name)
+    names.set(id, name)
+  }
+  return names
+}
+
 // ── Connection project base instances ─────────────────────────────────
 
 /** Parse projects.member_project_ids (JSON id array) defensively. */

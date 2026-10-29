@@ -11,6 +11,7 @@ import {
   ExternalLink,
   RefreshCw,
   Settings,
+  Settings2,
   GitBranch,
   FolderHeart,
   Sparkles,
@@ -56,6 +57,7 @@ import { HintBadge } from '@/components/ui/HintBadge'
 import { WorktreeList, BranchPickerDialog } from '@/components/worktrees'
 import { ConnectionInstanceList } from './ConnectionInstanceList'
 import { ManageSkillsDialog } from './ManageSkillsDialog'
+import { EditConnectionProjectDialog } from './EditConnectionProjectDialog'
 import {
   getRunnableShellCommands,
   renderShellCommandMenuItems,
@@ -203,6 +205,7 @@ export const ProjectItem = memo(function ProjectItem({
   const [editName, setEditName] = useState(project.name)
   const [branchPickerOpen, setBranchPickerOpen] = useState(false)
   const [manageSkillsOpen, setManageSkillsOpen] = useState(false)
+  const [editConnectionOpen, setEditConnectionOpen] = useState(false)
   const [removeConfirmOpen, setRemoveConfirmOpen] = useState(false)
   const [noCommitsDialogOpen, setNoCommitsDialogOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -695,6 +698,17 @@ export const ProjectItem = memo(function ProjectItem({
                 <FileText className="h-4 w-4 mr-2" />
                 Implement Document…
               </ContextMenuItem>
+              {/* Connection projects: edit the member projects. Only future instances pick
+                  the new set up; running instances keep their worktrees. */}
+              {isConnectionProject && (
+                <ContextMenuItem
+                  data-testid="edit-connection-project-menu-item"
+                  onClick={() => setEditConnectionOpen(true)}
+                >
+                  <Settings2 className="h-4 w-4 mr-2" />
+                  Edit Connection…
+                </ContextMenuItem>
+              )}
               {!isConnectionProject && (
                 <>
                   <ContextMenuItem
@@ -783,6 +797,11 @@ export const ProjectItem = memo(function ProjectItem({
       {/* Manage Skills Dialog — mounted only while open so idle sidebar rows stay cheap */}
       {manageSkillsOpen && (
         <ManageSkillsDialog project={project} open onOpenChange={setManageSkillsOpen} />
+      )}
+
+      {/* Edit Connection dialog (connection projects) — mounted only while open */}
+      {isConnectionProject && editConnectionOpen && (
+        <EditConnectionProjectDialog project={project} open onOpenChange={setEditConnectionOpen} />
       )}
 
       {/* Remove Confirmation Dialog */}

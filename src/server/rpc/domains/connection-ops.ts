@@ -16,7 +16,8 @@ import {
   saveConnectionAsProjectOp,
   setConnectionPinnedOp,
   setRecentConnectionNoteOp,
-  updateConnectionMembersOp
+  updateConnectionMembersOp,
+  updateConnectionProjectMembersOp
 } from '../../../main/services/connection-ops'
 import { telemetryService } from '../../../main/services/telemetry-service'
 import type { ConnectionWithMembers, RecentConnectionEntry } from '../../../shared/types/connection'
@@ -111,6 +112,12 @@ export interface ConnectionOpsSaveAsProjectResult {
   readonly error?: string
 }
 
+export interface ConnectionOpsUpdateProjectMembersResult {
+  readonly success: boolean
+  readonly project?: Project
+  readonly error?: string
+}
+
 export interface ConnectionOpsRpcService {
   readonly create: (
     worktreeIds: string[],
@@ -120,6 +127,11 @@ export interface ConnectionOpsRpcService {
   readonly saveAsProject?: (
     connectionId: string
   ) => Effect.Effect<ConnectionOpsSaveAsProjectResult, unknown, never>
+  /** Replace a connection project's member projects (future instances only). Optional like saveAsProject. */
+  readonly updateProjectMembers?: (
+    projectId: string,
+    memberProjectIds: string[]
+  ) => Effect.Effect<ConnectionOpsUpdateProjectMembersResult, unknown, never>
   readonly addMember: (
     connectionId: string,
     worktreeId: string
@@ -196,6 +208,12 @@ const updateMembersParamsSchema = z
     worktreeIds: z.array(z.string().min(1)).min(1)
   })
   .strict()
+const updateProjectMembersParamsSchema = z
+  .object({
+    projectId: z.string().min(1),
+    memberProjectIds: z.array(z.string().min(1)).min(2)
+  })
+  .strict()
 const setRecentNoteParamsSchema = z
   .object({
     entryId: z.string().min(1),
@@ -223,6 +241,18 @@ export const makeLiveConnectionOpsRpcService = (): ConnectionOpsRpcService => ({
         const result = await saveConnectionAsProjectOp(db, connectionId)
         if (result.success) {
           telemetryService.track('connection_saved_as_project')
+        }
+        return result
+      },
+      catch: (cause) => cause
+    }),
+  updateProjectMembers: (projectId, memberProjectIds) =>
+    Effect.tryPromise({
+      try: async () => {
+        const db = getDatabase()
+        const result = await updateConnectionProjectMembersOp(db, projectId, memberProjectIds)
+        if (result.success) {
+          telemetryService.track('connection_project_members_updated')
         }
         return result
       },
@@ -364,6 +394,21 @@ export const makeConnectionOpsRpcHandlers = (
             return yield* Effect.fail(new Error('saveAsProject not supported'))
           }
           return yield* saveAsProject(connectionId)
+        })
+    ],
+    [
+      'connectionOps.updateProjectMembers',
+      (params) =>
+        Effect.gen(function* () {
+          const { projectId, memberProjectIds } = yield* Effect.try({
+            try: () => updateProjectMembersParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          const updateProjectMembers = service.updateProjectMembers
+          if (!updateProjectMembers) {
+            return yield* Effect.fail(new Error('updateProjectMembers not supported'))
+          }
+          return yield* updateProjectMembers(projectId, memberProjectIds)
         })
     ],
     [

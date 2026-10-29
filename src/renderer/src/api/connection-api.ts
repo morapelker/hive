@@ -65,6 +65,12 @@ type ConnectionSaveAsProjectResult = {
   error?: string
 }
 
+type ConnectionUpdateProjectMembersResult = {
+  success: boolean
+  project?: Project
+  error?: string
+}
+
 export const connectionApi = {
   addMember: async (connectionId: string, worktreeId: string): Promise<ConnectionAddMemberResult> =>
     getRendererRpcClient().request<ConnectionAddMemberResult>('connectionOps.addMember', {
@@ -149,5 +155,14 @@ export const connectionApi = {
     getRendererRpcClient().request<ConnectionUpdateMembersResult>('connectionOps.updateMembers', {
       connectionId,
       worktreeIds
-    })
+    }),
+  /** Replace a connection project's member projects; only future instances pick it up. */
+  updateProjectMembers: async (
+    projectId: string,
+    memberProjectIds: string[]
+  ): Promise<ConnectionUpdateProjectMembersResult> =>
+    getRendererRpcClient().request<ConnectionUpdateProjectMembersResult>(
+      'connectionOps.updateProjectMembers',
+      { projectId, memberProjectIds }
+    )
 }

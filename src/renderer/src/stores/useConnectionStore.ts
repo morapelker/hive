@@ -84,6 +84,14 @@ interface ConnectionState {
   ) => Promise<string | null>
   duplicateConnection: (connectionId: string) => Promise<string | null>
   saveConnectionAsProject: (connectionId: string) => Promise<string | null>
+  /**
+   * Replace a connection project's member projects. Future instances (ticket launches, "+",
+   * the base) use the new set; already-created instances keep their members.
+   */
+  updateConnectionProjectMembers: (
+    projectId: string,
+    memberProjectIds: string[]
+  ) => Promise<boolean>
   selectConnection: (id: string | null, opts?: { gitView?: ConnectionGitView }) => void
 
   // Rename
@@ -429,6 +437,31 @@ export const useConnectionStore = create<ConnectionState>()(
           const message = error instanceof Error ? error.message : String(error)
           toast.error(`Failed to save connection as project: ${message}`)
           return null
+        }
+      },
+
+      updateConnectionProjectMembers: async (projectId: string, memberProjectIds: string[]) => {
+        try {
+          const result = await connectionApi.updateProjectMembers(projectId, memberProjectIds)
+          if (!result.success || !result.project) {
+            toast.error(`Failed to update connection: ${result.error || 'Unknown error'}`)
+            return false
+          }
+          const project = result.project
+          // Refresh the project row (dynamic import avoids a store cycle)
+          const { useProjectStore } = await import('./useProjectStore')
+          useProjectStore.setState((state) => ({
+            projects: state.projects.map((p) =>
+              p.id === project.id ? { ...p, member_project_ids: project.member_project_ids } : p
+            )
+          }))
+          // The base instance was rebuilt over the new members: re-list connections.
+          await get().loadConnections()
+          return true
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          toast.error(`Failed to update connection: ${message}`)
+          return false
         }
       },
 

@@ -801,6 +801,61 @@ describe('connection ops RPC mocked provider', () => {
     })
   })
 
+  it('routes connectionOps.updateProjectMembers to the injected provider service', async () => {
+    const result = { success: true, project: { id: 'project-9', kind: 'connection' } }
+    const updateProjectMembers = vi.fn(() => Effect.succeed(result))
+    const service = { updateProjectMembers } as unknown as ConnectionOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      connectionOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'connection-update-project-members-1',
+        method: 'connectionOps.updateProjectMembers',
+        params: {
+          projectId: 'project-9',
+          memberProjectIds: ['project-1', 'project-2']
+        }
+      })
+    )
+
+    expect(updateProjectMembers).toHaveBeenCalledWith('project-9', ['project-1', 'project-2'])
+    expect(response).toEqual({
+      id: 'connection-update-project-members-1',
+      ok: true,
+      value: result
+    })
+  })
+
+  it('rejects connectionOps.updateProjectMembers with fewer than 2 members before calling the provider service', async () => {
+    const updateProjectMembers = vi.fn(() => Effect.succeed({ success: false, error: 'unused' }))
+    const service = { updateProjectMembers } as unknown as ConnectionOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      connectionOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'connection-update-project-members-invalid',
+        method: 'connectionOps.updateProjectMembers',
+        params: {
+          projectId: 'project-9',
+          memberProjectIds: ['project-1']
+        }
+      })
+    )
+
+    expect(updateProjectMembers).not.toHaveBeenCalled()
+    expect(response).toMatchObject({
+      id: 'connection-update-project-members-invalid',
+      ok: false,
+      error: { code: 'VALIDATION_FAILED' }
+    })
+  })
+
   it('routes connectionOps.getRecentConnections to the injected provider service', async () => {
     const result = {
       success: true,
