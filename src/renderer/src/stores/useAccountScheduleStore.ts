@@ -5,7 +5,8 @@ import type {
   RefreshAllResultItem,
   SavedAccountDTO,
   UsageData,
-  UsageProvider
+  UsageProvider,
+  UsageWindow
 } from '@shared/types/usage'
 import { toast } from '@/lib/toast'
 import {
@@ -127,10 +128,11 @@ function ignoreFableForAutoSwitch(): boolean {
 
 /**
  * Highest current utilization across ALL of the active account's usage bars
- * for the provider — 5h, 7d, and any scoped windows (Fable, etc.) — the
- * number a 'usage' schedule is compared against. A live rejected rate-limit
- * event counts as 100 (anthropic only). Returns null when no fresh usage
- * data is available. `ignoreFable` drops the Fable window (auto-switch only).
+ * for the provider — the 5h window when the plan has one, 7d, and any scoped
+ * windows (Fable, etc.) — the number a 'usage' schedule is compared against.
+ * A live rejected rate-limit event counts as 100 (anthropic only). Returns
+ * null when no fresh usage data is available. `ignoreFable` drops the Fable
+ * window (auto-switch only).
  */
 export function getActiveUsagePercent(
   provider: UsageProvider,
@@ -141,11 +143,14 @@ export function getActiveUsagePercent(
   const normalized = normalizeUsage(provider, state.anthropicUsage, state.openaiUsage)
   if (!normalized) return overlay
   const usage = autoSwitchUsage(normalized, ignoreFable)
+  // A null window is one the plan doesn't have (Anthropic dropped the 5h
+  // limit from many plans; the usage API then reports `five_hour: null`):
+  // there is nothing there to compare against, so it is skipped.
   const windows = [
     usage.five_hour,
     usage.seven_day,
     ...(usage.scoped ?? []).map((s) => ({ utilization: s.used_percent, resets_at: s.resets_at }))
-  ].filter((w) => w && !isResetInPast(w.resets_at))
+  ].filter((w): w is UsageWindow => w !== null && !isResetInPast(w.resets_at))
   if (windows.length === 0) return overlay
   const max = Math.max(...windows.map((w) => w.utilization))
   return overlay === null ? max : Math.max(max, overlay)

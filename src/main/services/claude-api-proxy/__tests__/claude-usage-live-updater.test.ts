@@ -54,6 +54,20 @@ const USAGE_HEADERS = {
   'anthropic-ratelimit-unified-reset': '1790902800'
 }
 
+// Verbatim from a 2026-11-01 capture on a plan without a 5-hour limit: no
+// `-5h-*` header at all, and the weekly window is the representative claim.
+const NO_FIVE_HOUR_HEADERS = {
+  'anthropic-ratelimit-unified-overage-status': 'rejected',
+  'anthropic-ratelimit-unified-representative-claim': 'seven_day',
+  'anthropic-ratelimit-unified-reset': '1793977200',
+  'anthropic-ratelimit-unified-7d-reset': '1793977200',
+  'anthropic-ratelimit-unified-7d-status': 'allowed',
+  'anthropic-ratelimit-unified-fallback-percentage': '0.5',
+  'anthropic-ratelimit-unified-overage-disabled-reason': 'org_level_disabled',
+  'anthropic-ratelimit-unified-7d-utilization': '0.06',
+  'anthropic-ratelimit-unified-status': 'allowed'
+}
+
 function exchange(input: ExchangeInput = {}): LocalApiProxyExchange {
   const reportedUuid = input.reportedUuid === undefined ? ACCOUNT_A : input.reportedUuid
   return {
@@ -315,7 +329,63 @@ describe('ClaudeUsageLiveUpdater', () => {
     expect(harness.published[0].email).toBe('b@example.com')
     expect(harness.published[0].accountId).toBe('row-b')
     expect(harness.published[0].isLiveAccount).toBe(true)
-    expect(harness.published[0].usage.five_hour.utilization).toBe(3)
+    expect(harness.published[0].usage.five_hour?.utilization).toBe(3)
+  })
+
+  it('publishes no 5h window for an account whose plan has none', async () => {
+    // The poll already said `five_hour: null` for this plan; the live headers
+    // say nothing about a 5h window either (no `-5h-*` header at all).
+    const previous: UsageData = {
+      five_hour: null,
+      seven_day: { utilization: 5, resets_at: '2026-11-06T15:00:00.000Z' },
+      extra_usage: { is_enabled: false, utilization: 0, used_credits: 0, monthly_limit: 0 },
+      scoped: [{ label: 'Fable', used_percent: 10, resets_at: '2026-11-06T15:00:00.000Z' }]
+    }
+    const harness = makeHarness(
+      [accountA()],
+      { email: 'a@example.com', uuid: ACCOUNT_A },
+      [row('a@example.com', previous, 'row-a')]
+    )
+
+    harness.updater.handleExchange(exchange({ headers: NO_FIVE_HOUR_HEADERS }))
+    await harness.updater.settle()
+
+    expect(harness.published).toHaveLength(1)
+    const payload = harness.published[0]
+    expect(payload.usage.five_hour).toBeNull()
+    expect(payload.usage.seven_day).toEqual({
+      utilization: 6,
+      resets_at: '2026-11-06T15:00:00.000Z'
+    })
+    expect(payload.usage.extra_usage).toEqual(previous.extra_usage)
+    expect(payload.usage.scoped).toEqual(previous.scoped)
+    expect(payload.rateLimit.fiveHour).toBeUndefined()
+    expect(payload.rateLimit.sevenDay).toEqual({
+      status: 'allowed',
+      resetsAt: 1793977200,
+      overageStatus: 'rejected'
+    })
+    // The cached row says the same: no window, not a 0% one.
+    const stored = JSON.parse(harness.rows.get('a@example.com')!.last_usage_json!) as UsageData
+    expect(stored.five_hour).toBeNull()
+    expect(harness.deps.log.debug).toHaveBeenCalledWith(
+      'Live Claude usage update',
+      expect.objectContaining({ fiveHour: null, sevenDay: 6 })
+    )
+  })
+
+  it('does not invent a 5h window when no poll preceded the first live update', async () => {
+    const harness = makeHarness([accountA()], { email: 'a@example.com', uuid: ACCOUNT_A })
+
+    harness.updater.handleExchange(exchange({ headers: NO_FIVE_HOUR_HEADERS }))
+    await harness.updater.settle()
+
+    expect(harness.published).toHaveLength(1)
+    expect(harness.published[0].usage).toEqual({
+      five_hour: null,
+      seven_day: { utilization: 6, resets_at: '2026-11-06T15:00:00.000Z' }
+    })
+    expect(harness.published[0].rateLimit.fiveHour).toBeUndefined()
   })
 
   it('never falls back to the reported uuid for a token it cannot place', async () => {
@@ -660,11 +730,11 @@ describe('ClaudeUsageLiveUpdater', () => {
     harness.updater.handleExchange(withFiveHour('0.05', 1_010))
     harness.updater.handleExchange(withFiveHour('0.07', 1_020))
     await harness.updater.settle()
-    expect(harness.published.map((p) => p.usage.five_hour.utilization)).toEqual([3])
+    expect(harness.published.map((p) => p.usage.five_hour?.utilization)).toEqual([3])
 
     harness.runTimers()
     await harness.updater.settle()
-    expect(harness.published.map((p) => p.usage.five_hour.utilization)).toEqual([3, 7])
+    expect(harness.published.map((p) => p.usage.five_hour?.utilization)).toEqual([3, 7])
 
     // Quiet period: the trailing timer fires with nothing pending and clears.
     harness.runTimers()

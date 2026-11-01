@@ -575,6 +575,7 @@ function hasElapsedResetWindow(usage: UsageData | OpenAIUsageData | null): boole
     ...(anthropic.scoped ?? [])
   ]
   for (const window of anthropicWindows) {
+    // Null = the plan has no such window (e.g. no 5-hour limit): nothing to reset.
     if (!window) continue
     const resetsAt = (window as { resets_at?: string | null }).resets_at
     if (typeof resetsAt !== 'string') continue

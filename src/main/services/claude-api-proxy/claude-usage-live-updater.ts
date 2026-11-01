@@ -550,8 +550,9 @@ export class ClaudeUsageLiveUpdater {
       email,
       via: attribution.via,
       live: payload.isLiveAccount,
-      fiveHour: usage.five_hour.utilization,
-      sevenDay: usage.seven_day.utilization,
+      // Null when the plan has no such window (no `-5h-*` headers, no prior poll).
+      fiveHour: usage.five_hour?.utilization ?? null,
+      sevenDay: usage.seven_day?.utilization ?? null,
       status: observation.snapshot.status,
       claim: observation.snapshot.representativeClaim
     })

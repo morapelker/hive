@@ -154,4 +154,48 @@ describe('usageApi', () => {
     dispose()
     expect(unsubscribe).toHaveBeenCalledTimes(1)
   })
+
+  it('accepts live usage with null windows and rejects payloads missing a window key', () => {
+    const request = vi.fn()
+    const subscribe = vi.fn().mockReturnValue(vi.fn())
+    setRendererRpcClient({ request, subscribe })
+
+    const callback = vi.fn()
+    usageApi.onClaudeLiveUsage(callback)
+    const listener = subscribe.mock.calls[0][1] as (event: {
+      channel: string
+      payload: unknown
+    }) => void
+    const deliver = (usage: unknown): void =>
+      listener({
+        channel: 'usage:claudeLive',
+        payload: {
+          provider: 'anthropic',
+          accountId: 'row-a',
+          email: 'a@example.com',
+          accountUuid: null,
+          isLiveAccount: true,
+          liveEmail: 'a@example.com',
+          usage,
+          rateLimit: {},
+          observedAt: 1
+        }
+      })
+    const sevenDay = { utilization: 6, resets_at: '2026-11-06T15:00:00.000Z' }
+
+    // Anthropic dropped the 5h limit from many plans: the proxy's merged
+    // snapshot then carries `five_hour: null` (null = no such window), and
+    // the same shape applies to a plan without a weekly window.
+    deliver({ five_hour: null, seven_day: sevenDay })
+    deliver({ five_hour: { utilization: 3, resets_at: null }, seven_day: null })
+    expect(callback).toHaveBeenCalledTimes(2)
+    expect(callback.mock.calls[0][0].usage.five_hour).toBeNull()
+
+    // A missing key says nothing about that window — not a usage snapshot.
+    deliver({ seven_day: sevenDay })
+    deliver({ five_hour: null })
+    deliver({})
+    deliver(null)
+    expect(callback).toHaveBeenCalledTimes(2)
+  })
 })

@@ -568,6 +568,33 @@ describe('refreshAllForProvider', () => {
     expect(mocks.fetchClaudeUsage).toHaveBeenCalledTimes(1)
   })
 
+  it('fresh-skips an account whose plan has no 5-hour window on the strength of its 7d window', async () => {
+    mocks.listClaudeAccounts.mockResolvedValue([claudeAccount({ num: '1', email: 'a@example.com' })])
+    // `five_hour: null` is how the poll reports a plan without that limit:
+    // there is no 5h reset to check, only the weekly one, which has not elapsed.
+    const rowA = savedRow({
+      id: 'row-a',
+      email: 'a@example.com',
+      last_fetched_at: new Date(Date.now() - 5_000).toISOString(),
+      last_usage_json: JSON.stringify({
+        five_hour: null,
+        seven_day: { utilization: 6, resets_at: new Date(Date.now() + 86_400_000).toISOString() }
+      })
+    })
+    mocks.db.getSavedUsageAccountsByProvider.mockReturnValue([rowA])
+    mocks.db.getSavedUsageAccountById.mockReturnValue(rowA)
+    mocks.readClaudeEffectiveBlob.mockResolvedValue({
+      raw: '{}',
+      parsed: { accessToken: 'access', refreshToken: 'refresh', expiresAt: Date.now() + 3_600_000 }
+    })
+    mocks.fetchClaudeUsage.mockResolvedValue({ success: true, data: usageData() })
+
+    const results = await refreshAllForProvider('anthropic', undefined, { maxAgeMs: 60_000 })
+
+    expect(results).toEqual([{ accountId: 'row-a', success: true }])
+    expect(mocks.fetchClaudeUsage).not.toHaveBeenCalled()
+  })
+
   it('does not fresh-skip non-ok accounts even when recently fetched', async () => {
     mocks.listClaudeAccounts.mockResolvedValue([claudeAccount({ num: '1', email: 'a@example.com' })])
     const rowA = savedRow({

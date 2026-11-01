@@ -43,6 +43,111 @@ function jsonResponse(body: unknown, init: ResponseInit): Response {
   })
 }
 
+/**
+ * `GET /api/oauth/usage` as captured on 2026-11-01 from a plan without a
+ * 5-hour limit (Anthropic dropped it from many plans): `five_hour` is null,
+ * `limits[]` carries no `session` row, and every extra-usage number is null.
+ * Verbatim, so the normalization is exercised against the real key set.
+ */
+const NO_FIVE_HOUR_RESPONSE = {
+  five_hour: null,
+  seven_day: {
+    utilization: 6,
+    resets_at: '2026-11-06T15:00:00.066253+00:00',
+    limit_dollars: null,
+    used_dollars: null,
+    remaining_dollars: null,
+    locked_reason: null
+  },
+  seven_day_oauth_apps: null,
+  seven_day_opus: null,
+  seven_day_sonnet: null,
+  seven_day_cowork: null,
+  seven_day_omelette: null,
+  tangelo: null,
+  iguana_necktie: null,
+  omelette_promotional: null,
+  nimbus_quill: null,
+  cinder_cove: null,
+  copper_kite: null,
+  brass_thimble: null,
+  harbor_lantern: null,
+  wattle_ember: null,
+  promo_credits: null,
+  amber_ladder: null,
+  granite_teacup: null,
+  amber_cistern: null,
+  amber_cistern_offer: null,
+  juniper_tide: null,
+  cedar_ember: null,
+  starry_waterfall: null,
+  amber_gauge: null,
+  pace: null,
+  extra_usage: {
+    is_enabled: false,
+    monthly_limit: null,
+    used_credits: null,
+    utilization: null,
+    currency: null,
+    decimal_places: null,
+    disabled_reason: null,
+    user_disabled: false,
+    spend_limit_reached: false,
+    credits_ever_enabled: false,
+    daily: null,
+    weekly: null
+  },
+  limits: [
+    {
+      kind: 'weekly_all',
+      group: 'weekly',
+      percent: 6,
+      severity: 'normal',
+      resets_at: '2026-11-06T15:00:00.066253+00:00',
+      scope: null,
+      is_active: false
+    },
+    {
+      kind: 'weekly_scoped',
+      group: 'weekly',
+      percent: 10,
+      severity: 'normal',
+      resets_at: '2026-11-06T15:00:00.066382+00:00',
+      scope: { model: { id: null, display_name: 'Fable' }, surface: null },
+      is_active: true
+    }
+  ],
+  spend: {
+    used: { amount_minor: 0, currency: 'USD', exponent: 2 },
+    limit: null,
+    percent: 0,
+    severity: 'normal',
+    enabled: false,
+    disabled_reason: null,
+    cap: null,
+    balance: null,
+    auto_reload: null,
+    disclaimer:
+      'Usage credits cover you when you hit your plan limits. [Learn more](https://support.claude.com/articles/12429409)',
+    can_purchase_credits: false,
+    can_toggle: false
+  },
+  member_dashboard_available: false,
+  seven_day_breakdown: {
+    as_of: '2026-11-01T12:23:37.097136+00:00',
+    window_started_at: '2026-10-30T15:00:00.066253+00:00',
+    rows: [
+      { key: 'claude_code', display_name: 'Claude Code', percent: 100 },
+      { key: 'chat', display_name: 'Chats', percent: 0 },
+      { key: 'cowork', display_name: 'Cowork', percent: 0 },
+      { key: 'other', display_name: 'Other', percent: 0 }
+    ]
+  },
+  weekly_scoped_shares: [
+    { limit_index: 1, used_percent_of_weekly: 5, allowance_percent_of_weekly: 50 }
+  ]
+}
+
 describe('fetchClaudeUsage saved-account refresh', () => {
   beforeEach(async () => {
     vi.restoreAllMocks()
@@ -124,7 +229,7 @@ describe('fetchClaudeUsage saved-account refresh', () => {
     )
 
     expect(result.success).toBe(true)
-    expect(result.data?.five_hour.utilization).toBe(44)
+    expect(result.data?.five_hour?.utilization).toBe(44)
     expect(result.rotated).toMatchObject({
       accessToken: 'retry-access-token',
       refreshToken: 'retry-refresh-token',
@@ -294,7 +399,7 @@ describe('fetchClaudeUsage saved-account refresh', () => {
     const result = await fetchClaudeUsage(undefined, { caller: 'usage:fetch' })
 
     expect(result.success).toBe(true)
-    expect(result.data?.five_hour.utilization).toBe(77)
+    expect(result.data?.five_hour?.utilization).toBe(77)
     expect(result.rotated).toMatchObject({
       accessToken: 'live-retry-access',
       refreshToken: 'live-retry-refresh',
@@ -541,6 +646,128 @@ describe('fetchClaudeUsage saved-account refresh', () => {
 
       expect(result.success).toBe(true)
       expect(result.data?.scoped).toBeUndefined()
+    })
+  })
+
+  describe('response normalization', () => {
+    async function fetchWithBody(body: unknown) {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(jsonResponse(body, { status: 200 })))
+      return fetchClaudeUsage(
+        { accessToken: 'tok', accountId: 'acct-shape' },
+        { caller: 'usage:fetchForAccount', accountId: 'acct-shape' }
+      )
+    }
+
+    it('maps a plan without a 5-hour window: five_hour null, nothing else carried over', async () => {
+      const result = await fetchWithBody(NO_FIVE_HOUR_RESPONSE)
+
+      expect(result.success).toBe(true)
+      // `toEqual` on the whole object: none of the dozens of null keys,
+      // `spend`, `pace` or `seven_day_breakdown` may leak into the cache row.
+      expect(result.data).toEqual({
+        five_hour: null,
+        seven_day: { utilization: 6, resets_at: '2026-11-06T15:00:00.066253+00:00' },
+        extra_usage: { is_enabled: false, utilization: 0, used_credits: 0, monthly_limit: 0 },
+        scoped: [
+          { label: 'Fable', used_percent: 10, resets_at: '2026-11-06T15:00:00.066382+00:00' }
+        ]
+      })
+    })
+
+    it('still maps the legacy shape (both windows as objects, credits in cents) and drops stray keys', async () => {
+      const result = await fetchWithBody({
+        ...usageData(12),
+        extra_usage: {
+          is_enabled: true,
+          utilization: 25,
+          used_credits: 150,
+          monthly_limit: 5000,
+          currency: 'USD'
+        },
+        seven_day_opus: null,
+        spend: { used: { amount_minor: 0 } },
+        pace: null
+      })
+
+      expect(result.success).toBe(true)
+      expect(result.data).toEqual({
+        five_hour: { utilization: 12, resets_at: '2026-05-19T12:00:00.000Z' },
+        seven_day: { utilization: 13, resets_at: '2026-05-20T12:00:00.000Z' },
+        extra_usage: { is_enabled: true, utilization: 25, used_credits: 1.5, monthly_limit: 50 }
+      })
+    })
+
+    it('accepts a null weekly window alongside a 5-hour one', async () => {
+      const result = await fetchWithBody({
+        five_hour: { utilization: 40, resets_at: '2026-11-01T17:00:00.000Z' },
+        seven_day: null
+      })
+
+      expect(result.success).toBe(true)
+      expect(result.data).toEqual({
+        five_hour: { utilization: 40, resets_at: '2026-11-01T17:00:00.000Z' },
+        seven_day: null
+      })
+    })
+
+    it('falls back to limits[] rows by kind when the top-level windows are absent', async () => {
+      const result = await fetchWithBody({
+        limits: [
+          {
+            kind: 'session',
+            group: 'session',
+            percent: 40,
+            resets_at: '2026-11-01T17:00:00.000Z',
+            scope: null
+          },
+          {
+            kind: 'weekly_all',
+            group: 'weekly',
+            percent: 7,
+            resets_at: '2026-11-06T15:00:00.000Z',
+            scope: null
+          },
+          {
+            kind: 'weekly_scoped',
+            group: 'weekly',
+            percent: 10,
+            resets_at: null,
+            scope: { model: { id: null, display_name: 'Fable' }, surface: null }
+          }
+        ]
+      })
+
+      expect(result.success).toBe(true)
+      expect(result.data).toEqual({
+        five_hour: { utilization: 40, resets_at: '2026-11-01T17:00:00.000Z' },
+        seven_day: { utilization: 7, resets_at: '2026-11-06T15:00:00.000Z' },
+        scoped: [{ label: 'Fable', used_percent: 10, resets_at: null }]
+      })
+    })
+
+    it('takes a null top-level window at its word and never reads a session row as scoped', async () => {
+      // `five_hour: null` is the plan's statement; a stray `session` row must
+      // neither resurrect the window nor pass for a model bucket.
+      const result = await fetchWithBody({
+        five_hour: null,
+        seven_day: null,
+        limits: [
+          { kind: 'session', percent: 40, scope: { model: { display_name: 'Not a bucket' } } }
+        ]
+      })
+
+      expect(result.success).toBe(true)
+      expect(result.data).toEqual({ five_hour: null, seven_day: null })
+    })
+
+    it('treats a 200 whose body is not usage as a failed fetch', async () => {
+      const result = await fetchWithBody({
+        error: { type: 'authentication_error', message: 'nope' }
+      })
+
+      expect(result.success).toBe(false)
+      expect(result.data).toBeUndefined()
+      expect(result.error).toBe('Usage API returned an unexpected body')
     })
   })
 })

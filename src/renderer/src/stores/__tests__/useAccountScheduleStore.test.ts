@@ -4,6 +4,7 @@ import { resetRendererRpcClientForTests, setRendererRpcClient } from '@/api/rpc-
 import {
   useAccountScheduleStore,
   describeSchedule,
+  getActiveUsagePercent,
   resetExecutingProvidersForTests
 } from '../useAccountScheduleStore'
 import { useUsageStore } from '../useUsageStore'
@@ -139,6 +140,34 @@ describe('useAccountScheduleStore', () => {
     await useAccountScheduleStore.getState().checkSchedules()
 
     expect(switchCalls()).toHaveLength(1)
+  })
+
+  it('uses the 7d/scoped max when the plan has no 5h window (five_hour: null)', async () => {
+    // Anthropic dropped the 5h limit from many plans: the usage API reports
+    // `five_hour: null` for them. The null slot is skipped — it must neither
+    // crash the check nor read as 0% or 100% — and the other bars decide.
+    useAccountScheduleStore.getState().scheduleByUsage('anthropic', 'acc-2', 'target@x.com', 80)
+
+    useUsageStore.setState({
+      anthropicUsage: {
+        ...makeUsage(0, 60, undefined, [{ label: 'Fable', used_percent: 70 }]),
+        five_hour: null
+      }
+    })
+    expect(getActiveUsagePercent('anthropic')).toBe(70)
+    await useAccountScheduleStore.getState().checkSchedules()
+    expect(switchCalls()).toHaveLength(0)
+
+    useUsageStore.setState({ anthropicUsage: { ...makeUsage(0, 85), five_hour: null } })
+    expect(getActiveUsagePercent('anthropic')).toBe(85)
+    await useAccountScheduleStore.getState().checkSchedules()
+    expect(switchCalls()).toHaveLength(1)
+    expect(useAccountScheduleStore.getState().schedules.anthropic).toBeUndefined()
+  })
+
+  it('reports no usage when every window slot is null', () => {
+    useUsageStore.setState({ anthropicUsage: { five_hour: null, seven_day: null } })
+    expect(getActiveUsagePercent('anthropic')).toBeNull()
   })
 
   it('includes scoped bars (e.g. Fable) when finding the highest usage', async () => {

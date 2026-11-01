@@ -58,5 +58,13 @@ export function isClaudeLiveUsagePayload(value: unknown): value is ClaudeLiveUsa
   if (typeof payload.usage !== 'object' || payload.usage === null) return false
   if (typeof payload.rateLimit !== 'object' || payload.rateLimit === null) return false
   const usage = payload.usage as Record<string, unknown>
-  return typeof usage.five_hour === 'object' && typeof usage.seven_day === 'object'
+  // Each window is an object or null (null = the plan has no such window);
+  // `typeof null === 'object'` already admits null, but a missing key does
+  // not pass — the payload must say something about both windows.
+  return (
+    'five_hour' in usage &&
+    typeof usage.five_hour === 'object' &&
+    'seven_day' in usage &&
+    typeof usage.seven_day === 'object'
+  )
 }

@@ -27,6 +27,20 @@ const CAPTURED_HEADERS = {
   'request-id': 'req_011CfcFdD3w1YiofMwRzV8mf'
 }
 
+// Verbatim from a 2026-11-01 capture on a plan without a 5-hour limit: no
+// `-5h-*` header at all, and the weekly window is the representative claim.
+const NO_FIVE_HOUR_HEADERS = {
+  'anthropic-ratelimit-unified-overage-status': 'rejected',
+  'anthropic-ratelimit-unified-representative-claim': 'seven_day',
+  'anthropic-ratelimit-unified-reset': '1793977200',
+  'anthropic-ratelimit-unified-7d-reset': '1793977200',
+  'anthropic-ratelimit-unified-7d-status': 'allowed',
+  'anthropic-ratelimit-unified-fallback-percentage': '0.5',
+  'anthropic-ratelimit-unified-overage-disabled-reason': 'org_level_disabled',
+  'anthropic-ratelimit-unified-7d-utilization': '0.06',
+  'anthropic-ratelimit-unified-status': 'allowed'
+}
+
 describe('parseUnifiedRateLimitHeaders', () => {
   it('maps fraction utilization to percent and epoch seconds to resets', () => {
     const snapshot = parseUnifiedRateLimitHeaders(CAPTURED_HEADERS)
@@ -101,6 +115,20 @@ describe('parseUnifiedRateLimitHeaders', () => {
     expect(snapshot?.fiveHour?.resetsAt).toBe(1790902800)
   })
 
+  it('leaves fiveHour undefined on a plan without a 5-hour window', () => {
+    const snapshot = parseUnifiedRateLimitHeaders(NO_FIVE_HOUR_HEADERS)!
+    expect(snapshot.fiveHour).toBeUndefined()
+    expect(snapshot.sevenDay).toEqual({
+      utilizationPercent: 6,
+      resetsAt: 1793977200,
+      status: 'allowed',
+      surpassedThreshold: null
+    })
+    expect(snapshot.representativeClaim).toBe('seven_day')
+    expect(snapshot.resetsAt).toBe(1793977200)
+    expect(snapshotHasUsage(snapshot)).toBe(true)
+  })
+
   it('does not count a bare status header as usage', () => {
     const snapshot = parseUnifiedRateLimitHeaders({
       'anthropic-ratelimit-unified-status': 'allowed'
@@ -129,7 +157,7 @@ describe('mergeUnifiedSnapshotIntoUsage', () => {
     expect(merged.extra_usage).toEqual(previous.extra_usage)
     expect(merged.scoped).toEqual(previous.scoped)
     // Never mutates the previous snapshot.
-    expect(previous.five_hour.utilization).toBe(70)
+    expect(previous.five_hour?.utilization).toBe(70)
   })
 
   it('updates a scoped bucket by label and appends unknown-to-poll ones', () => {
@@ -157,8 +185,40 @@ describe('mergeUnifiedSnapshotIntoUsage', () => {
     })!
     expect(mergeUnifiedSnapshotIntoUsage(null, snapshot)).toEqual({
       five_hour: { utilization: 50, resets_at: '2026-10-02T01:00:00.000Z' },
-      seven_day: { utilization: 0, resets_at: null }
+      // Nothing is known about the weekly window yet: null, not a 0% window.
+      seven_day: null
     })
+  })
+
+  it('keeps five_hour null for a plan without a 5-hour window', () => {
+    const snapshot = parseUnifiedRateLimitHeaders(NO_FIVE_HOUR_HEADERS)!
+    const polled: UsageData = {
+      five_hour: null,
+      seven_day: { utilization: 5, resets_at: '2026-11-06T15:00:00.000Z' },
+      extra_usage: { is_enabled: false, utilization: 0, used_credits: 0, monthly_limit: 0 },
+      scoped: [{ label: 'Fable', used_percent: 10, resets_at: '2026-11-06T15:00:00.000Z' }]
+    }
+    expect(mergeUnifiedSnapshotIntoUsage(polled, snapshot)).toEqual({
+      five_hour: null,
+      seven_day: { utilization: 6, resets_at: '2026-11-06T15:00:00.000Z' },
+      extra_usage: polled.extra_usage,
+      scoped: polled.scoped
+    })
+  })
+
+  it('never fabricates a window the headers do not name, even with no prior poll', () => {
+    const snapshot = parseUnifiedRateLimitHeaders(NO_FIVE_HOUR_HEADERS)!
+    expect(mergeUnifiedSnapshotIntoUsage(null, snapshot)).toEqual({
+      five_hour: null,
+      seven_day: { utilization: 6, resets_at: '2026-11-06T15:00:00.000Z' }
+    })
+  })
+
+  it('adopts a 5h window from the headers even when the last poll reported none', () => {
+    const snapshot = parseUnifiedRateLimitHeaders(CAPTURED_HEADERS)!
+    const merged = mergeUnifiedSnapshotIntoUsage({ five_hour: null, seven_day: null }, snapshot)
+    expect(merged.five_hour).toEqual({ utilization: 3, resets_at: '2026-10-02T01:00:00.000Z' })
+    expect(merged.seven_day).toEqual({ utilization: 39, resets_at: '2026-10-03T14:00:00.000Z' })
   })
 })
 

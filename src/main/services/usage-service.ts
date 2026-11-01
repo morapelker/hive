@@ -5,7 +5,13 @@ import { homedir } from 'os'
 import { createLogger } from './logger'
 import { readClaudeLiveKeychainRaw } from './account-store-claude'
 import { refreshAnthropicToken } from './oauth-anthropic'
-import type { ClaudeRefreshResult, ScopedUsageWindow, UsageData, UsageResult } from '@shared/types/usage'
+import type {
+  ClaudeRefreshResult,
+  ScopedUsageWindow,
+  UsageData,
+  UsageResult,
+  UsageWindow
+} from '@shared/types/usage'
 
 export type { UsageData, UsageResult }
 
@@ -288,28 +294,138 @@ function claudeRefreshKey(override: ClaudeUsageOverride): string {
   return `access:${tokenSuffix(override.accessToken)}`
 }
 
-/** Map the usage response's `limits[]` array to model-scoped usage windows (Fable/Opus/etc). */
-function mapScopedLimits(limits: unknown): ScopedUsageWindow[] | undefined {
-  if (!Array.isArray(limits)) return undefined
+/**
+ * One row of the usage response's `limits[]` array, as far as this service
+ * reads it. `kind` is what classifies a row (per the Claude CLI's own schema):
+ * `session` is the 5-hour window, `weekly_all` the 7-day window and
+ * `weekly_scoped` a per-model bucket whose label is `scope.model.display_name`.
+ */
+interface UsageLimitRow {
+  kind?: unknown
+  percent?: unknown
+  resets_at?: unknown
+  scope?: { model?: { display_name?: unknown } | null } | null
+}
 
-  const scoped: ScopedUsageWindow[] = []
-  for (const entry of limits) {
-    if (!entry || typeof entry !== 'object') continue
-    const record = entry as {
-      percent?: unknown
-      resets_at?: unknown
-      scope?: { model?: { display_name?: unknown } }
+type UnscopedLimitKind = 'session' | 'weekly_all'
+
+function usageLimitRows(limits: unknown): UsageLimitRow[] {
+  if (!Array.isArray(limits)) return []
+  return limits.filter(
+    (entry): entry is UsageLimitRow => entry !== null && typeof entry === 'object'
+  )
+}
+
+function usageResetsAt(value: unknown): string | null {
+  return typeof value === 'string' ? value : null
+}
+
+/**
+ * One top-level window (`five_hour` / `seven_day`) of the usage response:
+ * - an object with a numeric `utilization` is the window (the shape every
+ *   plan used to get, and plans with a 5-hour limit still get);
+ * - `null` means the plan has NO such window. Anthropic dropped the 5-hour
+ *   limit from many plans in late 2026 and `/api/oauth/usage` reports
+ *   `five_hour: null` for them — that is a fact about the plan, not a gap in
+ *   the data, so it maps to null rather than to a 0% window;
+ * - an absent (or malformed) key falls back to the `limits[]` row of the
+ *   matching `kind`, which carries `percent` where the window object carries
+ *   `utilization`. No such row either → null.
+ */
+function mapUsageWindow(
+  value: unknown,
+  rows: UsageLimitRow[],
+  kind: UnscopedLimitKind
+): UsageWindow | null {
+  if (value === null) return null
+  if (value && typeof value === 'object') {
+    const window = value as { utilization?: unknown; resets_at?: unknown }
+    if (typeof window.utilization === 'number') {
+      return { utilization: window.utilization, resets_at: usageResetsAt(window.resets_at) }
     }
-    const displayName = record.scope?.model?.display_name
+  }
+  const row = rows.find((candidate) => candidate.kind === kind)
+  if (row === undefined) return null
+  return {
+    utilization: typeof row.percent === 'number' ? row.percent : 0,
+    resets_at: usageResetsAt(row.resets_at)
+  }
+}
+
+/** The model-scoped weekly windows (Fable/Opus/etc) among the `limits[]` rows. */
+function mapScopedLimits(rows: UsageLimitRow[]): ScopedUsageWindow[] | undefined {
+  const scoped: ScopedUsageWindow[] = []
+  for (const row of rows) {
+    const displayName = row.scope?.model?.display_name
     if (typeof displayName !== 'string' || displayName.length === 0) continue
+    // Classify on `kind`, never on the label: only `weekly_scoped` rows are
+    // per-model windows. A row that carries no `kind` at all (responses that
+    // predate the field) is still taken as scoped on the strength of naming a
+    // model, which is how this app read them before `kind` existed.
+    if (row.kind !== 'weekly_scoped' && row.kind !== undefined) continue
 
     scoped.push({
       label: displayName,
-      used_percent: typeof record.percent === 'number' ? record.percent : 0,
-      resets_at: typeof record.resets_at === 'string' ? record.resets_at : null
+      used_percent: typeof row.percent === 'number' ? row.percent : 0,
+      resets_at: usageResetsAt(row.resets_at)
     })
   }
   return scoped.length > 0 ? scoped : undefined
+}
+
+function finiteOrZero(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
+
+/**
+ * The extra-usage block, normalized: every numeric field may be null on the
+ * wire (a plan that never enabled credits reports `monthly_limit: null,
+ * used_credits: null, utilization: null`), and credits are reported in cents
+ * while the UI shows dollars.
+ */
+function mapExtraUsage(value: unknown): UsageData['extra_usage'] | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const raw = value as {
+    is_enabled?: unknown
+    utilization?: unknown
+    used_credits?: unknown
+    monthly_limit?: unknown
+  }
+  return {
+    is_enabled: raw.is_enabled === true,
+    utilization: finiteOrZero(raw.utilization),
+    used_credits: finiteOrZero(raw.used_credits) / 100,
+    monthly_limit: finiteOrZero(raw.monthly_limit) / 100
+  }
+}
+
+/**
+ * Build the app's `UsageData` from a `/api/oauth/usage` body, keeping only
+ * what the app reads. The raw body carries dozens of other keys (nulls for
+ * every promotional bucket, `spend`, `pace`, `seven_day_breakdown`, ...) that
+ * used to be persisted verbatim into `saved_usage_accounts.last_usage_json`.
+ *
+ * Returns null when the body is not a usage response at all: a usage body
+ * says something about the windows, through the top-level `five_hour` /
+ * `seven_day` keys (object or null) or through a `limits[]` array. An error
+ * envelope that happens to arrive with a 200 has neither.
+ */
+export function normalizeClaudeUsageResponse(body: unknown): UsageData | null {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null
+  const raw = body as Record<string, unknown>
+  const hasWindowKeys = 'five_hour' in raw || 'seven_day' in raw
+  if (!hasWindowKeys && !Array.isArray(raw.limits)) return null
+
+  const rows = usageLimitRows(raw.limits)
+  const data: UsageData = {
+    five_hour: mapUsageWindow(raw.five_hour, rows, 'session'),
+    seven_day: mapUsageWindow(raw.seven_day, rows, 'weekly_all')
+  }
+  const extraUsage = mapExtraUsage(raw.extra_usage)
+  if (extraUsage) data.extra_usage = extraUsage
+  const scoped = mapScopedLimits(rows)
+  if (scoped) data.scoped = scoped
+  return data
 }
 
 export async function fetchClaudeUsage(
@@ -403,17 +519,23 @@ export async function fetchClaudeUsage(
     }
 
     log.info('Claude usage response', responseLogData)
-    const data = (await response.json()) as UsageData & { limits?: unknown }
-
-    // API returns extra_usage credits in cents — convert to dollars
-    if (data.extra_usage) {
-      data.extra_usage.used_credits = (data.extra_usage.used_credits ?? 0) / 100
-      data.extra_usage.monthly_limit = (data.extra_usage.monthly_limit ?? 0) / 100
+    const body = (await response.json()) as unknown
+    const data = normalizeClaudeUsageResponse(body)
+    if (data === null) {
+      // A 200 whose body is not usage (an error envelope, say). Persisting it
+      // would cache a row with no windows at all, which the UI would then
+      // read as "this plan has no limits".
+      log.warn('Claude usage response is not a usage body', {
+        ...ctx,
+        bodyKeys:
+          body && typeof body === 'object' ? Object.keys(body).slice(0, 20) : typeof body
+      })
+      return {
+        success: false,
+        error: 'Usage API returned an unexpected body',
+        ...(rotated ? { rotated } : {})
+      }
     }
-
-    const scoped = mapScopedLimits(data.limits)
-    if (scoped) data.scoped = scoped
-    delete data.limits
 
     return { success: true, data, ...(rotated ? { rotated } : {}) }
   } catch (error) {

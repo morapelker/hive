@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { SavedAccountDTO } from '@shared/types/usage'
 import { resetRendererRpcClientForTests, setRendererRpcClient } from '@/api/rpc-client'
-import { useUsageStore, type UsageData } from '@/stores/useUsageStore'
+import { normalizeUsage, useUsageStore, type UsageData } from '@/stores/useUsageStore'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { toast } from '@/lib/toast'
 
@@ -69,6 +69,31 @@ describe('useUsageStore', () => {
   afterEach(() => {
     resetRendererRpcClientForTests()
     vi.useRealTimers()
+  })
+
+  it('stores an Anthropic snapshot whose plan has no 5h window with five_hour kept null', async () => {
+    // Anthropic dropped the 5h limit from many plans: the poll then returns
+    // `five_hour: null` next to a real weekly window. The snapshot must land
+    // in the store as-is (null preserved, not dropped as malformed) and still
+    // normalize as valid Anthropic usage for the bar.
+    const noFiveHour: UsageData = {
+      five_hour: null,
+      seven_day: { utilization: 6, resets_at: '2026-11-06T15:00:00.000Z' }
+    }
+    request.mockImplementation(async (method: string) => {
+      if (method === 'usageOps.fetch') return { success: true, data: noFiveHour }
+      if (method === 'accountOps.listSaved') return []
+      return null
+    })
+
+    await useUsageStore.getState().fetchUsageForProvider('anthropic')
+
+    const state = usageState()
+    expect(state.anthropicUsage).toBe(noFiveHour)
+    expect(state.anthropicUsage?.five_hour).toBeNull()
+    expect(state.anthropicLastError).toBeNull()
+    expect(normalizeUsage('anthropic', state.anthropicUsage, null)).toBe(noFiveHour)
+    expect(toast.error).not.toHaveBeenCalled()
   })
 
   it('records inner Anthropic failures without changing stale usage or debounce timestamp', async () => {

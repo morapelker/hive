@@ -61,6 +61,26 @@ describe('compareByResetTime', () => {
     ).toEqual(['idle', 'alreadyReset', 'future'])
   })
 
+  it('treats a window the plan does not have (null) as available now', () => {
+    // Anthropic dropped the 5h limit from many plans: the usage API then
+    // reports `five_hour: null`. There is nothing there to wait for, so it
+    // sorts like an idle window — unlike a missing snapshot, which is unknown.
+    const noFiveHour: UsageData = {
+      five_hour: null,
+      seven_day: { utilization: 10, resets_at: at(24) }
+    }
+    expect(usageResetSortKey(noFiveHour, now)).toEqual([Date.parse(at(24)), 0, 0])
+    expect(sorted({ future: usage(at(24), at(1)), noFiveHour })).toEqual(['noFiveHour', 'future'])
+
+    const noWindows: UsageData = { five_hour: null, seven_day: null }
+    expect(usageResetSortKey(noWindows, now)).toEqual([0, 0, 0])
+    expect(sorted({ unknown: null, future: usage(at(24), at(1)), noWindows })).toEqual([
+      'noWindows',
+      'future',
+      'unknown'
+    ])
+  })
+
   it('puts accounts with no usage snapshot last', () => {
     expect(sorted({ unknown: null, known: usage(at(150), at(4)) })).toEqual(['known', 'unknown'])
     expect(usageResetSortKey(null, now).every((k) => k === Number.POSITIVE_INFINITY)).toBe(true)

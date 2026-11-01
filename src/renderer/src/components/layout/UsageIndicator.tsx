@@ -38,7 +38,8 @@ import type {
   AnthropicRateLimitState,
   AnthropicRateLimitWindow,
   UsageData,
-  UsageProvider
+  UsageProvider,
+  UsageWindow
 } from '@shared/types/usage'
 
 function getBarColor(percent: number, rateLimitStatus?: string): string {
@@ -102,8 +103,11 @@ function isResetInPast(isoString: string | null | undefined): boolean {
   return !isNaN(time) && time < Date.now()
 }
 
+// Accepts null because `UsageData.five_hour` / `seven_day` are null when the
+// plan has no such window. Callers decide whether to render a row at all (see
+// `hasUsageWindowRow`); this only turns whatever window exists into bar values.
 function usageWindowDisplay(
-  window: { utilization: number; resets_at: string | null } | undefined,
+  window: UsageWindow | null | undefined,
   type: 'five_hour' | 'seven_day'
 ): { percent: number; resetTime: string } {
   if (!window || isResetInPast(window.resets_at)) return { percent: 0, resetTime: 'N/A' }
@@ -130,6 +134,22 @@ function getStatusLabel(status?: string): string | null {
 }
 
 const FABLE_LABEL = 'Fable'
+
+/**
+ * Whether to render a bar for a window at all. Anthropic dropped the 5-hour
+ * limit from many plans (late 2026): `/api/oauth/usage` then sends
+ * `five_hour: null`, which means "this plan has no such window", NOT "unknown"
+ * — so the row is omitted rather than shown as N/A. A null usage object is
+ * the opposite case (nothing fetched yet, no credentials, or a pinned provider
+ * with nothing known): keep showing every row as muted N/A, as before.
+ */
+function hasUsageWindowRow(
+  usage: UsageData | null | undefined,
+  type: 'five_hour' | 'seven_day'
+): boolean {
+  if (!usage) return true
+  return usage[type] !== null
+}
 
 /** The per-model Fable window from the usage payload's scoped limits, if any. */
 function findFableWindow(usage: UsageData | null | undefined): ScopedUsageWindow | undefined {
@@ -322,6 +342,8 @@ export function UsageAccountRow({
   membersLoading = false,
   autoSwitchIneligibleReason = null
 }: UsageAccountRowProps): React.JSX.Element {
+  const showFiveHour = hasUsageWindowRow(row.usage, 'five_hour')
+  const showSevenDay = hasUsageWindowRow(row.usage, 'seven_day')
   const fiveHour = usageWindowDisplay(row.usage?.five_hour, 'five_hour')
   const sevenDay = usageWindowDisplay(row.usage?.seven_day, 'seven_day')
   const scoped = row.usage?.scoped ?? []
@@ -389,8 +411,12 @@ export function UsageAccountRow({
       )}
 
       <div className={cn('mt-1 space-y-0.5', row.status === 'stale' && 'opacity-50')}>
-        <UsageRow label="5h" percent={fiveHour.percent} resetTime={fiveHour.resetTime} />
-        <UsageRow label="7d" percent={sevenDay.percent} resetTime={sevenDay.resetTime} />
+        {showFiveHour && (
+          <UsageRow label="5h" percent={fiveHour.percent} resetTime={fiveHour.resetTime} />
+        )}
+        {showSevenDay && (
+          <UsageRow label="7d" percent={sevenDay.percent} resetTime={sevenDay.resetTime} />
+        )}
         {scoped.map((entry) => {
           const display = usageWindowDisplay(
             { utilization: entry.used_percent, resets_at: entry.resets_at },
@@ -704,7 +730,8 @@ function ProviderUsagePopoverBody({ provider }: { provider: UsageProvider }): Re
   // reason), and finally the ones that can't be a switch target — expired,
   // failing, or already at/over the armed threshold. Within each group rows
   // are ordered by when they free up: soonest 7d reset first, then Fable,
-  // then 5h as tie-breakers.
+  // then 5h as tie-breakers (the 5h key only exists on plans that still have
+  // a 5h window; a null window counts as "available now").
   const nowMs = Date.now()
   const ineligibleReasons = new Map(
     accountRows.map((row) => [
@@ -909,6 +936,8 @@ export function ProviderUsageBlock({
   // provider, in which case show muted N/A bars.
   if (!usage && !isExplicitlySelected) return null
 
+  const showFiveHour = hasUsageWindowRow(usage, 'five_hour')
+  const showSevenDay = hasUsageWindowRow(usage, 'seven_day')
   const fiveHour = usageWindowDisplay(usage?.five_hour, 'five_hour')
   const sevenDay = usageWindowDisplay(usage?.seven_day, 'seven_day')
   const fiveHourRateLimit =
@@ -930,7 +959,10 @@ export function ProviderUsageBlock({
       )
     : undefined
   const showFable = fable !== undefined && fable.percent > 0
-  // Widen every label so the three bars stay aligned when "Fable" is shown.
+  // Widen every label so the bars stay aligned when "Fable" is shown — the
+  // short "5h"/"7d" labels fit the default width, and the widening applies
+  // to whichever of them is rendered (a plan without a 5h window still shows
+  // "7d" + "Fable" aligned).
   const triggerLabelClassName = showFable ? 'w-10' : undefined
 
   return (
@@ -973,20 +1005,24 @@ export function ProviderUsageBlock({
               />
             ) : null}
             <div className="flex-1 space-y-0.5">
-              <UsageRow
-                label="5h"
-                percent={fiveHour.percent}
-                resetTime={fiveHour.resetTime}
-                rateLimit={fiveHourRateLimit}
-                labelClassName={triggerLabelClassName}
-              />
-              <UsageRow
-                label="7d"
-                percent={sevenDay.percent}
-                resetTime={sevenDay.resetTime}
-                rateLimit={sevenDayRateLimit}
-                labelClassName={triggerLabelClassName}
-              />
+              {showFiveHour && (
+                <UsageRow
+                  label="5h"
+                  percent={fiveHour.percent}
+                  resetTime={fiveHour.resetTime}
+                  rateLimit={fiveHourRateLimit}
+                  labelClassName={triggerLabelClassName}
+                />
+              )}
+              {showSevenDay && (
+                <UsageRow
+                  label="7d"
+                  percent={sevenDay.percent}
+                  resetTime={sevenDay.resetTime}
+                  rateLimit={sevenDayRateLimit}
+                  labelClassName={triggerLabelClassName}
+                />
+              )}
               {showFable && fable && (
                 <UsageRow
                   label={FABLE_LABEL}

@@ -6,6 +6,7 @@ import {
 } from '@shared/types/custom-provider'
 import type {
   UsageData,
+  UsageWindow,
   AnthropicRateLimitInfo,
   AnthropicRateLimitState,
   OpenAIUsageData,
@@ -851,9 +852,7 @@ export function resolveDefaultUsageProvider(
   return 'anthropic'
 }
 
-function hasUsageWindow(
-  value: unknown
-): value is { utilization: number; resets_at: string | null } {
+function hasUsageWindow(value: unknown): value is UsageWindow {
   if (typeof value !== 'object' || value === null) return false
   const record = value as Record<string, unknown>
   // resets_at is legitimately null (or absent) for a window with no active
@@ -867,10 +866,28 @@ function hasUsageWindow(
   )
 }
 
+/**
+ * A window slot as `/api/oauth/usage` sends it: a window object, or null when
+ * the plan has no such window — Anthropic dropped the 5h limit from many
+ * plans, and those accounts get `five_hour: null`. Null is a valid, meaningful
+ * value here ("no window"), not a missing one, so it must not reject the body.
+ */
+function isUsageWindowOrNull(value: unknown): value is UsageWindow | null {
+  return value === null || hasUsageWindow(value)
+}
+
 function isAnthropicUsageData(value: unknown): value is UsageData {
   if (typeof value !== 'object' || value === null) return false
   const record = value as Record<string, unknown>
-  return hasUsageWindow(record.five_hour) && hasUsageWindow(record.seven_day)
+  // Both keys must be PRESENT: the usage endpoint always sends them (each an
+  // object or null), so a body missing either is not usage at all — e.g. an
+  // error envelope — and must not reach the bar as if it were.
+  return (
+    'five_hour' in record &&
+    'seven_day' in record &&
+    isUsageWindowOrNull(record.five_hour) &&
+    isUsageWindowOrNull(record.seven_day)
+  )
 }
 
 export function normalizeUsage(

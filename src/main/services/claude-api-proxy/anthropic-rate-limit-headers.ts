@@ -16,8 +16,12 @@
  *   polled `limits[]` stays the source for anything not listed here.
  * - Present on `/v1/messages` 200s and on plan-limit 429s; absent on
  *   `count_tokens`, `/api/hello`, and temporary-throttle 429s.
+ * - The `-5h-*` headers are absent altogether on plans without a 5-hour
+ *   window (Anthropic dropped that limit from many plans in late 2026; the
+ *   poll reports `five_hour: null` for them and `-representative-claim` is
+ *   `seven_day`). An absent window is not a 0% window.
  */
-import type { ScopedUsageWindow, UsageData } from '@shared/types/usage'
+import type { ScopedUsageWindow, UsageData, UsageWindow } from '@shared/types/usage'
 
 export const UNIFIED_HEADER_PREFIX = 'anthropic-ratelimit-unified-'
 
@@ -238,23 +242,29 @@ export function snapshotHasUsage(snapshot: UnifiedRateLimitSnapshot): boolean {
  * only describe the windows they name; everything else (`extra_usage`, other
  * `scoped` entries) is carried over from `previous` so the popover never loses
  * the Fable/extra-usage rows between polls.
+ *
+ * A window the headers do not name is carried over from `previous` and is
+ * null when there is nothing to carry. It is never invented: a plan without a
+ * 5-hour limit gets no `-5h-*` headers at all, and a made-up
+ * `{utilization: 0}` would draw a "5h 0%" bar (and cache a DB row) for a
+ * limit the account does not have.
  */
 export function mergeUnifiedSnapshotIntoUsage(
   previous: UsageData | null,
   snapshot: UnifiedRateLimitSnapshot
 ): UsageData {
-  const fiveHour = hasUsageNumbers(snapshot.fiveHour)
+  const fiveHour: UsageWindow | null = hasUsageNumbers(snapshot.fiveHour)
     ? {
         utilization: snapshot.fiveHour.utilizationPercent,
         resets_at: epochSecondsToIso(snapshot.fiveHour.resetsAt)
       }
-    : (previous?.five_hour ?? { utilization: 0, resets_at: null })
-  const sevenDay = hasUsageNumbers(snapshot.sevenDay)
+    : (previous?.five_hour ?? null)
+  const sevenDay: UsageWindow | null = hasUsageNumbers(snapshot.sevenDay)
     ? {
         utilization: snapshot.sevenDay.utilizationPercent,
         resets_at: epochSecondsToIso(snapshot.sevenDay.resetsAt)
       }
-    : (previous?.seven_day ?? { utilization: 0, resets_at: null })
+    : (previous?.seven_day ?? null)
 
   const scoped: ScopedUsageWindow[] = previous?.scoped ? previous.scoped.map((w) => ({ ...w })) : []
   for (const [bucket, window] of Object.entries(snapshot.scoped)) {

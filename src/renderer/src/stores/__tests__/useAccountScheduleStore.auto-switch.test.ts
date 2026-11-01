@@ -219,7 +219,10 @@ describe('useAccountScheduleStore auto-switch', () => {
   it('prefers the comfortable account whose 7-day window resets soonest over the emptiest one', async () => {
     const withSevenDayReset = (usage: UsageData, inMs: number): UsageData => ({
       ...usage,
-      seven_day: { ...usage.seven_day, resets_at: new Date(Date.now() + inMs).toISOString() }
+      seven_day: {
+        utilization: usage.seven_day?.utilization ?? 0,
+        resets_at: new Date(Date.now() + inMs).toISOString()
+      }
     })
     // acc-2 is emptier, but acc-3's weekly usage expires first.
     refreshedAccounts[1] = makeAccount(
@@ -241,10 +244,33 @@ describe('useAccountScheduleStore auto-switch', () => {
     expect(switchCalls()[0][1]).toEqual({ accountId: 'acc-3' })
   })
 
+  it('targets an account whose plan has no 5h window (five_hour: null)', async () => {
+    // Anthropic dropped the 5h limit from many plans: such an account's
+    // snapshot carries `five_hour: null`. It is scored on the windows it has
+    // and competes on the usual rules — here its weekly window resets before
+    // acc-3's (the fixture's one hour), so it wins the switch.
+    const weeklyReset = new Date(Date.now() + 1_800_000).toISOString()
+    refreshedAccounts[1] = makeAccount('acc-2', 'best@x.com', {
+      five_hour: null,
+      seven_day: { utilization: 6, resets_at: weeklyReset },
+      scoped: [{ label: 'Fable', used_percent: 10, resets_at: weeklyReset }]
+    })
+    useUsageStore.setState({ savedAccounts: { anthropic: refreshedAccounts, openai: [] } })
+    useAccountScheduleStore.getState().setAutoSwitch('anthropic', 90)
+
+    await useAccountScheduleStore.getState().checkSchedules()
+
+    expect(switchCalls()).toHaveLength(1)
+    expect(switchCalls()[0][1]).toEqual({ accountId: 'acc-2' })
+  })
+
   it('falls back to the best headroom score when no account is 10 points under the threshold', async () => {
     const withSevenDayReset = (usage: UsageData, inMs: number): UsageData => ({
       ...usage,
-      seven_day: { ...usage.seven_day, resets_at: new Date(Date.now() + inMs).toISOString() }
+      seven_day: {
+        utilization: usage.seven_day?.utilization ?? 0,
+        resets_at: new Date(Date.now() + inMs).toISOString()
+      }
     })
     // Both sit in the 80-90% band; acc-3 resets sooner but acc-2 has more headroom.
     refreshedAccounts[1] = makeAccount(

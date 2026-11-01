@@ -110,7 +110,13 @@ describe('pickAutoSwitchTarget', () => {
     usage:
       sevenDayResetsAt === undefined
         ? data
-        : { ...data, seven_day: { ...data.seven_day, resets_at: sevenDayResetsAt } }
+        : {
+            ...data,
+            seven_day: {
+              utilization: data.seven_day?.utilization ?? 0,
+              resets_at: sevenDayResetsAt
+            }
+          }
   })
   const inHours = (hours: number): string => new Date(NOW + hours * HOUR).toISOString()
   const pick = (candidates: { id: string; usage: UsageData }[], threshold = 90): string | null =>
@@ -286,5 +292,95 @@ describe('autoSwitchIneligibilityReason for accounts removed from auto-switch', 
     expect(
       autoSwitchIneligibilityReason({ ...row, isActive: true }, 90, NOW, false, true)
     ).toBeNull()
+  })
+})
+
+describe('plans without a 5h window (five_hour: null)', () => {
+  // Anthropic dropped the 5h limit from many plans: the usage API then reports
+  // `five_hour: null` (and `seven_day: null` is the same shape for the weekly
+  // window). Null means "no such window", not "unknown" — it must neither
+  // crash the scoring nor read as an empty or exhausted window.
+  const window = (
+    utilization: number,
+    resetsAt: string | null = FUTURE
+  ): UsageData['five_hour'] => ({
+    utilization,
+    resets_at: resetsAt
+  })
+
+  it('scores only the windows the plan has, renormalizing the weights', () => {
+    // 7d and Fable carry equal weight once the 5h share is gone: the score is
+    // the geometric mean of their headrooms (100 and 50).
+    const noFiveHour: UsageData = {
+      five_hour: null,
+      seven_day: window(0),
+      scoped: [{ label: 'Fable', used_percent: 50, resets_at: FUTURE }]
+    }
+    expect(scoreAccountHeadroom(noFiveHour, NOW)).toBeCloseTo(Math.sqrt(100 * 50), 6)
+    // Only a weekly window: its headroom IS the score.
+    expect(scoreAccountHeadroom({ five_hour: null, seven_day: window(30) }, NOW)).toBeCloseTo(70, 9)
+    // The null slot is not a free untouched window: an exhausted 7d still zeroes it.
+    expect(scoreAccountHeadroom({ five_hour: null, seven_day: window(100) }, NOW)).toBe(0)
+  })
+
+  it('scores an account with no window at all as full headroom, never NaN', () => {
+    const score = scoreAccountHeadroom({ five_hour: null, seven_day: null }, NOW)
+    expect(Number.isNaN(score)).toBe(false)
+    expect(score).toBe(100)
+  })
+
+  it('getMaxUsagePercent ignores null windows', () => {
+    expect(
+      getMaxUsagePercent(
+        {
+          five_hour: null,
+          seven_day: window(40),
+          scoped: [{ label: 'Fable', used_percent: 65, resets_at: FUTURE }]
+        },
+        NOW
+      )
+    ).toBe(65)
+    expect(getMaxUsagePercent({ five_hour: null, seven_day: window(40) }, NOW)).toBe(40)
+    expect(getMaxUsagePercent({ five_hour: window(40), seven_day: null }, NOW)).toBe(40)
+    expect(getMaxUsagePercent({ five_hour: null, seven_day: null }, NOW)).toBeNull()
+  })
+
+  it('isProvablyAtOrAbove ignores null windows', () => {
+    expect(isProvablyAtOrAbove({ five_hour: null, seven_day: window(95) }, 90, NOW)).toBe(true)
+    expect(isProvablyAtOrAbove({ five_hour: null, seven_day: window(10) }, 90, NOW)).toBe(false)
+    expect(isProvablyAtOrAbove({ five_hour: null, seven_day: null }, 90, NOW)).toBe(false)
+  })
+
+  it('pickAutoSwitchTarget treats a null 7d window as no running weekly window', () => {
+    const HOUR = 3_600_000
+    const inHours = (hours: number): string => new Date(NOW + hours * HOUR).toISOString()
+    const pick = (candidates: { id: string; usage: UsageData }[]): string | null =>
+      pickAutoSwitchTarget(candidates, 90, NOW)?.id ?? null
+
+    // Like an idle weekly window, a plan without one is kept in reserve.
+    expect(
+      pick([
+        { id: 'no-weekly', usage: { five_hour: window(0), seven_day: null } },
+        { id: 'running', usage: usage(50, 50) }
+      ])
+    ).toBe('running')
+    // A no-5h account competes on its weekly reset like any other.
+    expect(
+      pick([
+        { id: 'no-5h', usage: { five_hour: null, seven_day: window(10, inHours(5)) } },
+        { id: 'has-5h', usage: { five_hour: window(10), seven_day: window(10, inHours(100)) } }
+      ])
+    ).toBe('no-5h')
+  })
+
+  it('autoSwitchIneligibilityReason reads the remaining windows', () => {
+    const hot = {
+      usage: { five_hour: null, seven_day: window(95) },
+      status: 'ok' as const,
+      isActive: false
+    }
+    expect(autoSwitchIneligibilityReason(hot, 90, NOW)).toMatch(/At 95%/)
+    const cool = { ...hot, usage: { five_hour: null, seven_day: window(10) } }
+    expect(autoSwitchIneligibilityReason(cool, 90, NOW)).toBeNull()
   })
 })

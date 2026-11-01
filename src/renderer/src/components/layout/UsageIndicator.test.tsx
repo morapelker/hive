@@ -33,6 +33,15 @@ const sampleUsage: UsageData = {
   seven_day: { utilization: 10, resets_at: inOneDay() }
 }
 
+// What `/api/oauth/usage` returns for a plan Anthropic dropped the 5-hour
+// limit from: `five_hour` is null (no such window), only the weekly window
+// and its per-model (Fable) share exist.
+const noFiveHourUsage: UsageData = {
+  five_hour: null,
+  seven_day: { utilization: 6, resets_at: inOneDay() },
+  scoped: [{ label: 'Fable', used_percent: 10, resets_at: inOneDay() }]
+}
+
 describe('UsageAccountRow', () => {
   it('hides the Switch button for the active account', () => {
     render(
@@ -74,6 +83,91 @@ describe('UsageAccountRow', () => {
 
     expect(screen.getByText('66%')).toBeTruthy()
     expect(screen.getByText('N/A')).toBeTruthy()
+  })
+
+  it('omits the 5h row when the plan has no five_hour window (five_hour: null)', () => {
+    render(
+      <UsageAccountRow
+        row={{
+          id: 'acc-no-5h',
+          email: 'weekly-only@example.com',
+          usage: noFiveHourUsage,
+          status: 'ok',
+          lastError: null,
+          isActive: false,
+          isRefreshing: false
+        }}
+        onSwitch={vi.fn()}
+      />
+    )
+
+    expect(screen.queryByText('5h')).toBeNull()
+    expect(screen.getByText('7d')).toBeTruthy()
+    expect(screen.getByText('6%')).toBeTruthy()
+    expect(screen.getByText('Fable')).toBeTruthy()
+    // No window is unknown here, so nothing should fall back to N/A.
+    expect(screen.queryByText('N/A')).toBeNull()
+  })
+
+  it('still renders the 5h row when the plan has a five_hour window', () => {
+    render(
+      <UsageAccountRow
+        row={{
+          id: 'acc-with-5h',
+          email: 'session@example.com',
+          usage: sampleUsage,
+          status: 'ok',
+          lastError: null,
+          isActive: false,
+          isRefreshing: false
+        }}
+      />
+    )
+
+    expect(screen.getByText('5h')).toBeTruthy()
+    expect(screen.getByText('20%')).toBeTruthy()
+    expect(screen.getByText('7d')).toBeTruthy()
+  })
+
+  it('omits the 7d row when the plan reports no seven_day window (seven_day: null)', () => {
+    render(
+      <UsageAccountRow
+        row={{
+          id: 'acc-no-7d',
+          email: 'session-only@example.com',
+          usage: { five_hour: { utilization: 20, resets_at: inOneHour() }, seven_day: null },
+          status: 'ok',
+          lastError: null,
+          isActive: false,
+          isRefreshing: false
+        }}
+      />
+    )
+
+    expect(screen.getByText('5h')).toBeTruthy()
+    expect(screen.queryByText('7d')).toBeNull()
+  })
+
+  it('keeps both rows as muted N/A when nothing is known about the account (usage: null)', () => {
+    // null usage is "unknown", not "no window": the rows stay so the row
+    // still reads as an account whose usage has not been fetched.
+    render(
+      <UsageAccountRow
+        row={{
+          id: 'acc-unknown',
+          email: 'unknown@example.com',
+          usage: null,
+          status: 'ok',
+          lastError: null,
+          isActive: false,
+          isRefreshing: false
+        }}
+      />
+    )
+
+    expect(screen.getByText('5h')).toBeTruthy()
+    expect(screen.getByText('7d')).toBeTruthy()
+    expect(screen.getAllByText('N/A')).toHaveLength(2)
   })
 
   it('shows N/A and an empty bar for a window whose reset time is in the past', () => {
@@ -808,6 +902,100 @@ describe('ProviderUsageBlock provider toggle', () => {
     await user.hover(trigger)
     await screen.findByText('OpenAI API Usage')
     expect(screen.queryByText('Claude API Usage')).toBeNull()
+  })
+
+  it('renders the 5h and 7d bars in the trigger when the plan has a five_hour window', () => {
+    render(
+      <ProviderUsageBlock
+        provider="anthropic"
+        isExplicitlySelected
+        toggleProviders={['anthropic']}
+      />
+    )
+
+    const trigger = screen.getByTestId('usage-trigger-anthropic')
+    expect(within(trigger).getByText('5h')).toBeTruthy()
+    expect(within(trigger).getByText('20%')).toBeTruthy()
+    expect(within(trigger).getByText('7d')).toBeTruthy()
+    expect(within(trigger).getByText('10%')).toBeTruthy()
+  })
+
+  it('renders no 5h bar in the trigger for a plan without a five_hour window', () => {
+    useUsageStore.setState({ anthropicUsage: noFiveHourUsage })
+    render(
+      <ProviderUsageBlock
+        provider="anthropic"
+        isExplicitlySelected
+        toggleProviders={['anthropic']}
+      />
+    )
+
+    const trigger = screen.getByTestId('usage-trigger-anthropic')
+    expect(within(trigger).queryByText('5h')).toBeNull()
+    expect(within(trigger).getByText('7d')).toBeTruthy()
+    expect(within(trigger).getByText('6%')).toBeTruthy()
+    // The Fable share still gets its bar next to the weekly one.
+    expect(within(trigger).getByText('Fable')).toBeTruthy()
+    expect(within(trigger).getByText('10%')).toBeTruthy()
+    // Usage is known, so the bar is not drawn in the muted "no credentials" state.
+    expect(trigger.className).not.toContain('opacity-40')
+  })
+
+  it('renders no 5h row in the popover for a saved account whose plan has no five_hour window', async () => {
+    const user = userEvent.setup()
+    useUsageStore.setState((state) => ({
+      anthropicUsage: noFiveHourUsage,
+      savedAccounts: {
+        ...state.savedAccounts,
+        anthropic: [
+          {
+            id: 'anthropic-weekly-only',
+            provider: 'anthropic',
+            email: 'claude@example.com',
+            last_usage: noFiveHourUsage,
+            last_fetched_at: null,
+            status: 'ok',
+            last_error: null,
+            created_at: new Date().toISOString(),
+            plan: null
+          }
+        ]
+      }
+    }))
+
+    render(
+      <ProviderUsageBlock
+        provider="anthropic"
+        isExplicitlySelected
+        toggleProviders={['anthropic']}
+      />
+    )
+
+    await user.hover(screen.getByTestId('usage-trigger-anthropic'))
+    const popover = await screen.findByTestId('usage-popover-scroll')
+    await within(popover).findByText('claude@example.com')
+
+    expect(within(popover).queryByText('5h')).toBeNull()
+    expect(within(popover).getByText('7d')).toBeTruthy()
+    expect(within(popover).getByText('6%')).toBeTruthy()
+    expect(within(popover).queryByText('N/A')).toBeNull()
+  })
+
+  it('keeps muted N/A 5h and 7d bars for a pinned provider with no usage', () => {
+    useUsageStore.setState({ anthropicUsage: null })
+    render(
+      <ProviderUsageBlock
+        provider="anthropic"
+        isExplicitlySelected
+        toggleProviders={['anthropic']}
+      />
+    )
+
+    const trigger = screen.getByTestId('usage-trigger-anthropic')
+    expect(trigger.className).toContain('opacity-40')
+    expect(within(trigger).getByText('5h')).toBeTruthy()
+    expect(within(trigger).getByText('7d')).toBeTruthy()
+    expect(within(trigger).getAllByText('N/A')).toHaveLength(2)
   })
 
   it('shows a third Fable bar in the trigger when the Fable window is above 0%', () => {

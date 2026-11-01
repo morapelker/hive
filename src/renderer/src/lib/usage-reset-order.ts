@@ -5,9 +5,12 @@ import type { UsageData } from '@shared/types/usage'
 // Fable (scoped) window, then the 5h window. An account whose 7d window
 // resets sooner always ranks ahead; the later keys only break ties.
 //
-// A window with no active session (null resets_at) or whose cached reset time
-// has already passed is treated as "available now" (0) so it sorts first.
-// An account with no usage snapshot at all is unknown and sorts last.
+// A window with no active session (null resets_at), a window the plan doesn't
+// have at all (a null slot — Anthropic dropped the 5h limit from many plans,
+// and the usage API then reports `five_hour: null`) or a window whose cached
+// reset time has already passed is treated as "available now" (0) so it sorts
+// first: there is nothing there to wait for. An account with no usage snapshot
+// at all is unknown and sorts last.
 
 const AVAILABLE_NOW = 0
 const UNKNOWN = Number.POSITIVE_INFINITY

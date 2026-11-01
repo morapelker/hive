@@ -132,6 +132,36 @@ describe('useUsageStore.applyClaudeLiveUsage', () => {
     expect(state.anthropicEarlyRefreshAttemptAt).toBeNull()
   })
 
+  it('keeps five_hour null for an account whose plan has no 5h window', async () => {
+    // Plans without the 5h limit get no `-5h-*` headers: the main process then
+    // publishes `five_hour: null` and no fiveHour rate-limit window. The null
+    // must reach the bar and the row untouched (it is what hides the 5h bar),
+    // and no 5h overlay may be conjured for a window that doesn't exist.
+    useUsageStore.setState({ anthropicRateLimit: null })
+    const noFiveHour = payload({
+      usage: {
+        five_hour: null,
+        seven_day: { utilization: 6, resets_at: '2026-11-06T15:00:00.000Z' }
+      },
+      rateLimit: {
+        sevenDay: { status: 'allowed', resetsAt: Math.floor(NOW / 1000) + 3 * 86400 }
+      }
+    })
+
+    useUsageStore.getState().applyClaudeLiveUsage(noFiveHour)
+    await vi.runAllTimersAsync()
+
+    const state = useUsageStore.getState()
+    expect(state.anthropicUsage).toEqual(noFiveHour.usage)
+    expect(state.anthropicUsage?.five_hour).toBeNull()
+    expect(state.anthropicUsage?.seven_day?.utilization).toBe(6)
+    const rowA = state.savedAccounts.anthropic.find((row) => row.id === 'row-a')!
+    expect(rowA.last_usage).toEqual(noFiveHour.usage)
+    expect(rowA.last_usage).toMatchObject({ five_hour: null })
+    expect(state.anthropicRateLimit?.fiveHour).toBeUndefined()
+    expect(state.anthropicRateLimit?.sevenDay).toMatchObject({ status: 'allowed' })
+  })
+
   it('clears a stale poll error once no Retry-After deadline is pending', () => {
     useUsageStore.setState({ anthropicLastRetryAfter: null, anthropicLastError: 'offline' })
     useUsageStore.getState().applyClaudeLiveUsage(payload())

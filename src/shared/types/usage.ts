@@ -4,11 +4,27 @@ export interface ScopedUsageWindow {
   resets_at: string | null
 }
 
+/**
+ * One subscription usage window. `resets_at` is null when the window has no
+ * active session (e.g. an idle 5h window) — the API sends
+ * `{ utilization: 0, resets_at: null }`.
+ */
+export interface UsageWindow {
+  utilization: number
+  resets_at: string | null
+}
+
 export interface UsageData {
-  // resets_at is null when the window has no active session (e.g. an idle
-  // 5h window) — the API sends { utilization: 0, resets_at: null }.
-  five_hour: { utilization: number; resets_at: string | null }
-  seven_day: { utilization: number; resets_at: string | null }
+  /**
+   * The 5-hour (session) window, or null when the plan has no such limit —
+   * Anthropic dropped it from many plans in late 2026, and `/api/oauth/usage`
+   * then sends `five_hour: null` (the `limits[]` array carries no `session`
+   * row and `/v1/messages` responses carry no `-5h-*` headers). Null means
+   * "no window", not "unknown": the UI shows no 5h bar for such an account.
+   */
+  five_hour: UsageWindow | null
+  /** The 7-day (weekly) window; null when the plan reports none. */
+  seven_day: UsageWindow | null
   extra_usage?: {
     is_enabled: boolean
     utilization: number
