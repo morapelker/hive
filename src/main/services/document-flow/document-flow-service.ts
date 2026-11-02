@@ -1599,21 +1599,25 @@ export class DocumentFlowService {
    * in), so no ticket is left unmergeable.
    */
   private async extendItemInstances(run: DocumentRun, member: DocumentRunMember): Promise<void> {
-    const items = this.db.getDocumentRunItems(run.id).filter(
-      (item) =>
-        item.selected &&
-        item.connection_id &&
-        item.members &&
-        !isTerminalItemStatus(item.status) &&
-        item.status !== 'launching' &&
-        !item.members.some((own) => own.project_id === member.project_id)
-    )
+    const items = this.db
+      .getDocumentRunItems(run.id)
+      .filter(
+        (item) =>
+          item.selected &&
+          item.connection_id &&
+          item.members &&
+          !isTerminalItemStatus(item.status) &&
+          item.status !== 'launching' &&
+          !item.members.some((own) => own.project_id === member.project_id)
+      )
     for (const item of items) {
       const connectionId = item.connection_id as string
       try {
         const tip = await this.branchSha(member.project_path, member.integration_branch)
         if (!tip) {
-          throw new Error(`Branch ${member.integration_branch} was not found in ${member.project_name}.`)
+          throw new Error(
+            `Branch ${member.integration_branch} was not found in ${member.project_name}.`
+          )
         }
         const created = await this.deps.createWorktreeFromBranch({
           projectId: member.project_id,
@@ -1825,12 +1829,14 @@ export class DocumentFlowService {
       this.log(updated, 'run_ticket_created', 'The run got its ticket on the board')
       // A new run's ticket goes to the top of To Do, where the user looks for what they just made.
       if (column === 'todo') {
-        await this.deps.moveTicket(updated.project_id, ticket.id, column).catch((error: unknown) => {
-          log.warn('Could not move the ticket of a document run to the top of To Do', {
-            runId: updated.id,
-            error: describeError(error)
+        await this.deps
+          .moveTicket(updated.project_id, ticket.id, column)
+          .catch((error: unknown) => {
+            log.warn('Could not move the ticket of a document run to the top of To Do', {
+              runId: updated.id,
+              error: describeError(error)
+            })
           })
-        })
       }
       this.linkChildTickets(updated)
       return updated
@@ -1857,7 +1863,11 @@ export class DocumentFlowService {
     }
     if (ticket.column !== column) {
       await this.deps.moveTicket(run.project_id, ticketId, column)
-      this.log(run, 'run_ticket_moved', `The run's ticket moved to ${RUN_TICKET_COLUMN_NAMES[column]}`)
+      this.log(
+        run,
+        'run_ticket_moved',
+        `The run's ticket moved to ${RUN_TICKET_COLUMN_NAMES[column]}`
+      )
     }
     return true
   }
@@ -2373,16 +2383,18 @@ export class DocumentFlowService {
           throw new Error(`${member.project_name}: ${describeError(error)}`)
         }
       }
-      const members = checks.map(({ member, check }): DocumentMergeCheckMember => ({
-        project_id: member.project_id,
-        project_name: member.project_name,
-        symlink_name: member.symlink_name,
-        integrationBranch: member.integration_branch,
-        integrationHead: check.integrationHead,
-        state: check.state,
-        conflictedFiles: check.conflictedFiles,
-        commitsAhead: check.commitsAhead
-      }))
+      const members = checks.map(
+        ({ member, check }): DocumentMergeCheckMember => ({
+          project_id: member.project_id,
+          project_name: member.project_name,
+          symlink_name: member.symlink_name,
+          integrationBranch: member.integration_branch,
+          integrationHead: check.integrationHead,
+          state: check.state,
+          conflictedFiles: check.conflictedFiles,
+          commitsAhead: check.commitsAhead
+        })
+      )
       const conflicted = checks.some(({ check }) => check.state === 'conflict')
       // Merged already as a whole: every member either has the merge or had nothing to merge.
       const alreadyMerged =
@@ -3787,7 +3799,8 @@ export class DocumentFlowService {
         }
       ]
     })
-    if (contexts.length === 0) throw new Error(`${item.key} has no worktree in any member to merge.`)
+    if (contexts.length === 0)
+      throw new Error(`${item.key} has no worktree in any member to merge.`)
     return contexts
   }
 

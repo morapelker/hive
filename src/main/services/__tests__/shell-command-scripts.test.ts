@@ -15,19 +15,21 @@ function sha256(text: string): string {
  * The two shell constants are byte-exact copies of the scripts that were measured
  * against zsh, bash 3.2, bash 5, sh, ksh and dash. Any change (even whitespace) must
  * be re-measured, so their hashes are pinned here. Do not relax these tests.
+ * (Re-pinned once for Hive: the `[hive]` run markers and HIVE_SHELL_* variable names replaced
+ * their Tedooo-named originals; the shell logic is unchanged.)
  */
 describe('shell-command-scripts', () => {
   it('SHELL_COMMAND_WRAPPER is the measured wrapper, byte for byte', () => {
-    expect(Buffer.byteLength(SHELL_COMMAND_WRAPPER, 'utf8')).toBe(1412)
+    expect(Buffer.byteLength(SHELL_COMMAND_WRAPPER, 'utf8')).toBe(1402)
     expect(sha256(SHELL_COMMAND_WRAPPER)).toBe(
-      'a4537c6d6135f38a09979ea15673544af99d1bc0b3089f3bace5e203ed690a8b'
+      '68d0a19d9466f8c22a13d694450035db702796951816a63813ef71771bdb0fd8'
     )
   })
 
   it('DETACHED_HOST_SCRIPT is the measured host, byte for byte', () => {
-    expect(Buffer.byteLength(DETACHED_HOST_SCRIPT, 'utf8')).toBe(1586)
+    expect(Buffer.byteLength(DETACHED_HOST_SCRIPT, 'utf8')).toBe(1574)
     expect(sha256(DETACHED_HOST_SCRIPT)).toBe(
-      'e559a2e27f66ad1830cacec82c2a6b92d4c205db424a954f8410cbd112a5303e'
+      '21ef9644a08dc58fd1753a4cc7822fc08b0fd412dcb0106a2a4dd431516fe335'
     )
   })
 

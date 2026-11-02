@@ -513,7 +513,6 @@ const requestDesktopCommand = <A = unknown>(
     | UpdateMenuStatePayload
     | SetKeepAwakePayload
     | SetSessionQueuedStatePayload
-
     | ShowNotificationPayload
 ): Promise<A> => {
   const send = process.send
