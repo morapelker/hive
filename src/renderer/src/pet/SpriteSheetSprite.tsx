@@ -11,7 +11,12 @@ import {
   sparkleKeyframes
 } from './spriteSheet'
 
-const SPARKLE_PATH = 'M0-5 1.5-1.5 5 0 1.5 1.5 0 5-1.5 1.5-5 0-1.5-1.5Z'
+/** Sparkle outlines in a 10-unit box centred on the origin. */
+const SPARKLE_PATHS = {
+  star: 'M0-5 1.5-1.5 5 0 1.5 1.5 0 5-1.5 1.5-5 0-1.5-1.5Z',
+  glint: 'M0-5Q.833-.833 5 0Q.833.833 0 5Q-.833.833-5 0Q-.833-.833 0-5'
+} as const
+const SPARKLE_SIZE = 0.025
 
 function PawEmblem({ color }: { color: string }): React.JSX.Element {
   return (
@@ -54,10 +59,14 @@ export function SpriteSheetSprite({
   const [loadedSrc, setLoadedSrc] = useState<string | null>(null)
 
   const badge = sheet.badge
-  const anchors = badge?.anchors[variantIndex] ?? null
-  const anchorsKey = JSON.stringify(anchors)
   const showNumber = badge !== undefined && count >= badge.minSessions
+  // Without an emblem there is nothing to show below the count threshold, so the badge is left out.
+  const anchors =
+    badge && (showNumber || badge.emblem) ? (badge.anchors[variantIndex] ?? null) : null
+  const anchorsKey = JSON.stringify(anchors)
   const sparkles = sheet.sparkles && count >= sheet.sparkles.minSessions ? sheet.sparkles : null
+  const sparkleColor = sparkles?.variantColors?.[variantIndex] ?? sparkles?.color
+  const sparkleSize = sheet.sparkles?.size ?? SPARKLE_SIZE
   const inset = `${(sheet.inset ?? 0) * 100}%`
   const { frames, columns, rows, cycleMs } = sheet
   const cellSize = badge?.cellSize ?? DESIGN_BOX
@@ -74,7 +83,7 @@ export function SpriteSheetSprite({
       animations.push(badgeLayer.animate(badgeKeyframes(anchors, frames, cellSize), timing))
     }
     root.querySelectorAll<HTMLElement>('.pet-sheet-sparkle').forEach((sparkle, index) => {
-      animations.push(sparkle.animate(sparkleKeyframes(index), timing))
+      animations.push(sparkle.animate(sparkleKeyframes(index, sparkles?.opacity), timing))
     })
 
     // A new outfit joins the run mid-stride instead of snapping back to the first pose.
@@ -110,7 +119,8 @@ export function SpriteSheetSprite({
         {
           '--pet-sheet-inset': inset,
           '--pet-sheet-columns': columns,
-          '--pet-sheet-rows': rows
+          '--pet-sheet-rows': rows,
+          '--pet-sheet-sparkle-size': `${sparkleSize * 100}%`
         } as React.CSSProperties
       }
       data-testid={`pet-sheet-${state}`}
@@ -151,30 +161,34 @@ export function SpriteSheetSprite({
                     dominantBaseline="central"
                     fill={badge.color}
                     fontFamily={badge.fontFamily}
-                    fontWeight={700}
+                    fontWeight={badge.fontWeight ?? 700}
                     fontSize={badgeFontSize(badge, count)}
                     data-testid="pet-sheet-count"
                   >
                     {count}
                   </text>
                 ) : (
-                  <PawEmblem color={badge.emblemColor} />
+                  <PawEmblem color={badge.emblemColor ?? badge.color} />
                 )}
               </g>
             </svg>
           </span>
         )}
-        {sparkles?.positions.map(([x, y], index) => (
-          <span
-            key={index}
-            className="pet-sheet-sparkle"
-            style={{ left: `${(x - 5) / 4}%`, top: `${(y - 5) / 4}%` }}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="-5 -5 10 10">
-              <path d={SPARKLE_PATH} fill={sparkles.color} />
-            </svg>
-          </span>
-        ))}
+        {sparkles?.positions.map(([x, y], index) => {
+          // Positions are sparkle centres; the box is offset by half a sparkle, in design units.
+          const half = (sparkleSize * DESIGN_BOX) / 2
+          return (
+            <span
+              key={index}
+              className="pet-sheet-sparkle"
+              style={{ left: `${(x - half) / 4}%`, top: `${(y - half) / 4}%` }}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="-5 -5 10 10">
+                <path d={SPARKLE_PATHS[sparkles.shape ?? 'star']} fill={sparkleColor} />
+              </svg>
+            </span>
+          )
+        })}
       </span>
     </span>
   )

@@ -82,14 +82,15 @@ describe('pet Lottie rendering', () => {
     expect(pet.lottieScale?.working).toBe(1.55)
   })
 
-  it('resolves static and working-state Lottie assets for the French bulldog pet', () => {
+  it('resolves the static portrait and sprite-sheet atlases for the French bulldog pet', () => {
     const pet = getPet('french-bulldog')
 
     expect(pet.name).toBe('Shiba the Frenchie')
     expect(pet.resolvedAssets.idle).toContain('french-bulldog')
     expect(pet.resolvedAssets.permission).toContain('french-bulldog')
-    expect(pet.resolvedLottieAssets?.working).toContain('french-bulldog-run')
-    expect(pet.lottieScale?.working).toBe(1.45)
+    expect(pet.resolvedLottieAssets).toBeUndefined()
+    expect(pet.lottieScale).toBeUndefined()
+    expect(pet.resolvedWorkingSpriteSheetVariants?.[0]).toContain('french-bulldog-run-1')
   })
 
   it('resolves static and working-state Lottie assets for the dachshund pet', () => {

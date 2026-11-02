@@ -1,11 +1,11 @@
 .gallery {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
-.pug-artboard {
+.sheet-artboard {
   padding: 12px;
   background: #f0eee6;
 }
-.pug-card-sprite {
+.sheet-card-sprite {
   position: relative;
   display: block;
   width: 100%;
@@ -13,16 +13,16 @@
   aspect-ratio: 1;
   filter: none;
 }
-.pug-card-sprite > img {
+.sheet-card-sprite > img {
   width: 100%;
   height: 100%;
   object-fit: contain;
   display: block;
 }
-body[data-backdrop='dark'] .pug-artboard {
+body[data-backdrop='dark'] .sheet-artboard {
   background: #262c30;
 }
-body[data-backdrop='grid'] .pug-artboard {
+body[data-backdrop='grid'] .sheet-artboard {
   background: repeating-conic-gradient(#e9ece5 0% 25%, #fff 0% 50%) 0 0 / 16px 16px;
 }
 @media (max-width: 1000px) {

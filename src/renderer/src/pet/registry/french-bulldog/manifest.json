@@ -1,7 +1,7 @@
 {
   "id": "french-bulldog",
   "name": "Shiba the Frenchie",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "author": "Hive",
   "assets": {
     "idle": "assets/french-bulldog.png",
@@ -10,48 +10,146 @@
     "permission": "assets/french-bulldog.png",
     "plan_ready": "assets/french-bulldog.png"
   },
-  "lottieAssets": {
-    "working": "assets/french-bulldog-run.lottie"
-  },
-  "lottieScale": {
-    "working": 1.45
-  },
-  "imageScale": {
-    "idle": 1,
-    "working": 1,
-    "question": 1,
-    "permission": 1,
-    "plan_ready": 1
+  "workingSpriteSheet": {
+    "variants": [
+      "assets/french-bulldog-run-1.webp",
+      "assets/french-bulldog-run-2.webp",
+      "assets/french-bulldog-run-3.webp",
+      "assets/french-bulldog-run-4.webp",
+      "assets/french-bulldog-run-4.webp",
+      "assets/french-bulldog-run-10.webp",
+      "assets/french-bulldog-run-15.webp",
+      "assets/french-bulldog-run-20.webp"
+    ],
+    "variantSessions": [1, 2, 3, 4, 5, 10, 15, 20],
+    "frames": 24,
+    "columns": 6,
+    "rows": 4,
+    "cycleMs": 800,
+    "badge": {
+      "minSessions": 5,
+      "cellSize": 400,
+      "fontSize": 25,
+      "fullSizeDigits": 2.32,
+      "fontFamily": "Georgia,serif",
+      "fontWeight": 600,
+      "color": "#795139",
+      "rotate": -7.45,
+      "anchors": [
+        null,
+        null,
+        null,
+        [
+          [109.7, 226.5],
+          [110.5, 243.3],
+          [111, 261.6],
+          [111.3, 252],
+          [113.8, 237.1],
+          [112, 242.8],
+          [110.4, 246.7],
+          [123, 253.1]
+        ],
+        [
+          [109.7, 226.5],
+          [110.5, 243.3],
+          [111, 261.6],
+          [111.3, 252],
+          [113.8, 237.1],
+          [112, 242.8],
+          [110.4, 246.7],
+          [123, 253.1]
+        ],
+        [
+          [112, 226.3],
+          [112.6, 244.4],
+          [115.1, 261.3],
+          [113.6, 251],
+          [114.6, 239],
+          [113.4, 245],
+          [112.2, 247.3],
+          [124.5, 253.1]
+        ],
+        [
+          [113.6, 226.1],
+          [114.7, 242],
+          [115.8, 260.4],
+          [117, 250.8],
+          [118.5, 237.3],
+          [116.3, 244.1],
+          [115.5, 246.2],
+          [125.3, 251.9]
+        ],
+        [
+          [116.5, 231.6],
+          [120.4, 245.4],
+          [122, 263.3],
+          [119.7, 251.2],
+          [117.4, 236.3],
+          [114.6, 244.1],
+          [113.5, 247],
+          [121, 251.3]
+        ]
+      ]
+    },
+    "sparkles": {
+      "minSessions": 5,
+      "color": "#cf9d4e",
+      "variantColors": [null, null, null, null, null, null, null, "#a9cbd6"],
+      "positions": [
+        [40, 120],
+        [355, 100],
+        [340, 350]
+      ],
+      "shape": "glint",
+      "size": 0.03,
+      "opacity": [0.45, 1]
+    }
   },
   "animations": {
     "idle": {
       "type": "static",
       "transform": "none",
-      "overlay": { "kind": "none" }
+      "overlay": {
+        "kind": "none"
+      }
     },
     "working": {
       "type": "loop",
-      "durationMs": 1800,
+      "durationMs": 800,
       "transform": "none",
-      "overlay": { "kind": "none" }
+      "overlay": {
+        "kind": "none"
+      }
     },
     "question": {
       "type": "loop",
       "durationMs": 1200,
       "transform": "bounce",
-      "overlay": { "kind": "bubble", "symbol": "?", "tint": "#3b82f6" }
+      "overlay": {
+        "kind": "bubble",
+        "symbol": "?",
+        "tint": "#3b82f6"
+      }
     },
     "permission": {
       "type": "loop",
       "durationMs": 800,
       "transform": "bounce",
-      "overlay": { "kind": "bubble", "symbol": "!", "tint": "#ef4444" }
+      "overlay": {
+        "kind": "bubble",
+        "symbol": "!",
+        "tint": "#ef4444"
+      }
     },
     "plan_ready": {
       "type": "loop",
       "durationMs": 1600,
       "transform": "pulse",
-      "overlay": { "kind": "glow", "symbol": "✓", "tint": "#22c55e" }
+      "overlay": {
+        "kind": "glow",
+        "symbol": "✓",
+        "tint": "#22c55e"
+      }
     }
   },
   "defaultSize": "M"

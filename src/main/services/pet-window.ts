@@ -86,12 +86,6 @@ const FRENCH_BULLDOG_MANIFEST: PetManifest = {
     permission: 'assets/french-bulldog.png',
     plan_ready: 'assets/french-bulldog.png'
   },
-  lottieAssets: {
-    working: 'assets/french-bulldog-run.lottie'
-  },
-  lottieScale: {
-    working: 1.45
-  },
   defaultSize: 'M'
 }
 

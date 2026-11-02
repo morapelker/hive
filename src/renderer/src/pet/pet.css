@@ -136,8 +136,8 @@ button {
 
 .pet-sheet-sparkle {
   position: absolute;
-  width: 2.5%;
-  height: 2.5%;
+  width: var(--pet-sheet-sparkle-size, 2.5%);
+  height: var(--pet-sheet-sparkle-size, 2.5%);
   will-change: opacity;
 }
 

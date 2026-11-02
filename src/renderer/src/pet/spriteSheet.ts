@@ -53,6 +53,10 @@ export function badgeKeyframes(anchors: number[][], frames: number, cellSize: nu
   })
 }
 
-export function sparkleKeyframes(index: number): PropertyIndexedKeyframes {
-  return { opacity: index % 2 ? [0.1, 0.8, 0.1] : [0.8, 0.1, 0.8] }
+/** Neighbouring sparkles twinkle in counterphase between the dim and bright opacities. */
+export function sparkleKeyframes(
+  index: number,
+  [dim, bright]: [number, number] = [0.1, 0.8]
+): PropertyIndexedKeyframes {
+  return { opacity: index % 2 ? [dim, bright, dim] : [bright, dim, bright] }
 }

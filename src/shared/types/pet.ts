@@ -83,11 +83,14 @@ export interface PetSpriteSheet {
     fontSize: number
     fullSizeDigits: number
     fontFamily: string
+    /** CSS font weight of the count; defaults to 700. */
+    fontWeight?: number
     color: string
     /** Badge rotation in degrees. */
     rotate: number
-    emblem: 'paw'
-    emblemColor: string
+    /** Shown below `minSessions` on outfits that have anchors; without one the badge stays blank. */
+    emblem?: 'paw'
+    emblemColor?: string
     /** Badge center per variant, sampled at evenly spaced key poses; null for outfits without a badge. */
     anchors: Array<number[][] | null>
   }
@@ -95,7 +98,16 @@ export interface PetSpriteSheet {
   sparkles?: {
     minSessions: number
     color: string
+    /** Color per variant, overriding `color`; null or a missing entry keeps the default. */
+    variantColors?: Array<string | null>
+    /** Sparkle centers. */
     positions: number[][]
+    /** `star` has straight edges (default); `glint` has concave, curved sides. */
+    shape?: 'star' | 'glint'
+    /** Width and height of one sparkle as a fraction of the sprite box; defaults to 0.025. */
+    size?: number
+    /** Dimmest and brightest opacity of the twinkle; defaults to 0.1 and 0.8. */
+    opacity?: [number, number]
   }
 }
 
