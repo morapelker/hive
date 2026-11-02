@@ -201,19 +201,15 @@ describe('useAccountScheduleStore auto-switch', () => {
     useUsageStore.setState({ savedAccounts: { anthropic: refreshedAccounts, openai: [] } })
     useAccountScheduleStore.getState().setAccountAutoSwitchExcluded('anthropic', 'best@x.com', true)
     useAccountScheduleStore.getState().setAutoSwitch('anthropic', 90)
-    const events: AccountSwitchEvent[] = []
-    subscribeAccountSwitches((event) => events.push(event))
 
     await useAccountScheduleStore.getState().checkSchedules()
 
     expect(switchCalls()).toHaveLength(0)
-    expect(events).toHaveLength(0)
     expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('no other account below 90%'))
     // Still armed, backed off until the retry delay.
     expect(useAccountScheduleStore.getState().autoSwitch.anthropic?.notBefore).toBeGreaterThan(
       Date.now()
     )
-    resetAccountSwitchListenersForTests()
   })
 
   it('prefers the comfortable account whose 7-day window resets soonest over the emptiest one', async () => {

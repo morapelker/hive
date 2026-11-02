@@ -3,8 +3,6 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { SavedTicketLabel, SavedTicketLabelMutationResult } from '../../../../main/db'
 import { makeEventBus } from '../../../events/event-bus'
-import { makeStaticRootsResolver } from '../../../remote-access/path-guard'
-import type { AuthPrincipal } from '../../request-context'
 import { makeRpcRouter, type RpcContext } from '../../router'
 import { makeTicketLabelsRpcHandlers, type TicketLabelsRpcService } from '../ticket-labels'
 
@@ -46,7 +44,7 @@ function run(service: TicketLabelsRpcService, method: string, params: unknown): 
 
 function makeRouter(service: TicketLabelsRpcService) {
   return makeRpcRouter(
-    { eventBus: makeEventBus(), resolveDeviceRoots: makeStaticRootsResolver([]) },
+    { eventBus: makeEventBus() },
     makeTicketLabelsRpcHandlers(service)
   )
 }
@@ -262,47 +260,5 @@ describe('ticketLabels through the RPC router', () => {
       })
     )
     expect(updated).toEqual({ id: '2', ok: false, error: { code: 'INTERNAL_ERROR', message } })
-  })
-
-  it('serves the desktop and refuses every device principal (desktop-only catalog)', async () => {
-    const list = vi.fn(() => Effect.succeed([label]))
-    const router = makeRouter(makeService({ list }))
-
-    const desktop = await Effect.runPromise(
-      router.handle(
-        { id: 'd', method: 'ticketLabels.list', params: {} },
-        {
-          principal: { kind: 'desktop' }
-        }
-      )
-    )
-    expect(desktop).toEqual({ id: 'd', ok: true, value: [label] })
-
-    const devices: AuthPrincipal[] = [
-      { kind: 'device', deviceId: 'd1', name: 'phone', scope: 'viewer' },
-      { kind: 'device', deviceId: 'd2', name: 'phone', scope: 'operator' },
-      { kind: 'device', deviceId: 'd3', name: 'Other Mac', scope: 'peer' }
-    ]
-    const methods = [
-      'ticketLabels.list',
-      'ticketLabels.create',
-      'ticketLabels.update',
-      'ticketLabels.reorder',
-      'ticketLabels.delete',
-      'ticketLabels.usage'
-    ]
-    for (const principal of devices) {
-      for (const method of methods) {
-        const response = await Effect.runPromise(
-          router.handle({ id: method, method, params: {} }, { principal })
-        )
-        expect(response).toEqual({
-          id: method,
-          ok: false,
-          error: { code: 'FORBIDDEN', message: `Not available from a remote device: ${method}` }
-        })
-      }
-    }
-    expect(list).toHaveBeenCalledTimes(1)
   })
 })

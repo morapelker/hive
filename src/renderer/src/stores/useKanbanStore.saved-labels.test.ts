@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { KanbanTicket, TicketLabel } from '../../../main/db/types'
 
 import { resetRendererRpcClientForTests, setRendererRpcClient } from '@/api/rpc-client'
-import { reloadBoard } from '@/hooks/useDbChangeSync'
+import { reloadBoard } from '@/lib/board-reload'
 import { useKanbanStore } from './useKanbanStore'
 import { usePinnedStore } from './usePinnedStore'
 import { useTicketLabelsStore } from './useTicketLabelsStore'
@@ -32,10 +32,6 @@ function makeTicket(overrides: Partial<KanbanTicket> = {}): KanbanTicket {
     external_url: null,
     github_pr_number: null,
     github_pr_url: null,
-    sync_task_id: null,
-    sync_task_title: null,
-    sync_task_status: null,
-    sync_task_org_id: null,
     mark: null,
     total_tokens: 0,
     pending_launch_config: null,

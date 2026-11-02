@@ -105,6 +105,10 @@ const TELEPORT_SETTINGS = { url: 'https://remote.example.com', bootstrapToken: '
 const baseTicket: KanbanTicket = {
   id: 'ticket-1',
   project_id: 'project-1',
+  ticket_prefix: null,
+  ticket_number: null,
+  parent_ticket_id: null,
+  parent_ticket_key: null,
   title: 'Launch on remote',
   description: 'Make ticket launch on a remote machine',
   column: 'todo',

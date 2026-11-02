@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PR_STACK_RIGHT_PX } from '@/components/pr/PRNotificationStack'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { useLayoutStore } from '@/stores/useLayoutStore'
-import { useTedoooAgentStore } from '@/stores/useTedoooAgentStore'
 import { USER_INTERRUPT_DETAIL, WAITING_PREFIX } from '@shared/document-flow/planning'
 import type { DocumentRunDetail } from '@shared/types/document-flow'
 import { DocumentRunsIndicator } from './DocumentRunsIndicator'
@@ -15,7 +14,6 @@ vi.mock('@/api/document-flow-api', () => ({ documentFlowApi: api }))
 
 const initialFlowState = useDocumentFlowStore.getState()
 const initialLayoutState = useLayoutStore.getState()
-const initialAgentState = useTedoooAgentStore.getState()
 
 function seedRuns(...details: DocumentRunDetail[]): void {
   useDocumentFlowStore.setState({
@@ -28,7 +26,6 @@ beforeEach(() => {
     async (runId: string) => useDocumentFlowStore.getState().runsById[runId] ?? null
   )
   useLayoutStore.setState({ rightSidebarCollapsed: true })
-  useTedoooAgentStore.setState({ isOpen: false })
 })
 
 afterEach(async () => {
@@ -37,7 +34,6 @@ afterEach(async () => {
   vi.resetAllMocks()
   useDocumentFlowStore.setState(initialFlowState, true)
   useLayoutStore.setState(initialLayoutState, true)
-  useTedoooAgentStore.setState(initialAgentState, true)
 })
 
 describe('DocumentRunsIndicator', () => {
@@ -172,19 +168,17 @@ describe('DocumentRunsIndicator', () => {
     expect(screen.queryByTestId('docflow-runs-indicator')).toBeNull()
   })
 
-  it('stays clear of the right sidebar and the open agent panel', () => {
+  it('stays clear of the right sidebar', () => {
     seedRuns(makeDetail({ id: 'run-live', status: 'running' }, [{ key: 'A1', status: 'running' }]))
     useLayoutStore.setState({ rightSidebarCollapsed: false, rightSidebarWidth: 300 })
-    useTedoooAgentStore.setState({ isOpen: true, isMinimized: false, width: 400 })
     render(<DocumentRunsIndicator />)
 
     expect(screen.getByTestId('docflow-runs-indicator')).toHaveStyle({
-      right: `${PR_STACK_RIGHT_PX + 400 + 300}px`
+      right: `${PR_STACK_RIGHT_PX + 300}px`
     })
 
     act(() => {
       useLayoutStore.setState({ rightSidebarCollapsed: true })
-      useTedoooAgentStore.setState({ isMinimized: true })
     })
     expect(screen.getByTestId('docflow-runs-indicator')).toHaveStyle({
       right: `${PR_STACK_RIGHT_PX}px`

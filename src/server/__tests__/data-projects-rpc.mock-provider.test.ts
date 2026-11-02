@@ -6,15 +6,10 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { Cause, Effect, Exit, Option } from 'effect'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { DesktopCommandRequest } from '../../shared/desktop-command'
 import type { DataHistoryEntry, DataSavedQuery } from '../../shared/data-projects/types'
-import {
-  isChannelAllowedForDevice,
-  isMethodAllowedForScope
-} from '../../shared/remote-access/policy'
 import { RpcRouteError } from '../../shared/rpc/errors'
 import type { RpcResponse } from '../../shared/rpc/protocol'
 import {
@@ -34,7 +29,7 @@ import {
   toDataRpcError,
   type DataProjectsRpcDeps
 } from '../rpc/domains/data-projects'
-import { runWithRpcRequestContext, type AuthPrincipal } from '../rpc/request-context'
+import type { AuthPrincipal } from '../rpc/request-context'
 import { handleRpcWithRequestContext, makeRpcRouter } from '../rpc/router'
 
 // ---- fakes ----------------------------------------------------------------------------------
@@ -763,56 +758,6 @@ describe('dataProjects RPC: desktop only', () => {
     expect(methods.length).toBeGreaterThan(40)
     for (const method of methods) expect(handlers.has(method), method).toBe(true)
     expect([...handlers.keys()].sort()).toEqual([...new Set(methods)].sort())
-  })
-
-  it('refuses every method for a device principal and never touches the service', async () => {
-    const t = setup()
-    const device: AuthPrincipal = {
-      kind: 'device',
-      deviceId: 'phone',
-      name: 'Phone',
-      scope: 'operator'
-    }
-    for (const method of apiMethods()) {
-      const response = await t.call(method, {}, device)
-      expect(response.ok, method).toBe(false)
-      if (!response.ok) {
-        // The router's remote policy refuses first; the domain guard is the second line.
-        expect(['DATA_FORBIDDEN', 'REMOTE_FORBIDDEN', 'FORBIDDEN']).toContain(response.error.code)
-      }
-    }
-    expect(t.loadEngine).not.toHaveBeenCalled()
-  })
-
-  it('refuses a device principal in the domain itself, even if a policy slipped', async () => {
-    const t = setup()
-    const handlers = makeDataProjectsRpcHandlers(t.service)
-    const device: AuthPrincipal = { kind: 'device', deviceId: 'd', name: 'n', scope: 'operator' }
-    // Straight to the handlers, bypassing the router's policy: only the domain guard is left.
-    for (const [method, handler] of handlers) {
-      const exit = await runWithRpcRequestContext({ clientId: 'c', principal: device }, () =>
-        Effect.runPromiseExit(handler({ id: 'x' }, { eventBus: makeEventBus() }))
-      )
-      expect(Exit.isFailure(exit), method).toBe(true)
-      if (Exit.isFailure(exit)) {
-        const failure = Cause.failureOption(exit.cause)
-        expect(Option.isSome(failure) && (failure.value as RpcRouteError).code, method).toBe(
-          'DATA_FORBIDDEN'
-        )
-      }
-    }
-    expect(t.loadEngine).not.toHaveBeenCalled()
-  })
-
-  it('is absent from the remote-access policy and channel allowlist', () => {
-    for (const method of apiMethods()) {
-      for (const scope of ['viewer', 'operator', 'peer'] as const) {
-        expect(isMethodAllowedForScope(method, scope), `${method} ${scope}`).toBe(false)
-      }
-    }
-    for (const channel of ['dataProjects:status', 'dataProjects:export', 'dataAssistant:event']) {
-      expect(isChannelAllowedForDevice(channel, 'operator')).toBe(false)
-    }
   })
 
   it('accepts context-less loopback calls (auth disabled) and desktop principals', async () => {

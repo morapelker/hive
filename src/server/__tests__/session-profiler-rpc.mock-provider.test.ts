@@ -4,7 +4,6 @@ import { describe, expect, it, vi } from 'vitest'
 import { makeDesktopCommandResult, type DesktopCommandRequest } from '../../shared/desktop-command'
 import type { SessionProfilerSnapshot } from '../../shared/types/session-profiler'
 import { makeEventBus } from '../events/event-bus'
-import { getRemoteMethodTier, isMethodAllowedForScope } from '../../shared/remote-access/policy'
 import {
   makeLiveSessionProfilerOpsRpcService,
   type SessionProfilerOpsRpcService
@@ -165,13 +164,5 @@ describe('session profiler ops RPC mocked provider', () => {
       ok: false,
       error: 'ps timed out'
     })
-  })
-
-  it('is not reachable from paired devices', () => {
-    for (const method of ['sessionProfilerOps.getSnapshot', 'sessionProfilerOps.kill']) {
-      expect(isMethodAllowedForScope(method, 'viewer')).toBe(false)
-      expect(isMethodAllowedForScope(method, 'operator')).toBe(false)
-      expect(getRemoteMethodTier(method)).toBeNull()
-    }
   })
 })

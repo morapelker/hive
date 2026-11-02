@@ -141,9 +141,9 @@ describe('moveKanbanTicketToProject cross-backend model field preservation', () 
 
   // A shell command's ticket names a command of its own project: the id means nothing elsewhere.
   it.each([
-    ['internal', 'markdown'],
-    ['markdown', 'internal']
-  ] as const)('refuses to move a shell command ticket from an %s to a %s project', async (from) => {
+    { from: 'internal' as const, to: 'markdown' as const },
+    { from: 'markdown' as const, to: 'internal' as const }
+  ])('refuses to move a shell command ticket from an $from to a $to project', async ({ from }) => {
     const source = from === 'internal' ? internalProject : markdownProject
     const target = from === 'internal' ? markdownProject : internalProject
     const backend = getKanbanBackendForProject(source.id)

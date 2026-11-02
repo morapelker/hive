@@ -7,17 +7,9 @@ import {
   DATA_CONSOLE_CHANNEL,
   type DataConsoleEvent
 } from '../../../../shared/data-projects/console-types'
-import {
-  getRemoteMethodTier,
-  isChannelAllowedForDevice,
-  isMethodAllowedForScope,
-  REMOTE_CHANNEL_ALLOWLIST,
-  type RemoteDeviceScope
-} from '../../../../shared/remote-access/policy'
 import type { ServerEvent } from '../../../../shared/rpc/protocol'
 import { DataConsoleLog } from '../../../../main/services/data-projects/console-log'
 import { makeEventBus } from '../../../events/event-bus'
-import { runWithRpcRequestContext } from '../../request-context'
 import type { RpcContext } from '../../router'
 import {
   makeDataConsoleRpcHandlers,
@@ -26,7 +18,6 @@ import {
 } from '../data-console'
 
 const context = { eventBus: null } as unknown as RpcContext
-const SCOPES: RemoteDeviceScope[] = ['viewer', 'operator', 'peer']
 
 function fakeService(): DataConsoleRpcService {
   return {
@@ -73,41 +64,6 @@ describe('makeDataConsoleRpcHandlers', () => {
     expect(service.clear).toHaveBeenCalledWith('dp-1')
   })
 
-  it('refuses device principals in the handlers themselves', async () => {
-    const service = fakeService()
-    const handlers = makeDataConsoleRpcHandlers(service)
-    for (const method of handlers.keys()) {
-      const exit = await runWithRpcRequestContext(
-        {
-          clientId: 'phone',
-          principal: { kind: 'device', deviceId: 'd1', name: 'Phone', scope: 'operator' as never }
-        },
-        () => Effect.runPromiseExit(handlers.get(method)!({ id: 'dp-1' }, context))
-      )
-      expect(Exit.isFailure(exit)).toBe(true)
-      expect(JSON.stringify(exit)).toContain('DATA_FORBIDDEN')
-    }
-    expect(service.list).not.toHaveBeenCalled()
-    expect(service.clear).not.toHaveBeenCalled()
-    // Desktop principals are fine.
-    await runWithRpcRequestContext({ clientId: 'r', principal: { kind: 'desktop' } }, () =>
-      Effect.runPromise(handlers.get('dataProjects.console.list')!({ id: 'dp-1' }, context))
-    )
-    expect(service.list).toHaveBeenCalledTimes(1)
-  })
-
-  it('is never reachable from a paired device: no policy entry, no channel', () => {
-    for (const method of makeDataConsoleRpcHandlers(fakeService()).keys()) {
-      expect(method.startsWith('dataProjects.')).toBe(true)
-      expect(getRemoteMethodTier(method)).toBeNull()
-      for (const scope of SCOPES) expect(isMethodAllowedForScope(method, scope)).toBe(false)
-    }
-    expect(DATA_CONSOLE_CHANNEL.startsWith('dataProjects:')).toBe(true)
-    expect(isChannelAllowedForDevice(DATA_CONSOLE_CHANNEL)).toBe(false)
-    for (const scope of SCOPES)
-      expect(isChannelAllowedForDevice(DATA_CONSOLE_CHANNEL, scope)).toBe(false)
-    expect(REMOTE_CHANNEL_ALLOWLIST.some((c) => c.startsWith('dataProjects'))).toBe(false)
-  })
 })
 
 describe('makeLiveDataConsoleRpcService', () => {

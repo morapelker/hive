@@ -10,7 +10,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { KanbanTicket, KanbanTicketUpdate } from '../../../../main/db/types'
-import type { RemoteTicket } from '@/lib/peers/contract'
 import type { SavedTicketLabel, TicketLabel } from '@shared/lib/ticket-labels'
 
 // Opening the card's Radix context menu takes 10–30 s under jsdom (see KanbanTicketCard.peer)
@@ -61,10 +60,6 @@ function makeTicket(overrides: Partial<KanbanTicket> = {}): KanbanTicket {
     external_url: null,
     github_pr_number: null,
     github_pr_url: null,
-    sync_task_id: null,
-    sync_task_title: null,
-    sync_task_status: null,
-    sync_task_org_id: null,
     mark: null,
     total_tokens: 0,
     pending_launch_config: null,
@@ -99,7 +94,7 @@ const until: TicketLabel = { id: 'once-1', kind: 'once', name: 'Waiting until 21
 
 const card = (): HTMLElement => screen.getByTestId('kanban-ticket-ticket-1')
 
-function renderCard(ticket: KanbanTicket | RemoteTicket): void {
+function renderCard(ticket: KanbanTicket): void {
   render(
     <TooltipProvider>
       <KanbanTicketCard ticket={ticket} />
@@ -144,24 +139,6 @@ describe('label chips on the card', () => {
   it('renders no row for a ticket without labels', () => {
     renderCard(makeTicket({ labels: [] }))
     expect(within(card()).queryByTestId('ticket-labels')).toBeNull()
-  })
-
-  it("draws another Mac's labels, and copes with an older build's row that has none", () => {
-    const remote = {
-      desktopId: 'desk-b',
-      desktopName: 'Studio Mac',
-      remoteProjectId: 'peer-proj-1',
-      localProjectId: 'project-1'
-    }
-    const fromOlderBuild: Partial<KanbanTicket> = makeTicket()
-    delete fromOlderBuild.labels
-    renderCard({ ...(fromOlderBuild as KanbanTicket), remote })
-    expect(screen.getByTestId('ticket-peer-badge')).toBeInTheDocument()
-    expect(within(card()).queryByTestId('ticket-labels')).toBeNull()
-    cleanup()
-
-    renderCard({ ...makeTicket({ labels: [joy] }), remote })
-    expect(within(card()).getByTestId('ticket-labels')).toHaveTextContent('Waiting for Joy')
   })
 })
 

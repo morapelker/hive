@@ -15,7 +15,7 @@ import type {
   TicketLabel,
   Worktree
 } from '../../../../main/db'
-import type { BackupFile, BackupOpenResult, BackupProject } from '../../../../shared/types/backup'
+import type { BackupFile, BackupProject } from '../../../../shared/types/backup'
 import {
   makeBackupOpsRpcHandlers,
   makeBackupOpsRpcService,

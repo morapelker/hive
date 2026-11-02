@@ -19,7 +19,6 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { TicketLabel } from '@shared/lib/ticket-labels'
 import { resetRendererRpcClientForTests, setRendererRpcClient } from '@/api/rpc-client'
-import { setTedoooDevSessionForTests } from '@/api/tedooo/session-seam'
 import { buildPrompt, buildRemotePrompt } from '@/components/kanban/WorktreePickerModal'
 import { buildBoardPrompt } from '@/components/kanban/BoardAssistantView'
 import { TicketPickerModal, type TicketAttachmentData } from '@/components/kanban/TicketPickerModal'
@@ -28,8 +27,6 @@ import { buildTicketPrompt } from '@/lib/connection-project-launch'
 import { buildDisplayContent, buildMessageParts } from '@/lib/file-attachment-utils'
 import { DocumentFlowRunner } from '@/lib/document-flow/runner'
 import { advance, createWorld, TEST_NOW } from '@/lib/document-flow/runner-fakes'
-import { buildAppState } from '@/lib/tedooo-agent/app-state'
-import { runReadTool } from '@/lib/tedooo-agent/read-tools'
 import { useBoardChatStore, type BoardChatScope } from '@/stores/useBoardChatStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
@@ -86,10 +83,6 @@ function makeTicket(overrides: Partial<KanbanTicket> = {}): KanbanTicket {
     external_url: null,
     github_pr_number: null,
     github_pr_url: null,
-    sync_task_id: null,
-    sync_task_title: null,
-    sync_task_status: null,
-    sync_task_org_id: null,
     mark: null,
     total_tokens: 0,
     pending_launch_config: null,
@@ -189,7 +182,6 @@ beforeEach(() => {
       true
     )
   )
-  setTedoooDevSessionForTests(null)
   useProjectStore.setState({
     projects: [project(PROJECT_ID, 'shop'), project(OTHER_PROJECT_ID, 'rates')],
     selectedProjectId: PROJECT_ID
@@ -320,56 +312,7 @@ describe('board assistants', () => {
   })
 })
 
-// ── The Tedooo agent (desktop and phone) ──────────────────────────────
-
-describe('Tedooo agent', () => {
-  const call = (name: string, args: Record<string, unknown>) => ({
-    id: `call_${name}|fc_1`,
-    name,
-    arguments: args
-  })
-
-  it('get_board tool result (ticketView)', async () => {
-    await expectLabelBlind(async (variant) => {
-      useKanbanStore.setState({ tickets: boardTickets(variant) })
-      const result = await runReadTool(
-        call('get_board', {
-          project_id: PROJECT_ID,
-          column: null,
-          query: null,
-          include_archived: true,
-          limit: null
-        }),
-        new AbortController().signal
-      )
-      return JSON.stringify(result)
-    }, '"title":"Fix the cart badge"')
-  })
-
-  it('find_tickets tool result', async () => {
-    await expectLabelBlind(async (variant) => {
-      useKanbanStore.setState({ tickets: boardTickets(variant) })
-      const result = await runReadTool(
-        call('find_tickets', { query: 'checkout', project_id: PROJECT_ID }),
-        new AbortController().signal
-      )
-      return JSON.stringify(result)
-    }, '"title":"Ship the checkout"')
-  })
-
-  it('app_state snapshot (selected_ticket and project counts)', async () => {
-    await expectLabelBlind((variant) => {
-      useKanbanStore.setState({
-        tickets: boardTickets(variant),
-        selectedTicketId: 't1',
-        selectedTicketRef: { projectId: PROJECT_ID, ticketId: 't1' }
-      })
-      return JSON.stringify(buildAppState(new Date('2026-10-22T10:00:00Z')))
-    }, '"selected_ticket":{"id":"t1","title":"Ship the checkout"')
-  })
-})
-
-// ── A ticket attached to a session message ────────────────────────────
+// ── Ticket attachments ───────────────────────────────────────────────
 
 describe('ticket attachments', () => {
   /** What the ticket picker hands the composer for one picked ticket, through the real modal. */
