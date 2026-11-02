@@ -106,6 +106,7 @@ export function PetSprite({
     >
       <motion.span
         className={`pet-sprite pet-sprite-${state}`}
+        data-shadow={sheet && sheetSrc && sheet.shadow === false ? 'none' : undefined}
         style={
           { width: size, height: size, '--pet-image-scale': imageScale } as React.CSSProperties
         }

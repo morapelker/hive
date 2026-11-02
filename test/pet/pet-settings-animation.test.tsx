@@ -73,7 +73,8 @@ describe('pet animation settings', () => {
         'Jedi the Corgi',
         'Shiba the Frenchie',
         'Cooper the Dachshund',
-        'Twix the Pug'
+        'Twix the Pug',
+        'Udi the German Shepherd'
       ])
     )
   })

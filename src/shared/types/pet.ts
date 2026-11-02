@@ -73,6 +73,11 @@ export interface PetSpriteSheet {
   cycleMs: number
   /** Fraction of the sprite box left empty on each side, so decorations can sit on the edge. */
   inset?: number
+  /**
+   * Draw the overlay's drop shadow under the run cycle; defaults to true. False for a sprite that
+   * fills its box, where the shadow reads as a dark blob behind the paws on a light desktop.
+   */
+  shadow?: boolean
   /** A count badge that follows the fabric through the run cycle. */
   badge?: {
     /** Below this count the badge shows the emblem instead of the number. */

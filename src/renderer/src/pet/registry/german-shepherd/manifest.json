@@ -1,0 +1,161 @@
+{
+  "id": "german-shepherd",
+  "name": "Udi the German Shepherd",
+  "version": "1.0.0",
+  "author": "Hive",
+  "assets": {
+    "idle": "assets/german-shepherd.png",
+    "working": "assets/german-shepherd.png",
+    "question": "assets/german-shepherd.png",
+    "permission": "assets/german-shepherd.png",
+    "plan_ready": "assets/german-shepherd.png"
+  },
+  "workingSpriteSheet": {
+    "variants": [
+      "assets/german-shepherd-run-1.webp",
+      "assets/german-shepherd-run-1.webp",
+      "assets/german-shepherd-run-3.webp",
+      "assets/german-shepherd-run-4.webp",
+      "assets/german-shepherd-run-4.webp",
+      "assets/german-shepherd-run-10.webp",
+      "assets/german-shepherd-run-15.webp",
+      "assets/german-shepherd-run-20.webp"
+    ],
+    "variantSessions": [1, 2, 3, 4, 5, 10, 15, 20],
+    "frames": 64,
+    "columns": 8,
+    "rows": 8,
+    "cycleMs": 1000,
+    "inset": 0,
+    "shadow": false,
+    "badge": {
+      "minSessions": 5,
+      "cellSize": 448,
+      "fontSize": 30,
+      "fullSizeDigits": 2,
+      "fontFamily": "Georgia,serif",
+      "color": "#5b3523",
+      "rotate": -10,
+      "emblem": "paw",
+      "emblemColor": "#c9a24a",
+      "anchors": [
+        null,
+        null,
+        null,
+        [
+          [124.0, 271.9],
+          [111.4, 285.3],
+          [130.7, 278.6],
+          [125.6, 263.6],
+          [126.7, 267.0],
+          [117.6, 269.9],
+          [144.0, 274.9],
+          [135.9, 260.5]
+        ],
+        [
+          [124.0, 271.9],
+          [111.4, 285.3],
+          [130.7, 278.6],
+          [125.6, 263.6],
+          [126.7, 267.0],
+          [117.6, 269.9],
+          [144.0, 274.9],
+          [135.9, 260.5]
+        ],
+        [
+          [122.6, 270.3],
+          [113.8, 282.5],
+          [130.3, 275.9],
+          [125.3, 258.6],
+          [126.1, 265.6],
+          [117.6, 268.1],
+          [143.2, 274.1],
+          [132.6, 255.6]
+        ],
+        [
+          [123.7, 273.3],
+          [110.4, 281.6],
+          [129.6, 276.5],
+          [126.1, 260.8],
+          [126.1, 264.6],
+          [118.3, 268.0],
+          [142.5, 272.0],
+          [134.0, 256.2]
+        ],
+        [
+          [120.9, 270.6],
+          [111.1, 280.4],
+          [128.3, 273.1],
+          [124.3, 258.4],
+          [126.4, 260.1],
+          [115.9, 265.2],
+          [138.4, 268.3],
+          [132.9, 253.0]
+        ]
+      ]
+    },
+    "sparkles": {
+      "minSessions": 5,
+      "color": "#d7b268",
+      "positions": [
+        [48, 118],
+        [352, 96],
+        [70, 330]
+      ]
+    }
+  },
+  "animations": {
+    "idle": {
+      "type": "static",
+      "transform": "none",
+      "overlay": {
+        "kind": "none"
+      }
+    },
+    "working": {
+      "type": "loop",
+      "durationMs": 1000,
+      "transform": "none",
+      "overlay": {
+        "kind": "none"
+      }
+    },
+    "question": {
+      "type": "loop",
+      "durationMs": 1200,
+      "transform": "bounce",
+      "overlay": {
+        "kind": "bubble",
+        "symbol": "?",
+        "tint": "#3b82f6"
+      }
+    },
+    "permission": {
+      "type": "loop",
+      "durationMs": 800,
+      "transform": "bounce",
+      "overlay": {
+        "kind": "bubble",
+        "symbol": "!",
+        "tint": "#ef4444"
+      }
+    },
+    "plan_ready": {
+      "type": "loop",
+      "durationMs": 1600,
+      "transform": "pulse",
+      "overlay": {
+        "kind": "glow",
+        "symbol": "\u2713",
+        "tint": "#22c55e"
+      }
+    }
+  },
+  "defaultSize": "M",
+  "imageScale": {
+    "idle": 0.8,
+    "question": 0.8,
+    "permission": 0.8,
+    "plan_ready": 0.8
+  }
+}

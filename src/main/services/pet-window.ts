@@ -132,12 +132,28 @@ const PUG_MANIFEST: PetManifest = {
   defaultSize: 'M'
 }
 
+const GERMAN_SHEPHERD_MANIFEST: PetManifest = {
+  id: 'german-shepherd',
+  name: 'Udi the German Shepherd',
+  version: '1.0.0',
+  author: 'Hive',
+  assets: {
+    idle: 'assets/german-shepherd.png',
+    working: 'assets/german-shepherd.png',
+    question: 'assets/german-shepherd.png',
+    permission: 'assets/german-shepherd.png',
+    plan_ready: 'assets/german-shepherd.png'
+  },
+  defaultSize: 'M'
+}
+
 const PET_MANIFESTS: Record<string, PetManifest> = {
   bee: BEE_MANIFEST,
   corgi: CORGI_MANIFEST,
   'french-bulldog': FRENCH_BULLDOG_MANIFEST,
   dachshund: DACHSHUND_MANIFEST,
-  pug: PUG_MANIFEST
+  pug: PUG_MANIFEST,
+  'german-shepherd': GERMAN_SHEPHERD_MANIFEST
 }
 
 const PET_SIZE_PX: Record<PetSize, number> = {
