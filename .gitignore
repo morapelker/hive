@@ -72,6 +72,8 @@ scripts/*
 !scripts/crop-lottie.mjs
 !scripts/generate-corgi-variants.mjs
 !scripts/generate-corgi-digits.py
+!scripts/build-uv-pool-waker.mjs
+!scripts/install.sh
 
 .playwright-cli
 
