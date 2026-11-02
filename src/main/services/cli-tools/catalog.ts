@@ -1,7 +1,7 @@
 import type { CliToolId } from '@shared/types/cli-tools'
 
 /**
- * Everything Tedooo Code knows about each CLI tool, including the newest version it
+ * Everything Hive knows about each CLI tool, including the newest version it
  * will offer. The versions are deliberately embedded rather than fetched: bump them
  * here when a new release ships, and the Manage Skills dialog offers the update.
  */

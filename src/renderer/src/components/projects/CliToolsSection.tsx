@@ -192,7 +192,7 @@ function ToolRow({
           className="mt-1 text-xs text-muted-foreground"
           data-testid={`manage-skills-tool-${tool.id}-manual`}
         >
-          Tedooo Code can&apos;t {installLabel.toLowerCase()} this here. Run in a terminal:
+          Hive can&apos;t {installLabel.toLowerCase()} this here. Run in a terminal:
           <ManualCommand command={tool.manualInstallCommand} />
         </div>
       )}

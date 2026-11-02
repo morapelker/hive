@@ -1,6 +1,6 @@
 import type { ScriptOutputEvent } from './script'
 
-/** The CLI tools Tedooo Code knows how to detect, install and add skills for. */
+/** The CLI tools Hive knows how to detect, install and add skills for. */
 export type CliToolId = 'playwright-cli' | 'tcu'
 
 export const CLI_TOOL_IDS: readonly CliToolId[] = ['playwright-cli', 'tcu']
@@ -22,7 +22,7 @@ export type CliToolStatus = {
   description: string
   /** Directory name of the skill (the key Claude Code uses). */
   skillId: string
-  /** The newest version Tedooo Code knows about (embedded, not fetched). */
+  /** The newest version Hive knows about (embedded, not fetched). */
   latestVersion: string
   platformSupported: boolean
   binaryPath: string | null
@@ -30,9 +30,9 @@ export type CliToolStatus = {
   /** installedVersion >= latestVersion. False when not installed. */
   upToDate: boolean
   skill: CliToolSkillStatus
-  /** The command a user can run in a terminal when Tedooo Code can't install itself. */
+  /** The command a user can run in a terminal when Hive can't install itself. */
   manualInstallCommand: string
-  /** Tedooo Code can run the install/update itself on this machine. */
+  /** Hive can run the install/update itself on this machine. */
   canAutoInstall: boolean
   /** Something the user has to do after installing (e.g. grant permissions). */
   installHint?: string

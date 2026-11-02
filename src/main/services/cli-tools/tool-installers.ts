@@ -52,7 +52,7 @@ const QUICK_TIMEOUT_MS = 5000
 const TCU_DOCTOR_TIMEOUT_MS = 10_000
 const LOCAL_BIN_PATH_LINE = 'export PATH="$HOME/.local/bin:$PATH"'
 const TCU_PERMISSIONS_HINT =
-  'Grant Accessibility and Screen Recording to Tedooo Code in System Settings, then restart Tedooo Code.'
+  'Grant Accessibility and Screen Recording to Hive in System Settings, then restart Hive.'
 
 export type OutputPublisher = (event: CliToolOutputEvent) => void
 
@@ -506,7 +506,7 @@ async function installNpmTool(
     const status = await describeTool(entry, projectPath, deps)
     return {
       success: false,
-      error: `Tedooo Code can't write to npm's global folder. Run this in a terminal: ${manualInstallCommand(entry)}`,
+      error: `Hive can't write to npm's global folder. Run this in a terminal: ${manualInstallCommand(entry)}`,
       status
     }
   }
@@ -629,7 +629,7 @@ async function ensureLocalBinOnPath(
     const separator = existing === '' || existing.endsWith('\n') ? '' : '\n'
     await appendFile(
       profilePath,
-      `${separator}\n# Added by Tedooo Code so tcu is found\n${LOCAL_BIN_PATH_LINE}\n`
+      `${separator}\n# Added by Hive so tcu is found\n${LOCAL_BIN_PATH_LINE}\n`
     )
     publish({ type: 'output', data: `Added ${LOCAL_BIN_PATH_LINE} to ~/${profileName}\n` })
     log.info('Appended ~/.local/bin to the login shell profile', { profileName })
