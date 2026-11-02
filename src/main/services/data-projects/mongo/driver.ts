@@ -8,7 +8,7 @@
 // execute() runs exactly one mongosh-style statement: shared parser → shared classifier (the
 // read-only sandbox is enforced here from the exact classification, since MongoDB has no
 // server-side read-only transaction) → BSON argument conversion → executor. Every operation gets
-// a `tedooo:<uuid>` comment, an AbortSignal and an explicit session; cancelling aborts locally,
+// a `hive:<uuid>` comment, an AbortSignal and an explicit session; cancelling aborts locally,
 // then kills the server op via $currentOp(comment) → killOp, falling back to killSessions.
 
 import { randomUUID } from 'node:crypto'
@@ -119,7 +119,7 @@ const WRITE_ACTIONS = new Set([
 ])
 
 export interface MongoOperationHandle {
-  /** Comment attached to every command of the operation ("tedooo:<uuid>"). */
+  /** Comment attached to every command of the operation ("hive:<uuid>"). */
   readonly tag: string
   readonly signal: AbortSignal
   readonly session: ClientSession | undefined
@@ -362,7 +362,7 @@ class MongoDriverImpl implements MongoDriver {
 
   async startOperation(): Promise<MongoOperationHandle> {
     const client = await this.getClient()
-    const tag = `tedooo:${randomUUID()}`
+    const tag = `hive:${randomUUID()}`
     const controller = new AbortController()
     let session: ClientSession | undefined
     try {
@@ -867,7 +867,7 @@ class MongoDriverImpl implements MongoDriver {
   async listProcesses(): Promise<DataProcessInfo[]> {
     const client = await this.getClient()
     const admin = client.db('admin')
-    const tag = `tedooo:processes:${randomUUID()}`
+    const tag = `hive:processes:${randomUUID()}`
     const run = (allUsers: boolean): Promise<Document[]> =>
       admin
         .aggregate(
@@ -960,7 +960,7 @@ class MongoDriverImpl implements MongoDriver {
       })
     }
     const client = await this.getClient()
-    const tag = `tedooo:export:${randomUUID()}`
+    const tag = `hive:export:${randomUUID()}`
     const openCursor = this.exportCursorFactory(client, spec, statement, options.database, tag)
     const { signal } = options
     let current: { close(): Promise<void> } | null = null

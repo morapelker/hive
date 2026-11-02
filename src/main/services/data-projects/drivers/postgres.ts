@@ -911,7 +911,7 @@ class PostgresDriver implements DataDriver {
       const savepoint = options.readOnlySandbox && status === 'T'
       const client = this.requireSession()
       if (sandbox) await this.housekeeping(client, 'BEGIN READ ONLY')
-      if (savepoint) await this.housekeeping(client, 'SAVEPOINT tedooo_read')
+      if (savepoint) await this.housekeeping(client, 'SAVEPOINT hive_read')
       let outcome: CursorOutcome
       let failed = false
       try {
@@ -926,8 +926,8 @@ class PostgresDriver implements DataDriver {
           await this.housekeeping(
             client,
             failed
-              ? 'ROLLBACK TO SAVEPOINT tedooo_read; RELEASE SAVEPOINT tedooo_read'
-              : 'RELEASE SAVEPOINT tedooo_read'
+              ? 'ROLLBACK TO SAVEPOINT hive_read; RELEASE SAVEPOINT hive_read'
+              : 'RELEASE SAVEPOINT hive_read'
           ).catch(() => undefined)
         }
       }

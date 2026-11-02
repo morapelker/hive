@@ -2043,7 +2043,7 @@ export class DatabaseService implements DocumentFlowDb, DataProjectsRepository {
     const now = new Date().toISOString()
     // New projects get sort_order 0 (top), bump all others down — data projects too: both
     // tables share one sidebar order (see DATA_PROJECT_TABLES_SQL).
-    this.shiftSidebarOrder()
+    const shifted = this.shiftSidebarOrder()
 
     const project: Project = {
       id: randomUUID(),
@@ -2087,6 +2087,10 @@ export class DatabaseService implements DocumentFlowDb, DataProjectsRepository {
       project.last_accessed_at
     )
 
+    emitDbChanged({ entity: 'project', op: 'create', id: project.id, projectId: project.id })
+    if (shifted.dataProjects > 0) {
+      emitDbChanged({ entity: 'dataProject', op: 'reorder', id: null, projectId: null })
+    }
     return project
   }
 
@@ -2105,7 +2109,7 @@ export class DatabaseService implements DocumentFlowDb, DataProjectsRepository {
     const now = new Date().toISOString()
     // New projects get sort_order 0 (top), bump all others down — data projects too: both
     // tables share one sidebar order (see DATA_PROJECT_TABLES_SQL).
-    this.shiftSidebarOrder()
+    const shifted = this.shiftSidebarOrder()
 
     const id = randomUUID()
     const memberIdsJson = JSON.stringify(data.member_project_ids)
@@ -2117,6 +2121,10 @@ export class DatabaseService implements DocumentFlowDb, DataProjectsRepository {
     const created = this.getProject(id)
     if (!created) {
       throw new Error('Failed to create connection project')
+    }
+    emitDbChanged({ entity: 'project', op: 'create', id, projectId: id })
+    if (shifted.dataProjects > 0) {
+      emitDbChanged({ entity: 'dataProject', op: 'reorder', id: null, projectId: null })
     }
     return created
   }

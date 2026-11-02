@@ -4521,7 +4521,7 @@ describe('renderer API cleanup', () => {
     expect(projectApiSource).not.toContain('bridge?.openPath')
     expect(projectApiSource).not.toContain('bridge.openPath(path)')
     expect(projectApiSource).toContain(
-      "return getRendererRpcClient().request<void>('projectOps.openPath', { path })"
+      "return getRendererRpcClient().request<string>('projectOps.openPath', { path })"
     )
   })
 
@@ -13660,7 +13660,7 @@ describe('renderer API cleanup', () => {
       path.resolve(__dirname, '../../src/server/rpc/domains/project-ops.ts'),
       'utf-8'
     )
-    const functionStart = source.indexOf('openPath: async (path: string): Promise<void> =>')
+    const functionStart = source.indexOf('openPath: async (path: string): Promise<string> =>')
     const functionEnd = source.indexOf('  showInFolder: async', functionStart)
     const functionSource = source.slice(functionStart, functionEnd)
     const serverFunctionStart = serverSource.indexOf('openPath: (path) =>')
@@ -13675,7 +13675,7 @@ describe('renderer API cleanup', () => {
     expect(functionSource).not.toContain('bridge?.openPath')
     expect(functionSource).not.toContain('bridge.openPath(path)')
     expect(functionSource).toContain(
-      "return getRendererRpcClient().request<void>('projectOps.openPath', { path })"
+      "return getRendererRpcClient().request<string>('projectOps.openPath', { path })"
     )
     expect(functionSource).not.toContain('window.projectOps.openPath')
     expect(serverFunctionSource).toContain('requestProjectOpenPath(path)')
@@ -21308,7 +21308,7 @@ describe('renderer API cleanup', () => {
       'const defaultWt = activeWorktrees.find((w) => w.is_default)'
     )
     expect(resolveBaseSource).toContain(
-      'const resolvedBaseBranch = featureWorktree.base_branch ?? defaultWt?.branch_name'
+      'let resolvedBaseBranch = featureWorktree.base_branch ?? defaultWt?.branch_name'
     )
     expect(resolveBaseSource).not.toContain('db.worktree.getActiveByProject(pending.projectId)')
   })

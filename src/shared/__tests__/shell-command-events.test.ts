@@ -95,13 +95,13 @@ describe('shell-command status payload', () => {
 })
 
 describe('wrapShellCommandReplay', () => {
-  const start = `${ESC}]7777;tedooo-replay-start${BEL}`
-  const end = `${ESC}]7777;tedooo-replay-end${BEL}`
+  const start = `${ESC}]7777;hive-replay-start${BEL}`
+  const end = `${ESC}]7777;hive-replay-end${BEL}`
 
   it('exposes the protocol constants', () => {
     expect(SHELL_COMMAND_REPLAY_OSC).toBe(7777)
-    expect(SHELL_COMMAND_REPLAY_START).toBe('tedooo-replay-start')
-    expect(SHELL_COMMAND_REPLAY_END).toBe('tedooo-replay-end')
+    expect(SHELL_COMMAND_REPLAY_START).toBe('hive-replay-start')
+    expect(SHELL_COMMAND_REPLAY_END).toBe('hive-replay-end')
   })
 
   it('brackets the transcript: start marker, RIS, transcript, end marker', () => {

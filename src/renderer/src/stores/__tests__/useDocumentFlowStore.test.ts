@@ -32,7 +32,7 @@ vi.mock('@/lib/pr-content-provider', () => ({
 }))
 
 // The default launch model, as the quick launch would resolve it; what extraction runs with.
-vi.mock('@/lib/tedooo-agent/models', () => ({
+vi.mock('@/lib/launch-model', () => ({
   resolveDefaultLaunchModel: vi.fn(() => ({
     providerID: 'anthropic',
     modelID: 'opus',

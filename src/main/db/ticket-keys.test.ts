@@ -13,7 +13,7 @@ import { DatabaseService } from './database'
 import { CURRENT_SCHEMA_VERSION } from './schema'
 import type { KanbanTicket } from './types'
 
-// Ticket keys (TD-12) against a real SQLite file: the v62 columns, the machine-wide number
+// Ticket keys (TD-12) against a real SQLite file: the v57 columns, the machine-wide number
 // sequence, the one-time prefix, the backfill of a database from before the keys (including
 // the regrouping of a document run's tickets) and the parent link read through the join.
 
@@ -127,8 +127,8 @@ const allRows = (db: DatabaseService): unknown[] =>
 
 /**
  * Turns a current-schema file back into one written by the build before the keys existed:
- * no key columns, no counter, schema_version 61. Everything else (projects, runs, items and
- * the tickets themselves) stays, so the file is exactly what the v62 repair finds on upgrade.
+ * no key columns, no counter, schema_version 56. Everything else (projects, runs, items and
+ * the tickets themselves) stays, so the file is exactly what the v57 repair finds on upgrade.
  */
 const stripTicketKeys = (dbPath: string): void => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -142,7 +142,7 @@ const stripTicketKeys = (dbPath: string): void => {
     ALTER TABLE kanban_tickets DROP COLUMN parent_ticket_id;
     DROP TABLE IF EXISTS ticket_counters;
     DELETE FROM settings WHERE key = '${TICKET_KEY_PREFIX_SETTING}';
-    UPDATE settings SET value = '61' WHERE key = 'schema_version';
+    UPDATE settings SET value = '56' WHERE key = 'schema_version';
   `)
   const columns = (raw.pragma('table_info(kanban_tickets)') as { name: string }[]).map(
     (column) => column.name
@@ -187,7 +187,7 @@ describeIf('ticket keys', () => {
     it('creates the key columns, the counter table and the indexes on a fresh database', () => {
       const db = openDb()
       expect(db.getSchemaVersion()).toBe(CURRENT_SCHEMA_VERSION)
-      expect(CURRENT_SCHEMA_VERSION).toBe(62)
+      expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(57)
       expect(columnNames(db, 'kanban_tickets')).toEqual(
         expect.arrayContaining(['ticket_prefix', 'ticket_number', 'parent_ticket_id'])
       )
@@ -341,7 +341,7 @@ describeIf('ticket keys', () => {
 
     /**
      * Two projects, one document run whose parent ticket was created after its children (how a
-     * launch worked before v62) and an unrelated ticket created between the children and the
+     * launch worked before v57) and an unrelated ticket created between the children and the
      * parent — then the key columns are stripped so the next init has to number everything.
      */
     const seedOlderDatabase = (): Seed => {

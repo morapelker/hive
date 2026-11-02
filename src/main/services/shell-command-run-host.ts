@@ -85,8 +85,8 @@ export interface ShellCommandRunHostFactories {
 }
 
 /** Environment variable names of the detached protocol. */
-export const SHELL_RUN_DIR_ENV = 'TEDOOO_SHELL_RUN_DIR'
-export const SHELL_LOG_LIMIT_ENV = 'TEDOOO_SHELL_LOG_LIMIT_BLOCKS'
+export const SHELL_RUN_DIR_ENV = 'HIVE_SHELL_RUN_DIR'
+export const SHELL_LOG_LIMIT_ENV = 'HIVE_SHELL_LOG_LIMIT_BLOCKS'
 
 /** Retained transcript and replay size, both modes. */
 export const SHELL_COMMAND_LOG_CAP_BYTES = 5 * 1024 * 1024
@@ -107,9 +107,9 @@ export const SHELL_COMMAND_DEFAULT_ROWS = 24
 
 /** Written at the top of a transcript whose beginning was dropped to honour the cap. */
 export const SHELL_COMMAND_LOG_TRUNCATED_MARKER =
-  '\x1b[2m[tedooo] Earlier output was truncated\x1b[0m\r\n'
+  '\x1b[2m[hive] Earlier output was truncated\x1b[0m\r\n'
 /** Appended to the transcript when the user stops a run. */
-export const SHELL_COMMAND_STOPPED_MARKER = '\r\n\x1b[1;33m[tedooo] Stopped\x1b[0m\r\n'
+export const SHELL_COMMAND_STOPPED_MARKER = '\r\n\x1b[1;33m[hive] Stopped\x1b[0m\r\n'
 /** Appended to the transcript of an in-app run that died with the app. */
 export const SHELL_COMMAND_INTERRUPTED_MARKER =
-  '\r\n\x1b[1;33m[tedooo] Interrupted: the app quit while this command was running\x1b[0m\r\n'
+  '\r\n\x1b[1;33m[hive] Interrupted: the app quit while this command was running\x1b[0m\r\n'

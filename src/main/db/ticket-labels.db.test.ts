@@ -126,9 +126,9 @@ afterEach(() => {
 })
 
 describe('ticket labels schema', () => {
-  it('ships as the v66 migration', () => {
-    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(66)
-    const migration = MIGRATIONS.find((m) => m.version === 66)
+  it('ships as the v59 migration', () => {
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(59)
+    const migration = MIGRATIONS.find((m) => m.version === 59)
     expect(migration?.name).toBe('add_ticket_labels')
     expect(migration?.up).toBe(TICKET_LABELS_TABLES_SQL)
     // New columns never come from ALTER TABLE in a migration (safeAddColumn repairs them).

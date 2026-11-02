@@ -244,7 +244,7 @@ describe.skipIf(unsupported)('detached shell-command runs (real processes)', () 
         expect(readText(runFile(run.runDir, 'exit'))).toBe('script=0\nwrapper=0\n')
         expect(run.lines()).toContain(`${ROWS} ${COLS}`)
         expect(run.lines()).toContain('two')
-        expect(run.output()).toContain('[tedooo] Succeeded')
+        expect(run.output()).toContain('[hive] Succeeded')
         expect(run.output()).not.toContain('Script started')
         // Gapless: the sink received exactly the bytes script(1) logged.
         expect(run.output()).toBe(readText(runFile(run.runDir, 'log')))
@@ -266,7 +266,7 @@ describe.skipIf(unsupported)('detached shell-command runs (real processes)', () 
         expect(readText(runFile(run.runDir, 'exit'))).toBe('script=3\nwrapper=3\n')
         expect(run.lines()).toContain('one')
         expect(run.lines()).not.toContain('NOTRUN')
-        expect(run.output()).toContain('[tedooo] Failed at step 2/3')
+        expect(run.output()).toContain('[hive] Failed at step 2/3')
       },
       TEST_TIMEOUT_MS
     )
@@ -320,7 +320,7 @@ describe.skipIf(unsupported)('detached shell-command runs (real processes)', () 
           HOME: baseDir,
           ZDOTDIR: baseDir
         }
-        delete env.TEDOOO_SHELL_RUN_DIR
+        delete env.HIVE_SHELL_RUN_DIR
         const specPath = join(baseDir, `spec-${counter}.json`)
         writeFileSync(specPath, JSON.stringify({ ...hostSpawn, cwd: workDir, env }))
 
@@ -480,7 +480,7 @@ describe.skipIf(unsupported)('detached shell-command runs (real processes)', () 
             "head -c 6000000 /dev/zero | tr '\\0' 'x'",
             'echo NOTRUN'
           ],
-          { TEDOOO_SHELL_LOG_LIMIT_BLOCKS: '2048' }
+          { HIVE_SHELL_LOG_LIMIT_BLOCKS: '2048' }
         )
 
         const exit = await run.exit
@@ -504,18 +504,18 @@ describe.skipIf(unsupported)('detached shell-command runs (real processes)', () 
       const saved = {
         base: process.env[ANTHROPIC_BASE_URL_ENV],
         firstParty: process.env[ASSUME_FIRST_PARTY_ENV],
-        runDir: process.env.TEDOOO_SHELL_RUN_DIR
+        runDir: process.env.HIVE_SHELL_RUN_DIR
       }
       process.env[ANTHROPIC_BASE_URL_ENV] = proxyUrl
       process.env[ASSUME_FIRST_PARTY_ENV] = 'tedooo-test-first-party'
-      process.env.TEDOOO_SHELL_RUN_DIR = '/nonexistent/inherited'
+      process.env.HIVE_SHELL_RUN_DIR = '/nonexistent/inherited'
       setClaudeApiProxyBaseUrl(proxyUrl)
       try {
         const run = await startRun(
           '/bin/bash',
           [
             'echo "base=[$ANTHROPIC_BASE_URL] fp=[$_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL]"',
-            'echo "dir=[$TEDOOO_SHELL_RUN_DIR] limit=[$TEDOOO_SHELL_LOG_LIMIT_BLOCKS]"',
+            'echo "dir=[$HIVE_SHELL_RUN_DIR] limit=[$HIVE_SHELL_LOG_LIMIT_BLOCKS]"',
             'echo "extra=[$TEDOOO_TEST_EXTRA] term=[$TERM] cwd=[$PWD]"'
           ],
           { TEDOOO_TEST_EXTRA: 'from-options' }
@@ -534,7 +534,7 @@ describe.skipIf(unsupported)('detached shell-command runs (real processes)', () 
         for (const [key, value] of [
           [ANTHROPIC_BASE_URL_ENV, saved.base],
           [ASSUME_FIRST_PARTY_ENV, saved.firstParty],
-          ['TEDOOO_SHELL_RUN_DIR', saved.runDir]
+          ['HIVE_SHELL_RUN_DIR', saved.runDir]
         ] as const) {
           if (value === undefined) delete process.env[key]
           else process.env[key] = value

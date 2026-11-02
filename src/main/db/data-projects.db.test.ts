@@ -109,8 +109,8 @@ afterEach(() => {
 
 describe('data projects schema', () => {
   it('ships as the v66 migration and is the current version', () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(66)
-    const migration = MIGRATIONS.find((m) => m.version === 66)
+    expect(CURRENT_SCHEMA_VERSION).toBe(60)
+    const migration = MIGRATIONS.find((m) => m.version === 60)
     expect(migration?.name).toBe('add_data_projects')
     expect(migration?.up).toBe(DATA_PROJECT_TABLES_SQL)
     expect(migration?.down).toBe(DATA_PROJECT_TABLES_DROP_SQL)
@@ -130,7 +130,7 @@ describeIf('data projects database', () => {
     it('creates the three tables and their indexes on a fresh database', () => {
       const db = openDb()
       try {
-        expect(db.getSchemaVersion()).toBe(66)
+        expect(db.getSchemaVersion()).toBe(60)
         for (const table of ['data_projects', 'data_query_history', 'data_saved_queries']) {
           expect(db.tableExists(table)).toBe(true)
         }
@@ -147,17 +147,17 @@ describeIf('data projects database', () => {
       }
     })
 
-    it('repairs dropped tables when schema_version already says 66 (worktree skew)', () => {
+    it('repairs dropped tables when schema_version already says 60 (worktree skew)', () => {
       const path = makePath()
       const first = openDb(path)
       first.getRawDb().exec(DATA_PROJECT_TABLES_DROP_SQL)
       expect(first.tableExists('data_projects')).toBe(false)
-      expect(first.getSchemaVersion()).toBe(66)
+      expect(first.getSchemaVersion()).toBe(60)
       first.close()
 
       const reopened = openDb(path)
       try {
-        expect(reopened.getSchemaVersion()).toBe(66)
+        expect(reopened.getSchemaVersion()).toBe(60)
         expect(reopened.tableExists('data_projects')).toBe(true)
         expect(reopened.tableExists('data_query_history')).toBe(true)
         expect(reopened.tableExists('data_saved_queries')).toBe(true)
@@ -180,16 +180,16 @@ describeIf('data projects database', () => {
       }
     })
 
-    it('migrates a v65 database up to 66', () => {
+    it('migrates a v59 database up to 60', () => {
       const path = makePath()
       const first = openDb(path)
       first.getRawDb().exec(DATA_PROJECT_TABLES_DROP_SQL)
-      first.setSetting('schema_version', '65')
+      first.setSetting('schema_version', '59')
       first.close()
 
       const upgraded = openDb(path)
       try {
-        expect(upgraded.getSchemaVersion()).toBe(66)
+        expect(upgraded.getSchemaVersion()).toBe(60)
         expect(upgraded.tableExists('data_projects')).toBe(true)
       } finally {
         upgraded.close()

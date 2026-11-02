@@ -85,8 +85,8 @@ describe('console housekeeping and catalog statements (live)', () => {
       .slice(-4)
       .map((e) => [e.source, e.text])
     expect(tail).toEqual([
-      ['metadata', 'SAVEPOINT tedooo_read'],
-      ['metadata', 'RELEASE SAVEPOINT tedooo_read'],
+      ['metadata', 'SAVEPOINT hive_read'],
+      ['metadata', 'RELEASE SAVEPOINT hive_read'],
       ['table', 'SELECT 1'],
       ['query', 'ROLLBACK']
     ])

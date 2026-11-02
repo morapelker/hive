@@ -7,7 +7,7 @@
 // worker_thread is no way out: `worker.terminate()` blocks until the current native step returns
 // and was measured to SEGFAULT the whole process with better-sqlite3 (research/drivers.md §0).
 // So each open SQLite project gets a forked child (the server bundle re-entered with
-// TEDOOO_DATA_SQLITE_WORKER=1, see server/bin.ts → runSqliteWorker), and cancel = SIGKILL +
+// HIVE_DATA_SQLITE_WORKER=1, see server/bin.ts → runSqliteWorker), and cancel = SIGKILL +
 // respawn. SQLite's journal/WAL rolls back whatever the killed statement was doing.
 //
 // The same `SqliteSession` also runs in-process (vitest, unbundled runs) behind the identical
@@ -143,7 +143,7 @@ export type SqliteWorkerMessage =
   | { type: 'batch'; id: number; columns: string[]; rows: DataCell[][] }
 
 /** Env flag the server bundle checks first thing (server/bin.ts) to run the worker loop. */
-export const SQLITE_WORKER_ENV = 'TEDOOO_DATA_SQLITE_WORKER'
+export const SQLITE_WORKER_ENV = 'HIVE_DATA_SQLITE_WORKER'
 
 // ---------------------------------------------------------------------------------------------
 // Cells
@@ -1254,7 +1254,7 @@ export async function handleSqliteWorkerRequest(
 }
 
 /**
- * Child-process main loop (server/bin.ts calls it when TEDOOO_DATA_SQLITE_WORKER=1). Requests
+ * Child-process main loop (server/bin.ts calls it when HIVE_DATA_SQLITE_WORKER=1). Requests
  * run strictly one after another; stream acks bypass the queue because the running stream is
  * what waits for them. The process exits when the parent goes away (IPC disconnect) or after
  * `close`.

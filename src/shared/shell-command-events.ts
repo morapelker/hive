@@ -63,7 +63,7 @@ export function isShellCommandStatusPayload(value: unknown): value is ShellComma
  * main process publishes, on that SAME channel, one chunk that resets the terminal
  * and replays everything printed so far, bracketed by two private OSC sequences:
  *
- *   OSC 7777 ; tedooo-replay-start BEL   RIS   <transcript>   OSC 7777 ; tedooo-replay-end BEL
+ *   OSC 7777 ; hive-replay-start BEL   RIS   <transcript>   OSC 7777 ; hive-replay-end BEL
  *
  * Because the replay travels in-band, it is ordered against live output by
  * construction: no chunk can be lost or shown twice, whatever the timing of the
@@ -73,8 +73,8 @@ export function isShellCommandStatusPayload(value: unknown): value is ShellComma
  * live program. Terminals without the handler ignore the unknown OSC.
  */
 export const SHELL_COMMAND_REPLAY_OSC = 7777
-export const SHELL_COMMAND_REPLAY_START = 'tedooo-replay-start'
-export const SHELL_COMMAND_REPLAY_END = 'tedooo-replay-end'
+export const SHELL_COMMAND_REPLAY_START = 'hive-replay-start'
+export const SHELL_COMMAND_REPLAY_END = 'hive-replay-end'
 
 /** Reset the terminal and replay `transcript` (pass '' to just clear it). */
 export function wrapShellCommandReplay(transcript: string): string {

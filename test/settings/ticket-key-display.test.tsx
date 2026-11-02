@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { markHiveOrgPolicySettled } from '@/api/hive-enterprise/client'
-import { setTedoooDevSessionForTests, type TedoooDevSession } from '@/api/tedooo/session-seam'
 
 const mockUpdateSetting = vi.fn()
 let mockSettingsState: Record<string, unknown> = {}
@@ -39,24 +38,6 @@ vi.mock('@/lib/toast', () => ({
 
 // Hosted-only gate: the shell's session seam must be installed for the cached organisation
 // to count.
-const fakeSeam = (): TedoooDevSession => ({
-  getContext: () => null,
-  subscribe: () => () => {},
-  execute: vi.fn(async () => ({}) as never),
-  enqueue: vi.fn(async () => {}),
-  refresh: vi.fn(async () => {}),
-  openGeneral: vi.fn(),
-  notify: vi.fn(),
-  openExternal: vi.fn(),
-  importShareLink: vi.fn(async () => ({ ok: true, message: '' })),
-  agentTurn: vi.fn(async () => ({
-    type: 'message' as const,
-    text: '',
-    usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
-    history: []
-  }))
-})
-
 function baseState(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     autoStartSession: true,
@@ -92,13 +73,9 @@ describe('SettingsGeneral › Ticket IDs', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockSettingsState = baseState()
-    setTedoooDevSessionForTests(fakeSeam())
     markHiveOrgPolicySettled()
   })
 
-  afterEach(() => {
-    setTedoooDevSessionForTests(null)
-  })
 
   it('offers always / orchestrator only / never and reflects the stored choice', async () => {
     mockSettingsState = baseState({ ticketKeyDisplay: 'orchestrator' })

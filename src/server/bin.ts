@@ -1,5 +1,5 @@
 // Entry of the server bundle (out/main/server.js). The same file is also forked as the
-// data-projects SQLite worker (TEDOOO_DATA_SQLITE_WORKER=1, see the bottom of this file), so it
+// data-projects SQLite worker (HIVE_DATA_SQLITE_WORKER=1, see the bottom of this file), so it
 // keeps NO static import with side effects: the server graph (database, routers, account
 // stores, perf logging) is imported inside `main()` only, and a worker never loads it.
 // (`effect` stays static: a side-effect-free external, and one module instance for the bundle.)
@@ -137,14 +137,14 @@ if (
   entryArg.endsWith('server/bin.js') ||
   entryArg.endsWith('server.js')
 ) {
-  if (process.env.TEDOOO_DATA_SQLITE_WORKER === '1') {
+  if (process.env.HIVE_DATA_SQLITE_WORKER === '1') {
     // A data project's SQLite worker (forked by drivers/sqlite.ts with this bundle as its
     // entry): run the IPC loop only — no server, no app database, no account maintenance.
     void import('../main/services/data-projects/drivers/sqlite-worker')
       .then((worker) => worker.runSqliteWorker())
       .catch((error: unknown) => {
         // The parent sees the exit and reports the project as disconnected.
-        console.error('[tedooo-data-sqlite-worker] failed to start', error)
+        console.error('[hive-data-sqlite-worker] failed to start', error)
         process.exit(1)
       })
   } else {

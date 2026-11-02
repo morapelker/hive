@@ -613,7 +613,7 @@ describeSeed('sqlite worker child process (raw protocol)', () => {
     const child = fork(ENTRY, [], {
       execPath: process.execPath,
       execArgv: [],
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', TEDOOO_DATA_SQLITE_WORKER: '1' },
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', HIVE_DATA_SQLITE_WORKER: '1' },
       stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
       serialization: 'json'
     })

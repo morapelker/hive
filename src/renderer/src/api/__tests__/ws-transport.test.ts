@@ -209,7 +209,7 @@ describe('WsTransport', () => {
     await flushPromises()
 
     socket.close()
-    await expect(request).rejects.toThrow('Dev workspace WebSocket connection closed')
+    await expect(request).rejects.toThrow('Hive WebSocket connection closed')
     expect(transport.stats()).toMatchObject({ connected: false, pendingRequests: 0 })
     transport.close()
   })

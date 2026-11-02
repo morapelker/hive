@@ -25,7 +25,7 @@ describe('buildShellCommandPtySpawn', () => {
   it('zsh gets -ilc and (label, step) pairs after the constant wrapper and argv0', () => {
     expect(buildShellCommandPtySpawn(steps, { shell: '/bin/zsh', platform: 'darwin' })).toEqual({
       command: '/bin/zsh',
-      args: ['-ilc', SHELL_COMMAND_WRAPPER, 'tedooo-shell-command', ...pairs]
+      args: ['-ilc', SHELL_COMMAND_WRAPPER, 'hive-shell-command', ...pairs]
     })
   })
 
@@ -133,21 +133,21 @@ describe('buildDetachedHostSpawn', () => {
       args: [
         '-c',
         DETACHED_HOST_SCRIPT,
-        'tedooo-shell-host',
+        'hive-shell-host',
         runDir,
         '100',
         '30',
         '/bin/bash',
         '-ic',
         SHELL_COMMAND_WRAPPER,
-        'tedooo-shell-command',
+        'hive-shell-command',
         'echo a',
         'echo a',
         'echo b',
         'echo b'
       ]
     })
-    expect(DETACHED_HOST_ARGV0).toBe('tedooo-shell-host')
+    expect(DETACHED_HOST_ARGV0).toBe('hive-shell-host')
   })
 })
 
@@ -195,7 +195,7 @@ describe.skipIf(process.platform === 'win32')('SHELL_COMMAND_WRAPPER without a P
       ZDOTDIR: workDir,
       ...extraEnv
     }
-    if (!('TEDOOO_SHELL_RUN_DIR' in extraEnv)) delete env.TEDOOO_SHELL_RUN_DIR
+    if (!('HIVE_SHELL_RUN_DIR' in extraEnv)) delete env.HIVE_SHELL_RUN_DIR
     const result = spawnSync(target.shell, [target.flags, ...built.args.slice(1)], {
       cwd: workDir,
       env,
@@ -214,7 +214,7 @@ describe.skipIf(process.platform === 'win32')('SHELL_COMMAND_WRAPPER without a P
       expect(result.lines).toEqual(expect.arrayContaining(['one', 'two', 'three']))
       expect(result.stdout).toContain('[1/3]')
       expect(result.stdout).toContain('[3/3]')
-      expect(result.stdout).toContain('[tedooo] Succeeded')
+      expect(result.stdout).toContain('[hive] Succeeded')
     })
 
     it('stops at the first failing step with its status', { timeout: 30000 }, () => {
@@ -222,7 +222,7 @@ describe.skipIf(process.platform === 'win32')('SHELL_COMMAND_WRAPPER without a P
       expect(result.status).toBe(1)
       expect(result.lines).toContain('one')
       expect(result.lines).not.toContain('NOTRUN')
-      expect(result.stdout).toContain('[tedooo] Failed at step 2/3')
+      expect(result.stdout).toContain('[hive] Failed at step 2/3')
     })
 
     it('reports the exit code of a failing child', { timeout: 30000 }, () => {
@@ -265,7 +265,7 @@ describe.skipIf(process.platform === 'win32')('SHELL_COMMAND_WRAPPER without a P
       const result = run(target, ['echo one', 'exit 7', 'echo NOTRUN'])
       expect(result.status).toBe(7)
       expect(result.lines).not.toContain('NOTRUN')
-      expect(result.stdout).toContain('[tedooo] Failed at step 2/3')
+      expect(result.stdout).toContain('[hive] Failed at step 2/3')
     })
 
     it('break and continue cannot hijack the step loop', { timeout: 30000 }, () => {
@@ -286,10 +286,10 @@ describe.skipIf(process.platform === 'win32')('SHELL_COMMAND_WRAPPER without a P
       expect(result.status).toBe(4)
       expect(result.lines).toContain('two')
       expect(result.lines).not.toContain('NOTRUN')
-      expect(result.stdout).toContain('[tedooo] Failed at step 3/4')
+      expect(result.stdout).toContain('[hive] Failed at step 3/4')
     })
 
-    it('writes no inner.exit when TEDOOO_SHELL_RUN_DIR is unset', { timeout: 30000 }, () => {
+    it('writes no inner.exit when HIVE_SHELL_RUN_DIR is unset', { timeout: 30000 }, () => {
       const result = run(target, ['echo one', 'sh -c "exit 5"'])
       expect(result.status).toBe(5)
       expect(readdirSync(workDir).sort()).toEqual(['subdir'])
@@ -301,17 +301,17 @@ describe.skipIf(process.platform === 'win32')('SHELL_COMMAND_WRAPPER without a P
       try {
         const result = run(
           target,
-          ['echo one', 'sh -c "exit 6"', 'echo "dir=[$TEDOOO_SHELL_RUN_DIR]"'],
+          ['echo one', 'sh -c "exit 6"', 'echo "dir=[$HIVE_SHELL_RUN_DIR]"'],
           {
-            TEDOOO_SHELL_RUN_DIR: runDir
+            HIVE_SHELL_RUN_DIR: runDir
           }
         )
         expect(result.status).toBe(6)
         expect(readFileSync(join(runDir, 'inner.exit'), 'utf8')).toBe('6\n')
 
         // The variable is consumed before the first step: steps never see it.
-        const ok = run(target, ['echo "dir=[$TEDOOO_SHELL_RUN_DIR]"'], {
-          TEDOOO_SHELL_RUN_DIR: runDir
+        const ok = run(target, ['echo "dir=[$HIVE_SHELL_RUN_DIR]"'], {
+          HIVE_SHELL_RUN_DIR: runDir
         })
         expect(ok.status).toBe(0)
         expect(ok.lines).toContain('dir=[]')

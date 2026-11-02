@@ -101,6 +101,10 @@ interface TestTicket {
 const kanbanState = {
   tickets: new Map<string, TestTicket[]>(),
   isBoardViewActive: false,
+  closeBoardView: vi.fn(() => {
+    calls.push('closeBoardView')
+  }),
+  closePinnedBoard: vi.fn(),
   loadTickets: vi.fn(async (projectId: string) => {
     calls.push('loadTickets')
     if (!kanbanState.tickets.has(projectId)) kanbanState.tickets.set(projectId, [])
@@ -929,7 +933,7 @@ describe('runProjectShellCommand — navigation', () => {
     await runProjectShellCommand({ projectId: PROJECT, commandId: COMMAND.id, worktreeId: FEATURE })
 
     expect(calls.slice(calls.indexOf('runShellCommand') + 1)).toEqual([
-      'toggleBoardView',
+      'closeBoardView',
       'selectWorktree',
       'selectProject',
       'toggleProjectExpanded',

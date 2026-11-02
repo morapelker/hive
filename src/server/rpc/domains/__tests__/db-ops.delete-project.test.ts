@@ -26,6 +26,7 @@ const flowMocks = vi.hoisted(() => ({
 vi.mock('../../../../main/db', () => ({
   getDatabase: () => ({
     getProject: () => dbMocks.project,
+    getSessionsByProject: () => [],
     listDocumentRuns: dbMocks.listDocumentRuns,
     deleteProject: dbMocks.deleteProject
   })

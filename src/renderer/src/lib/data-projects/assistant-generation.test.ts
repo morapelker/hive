@@ -30,7 +30,7 @@ vi.mock('@/stores/useSettingsStore', () => ({
   }
 }))
 
-vi.mock('@/lib/tedooo-agent/models', () => ({
+vi.mock('@/lib/launch-model', () => ({
   resolveDefaultLaunchModel: () => settings.launchModel
 }))
 

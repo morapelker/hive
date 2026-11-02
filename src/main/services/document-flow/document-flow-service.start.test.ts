@@ -408,7 +408,8 @@ describe('start', () => {
     const detail = await harness.service.start(run.id)
 
     expect(harness.ticketBatches).toHaveLength(2)
-    expect(harness.ticketBatches[1].drafts[0]).toMatchObject({
+    // The replacement run ticket comes first, so the task tickets can point at it.
+    expect(harness.ticketBatches[0].drafts[0]).toMatchObject({
       draft_key: `run-${run.id}`,
       column: 'in_progress',
       worktree_id: detail.run.integration_worktree_id

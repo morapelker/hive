@@ -666,13 +666,12 @@ describeIf('database migration safety', () => {
     db.close()
   })
 
-  describe('shell commands (v55)', () => {
+  describe('shell commands (v51)', () => {
     it('adds projects.shell_commands and sessions.shell_command on a fresh database', () => {
       const db = new DatabaseService(makeDbPath())
       db.init()
 
       expect(db.getSchemaVersion()).toBe(CURRENT_SCHEMA_VERSION)
-      expect(CURRENT_SCHEMA_VERSION).toBe(55)
       expect(columnNames(db, 'projects')).toEqual(expect.arrayContaining(['shell_commands']))
       expect(columnNames(db, 'sessions')).toEqual(expect.arrayContaining(['shell_command']))
 

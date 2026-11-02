@@ -32,8 +32,8 @@ afterEach(() => {
   harness.cleanup()
 })
 
-const START = '<!-- tedooo-run-status:start -->'
-const END = '<!-- tedooo-run-status:end -->'
+const START = '<!-- hive-run-status:start -->'
+const END = '<!-- hive-run-status:end -->'
 
 /** A source document in the scratch directory, with these bytes. */
 function writeSource(name: string, content: string | Buffer): string {

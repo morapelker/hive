@@ -43,13 +43,12 @@ afterEach(() => {
 
 describe('openConnection', () => {
   it('leaves the board, selects the instance and the project, and makes the instance active', () => {
-    const toggleBoardView = vi.fn()
-    useKanbanStore.setState({ isBoardViewActive: true, toggleBoardView } as never)
+    useKanbanStore.setState({ isBoardViewActive: true } as never)
     useWorktreeStore.setState({ selectedWorktreeId: 'wt-1' } as never)
 
     openConnection('project-conn', 'conn-int')
 
-    expect(toggleBoardView).toHaveBeenCalledTimes(1)
+    expect(useKanbanStore.getState().isBoardViewActive).toBe(false)
     expect(useConnectionStore.getState().selectedConnectionId).toBe('conn-int')
     expect(useProjectStore.getState().selectedProjectId).toBe('project-conn')
     expect(useSessionStore.getState().activeConnectionId).toBe('conn-int')

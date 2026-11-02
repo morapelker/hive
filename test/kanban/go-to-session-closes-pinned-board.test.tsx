@@ -15,7 +15,6 @@ import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { resetRendererRpcClientForTests, setRendererRpcClient } from '@/api/rpc-client'
 import type { KanbanTicket } from '../../src/main/db/types'
 import { leaveBoardViews } from '@/lib/board-navigation'
-import { openPlanLink } from '@/components/agent/agent-ui'
 import { openSession } from '@/components/document-flow/document-flow-navigation'
 
 vi.mock('@/api/settings-api', () => ({
@@ -385,16 +384,6 @@ describe('go to session closes the pinned board', () => {
 
     expect(useKanbanStore.getState().isPinnedBoardActive).toBe(false)
     expect(useKanbanStore.getState().isPinnedBoardBehindSession).toBe(false)
-    expect(useSessionStore.getState().activeSessionId).toBe('session-1')
-  })
-
-  test('plan-row session link leaves the pinned board', async () => {
-    useKanbanStore.setState({ isPinnedBoardActive: true })
-
-    openPlanLink({ kind: 'session', sessionId: 'session-1' })
-    await flush()
-
-    expect(useKanbanStore.getState().isPinnedBoardActive).toBe(false)
     expect(useSessionStore.getState().activeSessionId).toBe('session-1')
   })
 

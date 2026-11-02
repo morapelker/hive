@@ -906,13 +906,12 @@ describe('DocumentRunDashboard — needs you', () => {
   })
 
   it('opens the ticket session in its worktree and closes the dialog', async () => {
-    const toggleBoardView = vi.fn()
-    useKanbanStore.setState({ isBoardViewActive: true, toggleBoardView } as never)
+    useKanbanStore.setState({ isBoardViewActive: true } as never)
     await renderDashboard(flagged())
 
     await click('docflow-needs-you-open-A1')
 
-    expect(toggleBoardView).toHaveBeenCalledTimes(1)
+    expect(useKanbanStore.getState().isBoardViewActive).toBe(false)
     expect(useWorktreeStore.getState().selectedWorktreeId).toBe('wt-A1')
     expect(useSessionStore.getState().activeWorktreeId).toBe('wt-A1')
     expect(useSessionStore.getState().activeSessionId).toBe('session-A1')
@@ -2136,13 +2135,12 @@ describe('DocumentRunDashboard — executing migrations', () => {
   })
 
   it('opens the migration session in the integration worktree and closes the dialog', async () => {
-    const toggleBoardView = vi.fn()
-    useKanbanStore.setState({ isBoardViewActive: true, toggleBoardView } as never)
+    useKanbanStore.setState({ isBoardViewActive: true } as never)
     await renderDashboard(migrating())
 
     await click('docflow-open-migration-session')
 
-    expect(toggleBoardView).toHaveBeenCalledTimes(1)
+    expect(useKanbanStore.getState().isBoardViewActive).toBe(false)
     expect(useWorktreeStore.getState().selectedWorktreeId).toBe('wt-integration')
     expect(useSessionStore.getState().activeWorktreeId).toBe('wt-integration')
     expect(useSessionStore.getState().activeSessionId).toBe('session-mig')

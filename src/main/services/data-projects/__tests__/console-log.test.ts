@@ -500,7 +500,7 @@ describe('Mongo command text', () => {
         uuid: new UUID('0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0')
       },
       limit: 21,
-      comment: 'tedooo:1234',
+      comment: 'hive:1234',
       $db: 'shop',
       lsid: { id: 'x' },
       $clusterTime: {},

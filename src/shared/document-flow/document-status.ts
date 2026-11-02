@@ -19,11 +19,11 @@ import type { DocumentFormat } from './preprocess'
 
 /** Markers around the block. HTML and Markdown share a comment, which neither renders. */
 export const RUN_STATUS_MARKERS: Record<DocumentFormat, { start: string; end: string }> = {
-  html: { start: '<!-- tedooo-run-status:start -->', end: '<!-- tedooo-run-status:end -->' },
-  markdown: { start: '<!-- tedooo-run-status:start -->', end: '<!-- tedooo-run-status:end -->' },
+  html: { start: '<!-- hive-run-status:start -->', end: '<!-- hive-run-status:end -->' },
+  markdown: { start: '<!-- hive-run-status:start -->', end: '<!-- hive-run-status:end -->' },
   text: {
-    start: '==== tedooo run status (generated) ====',
-    end: '==== end of tedooo run status ===='
+    start: '==== hive run status (generated) ====',
+    end: '==== end of hive run status ===='
   }
 }
 

@@ -32,7 +32,7 @@ import {
   MIGRATIONS
 } from './schema'
 
-// The persistence of the "Implement document" flow (v55) against a real SQLite file: the
+// The persistence of the "Implement document" flow (v52) against a real SQLite file: the
 // migration and its idempotent replay, the JSON / boolean mapping, the patch semantics the
 // orchestrator relies on (present keys only, null clears) and the single-owner runner lease.
 
@@ -43,7 +43,7 @@ const TABLES = [
   'session_final_messages'
 ]
 
-/** The item columns of the post-merge document update (v65). */
+/** The item columns of the post-merge document update (v58). */
 const DOCUMENT_UPDATE_COLUMNS = [
   'document_update_status',
   'document_update_detail',
@@ -175,26 +175,26 @@ afterEach(() => {
 })
 
 describe('document flow schema', () => {
-  it('ships as the v55 migration', () => {
-    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(55)
-    const migration = MIGRATIONS.find((m) => m.version === 55)
+  it('ships as the v52 migration', () => {
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(52)
+    const migration = MIGRATIONS.find((m) => m.version === 52)
     expect(migration?.name).toBe('add_document_flow')
     expect(migration?.up).toBe(DOCUMENT_FLOW_TABLES_SQL)
     expect(migration?.down).toBe(DOCUMENT_FLOW_TABLES_DROP_SQL)
   })
 
-  it('ships the run ticket link as the v57 migration, a column added by the repair step', () => {
-    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(57)
-    const migration = MIGRATIONS.find((m) => m.version === 57)
+  it('ships the run ticket link as the v53 migration, a column added by the repair step', () => {
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(53)
+    const migration = MIGRATIONS.find((m) => m.version === 53)
     expect(migration?.name).toBe('add_document_run_ticket')
     // Comment only: safeAddColumn() adds the column, so a replay cannot fail on a duplicate.
     expect(migration?.up.replace(/--.*$/gm, '').trim()).toBe('')
     expect(DOCUMENT_FLOW_TABLES_SQL).toMatch(/ticket_id\s+TEXT DEFAULT NULL,\s+report/)
   })
 
-  it('ships the migration session of a run as the v58 migration, columns added by the repair step', () => {
-    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(58)
-    const migration = MIGRATIONS.find((m) => m.version === 58)
+  it('ships the migration session of a run as the v54 migration, columns added by the repair step', () => {
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(54)
+    const migration = MIGRATIONS.find((m) => m.version === 54)
     expect(migration?.name).toBe('add_document_run_migration_session')
     // Comment only: safeAddColumn() adds the columns, so a replay cannot fail on a duplicate.
     expect(migration?.up.replace(/--.*$/gm, '').trim()).toBe('')
@@ -207,9 +207,9 @@ describe('document flow schema', () => {
     )
   })
 
-  it('ships the verification of a ticket as the v59 migration, columns added by the repair step', () => {
-    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(59)
-    const migration = MIGRATIONS.find((m) => m.version === 59)
+  it('ships the verification of a ticket as the v55 migration, columns added by the repair step', () => {
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(55)
+    const migration = MIGRATIONS.find((m) => m.version === 55)
     expect(migration?.name).toBe('add_document_run_item_verification')
     // Comment only: safeAddColumn() adds the columns, so a replay cannot fail on a duplicate.
     expect(migration?.up.replace(/--.*$/gm, '').trim()).toBe('')
@@ -222,9 +222,9 @@ describe('document flow schema', () => {
     )
   })
 
-  it('ships the connection-project columns of a run and its items as the v60 migration, columns added by the repair step', () => {
-    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(60)
-    const migration = MIGRATIONS.find((m) => m.version === 60)
+  it('ships the connection-project columns of a run and its items as the v56 migration, columns added by the repair step', () => {
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(56)
+    const migration = MIGRATIONS.find((m) => m.version === 56)
     expect(migration?.name).toBe('add_document_run_connection_project')
     expect(migration?.up.replace(/--.*$/gm, '').trim()).toBe('')
     expect(migration?.down.replace(/--.*$/gm, '').trim()).toBe('')
@@ -242,9 +242,9 @@ describe('document flow schema', () => {
     )
   })
 
-  it('ships the document update of a ticket as the v65 migration, columns added by the repair step', () => {
-    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(65)
-    const migration = MIGRATIONS.find((m) => m.version === 65)
+  it('ships the document update of a ticket as the v58 migration, columns added by the repair step', () => {
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(58)
+    const migration = MIGRATIONS.find((m) => m.version === 58)
     expect(migration?.name).toBe('add_document_run_item_document_update')
     // Comment only: safeAddColumn() adds the columns, so a replay cannot fail on a duplicate.
     expect(migration?.up.replace(/--.*$/gm, '').trim()).toBe('')
@@ -287,7 +287,7 @@ describeIf('document flow tables', () => {
     )
   })
 
-  it('recreates the tables from the repair step when the version is already past 55', () => {
+  it('recreates the tables from the repair step when the version is already past 52', () => {
     const path = makeDbPath()
     const db = openDb(path)
     db.getRawDb().exec(DOCUMENT_FLOW_TABLES_DROP_SQL)
@@ -304,9 +304,9 @@ describeIf('document flow tables', () => {
     expect(repaired.replaceDocumentRunItems(run.id, [draft('A1')])).toHaveLength(1)
   })
 
-  it('applies, replays and reverts the v55 migration on its own', () => {
+  it('applies, replays and reverts the v52 migration on its own', () => {
     const db = openDb()
-    const migration = MIGRATIONS.find((m) => m.version === 55)!
+    const migration = MIGRATIONS.find((m) => m.version === 52)!
     db.getRawDb().exec(migration.down)
     for (const table of TABLES) expect(db.tableExists(table)).toBe(false)
     expect(db.getIndexes().filter((index) => index.name.startsWith('idx_document_'))).toEqual([])
@@ -316,11 +316,11 @@ describeIf('document flow tables', () => {
     for (const table of TABLES) expect(db.tableExists(table)).toBe(true)
   })
 
-  it('upgrades a v54 database through the migration', () => {
+  it('upgrades a v51 database through the migration', () => {
     const path = makeDbPath()
     const db = openDb(path)
     db.getRawDb().exec(DOCUMENT_FLOW_TABLES_DROP_SQL)
-    db.setSetting('schema_version', '54')
+    db.setSetting('schema_version', '51')
     db.close()
 
     const upgraded = openDb(path)
@@ -336,7 +336,7 @@ describeIf('document flow tables', () => {
     raw.exec('ALTER TABLE document_runs DROP COLUMN migration_session_id')
     raw.exec('ALTER TABLE document_runs DROP COLUMN migration_started_at')
     raw.exec('ALTER TABLE document_runs DROP COLUMN migration_owner_pid')
-    db.setSetting('schema_version', '57')
+    db.setSetting('schema_version', '53')
     db.close()
 
     const upgraded = openDb(path)
@@ -374,7 +374,7 @@ describeIf('document flow tables', () => {
     }
     const run = db.updateDocumentRun('run-old', session)
     db.getRawDb().exec('ALTER TABLE document_runs DROP COLUMN migration_owner_pid')
-    // Already at v58: no migration runs, the repair step alone adds the column.
+    // Already at v54: no migration runs, the repair step alone adds the column.
     expect(db.getSetting('schema_version')).toBe(String(CURRENT_SCHEMA_VERSION))
     db.close()
 
@@ -404,7 +404,7 @@ describeIf('document flow tables', () => {
     raw.exec('ALTER TABLE document_run_items DROP COLUMN verification_suggested')
     raw.exec('ALTER TABLE document_run_items DROP COLUMN verification')
     raw.exec('ALTER TABLE document_run_items DROP COLUMN verification_reason')
-    db.setSetting('schema_version', '58')
+    db.setSetting('schema_version', '54')
     db.close()
 
     const upgraded = openDb(path)
@@ -440,7 +440,7 @@ describeIf('document flow tables', () => {
     for (const column of DOCUMENT_UPDATE_COLUMNS) {
       raw.exec(`ALTER TABLE document_run_items DROP COLUMN ${column}`)
     }
-    db.setSetting('schema_version', '64')
+    db.setSetting('schema_version', '57')
     db.close()
 
     const upgraded = openDb(path)
@@ -976,6 +976,15 @@ describeIf('document run items', () => {
     expect(items[0]).toEqual({
       id: expect.stringMatching(/^[0-9a-f-]{36}$/),
       run_id: run.id,
+      wait_until: null,
+      wait_timeouts: 0,
+      document_update_status: null,
+      document_update_detail: null,
+      document_update_queued_at: null,
+      document_update_attempts: 0,
+      document_update_hash: null,
+      document_update_report: null,
+      document_update_finished_at: null,
       key: 'B2',
       position: 0,
       title: 'Tax table',
@@ -1674,6 +1683,7 @@ describeIf('session final messages', () => {
     })
     expect(db.getSessionFinalMessage('session-1')).toEqual({
       session_id: 'session-1',
+      background_work: null,
       state: 'blocked',
       text: 'Which currency?\nSTATUS: NEEDS_INPUT',
       completion: null,

@@ -611,7 +611,7 @@ export function createMongoEngineService(deps: MongoServiceDeps): MongoEngineSer
       async () => {
         const client = await driver.getClient()
         const c = client.db(database).collection(collection)
-        const options: Document = { comment: `tedooo:write` }
+        const options: Document = { comment: `hive:write` }
         if (driver.writeTimeoutMs) options.maxTimeMS = driver.writeTimeoutMs
         if (collation) options.collation = collation
         try {
@@ -766,7 +766,7 @@ export function createMongoEngineService(deps: MongoServiceDeps): MongoEngineSer
           const name = await client
             .db(database)
             .collection(collection)
-            .createIndex(keys as IndexSpecification, { ...options, comment: 'tedooo:createIndex' })
+            .createIndex(keys as IndexSpecification, { ...options, comment: 'hive:createIndex' })
           driver.invalidateSchemaCache(database)
           return { result: { name }, rowCount: null }
         } catch (error) {
@@ -803,7 +803,7 @@ export function createMongoEngineService(deps: MongoServiceDeps): MongoEngineSer
           await client
             .db(database)
             .collection(collection)
-            .dropIndex(name, { comment: 'tedooo:dropIndex' })
+            .dropIndex(name, { comment: 'hive:dropIndex' })
           return { result: { name }, rowCount: null }
         } catch (error) {
           throw driver.toError(error)
@@ -864,12 +864,12 @@ export function createMongoEngineService(deps: MongoServiceDeps): MongoEngineSer
         const hasOutput = findMongoOutputStages(pipeline).length > 0
         // executionStats would run the pipeline; never with $out/$merge (SERVER-38063).
         raw = (await c
-          .aggregate(withoutOutputStages(pipeline), { maxTimeMS, comment: 'tedooo:explain' })
+          .aggregate(withoutOutputStages(pipeline), { maxTimeMS, comment: 'hive:explain' })
           .explain(hasOutput ? 'queryPlanner' : 'executionStats')) as Document
       } else {
         const f: Partial<NonNullable<MongoExplainRequest['find']>> = req.find ?? {}
         const filter = parseShellObject(f.filter, 'Filter') ?? {}
-        const options: Document = { maxTimeMS, comment: 'tedooo:explain' }
+        const options: Document = { maxTimeMS, comment: 'hive:explain' }
         const projection = parseShellObject(f.projection, 'Projection')
         const sort = parseShellObject(f.sort, 'Sort')
         const hint = parseShellHint(f.hint)

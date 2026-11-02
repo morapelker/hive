@@ -222,7 +222,7 @@ describe('renderRunStatusBlock', () => {
       })
     )
     expect(block.split('\n')).toEqual([
-      '==== tedooo run status (generated) ====',
+      '==== hive run status (generated) ====',
       'Implementation status',
       'Generated 2026-10-19 13:41 UTC by the document run · integration branch doc-factory @ 0123456',
       'Legend: ✅ Done · ⚠️ Partial / merged as it stood · ⏭️ Skipped · ❌ Not merged',
@@ -235,7 +235,7 @@ describe('renderRunStatusBlock', () => {
       '',
       'Manual steps:',
       '  - Rotate the API key',
-      '==== end of tedooo run status ===='
+      '==== end of hive run status ===='
     ])
   })
 

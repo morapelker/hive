@@ -2,7 +2,7 @@
 //
 // streamRows only receives a statement string, so the export path describes what to stream with
 // a small JSON "export spec" built by `mongoExportStatement(source, format)`:
-//   { "tedoooMongoExport": 1, "format": "csv"|"json", "database", "collection", "filter",
+//   { "hiveMongoExport": 1, "format": "csv"|"json", "database", "collection", "filter",
 //     "projection", "sort", "collation", "hint", "pipeline" }
 //   — or { ..., "shell": "<mongosh find/aggregate>" }
 // The spec also carries the format, which decides the row shape:
@@ -17,7 +17,7 @@ import { isPlainObject, relaxedText, scalarText } from './runtime'
 
 /** The single column of JSON-format Mongo export rows (row[0] = relaxed EJSON document). */
 export const MONGO_EJSON_COLUMN = '__ejson__'
-const SPEC_KEY = 'tedoooMongoExport'
+const SPEC_KEY = 'hiveMongoExport'
 
 export interface MongoExportSpec {
   format: 'csv' | 'json'

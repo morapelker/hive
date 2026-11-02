@@ -119,7 +119,8 @@ export function clearAccountStoreCacheForTests(): void {
 }
 
 function backupDir(): string {
-  return join(homedir(), '.claude-switch-backup')
+  const override = process.env.HIVE_CLAUDE_STORE_DIR?.trim()
+  return override ? override : join(homedir(), '.claude-switch-backup')
 }
 
 function sequencePath(): string {

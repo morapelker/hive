@@ -99,7 +99,7 @@ export async function launchChrome(
     )
   }
 
-  const userDataDir = await mkdtemp(join(tmpdir(), 'tedooo-claude-login-'))
+  const userDataDir = await mkdtemp(join(tmpdir(), 'hive-claude-login-'))
   const spawnImpl = options.spawnImpl ?? spawn
   const child = spawnImpl(binary, buildChromeArgs(userDataDir, url), {
     // stdin/stdout ignored; stderr piped (Chrome is chatty but it helps debugging);

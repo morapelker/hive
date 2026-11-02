@@ -291,7 +291,8 @@ describe('ProjectItem - Custom Commands Menu Integration', () => {
     const names = Array.from(menu.querySelectorAll('[role="menuitem"]')).map(
       (item) => item.textContent
     )
-    expect(names.indexOf('Install App')).toBe(names.indexOf('Connect to...') + 1)
+    expect(names.indexOf('Implement Document…')).toBe(names.indexOf('Connect to...') + 1)
+    expect(names.indexOf('Install App')).toBe(names.indexOf('Implement Document…') + 1)
     expect(names.indexOf('Rename Branch')).toBe(names.indexOf('Install App') + 1)
 
     // In this menu the branch group has no separator of its own: the commands add one

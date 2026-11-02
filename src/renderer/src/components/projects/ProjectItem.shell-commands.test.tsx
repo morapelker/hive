@@ -118,7 +118,7 @@ describe('ProjectItem shell commands in the context menu', () => {
     expect(names).toContain('Command 1')
     expect(names).toContain('Command 2')
     expect(names.indexOf('Command 1')).toBeGreaterThan(names.indexOf('Manage Skills'))
-    expect(names.indexOf('Command 2')).toBeLessThan(names.indexOf('Remove from workspace'))
+    expect(names.indexOf('Command 2')).toBeLessThan(names.indexOf('Remove from Hive'))
     expect(names).not.toContain('Run Command')
     // One separator opens the group, the menu's own separator closes it
     expect(separatorCount()).toBe(2)

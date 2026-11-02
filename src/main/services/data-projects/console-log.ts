@@ -570,7 +570,7 @@ export function inlineBindValues(
 // Instrumented drivers
 // ---------------------------------------------------------------------------------------------
 
-const INSTRUMENTED = Symbol.for('tedooo.dataConsole.instrumented')
+const INSTRUMENTED = Symbol.for('hive.dataConsole.instrumented')
 
 /** Rows returned / rows affected of a driver result (all its result sets). */
 export function resultCounts(
@@ -1134,7 +1134,7 @@ export function mongoCommandText(
   for (const [key, value] of Object.entries(command)) {
     if (MONGO_ENVELOPE.has(key)) continue
     // The executor tags operations for killOp: an id, not something the user wrote.
-    if (key === 'comment' && typeof value === 'string' && value.startsWith('tedooo:')) continue
+    if (key === 'comment' && typeof value === 'string' && value.startsWith('hive:')) continue
     body[key] = value
   }
   if (Object.keys(body).length === 0) {

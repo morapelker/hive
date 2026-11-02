@@ -65,7 +65,7 @@ describe('board Import dropdown', () => {
     expect(items).toEqual([
       'Import from GitHub',
       'Import from Jira',
-      'Import from Board JSON',
+      'Import from Hive JSON',
       'Implement document…',
       'Export Board'
     ])

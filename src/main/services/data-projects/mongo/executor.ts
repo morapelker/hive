@@ -3,7 +3,7 @@
 // @mongodb-js/shell-bson-parser (runtime.ts), each method validates the shapes it needs, and
 // reads are bounded: find gets .limit(N+1) / aggregate gets { $limit: N+1 } (unless it ends in
 // $out/$merge) so `truncated` is exact, with the hard cap and a byte budget always applied;
-// every operation carries the `tedooo:<uuid>` comment (for $currentOp → killOp on cancel), a
+// every operation carries the `hive:<uuid>` comment (for $currentOp → killOp on cancel), a
 // default maxTimeMS on reads and the abort signal where the driver supports one.
 //
 // Results: document lists → { kind: 'documents' } (canonical EJSON, read with promoteValues:
@@ -34,7 +34,7 @@ export interface MongoExecContext {
   database: string
   /** `use x`: switch the session database. */
   useDatabase(name: string): void
-  /** Comment tag of this operation ("tedooo:<uuid>"), for $currentOp → killOp. */
+  /** Comment tag of this operation ("hive:<uuid>"), for $currentOp → killOp. */
   tag: string
   signal: AbortSignal
   session?: ClientSession

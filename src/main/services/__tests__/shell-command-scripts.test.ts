@@ -39,13 +39,13 @@ describe('shell-command-scripts', () => {
   })
 
   it('exposes the two argv0 constants', () => {
-    expect(SHELL_COMMAND_ARGV0).toBe('tedooo-shell-command')
-    expect(DETACHED_HOST_ARGV0).toBe('tedooo-shell-host')
+    expect(SHELL_COMMAND_ARGV0).toBe('hive-shell-command')
+    expect(DETACHED_HOST_ARGV0).toBe('hive-shell-host')
   })
 
   it('the wrapper only reaches the run dir through the environment variable the host sets', () => {
-    expect(SHELL_COMMAND_WRAPPER).toContain('__tc_dir=$TEDOOO_SHELL_RUN_DIR')
-    expect(SHELL_COMMAND_WRAPPER).toContain('unset TEDOOO_SHELL_RUN_DIR')
-    expect(DETACHED_HOST_SCRIPT).toContain('export TEDOOO_SHELL_RUN_DIR="$d"')
+    expect(SHELL_COMMAND_WRAPPER).toContain('__tc_dir=$HIVE_SHELL_RUN_DIR')
+    expect(SHELL_COMMAND_WRAPPER).toContain('unset HIVE_SHELL_RUN_DIR')
+    expect(DETACHED_HOST_SCRIPT).toContain('export HIVE_SHELL_RUN_DIR="$d"')
   })
 })

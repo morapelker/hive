@@ -86,7 +86,7 @@ const QUERY_PREVIEW_CHARS = 4_000
 
 /**
  * The child can only be forked when this process IS the server bundle: bin.ts re-enters the
- * worker loop from process.argv[1] when TEDOOO_DATA_SQLITE_WORKER=1. vitest, ts runners and the
+ * worker loop from process.argv[1] when HIVE_DATA_SQLITE_WORKER=1. vitest, ts runners and the
  * Electron main process have no such entry.
  */
 export function defaultSqliteWorkerMode(
