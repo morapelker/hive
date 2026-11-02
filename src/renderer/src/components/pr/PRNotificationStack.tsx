@@ -307,6 +307,9 @@ function PRNotificationCard({
 // Stack — mounts once in AppLayout
 // ---------------------------------------------------------------------------
 
+/** The stack's distance from the window's right edge; other floating indicators line up on it. */
+export const PR_STACK_RIGHT_PX = 16
+
 export function PRNotificationStack(): React.JSX.Element | null {
   const notifications = usePRNotificationStore((s) => s.notifications)
 

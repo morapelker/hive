@@ -2586,6 +2586,26 @@ const handleDesktopBackendCommand = (
     }
   }
 
+  if (message.command === 'showNotification') {
+    try {
+      notificationService.showNotification(message.payload)
+      sendDesktopBackendCommandResult(
+        child,
+        makeDesktopCommandResult(message.id, { ok: true }),
+        log
+      )
+    } catch (error) {
+      sendDesktopBackendCommandResult(
+        child,
+        makeDesktopCommandResult(message.id, {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error)
+        }),
+        log
+      )
+    }
+  }
+
   if (message.command === 'updaterCheckForUpdate') {
     updaterService
       .checkForUpdates(message.payload)

@@ -65,7 +65,7 @@ import {
 import { AddRunMemberDialog } from './AddRunMemberDialog'
 import { DocumentRunPRRow } from './DocumentRunPRActions'
 import { TonePill } from './DocumentFlowBadges'
-import { NeedsYouSection, RunItemsTable } from './DocumentRunItems'
+import { NeedsYouSection, RunItemsTable, useRunItemActions } from './DocumentRunItems'
 import { RunActivityLog, RunReportSection } from './DocumentRunReport'
 import { RunParallelControl } from './RunParallelControl'
 import { RunProgressBar } from './RunProgressBar'
@@ -327,6 +327,7 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
   const segments = progressSegments(summary)
   const active = isActiveRunStatus(run.status)
   const documentEdit = runDocumentEditState(run, items)
+  const itemActions = useRunItemActions(run)
 
   const perform = (kind: BusyKind, action: Promise<void>, failure: string): void => {
     setBusy(kind)

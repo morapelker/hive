@@ -84,6 +84,7 @@ import {
   startClaudeApiProxy
 } from './services/claude-api-proxy/claude-api-proxy'
 import { startThreadpoolProbe } from './services/perf-logging/threadpool-probe'
+import { publishDesktopBackendEvent } from './desktop/backend-event-publisher'
 import { createThreadpoolStallRecovery } from './services/perf-logging/threadpool-stall-recovery'
 import { wakeThreadpoolWorkers } from './services/perf-logging/threadpool-waker'
 import {

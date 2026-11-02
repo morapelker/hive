@@ -4,7 +4,6 @@ import {
   PAUSED_PREFIX,
   WAITING_FOR_WORK_PREFIX,
   awaitsLaunch,
-  WAITING_FOR_WORK_PREFIX,
   countRunningAgents,
   documentUpdateLaneOwner,
   documentUpdateQueuePosition,

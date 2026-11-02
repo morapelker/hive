@@ -7,7 +7,7 @@
 
 import type { DataAssistantGeneration } from '@shared/data-projects/types'
 import { resolvePRContentGeneration } from '@/lib/pr-content-provider'
-import { resolveDefaultLaunchModel } from '@/lib/tedooo-agent/models'
+import { resolveDefaultLaunchModel } from '@/lib/launch-model'
 import {
   resolvePreferredAgentSdk,
   useSettingsStore,

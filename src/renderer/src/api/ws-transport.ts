@@ -56,6 +56,7 @@ export class WsTransport {
   private readonly webSocketTokenProvider?: () => Promise<string | null>
   private readonly reconnectDelayMs: number
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private readonly openListeners = new Set<() => void>()
   private reconnectAttempt = 0
   private closed = false
   private everOpened = false
@@ -115,6 +116,17 @@ export class WsTransport {
         this.eventListeners.delete(channel)
         this.sendUnsubscribe(channel)
       }
+    }
+  }
+
+  /**
+   * Runs after every (re)connect of the socket, once its subscriptions are re-sent, so a
+   * caller can redo what the server forgot when the previous socket closed.
+   */
+  onOpen(listener: () => void): () => void {
+    this.openListeners.add(listener)
+    return () => {
+      this.openListeners.delete(listener)
     }
   }
 
@@ -185,6 +197,13 @@ export class WsTransport {
           this.everOpened = true
           this.connectPromise = null
           this.sendSubscriptions(socket)
+          for (const listener of this.openListeners) {
+            try {
+              listener()
+            } catch (error) {
+              console.warn('[ws-transport] an onOpen listener failed', error)
+            }
+          }
           resolve(socket)
         })
 

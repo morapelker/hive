@@ -13,10 +13,10 @@
  * renderer; nothing here launches or prompts a session. The base branch is only ever read.
  */
 import { createHash, randomUUID } from 'node:crypto'
-import { constants as fsConstants, createReadStream, existsSync, realpathSync } from 'node:fs'
-import { access, mkdir, open, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { constants as fsConstants, existsSync, realpathSync } from 'node:fs'
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, dirname, extname, join, resolve, sep } from 'node:path'
+import { basename, dirname, extname, join, resolve } from 'node:path'
 import type { DocumentFlowUpdatedEvent } from '@shared/document-flow-events'
 import {
   CLASSIFICATION_JSON_SCHEMA,
@@ -115,9 +115,7 @@ import {
   readDocumentSource,
   removeRunDir,
   replaceDocumentFile,
-  writeRunFiles,
-  writeRunFilesFromStaging,
-  type StagedRunFiles
+  writeRunFiles
 } from './document-files'
 import * as documentFlowGit from './document-flow-git'
 import { resolveSessionFinalMessage } from './final-message'

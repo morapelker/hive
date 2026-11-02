@@ -149,10 +149,7 @@ import {
   documentRunTicketToneClass,
   useDocumentRunTicket
 } from '@/components/document-flow/useDocumentRunTicket'
-import {
-  isUnlaunchedCardPhase,
-  runBoardCardState
-} from '@/components/document-flow/document-flow-ui'
+import { isUnlaunchedCardPhase } from '@/components/document-flow/document-flow-ui'
 import { isActiveRunStatus } from '@/components/document-flow/document-flow-ui'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import {

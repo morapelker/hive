@@ -4,7 +4,6 @@ import { PR_STACK_RIGHT_PX } from '@/components/pr/PRNotificationStack'
 import { cn } from '@/lib/utils'
 import { selectActiveRuns, useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { useLayoutStore } from '@/stores/useLayoutStore'
-import { useTedoooAgentStore } from '@/stores/useTedoooAgentStore'
 import { summarizeItems } from '@shared/document-flow/planning'
 import { documentNameFromPath, formatRunProgress, needsUser, pluralize } from './document-flow-ui'
 
@@ -23,7 +22,6 @@ export function DocumentRunsIndicator(): React.JSX.Element | null {
   // Same horizontal anchor as the PR notification stack: left of the open agent panel. This
   // card is mounted at the layout root rather than inside the main pane, so the right sidebar
   // is added too.
-  const agentPanelWidth = useTedoooAgentStore((s) => (s.isOpen && !s.isMinimized ? s.width : 0))
   const rightSidebarWidth = useLayoutStore((s) =>
     s.rightSidebarCollapsed ? 0 : s.rightSidebarWidth
   )
@@ -49,7 +47,7 @@ export function DocumentRunsIndicator(): React.JSX.Element | null {
         'shadow-[0_16px_36px_rgba(0,0,0,0.24),inset_0_1px_0_rgba(255,255,255,0.04)]'
       )}
       style={{
-        right: PR_STACK_RIGHT_PX + agentPanelWidth + rightSidebarWidth,
+        right: PR_STACK_RIGHT_PX + rightSidebarWidth,
         bottom: INDICATOR_BOTTOM_PX
       }}
       data-testid="docflow-runs-indicator"

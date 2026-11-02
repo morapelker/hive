@@ -1,20 +1,17 @@
 import {
   chmod,
   copyFile,
-  lstat,
   mkdir,
   readFile,
-  readdir,
   realpath,
   rename,
   rm,
   stat,
   unlink,
-  utimes,
   writeFile
 } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   renderBlocks,

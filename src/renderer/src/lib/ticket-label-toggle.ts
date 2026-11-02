@@ -25,7 +25,7 @@ import {
   ticketLabelsOf,
   type TicketLabel
 } from '@shared/lib/ticket-labels'
-import { reloadBoard } from '@/hooks/useDbChangeSync'
+import { reloadBoard } from '@/lib/board-reload'
 import { toast } from '@/lib/toast'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useTicketLabelsStore } from '@/stores/useTicketLabelsStore'

@@ -16,7 +16,7 @@ import { buildTicketPrompt } from '@/lib/connection-project-launch'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { mapOpencodeMessagesToSessionViewMessages } from '@/lib/opencode-transcript'
 import { findSessionById, sendFollowupToSession } from '@/lib/session-followup'
-import { resolveDefaultLaunchModel } from '@/lib/tedooo-agent/models'
+import { resolveDefaultLaunchModel } from '@/lib/launch-model'
 import {
   launchTicketWithModel,
   type TicketLaunchResult,

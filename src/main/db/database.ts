@@ -1,7 +1,7 @@
 import { deleteAttachment } from '../services/attachment-storage'
 import type { AgentSdk } from '@shared/types/agent-sdk'
 import { parseProjectShellCommands } from '@shared/lib/shell-commands'
-import { emitDbChanged } from '../services/db-change-events'
+import { emitDbChanged, withDbChangeBatch } from '../services/db-change-events'
 import {
   SAVED_TICKET_LABELS_MAX,
   applySavedTicketLabelChange,
@@ -962,6 +962,20 @@ export class DatabaseService implements DocumentFlowDb, DataProjectsRepository {
    * Idempotently add a column to a table. No-op if column already exists.
    * Safe to call repeatedly (e.g. after merges that replay migrations).
    */
+  /** Depth of the kanban batch in progress; a row write inside one emits no event of its own. */
+  private kanbanBatchDepth = 0
+
+  private lookupWorktreeProjectId(worktreeId: string): string | null {
+    try {
+      const row = this.getDb()
+        .prepare('SELECT project_id FROM worktrees WHERE id = ?')
+        .get(worktreeId) as { project_id: string } | undefined
+      return row?.project_id ?? null
+    } catch {
+      return null
+    }
+  }
+
   private safeAddColumn(table: string, column: string, definition: string): void {
     const db = this.getDb()
     const columns = db.pragma(`table_info(${table})`) as { name: string }[]

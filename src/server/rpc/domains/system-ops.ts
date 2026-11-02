@@ -10,6 +10,7 @@ import {
   type OpenInChromeResult,
   type SetKeepAwakePayload,
   type SetSessionQueuedStatePayload,
+  type ShowNotificationPayload,
   type UpdateMenuStatePayload
 } from '../../../shared/desktop-command'
 import {
@@ -33,6 +34,7 @@ type SystemDesktopCommandName =
   | 'setKeepAwake'
   | 'sleepNow'
   | 'setSessionQueuedState'
+  | 'showNotification'
 
 export interface SystemOpsRpcService {
   readonly getLogDir: () => Effect.Effect<string, unknown, never>
@@ -58,6 +60,10 @@ export interface SystemOpsRpcService {
   readonly setSessionQueuedState?: (
     sessionId: string,
     hasQueued: boolean
+  ) => Effect.Effect<void, unknown, never>
+  /** A native notification on this machine. */
+  readonly showNotification?: (
+    payload: ShowNotificationPayload
   ) => Effect.Effect<void, unknown, never>
   /** macOS privacy (TCC) state for the folder-access prompts agent sessions trigger. */
   readonly getMacosPermissions?: () => Effect.Effect<MacosPermissionStatus, unknown, never>
@@ -107,6 +113,20 @@ const setSessionQueuedStateParamsSchema = z
   .object({
     sessionId: z.string().min(1),
     hasQueued: z.boolean()
+  })
+  .strict()
+const showNotificationParamsSchema = z
+  .object({
+    title: z.string().min(1),
+    body: z.string(),
+    navigate: z
+      .object({
+        projectId: z.string().min(1),
+        worktreeId: z.string().min(1),
+        sessionId: z.string().min(1)
+      })
+      .strict()
+      .optional()
   })
   .strict()
 const openMacosPrivacySettingsParamsSchema = z
@@ -215,6 +235,11 @@ export const makeLiveSystemOpsRpcService = (): SystemOpsRpcService => ({
         requestDesktopCommand<void>('setSessionQueuedState', { sessionId, hasQueued }).then(
           () => undefined
         ),
+      catch: (cause) => cause
+    }),
+  showNotification: (payload) =>
+    Effect.tryPromise({
+      try: () => requestDesktopCommand<void>('showNotification', payload).then(() => undefined),
       catch: (cause) => cause
     }),
   // Both run in the backend process itself: it is a child of the app bundle,
@@ -434,6 +459,20 @@ export const makeSystemOpsRpcHandlers = (
         })
     ],
     [
+      'systemOps.showNotification',
+      (params) =>
+        Effect.gen(function* () {
+          const payload = yield* Effect.try({
+            try: () => showNotificationParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          if (!service.showNotification) {
+            return yield* Effect.fail(new Error('systemOps.showNotification is unavailable'))
+          }
+          return yield* service.showNotification(payload)
+        })
+    ],
+    [
       'systemOps.getMacosPermissions',
       (params) =>
         Effect.gen(function* () {
@@ -474,6 +513,8 @@ const requestDesktopCommand = <A = unknown>(
     | UpdateMenuStatePayload
     | SetKeepAwakePayload
     | SetSessionQueuedStatePayload
+
+    | ShowNotificationPayload
 ): Promise<A> => {
   const send = process.send
   if (typeof send !== 'function') {

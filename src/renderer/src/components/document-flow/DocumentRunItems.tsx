@@ -61,9 +61,11 @@ const MARK_DONE_TITLE = 'Treat the ticket as done and queue it for merging'
 const MARK_DONE_WORKING_TITLE =
   'Its session is still working; wait for it to finish before marking the ticket done'
 
-interface RunItemActions {
+export interface RunItemActions {
   /** Item actions only make sense while the orchestrator still drives the run. */
   enabled: boolean
+  /** The label of `open`. */
+  openLabel: string
   /**
    * The item's session is visibly busy (the user answered it, say): what it is doing has to
    * land before the ticket can be declared done, or an unfinished branch gets merged.
@@ -99,7 +101,7 @@ interface RunItemActions {
   ) => Promise<void>
 }
 
-function useRunItemActions(run: DocumentRun): RunItemActions {
+export function useRunItemActions(run: DocumentRun): RunItemActions {
   const retryItem = useDocumentFlowStore((s) => s.retryItem)
   const markItemDone = useDocumentFlowStore((s) => s.markItemDone)
   const skipItem = useDocumentFlowStore((s) => s.skipItem)
@@ -119,6 +121,7 @@ function useRunItemActions(run: DocumentRun): RunItemActions {
       }
     return {
       enabled: isActiveRunStatus(run.status),
+      openLabel: 'Open session',
       isSessionWorking: (item) => {
         const target = itemSessionTarget(run, item)
         const status = target ? sessionStatuses[target.sessionId]?.status : undefined

@@ -6,6 +6,7 @@ import {
   type NotificationNavigatePayload
 } from '@shared/notification-events'
 import type { ServerEvent } from '@shared/rpc/protocol'
+import type { ShowNotificationPayload } from '@shared/desktop-command'
 import type {
   MacosPermissionStatus,
   MacosPrivacyPane,
@@ -77,6 +78,9 @@ export const systemApi = {
       sessionId,
       hasQueued
     }),
+  /** A native notification on this machine (macOS Notification Center on a Mac). */
+  showNotification: async (payload: ShowNotificationPayload): Promise<void> =>
+    getRendererRpcClient().request<void>('systemOps.showNotification', payload),
   detectAgentSdks: async (): Promise<AgentSdkDetectionResult> => {
     return getRendererRpcClient().request<AgentSdkDetectionResult>('systemOps.detectAgentSdks', {})
   },

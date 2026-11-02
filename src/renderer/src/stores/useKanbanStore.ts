@@ -868,6 +868,68 @@ const pendingExplicitReopens = new Map<string, Set<string>>()
 const pendingImplementReopens = new Map<string, Set<string>>()
 
 
+// ── In-flight mutation counter ─────────────────────────────────────────
+// Each optimistic mutation may hold a count for its project while its RPC is in flight;
+// a board reload (lib/board-reload.ts) waits for the count to be back to 0, so a reload
+// can never clobber an optimistic update with the pre-write server state.
+const inFlightMutationsByProject = new Map<string, number>()
+const mutationSettledWaiters = new Map<string, Set<() => void>>()
+// Bumped on every beginKanbanMutation. A reload that captured the generation before its fetch
+// can tell, once the response arrives, whether a mutation started during the round-trip.
+const mutationGenerationByProject = new Map<string, number>()
+
+export function getKanbanInFlightMutationCount(projectId: string): number {
+  return inFlightMutationsByProject.get(projectId) ?? 0
+}
+
+/** Number of optimistic mutations ever begun for `projectId` (monotonic, per app run). */
+export function getKanbanMutationGeneration(projectId: string): number {
+  return mutationGenerationByProject.get(projectId) ?? 0
+}
+
+/** Resolves once no optimistic kanban mutation is in flight for `projectId`. */
+export function whenKanbanMutationsSettled(projectId: string): Promise<void> {
+  if (getKanbanInFlightMutationCount(projectId) === 0) return Promise.resolve()
+  return new Promise((resolve) => {
+    let waiters = mutationSettledWaiters.get(projectId)
+    if (!waiters) {
+      waiters = new Set()
+      mutationSettledWaiters.set(projectId, waiters)
+    }
+    waiters.add(resolve)
+  })
+}
+
+/** Marks a mutation as in flight for `projectId`; call the returned function when it settles. */
+export function beginKanbanMutation(projectId: string): () => void {
+  inFlightMutationsByProject.set(projectId, getKanbanInFlightMutationCount(projectId) + 1)
+  mutationGenerationByProject.set(projectId, getKanbanMutationGeneration(projectId) + 1)
+  let ended = false
+  return () => {
+    if (ended) return
+    ended = true
+    const remaining = getKanbanInFlightMutationCount(projectId) - 1
+    if (remaining > 0) {
+      inFlightMutationsByProject.set(projectId, remaining)
+      return
+    }
+    inFlightMutationsByProject.delete(projectId)
+    const waiters = mutationSettledWaiters.get(projectId)
+    mutationSettledWaiters.delete(projectId)
+    waiters?.forEach((resolve) => resolve())
+  }
+}
+
+/** Runs `fn` while holding the in-flight count for `projectId` (released on settle or throw). */
+export async function withKanbanMutation<T>(projectId: string, fn: () => Promise<T>): Promise<T> {
+  const end = beginKanbanMutation(projectId)
+  try {
+    return await fn()
+  } finally {
+    end()
+  }
+}
+
 // ── Saved-label edits vs. ticket loads ─────────────────────────────────
 // applySavedLabelChange patches the loaded tickets once the DB has rewritten their label
 // snapshots. A ticket load answered before that rewrite but stored after the patch would put

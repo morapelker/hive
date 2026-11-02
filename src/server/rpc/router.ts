@@ -1,4 +1,4 @@
-import { Effect } from 'effect'
+import { Effect, Scheduler } from 'effect'
 import { z } from 'zod'
 import { RPC_ERROR_CODES, RpcRouteError, toRpcError } from '@shared/rpc/errors'
 import { RpcRequestSchema, type RpcRequest, type RpcResponse } from '@shared/rpc/protocol'
@@ -339,6 +339,27 @@ const makeDefaultRpcHandlers = (context: RpcContext): ReadonlyMap<string, RpcHan
     ...makeUsageOpsRpcHandlers(context.usageOps ?? makeLiveUsageOpsRpcService()),
     ...makeWorktreeOpsRpcHandlers(context.worktreeOps ?? makeLiveWorktreeOpsRpcService())
   ])
+
+import { runWithRpcRequestContext, type RpcRequestContext } from './request-context'
+
+/**
+ * Runs `router.handle` inside the request-scoped AsyncLocalStorage context (see
+ * request-context.ts) so a domain can read who asked. A per-call Effect scheduler re-enters the
+ * context on every fiber resumption, because the default global scheduler batches tasks from
+ * unrelated requests into one timer and would otherwise leak or lose the store between
+ * concurrent connections.
+ */
+export const handleRpcWithRequestContext = (
+  router: RpcRouter,
+  request: unknown,
+  context: RpcRequestContext
+): Promise<RpcResponse> =>
+  runWithRpcRequestContext(context, () => {
+    const scheduler = Scheduler.make((task, _priority) => {
+      setImmediate(() => runWithRpcRequestContext(context, task))
+    })
+    return Effect.runPromise(router.handle(request).pipe(Effect.withScheduler(scheduler)))
+  })
 
 export const makeRpcRouter = (
   context: RpcContext,

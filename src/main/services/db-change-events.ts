@@ -14,3 +14,13 @@ export const emitDbChanged = (_event: DbChangedEventInput): void => {}
 
 /** Runs `fn` as is; there is no event batching to collapse. */
 export const withDbChangeBatch = <T>(fn: () => T): T => fn()
+
+export type DbChangeEventPublisher = (channel: string, payload: unknown) => Promise<void>
+
+/** Accepted and ignored: nothing is published. */
+export const setDbChangeEventPublisher = (_publisher: DbChangeEventPublisher | null): void => {}
+
+/** Nothing is ever pending. */
+export const flushPendingDbChangedEvents = (): void => {}
+
+export const isDbChangeBatchActive = (): boolean => false

@@ -1,6 +1,7 @@
 import { Notification, app } from 'electron'
 import { createLogger } from './logger'
 import { emitNotificationNavigate } from './notification-events'
+import type { ShowNotificationPayload } from '@shared/desktop-command'
 
 const log = createLogger({ component: 'NotificationService' })
 
@@ -142,6 +143,48 @@ class NotificationService {
   // Track which sessions currently have queued follow-up messages so that
   // `showSessionComplete` can suppress notifications while the session is
   // about to continue with the next queued message.
+  /**
+   * A native notification the renderer asked for (systemOps.showNotification): shown only
+   * while the window is in the background, like the session notifications.
+   */
+  showNotification(data: ShowNotificationPayload): void {
+    if (!this.shouldNotifyWhenWindowUnfocused()) {
+      log.info('Skipping notification: main window is focused', { title: data.title })
+      return
+    }
+
+    if (!Notification.isSupported()) {
+      log.warn('Notifications not supported on this platform')
+      return
+    }
+
+    log.info('Showing notification', { title: data.title })
+
+    const notification = new Notification({
+      title: data.title,
+      body: data.body,
+      silent: false
+    })
+
+    notification.on('click', () => {
+      if (!this.mainWindow || this.mainWindow.isDestroyed()) return
+      this.mainWindow.show()
+      this.mainWindow.focus()
+      if (data.navigate) emitNotificationNavigate(data.navigate)
+    })
+
+    notification.show()
+
+    // The window is in the background (checked above), so the badge is cleared on the next
+    // focus — it never sticks to a focused app.
+    this.unreadCount++
+    if (process.platform === 'darwin') {
+      app.dock?.setBadge(String(this.unreadCount))
+    } else {
+      app.setBadgeCount(this.unreadCount)
+    }
+  }
+
   setSessionQueuedState(sessionId: string, hasQueued: boolean): void {
     if (hasQueued) {
       this.sessionsWithQueuedMessages.add(sessionId)

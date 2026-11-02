@@ -50,6 +50,11 @@ export class HiveClient {
     return this.transport.subscribe(channel, maybeListener as ServerEventListener, paramsOrListener)
   }
 
+  /** A listener for every (re)connect of the socket (see WsTransport.onOpen). */
+  onOpen(listener: () => void): () => void {
+    return this.transport.onOpen(listener)
+  }
+
   /** Transport counters for performance logging. */
   stats(options: { reset?: boolean } = {}): WsTransportStats {
     return this.transport.stats(options)
@@ -112,4 +117,20 @@ const createWebSocketTokenProvider = (
     const body = (await response.json()) as WebSocketTokenResponse
     return body.webSocketToken.token
   }
+}
+
+let rendererClientId: string | null = null
+
+/**
+ * Stable id of this renderer page (minted once per page load). The document flow records it as
+ * the lease of the client driving a run (`document_runs.runner_client_id`).
+ */
+export function getRendererClientId(): string {
+  if (!rendererClientId) {
+    rendererClientId =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `renderer-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+  }
+  return rendererClientId
 }

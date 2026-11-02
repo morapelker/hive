@@ -26,7 +26,6 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { ShuffleOffIcon } from './ShuffleOffIcon'
 import { isExcludedFromAutoSwitch, useAccountScheduleStore } from '@/stores/useAccountScheduleStore'
-import { useSettingsStore } from '@/stores/useSettingsStore'
 import { accountApi } from '@/api/account-api'
 import { createHiveAccountShare } from '@/api/hive-enterprise/client'
 import { buildShareAccountLink } from '@shared/account-share-link'

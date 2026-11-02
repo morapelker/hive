@@ -45,6 +45,10 @@ export const startHiveServer = (
   Effect.gen(function* () {
     const config = yield* resolveServerConfig(input)
     getDatabase().init()
+    // Ticket keys (HV-12) need a prefix; Hive derives it from the git identity on this machine.
+    void import('../main/services/ticket-key-prefix')
+      .then((m) => m.ensureTicketKeyPrefixFromIdentity())
+      .catch(() => undefined)
     // Startup + periodic sweep: report any session usage accrued while the
     // app was closed or whose stop event was missed (crash, quit race).
     startSessionUsageSweep()

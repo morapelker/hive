@@ -43,6 +43,7 @@ export type DesktopCommandName =
   | 'sessionProfilerKill'
   | 'sleepNow'
   | 'setSessionQueuedState'
+  | 'showNotification'
   | 'updaterCheckForUpdate'
   | 'updaterDownloadUpdate'
   | 'updaterInstallUpdate'
@@ -186,6 +187,16 @@ export type SessionProfilerKillDesktopResult = SessionProfilerKillResult
 export interface SetSessionQueuedStatePayload {
   readonly sessionId: string
   readonly hasQueued: boolean
+}
+
+export interface ShowNotificationPayload {
+  readonly title: string
+  readonly body: string
+  readonly navigate?: {
+    readonly projectId: string
+    readonly worktreeId: string
+    readonly sessionId: string
+  }
 }
 
 export interface ConfirmPayload {
@@ -1035,6 +1046,7 @@ export type DesktopCommandRequest =
   | SessionProfilerKillDesktopCommandRequest
   | SleepNowDesktopCommandRequest
   | SetSessionQueuedStateDesktopCommandRequest
+  | ShowNotificationDesktopCommandRequest
   | UpdaterCheckForUpdateDesktopCommandRequest
   | UpdaterDownloadUpdateDesktopCommandRequest
   | UpdaterInstallUpdateDesktopCommandRequest
@@ -1334,6 +1346,13 @@ export interface SetSessionQueuedStateDesktopCommandRequest {
   readonly id: string
   readonly command: 'setSessionQueuedState'
   readonly payload: SetSessionQueuedStatePayload
+}
+
+export interface ShowNotificationDesktopCommandRequest {
+  readonly type: typeof DESKTOP_COMMAND_REQUEST_TYPE
+  readonly id: string
+  readonly command: 'showNotification'
+  readonly payload: ShowNotificationPayload
 }
 
 export interface UpdaterCheckForUpdateDesktopCommandRequest {
@@ -2089,6 +2108,11 @@ export function makeDesktopCommandRequest(
 ): SetSessionQueuedStateDesktopCommandRequest
 export function makeDesktopCommandRequest(
   id: string,
+  command: 'showNotification',
+  payload: ShowNotificationPayload
+): ShowNotificationDesktopCommandRequest
+export function makeDesktopCommandRequest(
+  id: string,
   command: 'updaterCheckForUpdate',
   payload: UpdaterCheckForUpdatePayload
 ): UpdaterCheckForUpdateDesktopCommandRequest
@@ -2532,6 +2556,7 @@ export function makeDesktopCommandRequest(
     | PerfLoggingPayload
     | SessionProfilerKillPayload
     | SetSessionQueuedStatePayload
+    | ShowNotificationPayload
     | UpdaterCheckForUpdatePayload
     | UpdaterSetChannelPayload
     | PublishPetStatusPayload
@@ -2872,6 +2897,19 @@ export function makeDesktopCommandRequest(
       command,
       payload
     } as SetSessionQueuedStateDesktopCommandRequest
+  }
+
+  if (command === 'showNotification') {
+    if (!payload) {
+      throw new Error('Missing showNotification payload')
+    }
+
+    return {
+      type: DESKTOP_COMMAND_REQUEST_TYPE,
+      id,
+      command,
+      payload
+    } as ShowNotificationDesktopCommandRequest
   }
 
   if (command === 'updaterCheckForUpdate') {
@@ -3903,6 +3941,7 @@ export const isDesktopCommandRequest = (value: unknown): value is DesktopCommand
       value.command === 'sleepNow' ||
       (value.command === 'setSessionQueuedState' &&
         isSetSessionQueuedStatePayload(value.payload)) ||
+      (value.command === 'showNotification' && isShowNotificationPayload(value.payload)) ||
       (value.command === 'updaterCheckForUpdate' &&
         isUpdaterCheckForUpdatePayload(value.payload)) ||
       value.command === 'updaterDownloadUpdate' ||
@@ -4134,6 +4173,16 @@ const isSessionProfilerKillPayload = (value: unknown): value is SessionProfilerK
 
 const isSetSessionQueuedStatePayload = (value: unknown): value is SetSessionQueuedStatePayload =>
   isRecord(value) && typeof value.sessionId === 'string' && typeof value.hasQueued === 'boolean'
+
+const isShowNotificationPayload = (value: unknown): value is ShowNotificationPayload =>
+  isRecord(value) &&
+  typeof value.title === 'string' &&
+  typeof value.body === 'string' &&
+  (value.navigate === undefined ||
+    (isRecord(value.navigate) &&
+      typeof value.navigate.projectId === 'string' &&
+      typeof value.navigate.worktreeId === 'string' &&
+      typeof value.navigate.sessionId === 'string'))
 
 const isConfirmPayload = (value: unknown): value is ConfirmPayload =>
   isRecord(value) && typeof value.message === 'string'
