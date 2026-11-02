@@ -24,12 +24,21 @@ vi.mock('@/api/db-api', () => ({
 
 const gitApiMocks = vi.hoisted(() => ({
   hasUncommittedChanges: vi.fn(),
-  branchDiffShortStat: vi.fn()
+  branchDiffShortStat: vi.fn(),
+  syncBranchWithOrigin: vi.fn()
 }))
 
 vi.mock('@/api/git-api', () => ({
   gitApi: gitApiMocks
 }))
+
+const toastMocks = vi.hoisted(() => ({
+  warning: vi.fn(),
+  loading: vi.fn(() => 'toast-1'),
+  dismiss: vi.fn()
+}))
+
+vi.mock('@/lib/toast', () => ({ toast: toastMocks }))
 
 const sessionStoreState = vi.hoisted(() => ({
   sessionsByConnection: new Map<string, { id: string }[]>()
@@ -75,6 +84,7 @@ const mainWorktree = worktree({
 
 beforeEach(() => {
   vi.clearAllMocks()
+  gitApiMocks.syncBranchWithOrigin.mockResolvedValue({ success: true, updated: false })
   sessionStoreState.sessionsByConnection = new Map()
 })
 
@@ -300,6 +310,139 @@ describe('buildConnectionMergeQueue', () => {
     })
     expect(await buildConnectionMergeQueue('conn-1')).toEqual([])
     expect(dbApiMocks.worktree.get).not.toHaveBeenCalled()
+  })
+})
+
+describe('assessConnectionMembers — pulling first', () => {
+  const stat = {
+    success: true,
+    filesChanged: 0,
+    insertions: 0,
+    deletions: 0,
+    commitsAhead: 0
+  }
+
+  beforeEach(() => {
+    connectionApiMocks.get.mockResolvedValue({
+      success: true,
+      connection: {
+        id: 'conn-1',
+        members: [
+          { worktree_id: 'wt-web', project_id: 'proj-web', project_name: 'Web' },
+          { worktree_id: 'wt-api', project_id: 'proj-api', project_name: 'Api' }
+        ]
+      }
+    })
+    dbApiMocks.worktree.get.mockImplementation(async (id: string) =>
+      id === 'wt-web'
+        ? worktree({ id, project_id: 'proj-web', path: '/web/feature' })
+        : worktree({ id, project_id: 'proj-api', path: '/api/feature', base_branch: 'develop' })
+    )
+    dbApiMocks.worktree.getActiveByProject.mockImplementation(async (projectId: string) =>
+      projectId === 'proj-web'
+        ? [mainWorktree]
+        : [worktree({ id: 'wt-develop', branch_name: 'develop', path: '/api/develop' })]
+    )
+    gitApiMocks.hasUncommittedChanges.mockResolvedValue(false)
+    gitApiMocks.branchDiffShortStat.mockResolvedValue(stat)
+  })
+
+  it('pulls every member’s base branch before any check reads it', async () => {
+    await assessConnectionMembers('conn-1')
+
+    expect(gitApiMocks.syncBranchWithOrigin).toHaveBeenCalledTimes(2)
+    expect(gitApiMocks.syncBranchWithOrigin).toHaveBeenCalledWith('/web/feature', 'main')
+    expect(gitApiMocks.syncBranchWithOrigin).toHaveBeenCalledWith('/api/feature', 'develop')
+    const lastPull = Math.max(...gitApiMocks.syncBranchWithOrigin.mock.invocationCallOrder)
+    const firstCheck = Math.min(
+      ...gitApiMocks.branchDiffShortStat.mock.invocationCallOrder,
+      ...gitApiMocks.hasUncommittedChanges.mock.invocationCallOrder
+    )
+    expect(lastPull).toBeLessThan(firstCheck)
+  })
+
+  it('reads a branch as already merged once the pull brought its commits in', async () => {
+    // What the ticket is about: the PR landed on origin, so local main only has it after a pull
+    let pulled = false
+    gitApiMocks.syncBranchWithOrigin.mockImplementation(async () => {
+      pulled = true
+      return { success: true, updated: true }
+    })
+    gitApiMocks.branchDiffShortStat.mockImplementation(async () => ({
+      ...stat,
+      commitsAhead: pulled ? 0 : 3
+    }))
+
+    expect(await buildConnectionMergeQueue('conn-1')).toEqual([])
+  })
+
+  it('goes on with the local branches when a pull fails, and says which', async () => {
+    gitApiMocks.syncBranchWithOrigin.mockImplementation(async (path: string) => ({
+      success: path !== '/api/feature',
+      updated: false
+    }))
+    gitApiMocks.branchDiffShortStat.mockResolvedValue({ ...stat, commitsAhead: 1 })
+
+    const queue = await buildConnectionMergeQueue('conn-1')
+
+    expect(queue.map((target) => target.worktreeId)).toEqual(['wt-web', 'wt-api'])
+    expect(toastMocks.warning).toHaveBeenCalledWith(
+      'Could not pull latest develop (Api) from origin - checking against the local branch'
+    )
+  })
+
+  it('leaves the members it will not check alone', async () => {
+    connectionApiMocks.get.mockResolvedValue({
+      success: true,
+      connection: {
+        id: 'conn-1',
+        members: [
+          { worktree_id: 'wt-archived', project_id: 'proj-1' },
+          { worktree_id: 'wt-on-base', project_id: 'proj-1' },
+          { worktree_id: 'wt-no-base', project_id: 'proj-2' }
+        ]
+      }
+    })
+    dbApiMocks.worktree.get.mockImplementation(async (id: string) => {
+      if (id === 'wt-archived') return worktree({ id, status: 'archived' })
+      if (id === 'wt-on-base') return worktree({ id, branch_name: 'main' })
+      return worktree({ id, base_branch: 'gone' })
+    })
+    dbApiMocks.worktree.getActiveByProject.mockResolvedValue([mainWorktree])
+
+    const assessment = await assessConnectionMembers('conn-1')
+
+    expect(assessment.skipped.map((s) => s.reason).sort()).toEqual([
+      'inactive',
+      'no-base-worktree',
+      'on-base'
+    ])
+    expect(gitApiMocks.syncBranchWithOrigin).not.toHaveBeenCalled()
+    expect(toastMocks.loading).not.toHaveBeenCalled()
+  })
+
+  it('leaves out a member whose archive started during the pull', async () => {
+    gitApiMocks.syncBranchWithOrigin.mockImplementation(async () => {
+      worktreeStoreState.archivingWorktreeIds = new Set(['wt-api'])
+      return { success: true, updated: false }
+    })
+    gitApiMocks.branchDiffShortStat.mockResolvedValue({ ...stat, commitsAhead: 1 })
+
+    const assessment = await assessConnectionMembers('conn-1')
+
+    expect(assessment.targets).toEqual([{ worktreeId: 'wt-web', projectId: 'proj-web' }])
+    expect(assessment.skipped).toEqual([
+      { worktreeId: 'wt-api', projectId: 'proj-api', reason: 'inactive' }
+    ])
+    expect(gitApiMocks.branchDiffShortStat).not.toHaveBeenCalledWith('/api/feature', 'develop')
+  })
+
+  it('pulls nothing for a deleted connection', async () => {
+    connectionApiMocks.get.mockResolvedValue({ success: false, error: 'Connection not found' })
+
+    await assessConnectionMembers('conn-1')
+
+    expect(gitApiMocks.syncBranchWithOrigin).not.toHaveBeenCalled()
   })
 })
 

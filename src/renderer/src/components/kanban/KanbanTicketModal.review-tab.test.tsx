@@ -62,7 +62,9 @@ vi.mock('@/lib/toast', () => ({
   toast: {
     success: vi.fn(),
     error: vi.fn(),
-    warning: vi.fn()
+    warning: vi.fn(),
+    loading: vi.fn(() => 1),
+    dismiss: vi.fn()
   }
 }))
 
@@ -107,7 +109,8 @@ vi.mock('@/api/db-api', () => ({
 const gitApiMocks = vi.hoisted(() => ({
   listBranchesWithStatus: vi.fn().mockResolvedValue({ success: true, branches: [] }),
   getBranchDiffFiles: vi.fn().mockResolvedValue({ success: true, files: [] }),
-  onStatusChanged: vi.fn().mockReturnValue(() => {})
+  onStatusChanged: vi.fn().mockReturnValue(() => {}),
+  syncBranchWithOrigin: vi.fn().mockResolvedValue({ success: true, updated: false })
 }))
 
 vi.mock('@/api/git-api', () => ({
@@ -293,28 +296,33 @@ function renderModal(): void {
   )
 }
 
-describe('KanbanTicketModal review mode Tab handling', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    dbApiMocks.worktree.get.mockResolvedValue(null)
-    dbApiMocks.worktree.getActiveByProject.mockResolvedValue([])
-    dbApiMocks.setting.get.mockResolvedValue(null)
-    dbApiMocks.setting.set.mockResolvedValue(undefined)
-    gitApiMocks.listBranchesWithStatus.mockResolvedValue({ success: true, branches: [] })
-    gitApiMocks.getBranchDiffFiles.mockResolvedValue({ success: true, files: [] })
-    gitApiMocks.onStatusChanged.mockReturnValue(() => {})
-  })
+function resetMocks(): void {
+  vi.clearAllMocks()
+  dbApiMocks.worktree.get.mockResolvedValue(null)
+  dbApiMocks.worktree.getActiveByProject.mockResolvedValue([])
+  dbApiMocks.setting.get.mockResolvedValue(null)
+  dbApiMocks.setting.set.mockResolvedValue(undefined)
+  gitApiMocks.listBranchesWithStatus.mockResolvedValue({ success: true, branches: [] })
+  gitApiMocks.getBranchDiffFiles.mockResolvedValue({ success: true, files: [] })
+  gitApiMocks.onStatusChanged.mockReturnValue(() => {})
+  gitApiMocks.syncBranchWithOrigin.mockResolvedValue({ success: true, updated: false })
+}
 
-  afterEach(() => {
-    cleanup()
-    useSettingsStore.setState(initialSettingsState, true)
-    useSessionStore.setState(initialSessionState, true)
-    useWorktreeStore.setState(initialWorktreeState, true)
-    useKanbanStore.setState(initialKanbanState, true)
-    useProjectStore.setState(initialProjectState, true)
-    useWorktreeStatusStore.setState(initialWorktreeStatusState, true)
-    useRemoteLaunchStore.setState(initialRemoteLaunchState, true)
-  })
+function resetStores(): void {
+  cleanup()
+  useSettingsStore.setState(initialSettingsState, true)
+  useSessionStore.setState(initialSessionState, true)
+  useWorktreeStore.setState(initialWorktreeState, true)
+  useKanbanStore.setState(initialKanbanState, true)
+  useProjectStore.setState(initialProjectState, true)
+  useWorktreeStatusStore.setState(initialWorktreeStatusState, true)
+  useRemoteLaunchStore.setState(initialRemoteLaunchState, true)
+}
+
+describe('KanbanTicketModal review mode Tab handling', () => {
+  beforeEach(resetMocks)
+
+  afterEach(resetStores)
 
   it('intercepts Tab to toggle build/plan and shows the mode chip for non-CLI sessions', async () => {
     const session = makeSession('opencode')
@@ -355,5 +363,85 @@ describe('KanbanTicketModal review mode Tab handling', () => {
     // Neither Tab nor Shift+Tab is intercepted — the terminal gets them
     expect(tabNotPrevented).toBe(true)
     expect(shiftTabNotPrevented).toBe(true)
+  })
+})
+
+describe('KanbanTicketModal review mode Move to Done', () => {
+  beforeEach(resetMocks)
+
+  afterEach(resetStores)
+
+  it('moves the ticket straight to Done when nothing is left to merge', async () => {
+    const session = makeSession('opencode')
+    dbApiMocks.session.get.mockResolvedValue(session)
+    setupStores(session)
+
+    renderModal()
+
+    fireEvent.click(await screen.findByTestId('review-move-done-btn'))
+
+    // No active worktree to merge (dbApi.worktree.get resolves null): the direct move
+    await waitFor(() =>
+      expect(useKanbanStore.getState().moveTicket).toHaveBeenCalledWith(
+        'ticket-1',
+        'project-1',
+        'done',
+        expect.any(Number)
+      )
+    )
+    expect(useKanbanStore.getState().pendingDoneMove).toBeNull()
+    expect(gitApiMocks.syncBranchWithOrigin).not.toHaveBeenCalled()
+  })
+
+  it('pulls nothing without a worktree on the base branch: the dialog skips the merge then', async () => {
+    const session = makeSession('opencode')
+    dbApiMocks.session.get.mockResolvedValue(session)
+    setupStores(session)
+    dbApiMocks.worktree.get.mockResolvedValue({ ...worktree, base_branch: 'archived-parent' })
+    dbApiMocks.worktree.getActiveByProject.mockResolvedValue([
+      { ...worktree, id: 'worktree-main', branch_name: 'main', path: '/repo', is_default: true }
+    ])
+
+    renderModal()
+    fireEvent.click(await screen.findByTestId('review-move-done-btn'))
+
+    await waitFor(() =>
+      expect(useKanbanStore.getState().pendingDoneMove).toMatchObject({ ticketId: 'ticket-1' })
+    )
+    expect(gitApiMocks.syncBranchWithOrigin).not.toHaveBeenCalled()
+  })
+
+  it('pulls the base branch before the merge dialog checks the ticket’s branch against it', async () => {
+    const session = makeSession('opencode')
+    dbApiMocks.session.get.mockResolvedValue(session)
+    setupStores(session)
+    dbApiMocks.worktree.get.mockResolvedValue(worktree)
+    dbApiMocks.worktree.getActiveByProject.mockResolvedValue([
+      { ...worktree, id: 'worktree-main', branch_name: 'main', path: '/repo', is_default: true }
+    ])
+    let release: (result: { success: boolean; updated: boolean }) => void = () => {}
+    gitApiMocks.syncBranchWithOrigin.mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve
+      })
+    )
+
+    renderModal()
+    fireEvent.click(await screen.findByTestId('review-move-done-btn'))
+
+    await waitFor(() =>
+      expect(gitApiMocks.syncBranchWithOrigin).toHaveBeenCalledWith('/repo/feature', 'main')
+    )
+    // The dialog runs its checks as soon as it opens: not before the pull is through
+    expect(useKanbanStore.getState().pendingDoneMove).toBeNull()
+
+    release({ success: false, updated: false })
+
+    await waitFor(() =>
+      expect(useKanbanStore.getState().pendingDoneMove).toMatchObject({
+        ticketId: 'ticket-1',
+        targetColumn: 'done'
+      })
+    )
   })
 })

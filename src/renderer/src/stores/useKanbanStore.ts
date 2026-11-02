@@ -2379,6 +2379,21 @@ export const useKanbanStore = create<KanbanState>()(
 
       // ── Merge-on-done state ──────────────────────────────────────────
       setPendingDoneMove: (data) => {
+        // A drop waits on origin before it gets here, so one can land while another's dialog
+        // is open. Taking the dialog over would lose that move, and a merge in flight would
+        // finish into the wrong ticket's steps: the open move wins, and the newcomer is told.
+        const open = get().pendingDoneMove
+        if (open) {
+          if (open.ticketId !== data.ticketId || open.projectId !== data.projectId) {
+            const title = get()
+              .tickets.get(data.projectId)
+              ?.find((t) => t.id === data.ticketId)?.title
+            toast.warning(
+              `${title ? `"${title}"` : 'The ticket'} stays where it is - finish the open merge, then move it again`
+            )
+          }
+          return
+        }
         set({ pendingDoneMove: data })
       },
 

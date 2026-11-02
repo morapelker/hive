@@ -501,6 +501,15 @@ export const gitApi = {
       branch,
       rebase
     }),
+  /**
+   * Fast-forward local `branch` to origin wherever it is checked out; `worktreePath` is any
+   * worktree of the repository. Never merges: `success: false` means the branch stayed put.
+   */
+  syncBranchWithOrigin: async (worktreePath: string, branch: string): Promise<GitPullResult> =>
+    getRendererRpcClient().request<GitPullResult>('gitOps.syncBranchWithOrigin', {
+      worktreePath,
+      branch
+    }),
   stageFile: async (worktreePath: string, filePath: string): Promise<GitOperationResult> =>
     getRendererRpcClient().request<GitOperationResult>('gitOps.stageFile', {
       worktreePath,

@@ -988,6 +988,54 @@ describe('git ops RPC mocked provider', () => {
     })
   })
 
+  it('routes gitOps.syncBranchWithOrigin to the injected provider service', async () => {
+    const syncBranchWithOrigin = vi.fn(() => Effect.succeed({ success: true, updated: true }))
+    const service = { syncBranchWithOrigin } as unknown as GitOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      gitOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'git-sync-1',
+        method: 'gitOps.syncBranchWithOrigin',
+        params: { worktreePath: '/repo', branch: 'main' }
+      })
+    )
+
+    expect(syncBranchWithOrigin).toHaveBeenCalledWith('/repo', 'main')
+    expect(response).toEqual({
+      id: 'git-sync-1',
+      ok: true,
+      value: { success: true, updated: true }
+    })
+  })
+
+  it('validates gitOps.syncBranchWithOrigin params before calling the provider service', async () => {
+    const syncBranchWithOrigin = vi.fn(() => Effect.succeed({ success: true, updated: true }))
+    const service = { syncBranchWithOrigin } as unknown as GitOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      gitOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'git-sync-invalid',
+        method: 'gitOps.syncBranchWithOrigin',
+        params: { worktreePath: '/repo', branch: '' }
+      })
+    )
+
+    expect(syncBranchWithOrigin).not.toHaveBeenCalled()
+    expect(response).toMatchObject({
+      id: 'git-sync-invalid',
+      ok: false,
+      error: { code: 'VALIDATION_FAILED' }
+    })
+  })
+
   it('routes gitOps.merge to the injected provider service', async () => {
     const merge = vi.fn(() => Effect.succeed({ success: true }))
     const service = { merge } as unknown as GitOpsRpcService

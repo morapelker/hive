@@ -21,7 +21,8 @@ const dbApiMocks = vi.hoisted(() => ({
 }))
 const gitApiMocks = vi.hoisted(() => ({
   hasUncommittedChanges: vi.fn(),
-  branchDiffShortStat: vi.fn()
+  branchDiffShortStat: vi.fn(),
+  syncBranchWithOrigin: vi.fn()
 }))
 
 const runDoneQueue = vi.hoisted(() => ({ queueDocumentRunDone: vi.fn() }))
@@ -45,7 +46,14 @@ vi.mock('@/components/kanban/WorktreePickerModal', () => ({
 vi.mock('@/components/kanban/TicketCreateModal', () => ({ TicketCreateModal: () => null }))
 
 vi.mock('@/lib/toast', () => ({
-  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() }
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+    warning: vi.fn(),
+    info: vi.fn(),
+    loading: vi.fn(() => 1),
+    dismiss: vi.fn()
+  }
 }))
 
 vi.mock('motion/react', () => ({
@@ -187,6 +195,7 @@ beforeEach(() => {
   dbApiMocks.worktree.get.mockResolvedValue(integrationWorktree)
   dbApiMocks.worktree.getActiveByProject.mockResolvedValue([integrationWorktree, mainWorktree])
   gitApiMocks.hasUncommittedChanges.mockResolvedValue(false)
+  gitApiMocks.syncBranchWithOrigin.mockResolvedValue({ success: true, updated: false })
   gitApiMocks.branchDiffShortStat.mockResolvedValue({
     success: true,
     filesChanged: 4,
@@ -339,6 +348,90 @@ describe('dropping the ticket of a run that has ended', () => {
       expect(toast.warning).not.toHaveBeenCalled()
     }
   )
+
+  it('pulls the base branch before checking the branch against it', async () => {
+    seedRun('completed')
+
+    await drop(makeTicket({ column: 'review' }), 'done')
+
+    await waitFor(() => expect(setPendingDoneMove).toHaveBeenCalled())
+    expect(gitApiMocks.syncBranchWithOrigin).toHaveBeenCalledTimes(1)
+    expect(gitApiMocks.syncBranchWithOrigin).toHaveBeenCalledWith(
+      '/worktrees/doc-checkout',
+      'main'
+    )
+    expect(gitApiMocks.syncBranchWithOrigin.mock.invocationCallOrder[0]).toBeLessThan(
+      gitApiMocks.branchDiffShortStat.mock.invocationCallOrder[0]
+    )
+  })
+
+  it('lands the ticket without a merge step when the pull brought its commits in', async () => {
+    seedRun('completed')
+    let pulled = false
+    gitApiMocks.syncBranchWithOrigin.mockImplementation(async () => {
+      pulled = true
+      return { success: true, updated: true }
+    })
+    gitApiMocks.branchDiffShortStat.mockImplementation(async () => ({
+      success: true,
+      filesChanged: 0,
+      insertions: 0,
+      deletions: 0,
+      commitsAhead: pulled ? 0 : 6
+    }))
+
+    await drop(makeTicket({ column: 'in_progress' }), 'merged')
+
+    await waitFor(() => expect(moveTicket).toHaveBeenCalled())
+    expect(setPendingDoneMove).not.toHaveBeenCalled()
+  })
+
+  it.each(['merged', 'done'] as const)(
+    'gives up on the %s drop when the ticket was moved during the pull: the newer move wins',
+    async (target) => {
+      seedRun('completed')
+      gitApiMocks.branchDiffShortStat.mockResolvedValue({
+        success: true,
+        filesChanged: 0,
+        insertions: 0,
+        deletions: 0,
+        commitsAhead: 0
+      })
+      const ticket = makeTicket({ column: 'in_progress' })
+      let release: (result: { success: boolean; updated: boolean }) => void = () => {}
+      gitApiMocks.syncBranchWithOrigin.mockReturnValue(
+        new Promise((resolve) => {
+          release = resolve
+        })
+      )
+
+      await drop(ticket, target)
+      await waitFor(() => expect(gitApiMocks.syncBranchWithOrigin).toHaveBeenCalled())
+
+      useKanbanStore.setState({
+        tickets: new Map([[ticket.project_id, [{ ...ticket, column: 'review' }]]])
+      })
+      release({ success: true, updated: false })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      expect(moveTicket).not.toHaveBeenCalled()
+      expect(setPendingDoneMove).not.toHaveBeenCalled()
+      expect(gitApiMocks.branchDiffShortStat).not.toHaveBeenCalled()
+    }
+  )
+
+  it('goes on with the local branch when the pull fails, and says so', async () => {
+    seedRun('completed')
+    gitApiMocks.syncBranchWithOrigin.mockResolvedValue({ success: false, updated: false })
+
+    await drop(makeTicket({ column: 'review' }), 'done')
+
+    await waitFor(() => expect(setPendingDoneMove).toHaveBeenCalled())
+    expect(toast.warning).toHaveBeenCalledWith(
+      'Could not pull latest main from origin - checking against the local branch'
+    )
+  })
 
   it('opens it for Merged as well', async () => {
     seedRun('completed')

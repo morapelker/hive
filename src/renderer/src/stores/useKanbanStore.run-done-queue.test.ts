@@ -230,3 +230,61 @@ describe('completeDoneMove — document-run batch', () => {
     expect(toastMocks.warning).toHaveBeenCalledWith(expect.stringContaining('1 branch'))
   })
 })
+
+describe('setPendingDoneMove', () => {
+  const move = (ticketId: string): PendingDoneMove => ({
+    ticketId,
+    projectId: 'proj',
+    sortOrder: 0,
+    targetColumn: 'done'
+  })
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    useKanbanStore.setState({
+      pendingDoneMove: null,
+      tickets: new Map([['proj', [ticket('t-a', 'review'), ticket('t-b', 'review')]]])
+    })
+  })
+
+  it('opens a move when none is open', () => {
+    const first = move('t-a')
+
+    useKanbanStore.getState().setPendingDoneMove(first)
+
+    expect(useKanbanStore.getState().pendingDoneMove).toBe(first)
+    expect(toastMocks.warning).not.toHaveBeenCalled()
+  })
+
+  it('keeps the open move when a drop that waited on origin lands late, and says so', () => {
+    const first = move('t-a')
+    useKanbanStore.getState().setPendingDoneMove(first)
+
+    useKanbanStore.getState().setPendingDoneMove(move('t-b'))
+
+    expect(useKanbanStore.getState().pendingDoneMove).toBe(first)
+    expect(toastMocks.warning).toHaveBeenCalledWith(
+      '"Ticket t-b" stays where it is - finish the open merge, then move it again'
+    )
+  })
+
+  it('takes the same ticket dropped twice as one move, without a warning', () => {
+    const first = move('t-a')
+    useKanbanStore.getState().setPendingDoneMove(first)
+
+    useKanbanStore.getState().setPendingDoneMove(move('t-a'))
+
+    expect(useKanbanStore.getState().pendingDoneMove).toBe(first)
+    expect(toastMocks.warning).not.toHaveBeenCalled()
+  })
+
+  it('opens the next move once the open one is gone', () => {
+    useKanbanStore.getState().setPendingDoneMove(move('t-a'))
+    useKanbanStore.getState().clearPendingDoneMove()
+    const next = move('t-b')
+
+    useKanbanStore.getState().setPendingDoneMove(next)
+
+    expect(useKanbanStore.getState().pendingDoneMove).toBe(next)
+  })
+})

@@ -117,6 +117,7 @@ export class Git extends Context.Tag('GitIsland/Git')<
         branchName: string,
         options?: { silent?: boolean; skipPull?: boolean }
       ) => Eff<GitPullResult>
+      readonly syncBranchWithOrigin: (repoPath: string, branchName: string) => Eff<GitPullResult>
       readonly merge: (repoPath: string, sourceBranch: string) => Eff<GitMergeResult>
       readonly mergeAbort: (repoPath: string) => Eff<GitOperationResult>
     }

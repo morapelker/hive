@@ -217,6 +217,10 @@ class GitFacade {
     return runResult(Effect.flatMap(Git, (git) => git.commit.pullBaseBranch(repoPath, branchName, options)))
   }
 
+  syncBranchWithOrigin(repoPath: string, branchName: string): Promise<GitPullResult> {
+    return runResult(Effect.flatMap(Git, (git) => git.commit.syncBranchWithOrigin(repoPath, branchName)))
+  }
+
   merge(repoPath: string, sourceBranch: string): Promise<GitMergeResult> {
     return runResult(Effect.flatMap(Git, (git) => git.commit.merge(repoPath, sourceBranch)))
   }

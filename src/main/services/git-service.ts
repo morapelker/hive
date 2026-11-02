@@ -257,6 +257,10 @@ export class GitService {
     return gitEffectService.pullBaseBranch(this.repoPath, branchName, options)
   }
 
+  async syncBranchWithOrigin(branchName: string): Promise<GitPullResult> {
+    return gitEffectService.syncBranchWithOrigin(this.repoPath, branchName)
+  }
+
   async merge(sourceBranch: string): Promise<GitMergeResult> {
     return gitEffectService.merge(this.repoPath, sourceBranch)
   }

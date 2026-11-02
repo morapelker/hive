@@ -741,6 +741,20 @@ describe('gitApi', () => {
     })
   })
 
+  it('routes syncBranchWithOrigin through the renderer RPC client', async () => {
+    const result = { success: true, updated: true }
+    const request = vi.fn().mockResolvedValue(result)
+    const subscribe = vi.fn()
+
+    setRendererRpcClient({ request, subscribe })
+
+    await expect(gitApi.syncBranchWithOrigin('/tmp/tedooo-code', 'main')).resolves.toBe(result)
+    expect(request).toHaveBeenCalledWith('gitOps.syncBranchWithOrigin', {
+      worktreePath: '/tmp/tedooo-code',
+      branch: 'main'
+    })
+  })
+
   it('routes stageFile through the renderer RPC client', async () => {
     const result = { success: true }
     const request = vi.fn().mockResolvedValue(result)

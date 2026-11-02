@@ -22,10 +22,16 @@ import { normalizeBranchDisplayName } from '@shared/git-output'
 const execFileAsync = promisify(execFile)
 type GitOperation = 'merge' | 'rebase' | 'cherry-pick' | 'apply'
 
-/** Outcome of aligning a local base branch with origin before cutting a worktree from it. */
+/** Outcome of aligning a local base branch with origin. */
 type BaseBranchSyncResult = { success: boolean; updated: boolean }
 
 const log = createLogger({ component: 'GitWorktreeOps' })
+
+/**
+ * How long a sync with origin may go without any output from git before it is killed: it holds
+ * a global git permit meanwhile, and nothing else would ever end it on a dead connection.
+ */
+const BRANCH_SYNC_STALL_TIMEOUT_MS = 60_000
 
 export const resolveGitWorktreesDir = (
   projectName: string,
@@ -661,10 +667,12 @@ const make = Effect.gen(function* () {
   }
 
   /**
-   * Fast-forward local `branchName` to `origin/<branchName>` before a worktree
-   * is cut from it. Tickets are often written long before they start, so by
-   * then the local base branch (usually main) can trail origin by many commits
-   * and the new worktree would open with a large diff from origin/main.
+   * Fast-forward local `branchName` to `origin/<branchName>` before something
+   * reads the local branch. Tickets are often written long before they start, so
+   * by then the local base branch (usually main) can trail origin by many commits
+   * and a worktree cut from it would open with a large diff from origin/main. The
+   * same goes for the Done/Merged checks of a ticket's branch against its base: a
+   * PR merged on the remote still reads as work to merge against a stale main.
    *
    * Git refuses `fetch origin <b>:<b>` while `<b>` is checked out in ANY
    * worktree, so the pull runs inside the worktree that holds the branch (the
@@ -675,9 +683,16 @@ const make = Effect.gen(function* () {
    *
    * A branch with no remote-tracking ref (never pushed or fetched) is left
    * alone and reported as in sync. Anything else that blocks the fast-forward
-   * (offline, a diverged local branch, a dirty checkout conflicting with the
-   * incoming commits) reports `success: false`; the caller still creates the
-   * worktree from the local branch and the UI warns.
+   * (offline, a stalled remote, a diverged local branch, a dirty checkout
+   * conflicting with the incoming commits) reports `success: false`; the caller
+   * goes on with the local branch and the UI warns.
+   *
+   * This runs on the user's checkout without them asking, so their git config
+   * must not change what it does: `merge.autoStash` (or `pull.rebase` with
+   * `rebase.autoStash`) would stash their edits and leave conflict markers
+   * behind while git exits 0, and `pull.rebase` alone refuses any dirty tree.
+   * `--progress` keeps output flowing through a real transfer, so that only a
+   * stalled remote trips the timeout.
    */
   const syncBranchWithOrigin = (
     repoPath: string,
@@ -701,10 +716,18 @@ const make = Effect.gen(function* () {
         }
 
         const before = await resolveRef(`refs/heads/${branchName}`)
+        const stallTimeout = { timeout: { block: BRANCH_SYNC_STALL_TIMEOUT_MS } }
         if (checkout) {
-          await simpleGit(checkout.path).pull('origin', branchName, { '--ff-only': null })
+          await simpleGit(checkout.path, stallTimeout).pull('origin', branchName, {
+            '--ff-only': null,
+            '--no-rebase': null,
+            '--no-autostash': null,
+            '--progress': null
+          })
         } else {
-          await git.fetch('origin', `${branchName}:${branchName}`)
+          await simpleGit(repoPath, stallTimeout).fetch('origin', `${branchName}:${branchName}`, {
+            '--progress': null
+          })
         }
         const after = await resolveRef(`refs/heads/${branchName}`)
         return { success: true, updated: before !== after }
@@ -1291,6 +1314,7 @@ const make = Effect.gen(function* () {
           }
         }),
       pullBaseBranch,
+      syncBranchWithOrigin,
       merge: (repoPath, sourceBranch) =>
         writeOp(repoPath, `git merge ${sourceBranch}`, (git) =>
           git.merge([sourceBranch]).then(() => ({ success: true as const }))

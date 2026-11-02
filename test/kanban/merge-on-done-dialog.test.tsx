@@ -381,6 +381,50 @@ describe('MergeOnDoneDialog', () => {
     expect(useKanbanStore.getState().pendingDoneMove).toBeNull()
   })
 
+  test('a merge finishing after the dialog moved on never offers to archive the other branch', async () => {
+    let finishMerge: (result: { success: boolean }) => void = () => {}
+    merge.mockReturnValue(
+      new Promise((resolve) => {
+        finishMerge = resolve
+      })
+    )
+    vi.mocked(dbApi.worktree.get).mockImplementation(async (id: string) =>
+      id === 'other-wt'
+        ? makeWorktree({ id: 'other-wt', branch_name: 'other', path: '/repo/other' })
+        : makeWorktree()
+    )
+    useKanbanStore.setState({
+      tickets: new Map([
+        ['project-1', [makeTicket(), makeTicket({ id: 'ticket-2', worktree_id: 'other-wt' })]]
+      ]),
+      pendingDoneMove: { ticketId: 'ticket-1', projectId: 'project-1', sortOrder: 10, targetColumn: 'done' }
+    })
+
+    render(<MergeOnDoneDialog />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Merge' }))
+    await waitFor(() => expect(merge).toHaveBeenCalledWith('/repo/main', 'feature'))
+
+    // Dismissed mid-merge, then a drop that was waiting on origin opens its own move
+    act(() => {
+      useKanbanStore.getState().clearPendingDoneMove()
+      useKanbanStore.getState().setPendingDoneMove({
+        ticketId: 'ticket-2',
+        projectId: 'project-1',
+        sortOrder: 11,
+        targetColumn: 'done'
+      })
+    })
+    await screen.findByText(/other/)
+
+    await act(async () => {
+      finishMerge({ success: true })
+    })
+
+    expect(screen.queryByRole('button', { name: /Archive/ })).toBeNull()
+    expect(screen.queryByText(/Merge successful/)).toBeNull()
+    expect(screen.getByRole('button', { name: 'Merge' })).toBeTruthy()
+  })
+
   test('moves ticket to done only after a successful merge reaches the archive step', async () => {
     merge.mockResolvedValue({ success: true })
 

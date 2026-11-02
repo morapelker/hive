@@ -60,6 +60,7 @@ import type {
 } from '../../../../main/db/types'
 import { documentRunIdOf, isDocumentRunTicket } from '@shared/document-flow/run-ticket'
 import { queueDocumentRunDone } from '@/lib/document-flow/run-done-queue'
+import { pullBaseBranches } from '@/lib/base-branch-pull'
 import type { DocumentRun } from '@shared/types/document-flow'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { dbApi } from '@/api/db-api'
@@ -576,6 +577,9 @@ export function KanbanColumn({
         // stop-session paths below.
         const documentRunTicket = findTicket(ticketId, ticketProjectId)
         const documentRunId = documentRunIdOf(documentRunTicket)
+        // A Done/Merged drop waits on origin with the card still draggable: a newer move wins
+        const movedSinceDrop = (): boolean =>
+          findTicket(ticketId, ticketProjectId)?.column !== documentRunTicket?.column
         if (documentRunId) {
           let run:
             | Pick<DocumentRun, 'status' | 'migration_session_id' | 'integration_connection_id'>
@@ -772,6 +776,15 @@ export function KanbanColumn({
                   // A document run's ticket is checked without a base worktree too: Done
                   // means merged for it, so it only moves freely with nothing left to merge
                   if (baseWorktree || documentRunId) {
+                    await pullBaseBranches([
+                      {
+                        projectId: ticketProjectId,
+                        worktreePath: worktree.path,
+                        branch: resolvedBaseBranch
+                      }
+                    ])
+                    if (movedSinceDrop()) return
+
                     // Pre-check: does the feature branch actually have work to merge?
                     const [hasUncommitted, branchStatResult] = await Promise.all([
                       gitApi.hasUncommittedChanges(worktree.path),
@@ -850,6 +863,7 @@ export function KanbanColumn({
                 const mergeQueue = await buildConnectionMergeQueue(ticketConnectionId, {
                   includeAlreadyMerged: archivePromptOnly
                 })
+                if (movedSinceDrop()) return
                 if (mergeQueue.length > 0) {
                   const [firstTarget, ...restTargets] = mergeQueue
                   const sortOrder = store.computeSortOrder(
@@ -880,6 +894,8 @@ export function KanbanColumn({
         }
 
         // Default: move directly
+        if (movedSinceDrop()) return
+        suppressLayoutAnimation() // Its 300ms may have run out while waiting on origin
         const sortOrder = store.computeSortOrder(
           projectTicketsForColumn(ticketProjectId),
           projectLocalDropIndex(ticketProjectId, targetIndex)

@@ -939,6 +939,9 @@ export function MergeOnDoneDialog() {
       }
 
       toast.success('Branch merged successfully')
+      // Dismissed during the merge, and another move opened since: its branch was not merged
+      // and must not get the archive step, which deletes the branch
+      if (useKanbanStore.getState().pendingDoneMove !== pendingDoneMove) return
       // A merge-only connection queue advances instead of offering the
       // destructive archive step; connection members with offerArchive get it (see init)
       if (pendingDoneMove.worktreeId && !pendingDoneMove.offerArchive) {

@@ -49,7 +49,8 @@ const gitApiMocks = vi.hoisted(() => ({
   merge: vi.fn(),
   pull: vi.fn(),
   getRemoteUrl: vi.fn(),
-  isBranchMerged: vi.fn()
+  isBranchMerged: vi.fn(),
+  syncBranchWithOrigin: vi.fn()
 }))
 const kanbanApiMocks = vi.hoisted(() => ({
   ticket: { move: vi.fn(), getBySession: vi.fn(async () => []) }
@@ -316,6 +317,7 @@ beforeEach(() => {
   dbApiMocks.project.get.mockResolvedValue({ path: '/repo', name: 'Shop' })
   // The run merged into base already: nothing is dirty, nothing is ahead of anything
   gitApiMocks.hasUncommittedChanges.mockResolvedValue(false)
+  gitApiMocks.syncBranchWithOrigin.mockResolvedValue({ success: true, updated: false })
   gitApiMocks.branchDiffShortStat.mockResolvedValue({
     success: true,
     filesChanged: 0,

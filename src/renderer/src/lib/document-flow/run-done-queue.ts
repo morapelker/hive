@@ -18,6 +18,7 @@
 import { dbApi } from '@/api/db-api'
 import { documentFlowApi } from '@/api/document-flow-api'
 import { gitApi } from '@/api/git-api'
+import { pullBaseBranches, type BaseBranchPullTarget } from '@/lib/base-branch-pull'
 import { assessConnectionMembers } from '@/lib/connection-merge'
 import { getSessionSignal } from '@/lib/document-flow/session-signal'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
@@ -92,6 +93,17 @@ async function classifyBranch(args: {
   if (!dirty && stat.commitsAhead === 0) return { kind: 'clean' }
   if (args.landed && stat.commitsAhead === 0) return { kind: 'leftovers' }
   return { kind: 'work' }
+}
+
+/** Pulls a base branch the first time a batch is about to read it, and only then. */
+function makeBasePuller(): (target: BaseBranchPullTarget) => Promise<void> {
+  const pulled = new Set<string>()
+  return async (target) => {
+    const key = `${target.projectId}\0${target.branch}`
+    if (pulled.has(key)) return
+    pulled.add(key)
+    await pullBaseBranches([target])
+  }
 }
 
 /** What the builders share: the board rows, and the lists they fill. */
@@ -229,6 +241,16 @@ export async function buildRunDoneQueue(
     return defaultBranch
   }
 
+  const pullBase = makeBasePuller()
+  // Nothing here reads base while the integration branch is alive, but the dialog does, for
+  // the integration entry and every archive entry: this is the batch's last chance to pull
+  if (integrationActive) {
+    const baseBranch = integration.base_branch ?? (await projectDefaultBranch())
+    if (baseBranch) {
+      await pullBase({ projectId, worktreePath: integration.path, branch: baseBranch })
+    }
+  }
+
   for (const item of selectedItems(detail)) {
     const label = itemLabel(item.key, item.title)
     const worktreeId = item.worktree_id && item.worktree_id !== integrationId ? item.worktree_id : null
@@ -263,6 +285,11 @@ export async function buildRunDoneQueue(
         draft.kept.push({ label, reason: 'no base branch to check it against' })
         continue
       }
+      await pullBase({
+        projectId: worktree.project_id,
+        worktreePath: worktree.path,
+        branch: baseBranch
+      })
       const verdict = await classifyBranch({
         path: worktree.path,
         branch: worktree.branch_name,
@@ -352,6 +379,7 @@ async function buildConnectionRunDoneQueue(
 ): Promise<RunDoneQueue> {
   const draft = new RunQueueDraft(runTicketId, tickets)
   const memberByProject = new Map(run.members.map((m) => [m.project_id, m]))
+  const pullBase = makeBasePuller()
 
   // The integration instance: which member integration worktrees still exist, and which
   // members can be merged into their base here
@@ -431,15 +459,24 @@ async function buildConnectionRunDoneQueue(
     const verdicts: { member: DocumentRunMember; verdict: BranchVerdict; active: boolean }[] = []
     for (const { member, worktree } of rows) {
       const active = integrationActive.get(member.project_id) === true
+      const baseBranch = worktree.base_branch ?? member.base_branch
+      // The assessment pulled the bases of the members with an integration worktree; without
+      // one, the branch is checked against a base nothing has pulled yet
+      if (!active) {
+        await pullBase({
+          projectId: member.project_id,
+          projectName: member.project_name,
+          worktreePath: worktree.path,
+          branch: baseBranch
+        })
+      }
       verdicts.push({
         member,
         active,
         verdict: await classifyBranch({
           path: worktree.path,
           branch: worktree.branch_name,
-          compareBranch: active
-            ? member.integration_branch
-            : (worktree.base_branch ?? member.base_branch),
+          compareBranch: active ? member.integration_branch : baseBranch,
           landed,
           checkMarkers: true
         })

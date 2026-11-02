@@ -418,6 +418,177 @@ describe('git ops RPC domain', () => {
     expect(readFileSync(join(dir, 'tracked.txt'), 'utf8')).toBe('updated\n')
   })
 
+  describe('syncBranchWithOrigin', () => {
+    const revParse = (cwd: string, ref: string): string =>
+      execFileSync('git', ['rev-parse', ref], { cwd, encoding: 'utf8' }).trim()
+
+    const commit = (cwd: string, content: string): void => {
+      writeFileSync(join(cwd, 'tracked.txt'), content)
+      git(cwd, ['add', 'tracked.txt'])
+      git(cwd, ['commit', '-m', content.trim()])
+    }
+
+    /** A clone of a repo whose origin/main is one commit ahead of the clone's local main. */
+    const cloneBehindOrigin = (): { dir: string; seedDir: string; originHead: string } => {
+      const remoteDir = makeTempDir()
+      const seedDir = makeTempDir()
+      const dir = makeTempDir()
+      git(remoteDir, ['init', '--bare'])
+      git(seedDir, ['init'])
+      git(seedDir, ['config', 'user.email', 'tedooo-code@example.test'])
+      git(seedDir, ['config', 'user.name', 'Tedooo Code Test'])
+      commit(seedDir, 'original\n')
+      git(seedDir, ['branch', '-M', 'main'])
+      git(seedDir, ['remote', 'add', 'origin', remoteDir])
+      git(seedDir, ['push', '-u', 'origin', 'main'])
+      git(remoteDir, ['symbolic-ref', 'HEAD', 'refs/heads/main'])
+      rmSync(dir, { recursive: true, force: true })
+      execFileSync('git', ['clone', remoteDir, dir], { stdio: 'ignore' })
+      git(dir, ['config', 'user.email', 'tedooo-code@example.test'])
+      git(dir, ['config', 'user.name', 'Tedooo Code Test'])
+      commit(seedDir, 'merged on origin\n')
+      git(seedDir, ['push', 'origin', 'main'])
+      return { dir, seedDir, originHead: revParse(seedDir, 'HEAD') }
+    }
+
+    it('pulls the branch where it is checked out, not in the worktree the call came from', async () => {
+      const { dir, originHead } = cloneBehindOrigin()
+      const featureDir = join(makeTempDir(), 'feature')
+      git(dir, ['worktree', 'add', '-b', 'feature', featureDir])
+      const featureHead = revParse(featureDir, 'HEAD')
+
+      const result = await Effect.runPromise(
+        makeLiveGitOpsRpcService().syncBranchWithOrigin(featureDir, 'main')
+      )
+
+      expect(result).toEqual({ success: true, updated: true })
+      expect(revParse(dir, 'main')).toBe(originHead)
+      expect(readFileSync(join(dir, 'tracked.txt'), 'utf8')).toBe('merged on origin\n')
+      // A plain `git pull origin main` from here would have merged main into feature
+      expect(revParse(featureDir, 'HEAD')).toBe(featureHead)
+    })
+
+    it('fast-forwards a branch that is checked out nowhere', async () => {
+      const { dir, originHead } = cloneBehindOrigin()
+      git(dir, ['checkout', '-b', 'feature'])
+      const featureHead = revParse(dir, 'HEAD')
+
+      const result = await Effect.runPromise(
+        makeLiveGitOpsRpcService().syncBranchWithOrigin(dir, 'main')
+      )
+
+      expect(result).toEqual({ success: true, updated: true })
+      expect(revParse(dir, 'main')).toBe(originHead)
+      expect(revParse(dir, 'HEAD')).toBe(featureHead)
+    })
+
+    it('reports a local branch that is already level as not updated', async () => {
+      const { dir } = cloneBehindOrigin()
+      git(dir, ['pull', 'origin', 'main'])
+
+      const result = await Effect.runPromise(
+        makeLiveGitOpsRpcService().syncBranchWithOrigin(dir, 'main')
+      )
+
+      expect(result).toEqual({ success: true, updated: false })
+    })
+
+    it('keeps local commits on a branch ahead of origin', async () => {
+      const { dir } = cloneBehindOrigin()
+      git(dir, ['pull', 'origin', 'main'])
+      commit(dir, 'merged locally, not pushed\n')
+      const localHead = revParse(dir, 'HEAD')
+
+      const result = await Effect.runPromise(
+        makeLiveGitOpsRpcService().syncBranchWithOrigin(dir, 'main')
+      )
+
+      expect(result).toEqual({ success: true, updated: false })
+      expect(revParse(dir, 'main')).toBe(localHead)
+    })
+
+    it('reports a diverged branch and leaves it as it was, with no merge in progress', async () => {
+      const { dir } = cloneBehindOrigin()
+      commit(dir, 'merged locally, not pushed\n')
+      const localHead = revParse(dir, 'HEAD')
+
+      const result = await Effect.runPromise(
+        makeLiveGitOpsRpcService().syncBranchWithOrigin(dir, 'main')
+      )
+
+      expect(result).toEqual({ success: false, updated: false })
+      expect(revParse(dir, 'main')).toBe(localHead)
+      expect(existsSync(join(dir, '.git', 'MERGE_HEAD'))).toBe(false)
+      expect(readFileSync(join(dir, 'tracked.txt'), 'utf8')).toBe('merged locally, not pushed\n')
+    })
+
+    it.each([
+      ['merge.autoStash', [['merge.autoStash', 'true']]],
+      [
+        'pull.rebase with rebase.autoStash',
+        [
+          ['pull.rebase', 'true'],
+          ['rebase.autoStash', 'true']
+        ]
+      ]
+    ])(
+      'with %s, leaves edits that overlap the incoming commits alone instead of stashing them into conflict markers',
+      async (_name, config) => {
+        const { dir } = cloneBehindOrigin()
+        for (const [key, value] of config) git(dir, ['config', key, value])
+        writeFileSync(join(dir, 'tracked.txt'), 'edited, not committed\n')
+        const localHead = revParse(dir, 'HEAD')
+
+        const result = await Effect.runPromise(
+          makeLiveGitOpsRpcService().syncBranchWithOrigin(dir, 'main')
+        )
+
+        expect(result).toEqual({ success: false, updated: false })
+        expect(revParse(dir, 'main')).toBe(localHead)
+        expect(readFileSync(join(dir, 'tracked.txt'), 'utf8')).toBe('edited, not committed\n')
+        const statusOf = (args: string[]): string =>
+          execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim()
+        expect(statusOf(['status', '--porcelain'])).toBe('M tracked.txt')
+        expect(statusOf(['stash', 'list'])).toBe('')
+      }
+    )
+
+    it('with pull.rebase, still fast-forwards past edits the incoming commits do not touch', async () => {
+      const { dir, originHead } = cloneBehindOrigin()
+      git(dir, ['config', 'pull.rebase', 'true'])
+      writeFileSync(join(dir, 'other.txt'), 'seed\n')
+      git(dir, ['add', 'other.txt'])
+      git(dir, ['commit', '-m', 'other file'])
+      git(dir, ['push', 'origin', 'HEAD:side'])
+      git(dir, ['reset', '--hard', 'HEAD~1'])
+      writeFileSync(join(dir, 'untouched.txt'), 'edited, not committed\n')
+      git(dir, ['add', 'untouched.txt'])
+
+      const result = await Effect.runPromise(
+        makeLiveGitOpsRpcService().syncBranchWithOrigin(dir, 'main')
+      )
+
+      expect(result).toEqual({ success: true, updated: true })
+      expect(revParse(dir, 'main')).toBe(originHead)
+      expect(readFileSync(join(dir, 'untouched.txt'), 'utf8')).toBe('edited, not committed\n')
+    })
+
+    it('does nothing without an origin', async () => {
+      const dir = makeTempDir()
+      git(dir, ['init'])
+      git(dir, ['config', 'user.email', 'tedooo-code@example.test'])
+      git(dir, ['config', 'user.name', 'Tedooo Code Test'])
+      commit(dir, 'original\n')
+      git(dir, ['branch', '-M', 'main'])
+
+      const result = await Effect.runPromise(
+        makeLiveGitOpsRpcService().syncBranchWithOrigin(dir, 'main')
+      )
+
+      expect(result).toEqual({ success: true, updated: false })
+    })
+  })
+
   it('merges a branch into the current git worktree branch', async () => {
     const dir = makeTempDir()
     git(dir, ['init'])

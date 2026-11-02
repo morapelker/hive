@@ -1,6 +1,7 @@
 import { connectionApi } from '@/api/connection-api'
 import { dbApi } from '@/api/db-api'
 import { gitApi } from '@/api/git-api'
+import { pullBaseBranches } from '@/lib/base-branch-pull'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import type { Session, Worktree } from '../../../main/db/types'
@@ -84,7 +85,8 @@ export interface ConnectionMembersAssessment {
 /**
  * The assessment behind `buildConnectionMergeQueue`, with the members it leaves out named:
  * a document-run batch has to tell a member it can archive from one whose integration
- * branch can never reach its base here.
+ * branch can never reach its base here. Every member's base branch is pulled first, since
+ * the checks read the local branches; every caller is a Done/Merged move about to rely on them.
  */
 export async function assessConnectionMembers(
   connectionId: string,
@@ -102,19 +104,21 @@ export async function assessConnectionMembers(
   const members = result.connection.members
   const seenWorktrees = new Set<string>()
   // Members mid-archive are already detached from the ticket's point of view --
-  // never ask to commit/merge a branch that is on its way out
-  const archivingWorktreeIds = useWorktreeStore.getState().archivingWorktreeIds
+  // never ask to commit/merge a branch that is on its way out (read afresh after
+  // the pull below too: waiting on origin leaves time for an archive to start)
   const skipped: ConnectionMemberSkipped[] = []
 
-  const assessed = await Promise.all(
-    members.map(async (member): Promise<ConnectionMergeTarget | null> => {
+  const resolved = await Promise.all(
+    members.map(async (member) => {
       if (seenWorktrees.has(member.worktree_id)) return null
       seenWorktrees.add(member.worktree_id)
       const skip = (reason: ConnectionMemberSkipped['reason']): null => {
         skipped.push({ worktreeId: member.worktree_id, projectId: member.project_id, reason })
         return null
       }
-      if (archivingWorktreeIds.has(member.worktree_id)) return skip('inactive')
+      if (useWorktreeStore.getState().archivingWorktreeIds.has(member.worktree_id)) {
+        return skip('inactive')
+      }
 
       const worktree = await dbApi.worktree.get<Worktree>(member.worktree_id)
       if (!worktree || worktree.status !== 'active') return skip('inactive')
@@ -129,6 +133,26 @@ export async function assessConnectionMembers(
       )
       if (!baseWorktree) return skip('no-base-worktree')
 
+      return { member, worktree, baseBranch }
+    })
+  )
+  const checkable = resolved.filter((entry) => entry !== null)
+
+  await pullBaseBranches(
+    checkable.map(({ member, worktree, baseBranch }) => ({
+      projectId: member.project_id,
+      projectName: member.project_name,
+      worktreePath: worktree.path,
+      branch: baseBranch
+    }))
+  )
+
+  const assessed = await Promise.all(
+    checkable.map(async ({ member, worktree, baseBranch }): Promise<ConnectionMergeTarget | null> => {
+      if (useWorktreeStore.getState().archivingWorktreeIds.has(worktree.id)) {
+        skipped.push({ worktreeId: worktree.id, projectId: member.project_id, reason: 'inactive' })
+        return null
+      }
       const [hasUncommitted, branchStatResult] = await Promise.all([
         gitApi.hasUncommittedChanges(worktree.path),
         gitApi.branchDiffShortStat(worktree.path, baseBranch)

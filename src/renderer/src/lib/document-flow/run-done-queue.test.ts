@@ -22,7 +22,8 @@ const dbApiMocks = vi.hoisted(() => ({
 const gitApiMocks = vi.hoisted(() => ({
   hasUncommittedChanges: vi.fn(),
   branchDiffShortStat: vi.fn(),
-  getFileStatuses: vi.fn()
+  getFileStatuses: vi.fn(),
+  syncBranchWithOrigin: vi.fn()
 }))
 const flowApi = vi.hoisted(() => ({ get: vi.fn() }))
 const connectionMerge = vi.hoisted(() => ({ assessConnectionMembers: vi.fn() }))
@@ -166,6 +167,7 @@ beforeEach(() => {
     commitsAhead: ahead[path]?.[base] ?? 0
   }))
   gitApiMocks.getFileStatuses.mockResolvedValue({ success: true, files: [] })
+  gitApiMocks.syncBranchWithOrigin.mockResolvedValue({ success: true, updated: false })
   signal.getSessionSignal.mockReturnValue({ kind: 'ended' })
   worktrees['wt-int'].status = 'active'
 })
@@ -446,6 +448,49 @@ describe('buildRunDoneQueue — run on a connection project', () => {
 
     expect(queue.alsoMoveTicketIds).toContain('t-a')
     expect(labels(queue.entries)).toEqual(['run-integration:The run · Api', 'run-integration:The run · Web'])
+  })
+})
+
+describe('buildRunDoneQueue — pulling first', () => {
+  const pulledBeforeAnyCheck = (): boolean =>
+    Math.max(...gitApiMocks.syncBranchWithOrigin.mock.invocationCallOrder) <
+    Math.min(...gitApiMocks.branchDiffShortStat.mock.invocationCallOrder)
+
+  it('pulls the base the dialog will check the integration branch against', async () => {
+    await buildRunDoneQueue(detail(), 'run-ticket', tickets())
+
+    expect(gitApiMocks.syncBranchWithOrigin).toHaveBeenCalledTimes(1)
+    expect(gitApiMocks.syncBranchWithOrigin).toHaveBeenCalledWith('/wt/int', 'main')
+    expect(pulledBeforeAnyCheck()).toBe(true)
+  })
+
+  it('without an integration worktree, pulls the base once before the branches are checked against it', async () => {
+    worktrees['wt-int'].status = 'archived'
+
+    await buildRunDoneQueue(detail(), 'run-ticket', tickets())
+
+    expect(gitApiMocks.syncBranchWithOrigin).toHaveBeenCalledTimes(1)
+    expect(gitApiMocks.syncBranchWithOrigin).toHaveBeenCalledWith('/wt/a', 'main')
+    expect(pulledBeforeAnyCheck()).toBe(true)
+  })
+
+  it('on a connection project, leaves active members to the assessment and pulls the base of one without an integration worktree', async () => {
+    useConnectionWorktrees()
+    connectionWorktrees['wt-int-api'].status = 'archived'
+
+    await buildRunDoneQueue(connectionDetail(), 'run-ticket', tickets())
+
+    expect(connectionMerge.assessConnectionMembers).toHaveBeenCalled()
+    // Web still has its integration worktree: its base was the assessment's to pull
+    expect(gitApiMocks.syncBranchWithOrigin).toHaveBeenCalledTimes(1)
+    expect(gitApiMocks.syncBranchWithOrigin).toHaveBeenCalledWith('/api/a1', 'main')
+    const pullOrder = gitApiMocks.syncBranchWithOrigin.mock.invocationCallOrder[0]
+    const checkOfApi = gitApiMocks.branchDiffShortStat.mock.calls.findIndex(
+      ([path, base]) => path === '/api/a1' && base === 'main'
+    )
+    expect(pullOrder).toBeLessThan(
+      gitApiMocks.branchDiffShortStat.mock.invocationCallOrder[checkOfApi]
+    )
   })
 })
 

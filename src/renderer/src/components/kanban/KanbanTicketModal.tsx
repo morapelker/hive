@@ -90,6 +90,7 @@ import { markClaudeCliPromptStarted } from '@/lib/claude-cli-send-tracking'
 import { isPlanLike, toggleSuper } from '@/lib/constants'
 import { buildSdkPlanImplementationPrompt } from '@/lib/proposedPlan'
 import { toast } from '@/lib/toast'
+import { pullBaseBranches } from '@/lib/base-branch-pull'
 import {
   useTicketRunScript,
   useTicketRunScriptHotkey,
@@ -3289,6 +3290,14 @@ function ReviewModeContent({
 
   // ── Move to Done ──────────────────────────────────────────────────
   const handleMoveToDone = useCallback(async () => {
+    // The wait for origin leaves the rest of the modal live: a newer move of the ticket wins
+    const movedSinceClick = (): boolean => {
+      const current = useKanbanStore
+        .getState()
+        .tickets.get(ticket.project_id)
+        ?.find((t) => t.id === ticket.id)
+      return !!current && current.column !== ticket.column
+    }
     // Merge-on-done: intercept for feature-branch worktrees
     if (ticket.worktree_id) {
       try {
@@ -3302,6 +3311,18 @@ function ReviewModeContent({
           const resolvedBaseBranch = worktree.base_branch ?? defaultWt?.branch_name
 
           if (resolvedBaseBranch && worktree.branch_name !== resolvedBaseBranch) {
+            // The merge dialog's checks are the first ones on this path. Without a worktree on
+            // the base branch it skips them and the merge: nothing there reads the base branch.
+            if (defaultWorktrees.some((w) => w.branch_name === resolvedBaseBranch)) {
+              await pullBaseBranches([
+                {
+                  projectId: ticket.project_id,
+                  worktreePath: worktree.path,
+                  branch: resolvedBaseBranch
+                }
+              ])
+              if (movedSinceClick()) return
+            }
             const kanbanStore = useKanbanStore.getState()
             const doneTickets = kanbanStore.getTicketsByColumn(ticket.project_id, 'done')
             const sortOrder = kanbanStore.computeSortOrder(doneTickets, doneTickets.length)
@@ -3328,6 +3349,7 @@ function ReviewModeContent({
           const mergeQueue = await buildConnectionMergeQueue(connectionId, {
             includeAlreadyMerged: true
           })
+          if (movedSinceClick()) return
           if (mergeQueue.length > 0) {
             const [firstTarget, ...restTargets] = mergeQueue
             const kanbanStore = useKanbanStore.getState()
@@ -3383,6 +3405,7 @@ function ReviewModeContent({
     }
 
     // Original logic
+    if (movedSinceClick()) return
     try {
       const kanbanStore = useKanbanStore.getState()
       const doneTickets = kanbanStore.getTicketsByColumn(ticket.project_id, 'done')

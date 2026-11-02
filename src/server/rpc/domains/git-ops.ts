@@ -315,6 +315,15 @@ export interface GitOpsRpcService {
     branch?: string,
     rebase?: boolean
   ) => Effect.Effect<GitPullResult, unknown, never>
+  /**
+   * Fast-forward a local branch to origin wherever it is checked out, from any worktree of
+   * the repository. Unlike `pull` it never merges into what `worktreePath` has checked out,
+   * and it reports a branch it cannot fast-forward instead of leaving a merge behind.
+   */
+  readonly syncBranchWithOrigin: (
+    worktreePath: string,
+    branch: string
+  ) => Effect.Effect<GitPullResult, unknown, never>
   readonly merge: (
     worktreePath: string,
     sourceBranch: string
@@ -459,6 +468,9 @@ const pullParamsSchema = z
     branch: z.string().optional(),
     rebase: z.boolean().optional()
   })
+  .strict()
+const syncBranchWithOriginParamsSchema = z
+  .object({ worktreePath: z.string().min(1), branch: z.string().min(1) })
   .strict()
 const mergeParamsSchema = z
   .object({ worktreePath: z.string().min(1), sourceBranch: z.string().min(1) })
@@ -913,6 +925,14 @@ export const makeLiveGitOpsRpcService = (
               error: error instanceof Error ? error.message : 'Unknown error'
             }
           }
+        },
+        catch: (cause) => cause
+      }),
+    syncBranchWithOrigin: (worktreePath, branch) =>
+      Effect.tryPromise({
+        try: async (): Promise<GitPullResult> => {
+          const { createGitService } = await import('../../../main/services/git-service')
+          return createGitService(worktreePath).syncBranchWithOrigin(branch)
         },
         catch: (cause) => cause
       }),
@@ -2165,6 +2185,17 @@ export const makeGitOpsRpcHandlers = (
             catch: (cause) => cause
           })
           return yield* service.pull(worktreePath, remote, branch, rebase)
+        })
+    ],
+    [
+      'gitOps.syncBranchWithOrigin',
+      (params) =>
+        Effect.gen(function* () {
+          const { worktreePath, branch } = yield* Effect.try({
+            try: () => syncBranchWithOriginParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          return yield* service.syncBranchWithOrigin(worktreePath, branch)
         })
     ],
     [
