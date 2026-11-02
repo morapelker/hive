@@ -58,4 +58,23 @@ describe('pet animation settings', () => {
     expect(screen.getByTestId('pet-animation-speed-enabled-checkbox')).toBeChecked()
     expect(screen.getByTestId('pet-animation-speed-slider')).toHaveValue('2')
   })
+
+  it('counts sprite-sheet styles for the pug and lists every pet by name', () => {
+    pet = { ...pet, petId: 'pug' }
+    render(<SettingsPet />)
+    expect(screen.getByTestId('pet-animation-variants')).toHaveTextContent('up to 8 styles')
+    expect(
+      Array.from(screen.getByTestId('pet-selector').querySelectorAll('option')).map(
+        (option) => option.textContent
+      )
+    ).toEqual(
+      expect.arrayContaining([
+        'Maya the Bee',
+        'Jedi the Corgi',
+        'Shiba the Frenchie',
+        'Cooper the Dachshund',
+        'Twix the Pug'
+      ])
+    )
+  })
 })

@@ -34,7 +34,7 @@ export const DEFAULT_PET_SETTINGS: PetSettings = {
 
 const BEE_MANIFEST: PetManifest = {
   id: 'bee',
-  name: 'Bee',
+  name: 'Maya the Bee',
   version: '1.0.0',
   author: 'Hive',
   assets: {
@@ -55,7 +55,7 @@ const BEE_MANIFEST: PetManifest = {
 
 const CORGI_MANIFEST: PetManifest = {
   id: 'corgi',
-  name: 'Corgi',
+  name: 'Jedi the Corgi',
   version: '1.0.0',
   author: 'Hive',
   assets: {
@@ -76,7 +76,7 @@ const CORGI_MANIFEST: PetManifest = {
 
 const FRENCH_BULLDOG_MANIFEST: PetManifest = {
   id: 'french-bulldog',
-  name: 'French Bulldog',
+  name: 'Shiba the Frenchie',
   version: '1.0.0',
   author: 'Hive',
   assets: {
@@ -97,7 +97,7 @@ const FRENCH_BULLDOG_MANIFEST: PetManifest = {
 
 const DACHSHUND_MANIFEST: PetManifest = {
   id: 'dachshund',
-  name: 'Dachshund',
+  name: 'Cooper the Dachshund',
   version: '1.0.0',
   author: 'Hive',
   assets: {
@@ -123,11 +123,27 @@ const DACHSHUND_MANIFEST: PetManifest = {
   defaultSize: 'M'
 }
 
+const PUG_MANIFEST: PetManifest = {
+  id: 'pug',
+  name: 'Twix the Pug',
+  version: '1.0.0',
+  author: 'Hive',
+  assets: {
+    idle: 'assets/pug.png',
+    working: 'assets/pug.png',
+    question: 'assets/pug.png',
+    permission: 'assets/pug.png',
+    plan_ready: 'assets/pug.png'
+  },
+  defaultSize: 'M'
+}
+
 const PET_MANIFESTS: Record<string, PetManifest> = {
   bee: BEE_MANIFEST,
   corgi: CORGI_MANIFEST,
   'french-bulldog': FRENCH_BULLDOG_MANIFEST,
-  dachshund: DACHSHUND_MANIFEST
+  dachshund: DACHSHUND_MANIFEST,
+  pug: PUG_MANIFEST
 }
 
 const PET_SIZE_PX: Record<PetSize, number> = {

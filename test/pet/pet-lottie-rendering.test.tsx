@@ -75,7 +75,7 @@ describe('pet Lottie rendering', () => {
   it('resolves static and working-state Lottie assets for the corgi pet', () => {
     const pet = getPet('corgi')
 
-    expect(pet.name).toBe('Corgi')
+    expect(pet.name).toBe('Jedi the Corgi')
     expect(pet.resolvedAssets.idle).toContain('corgi-static')
     expect(pet.resolvedAssets.question).toContain('corgi-static')
     expect(pet.resolvedLottieAssets?.working).toContain('corgi-anim')
@@ -85,7 +85,7 @@ describe('pet Lottie rendering', () => {
   it('resolves static and working-state Lottie assets for the French bulldog pet', () => {
     const pet = getPet('french-bulldog')
 
-    expect(pet.name).toBe('French Bulldog')
+    expect(pet.name).toBe('Shiba the Frenchie')
     expect(pet.resolvedAssets.idle).toContain('french-bulldog')
     expect(pet.resolvedAssets.permission).toContain('french-bulldog')
     expect(pet.resolvedLottieAssets?.working).toContain('french-bulldog-run')
@@ -95,7 +95,7 @@ describe('pet Lottie rendering', () => {
   it('resolves static and working-state Lottie assets for the dachshund pet', () => {
     const pet = getPet('dachshund')
 
-    expect(pet.name).toBe('Dachshund')
+    expect(pet.name).toBe('Cooper the Dachshund')
     expect(pet.resolvedAssets.idle).toContain('dachshund')
     expect(pet.resolvedAssets.question).toContain('dachshund')
     expect(pet.resolvedLottieAssets?.working).toContain('dachshund-run')
@@ -105,12 +105,20 @@ describe('pet Lottie rendering', () => {
     expect(pet.imageScale?.idle).toBe(1.4)
   })
 
-  it('lists all four pets in the registry', () => {
+  it('lists all five pets in the registry with their names', () => {
     expect(
       listPets()
-        .map((pet) => pet.id)
+        .map((pet) => [pet.id, pet.name])
         .sort()
-    ).toEqual(['bee', 'corgi', 'dachshund', 'french-bulldog'].sort())
+    ).toEqual(
+      [
+        ['bee', 'Maya the Bee'],
+        ['corgi', 'Jedi the Corgi'],
+        ['dachshund', 'Cooper the Dachshund'],
+        ['french-bulldog', 'Shiba the Frenchie'],
+        ['pug', 'Twix the Pug']
+      ].sort()
+    )
   })
 
   it('applies the manifest image scale to static states and falls back to 1', () => {

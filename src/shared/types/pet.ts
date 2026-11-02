@@ -39,6 +39,11 @@ export interface PetManifest {
     /** Longer counts shrink to fit; this does not cap the displayed number. */
     fullSizeDigits: number
   }
+  /**
+   * Working run cycle drawn from sprite-sheet atlases instead of Lottie. Styles are chosen by
+   * session count with the same rules as `workingLottieVariants`; see `workingVariantSource()`.
+   */
+  workingSpriteSheet?: PetSpriteSheet
   lottieScale?: Partial<Record<PetState, number>>
   imageScale?: Partial<Record<PetState, number>>
   animations?: Partial<
@@ -55,10 +60,50 @@ export interface PetManifest {
   defaultSize?: PetSize
 }
 
+/** A grid of equally sized run-cycle poses, read left to right and top to bottom. */
+export interface PetSpriteSheet {
+  /** Atlas per style, in ascending session-count order. Entries may repeat an atlas. */
+  variants: string[]
+  /** Ascending minimum session count per entry of `variants`; omitted entries default to their 1-based index. */
+  variantSessions?: number[]
+  frames: number
+  columns: number
+  rows: number
+  /** One full run cycle, independent of playback speed. */
+  cycleMs: number
+  /** Fraction of the sprite box left empty on each side, so decorations can sit on the edge. */
+  inset?: number
+  /** A count badge that follows the fabric through the run cycle. */
+  badge?: {
+    /** Below this count the badge shows the emblem instead of the number. */
+    minSessions: number
+    /** Source pixel size of one atlas cell, the unit of `anchors`. */
+    cellSize: number
+    /** Font size in a 400-unit box at `fullSizeDigits`; longer counts shrink to fit and are never capped. */
+    fontSize: number
+    fullSizeDigits: number
+    fontFamily: string
+    color: string
+    /** Badge rotation in degrees. */
+    rotate: number
+    emblem: 'paw'
+    emblemColor: string
+    /** Badge center per variant, sampled at evenly spaced key poses; null for outfits without a badge. */
+    anchors: Array<number[][] | null>
+  }
+  /** Twinkling accents in a 400-unit box, shown from `minSessions` onward. */
+  sparkles?: {
+    minSessions: number
+    color: string
+    positions: number[][]
+  }
+}
+
 export interface LoadedPet extends PetManifest {
   resolvedAssets: Record<PetState, string>
   resolvedLottieAssets?: Partial<Record<PetState, string>>
   resolvedWorkingLottieVariants?: string[]
+  resolvedWorkingSpriteSheetVariants?: string[]
 }
 
 export interface PetPosition {

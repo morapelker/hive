@@ -1,0 +1,138 @@
+{
+  "id": "pug",
+  "name": "Twix the Pug",
+  "version": "1.0.0",
+  "author": "Hive",
+  "assets": {
+    "idle": "assets/pug.png",
+    "working": "assets/pug.png",
+    "question": "assets/pug.png",
+    "permission": "assets/pug.png",
+    "plan_ready": "assets/pug.png"
+  },
+  "workingSpriteSheet": {
+    "variants": [
+      "assets/pug-run-1.webp",
+      "assets/pug-run-2.webp",
+      "assets/pug-run-3.webp",
+      "assets/pug-run-4.webp",
+      "assets/pug-run-4.webp",
+      "assets/pug-run-10.webp",
+      "assets/pug-run-15.webp",
+      "assets/pug-run-20.webp"
+    ],
+    "variantSessions": [1, 2, 3, 4, 5, 10, 15, 20],
+    "frames": 24,
+    "columns": 6,
+    "rows": 4,
+    "cycleMs": 800,
+    "inset": 0.06,
+    "badge": {
+      "minSessions": 5,
+      "cellSize": 443.5,
+      "fontSize": 29,
+      "fullSizeDigits": 2,
+      "fontFamily": "Georgia,serif",
+      "color": "#795139",
+      "rotate": -18,
+      "emblem": "paw",
+      "emblemColor": "#bd9368",
+      "anchors": [
+        null,
+        null,
+        null,
+        [
+          [121, 274],
+          [105.5, 277],
+          [103, 294],
+          [107.5, 275],
+          [117, 270.5],
+          [109.5, 272.5],
+          [115, 274.5],
+          [122.5, 263.5]
+        ],
+        [
+          [121, 274],
+          [105.5, 277],
+          [103, 294],
+          [107.5, 275],
+          [117, 270.5],
+          [109.5, 272.5],
+          [115, 274.5],
+          [122.5, 263.5]
+        ],
+        [
+          [124, 255],
+          [118.5, 262],
+          [116, 277],
+          [115.5, 259],
+          [124, 256.5],
+          [129.5, 260.5],
+          [128, 267.5],
+          [135.5, 253.5]
+        ],
+        [
+          [138, 263],
+          [130.5, 276],
+          [132, 296],
+          [131.5, 278],
+          [132, 266.5],
+          [135.5, 272.5],
+          [134, 279.5],
+          [135.5, 267.5]
+        ],
+        [
+          [113, 268],
+          [114.5, 282],
+          [94, 292],
+          [104.5, 276],
+          [110, 269.5],
+          [116.5, 270.5],
+          [115, 279.5],
+          [111.5, 265.5]
+        ]
+      ]
+    },
+    "sparkles": {
+      "minSessions": 5,
+      "color": "#d7b268",
+      "positions": [
+        [51, 111],
+        [364, 211],
+        [86, 363]
+      ]
+    }
+  },
+  "animations": {
+    "idle": {
+      "type": "static",
+      "transform": "none",
+      "overlay": { "kind": "none" }
+    },
+    "working": {
+      "type": "loop",
+      "durationMs": 800,
+      "transform": "none",
+      "overlay": { "kind": "none" }
+    },
+    "question": {
+      "type": "loop",
+      "durationMs": 1200,
+      "transform": "bounce",
+      "overlay": { "kind": "bubble", "symbol": "?", "tint": "#3b82f6" }
+    },
+    "permission": {
+      "type": "loop",
+      "durationMs": 800,
+      "transform": "bounce",
+      "overlay": { "kind": "bubble", "symbol": "!", "tint": "#ef4444" }
+    },
+    "plan_ready": {
+      "type": "loop",
+      "durationMs": 1600,
+      "transform": "pulse",
+      "overlay": { "kind": "glow", "symbol": "✓", "tint": "#22c55e" }
+    }
+  },
+  "defaultSize": "M"
+}

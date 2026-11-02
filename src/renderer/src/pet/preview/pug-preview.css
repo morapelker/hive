@@ -1,0 +1,37 @@
+.gallery {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.pug-artboard {
+  padding: 12px;
+  background: #f0eee6;
+}
+.pug-card-sprite {
+  position: relative;
+  display: block;
+  width: 100%;
+  max-width: 236px;
+  aspect-ratio: 1;
+  filter: none;
+}
+.pug-card-sprite > img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+body[data-backdrop='dark'] .pug-artboard {
+  background: #262c30;
+}
+body[data-backdrop='grid'] .pug-artboard {
+  background: repeating-conic-gradient(#e9ece5 0% 25%, #fff 0% 50%) 0 0 / 16px 16px;
+}
+@media (max-width: 1000px) {
+  .gallery {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 620px) {
+  .gallery {
+    grid-template-columns: 1fr;
+  }
+}

@@ -87,6 +87,60 @@ button {
   filter: saturate(1.1) brightness(1.03);
 }
 
+/* Sprite-sheet run cycles: an atlas stepped through its grid behind a cropped window. */
+.pet-sheet {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.pet-sheet-crop {
+  position: absolute;
+  inset: var(--pet-sheet-inset, 0%);
+  overflow: hidden;
+}
+
+.pet-sprite .pet-sheet-atlas {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: calc(var(--pet-sheet-columns, 1) * 100%);
+  height: calc(var(--pet-sheet-rows, 1) * 100%);
+  max-width: none;
+  object-fit: fill;
+  transform: none;
+  filter: none;
+  will-change: transform;
+}
+
+.pet-sheet-effects {
+  position: absolute;
+  inset: var(--pet-sheet-inset, 0%);
+  pointer-events: none;
+}
+
+.pet-sheet-badge {
+  position: absolute;
+  inset: 0;
+  will-change: transform;
+}
+
+.pet-sheet-badge svg,
+.pet-sheet-sparkle svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.pet-sheet-sparkle {
+  position: absolute;
+  width: 2.5%;
+  height: 2.5%;
+  will-change: opacity;
+}
+
 .pet-sprite-question img {
   filter: saturate(1.08) hue-rotate(8deg);
 }

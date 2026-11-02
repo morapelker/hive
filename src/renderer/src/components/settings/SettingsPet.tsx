@@ -3,6 +3,7 @@ import type { PetSettings, PetSize } from '@shared/types/pet'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { getPet, listPets } from '@/pet/registry'
+import { workingVariantSource } from '@/pet/workingVariant'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { petApi } from '@/api/pet-api'
 
@@ -16,7 +17,7 @@ export function SettingsPet(): React.JSX.Element {
   const { pet, updateSetting } = useSettingsStore()
   const pets = listPets()
   const animationSpeed = Math.min(Math.max(pet.animationSpeed, 2), 5)
-  const variantCount = getPet(pet.petId).workingLottieVariants?.length ?? 0
+  const variantCount = workingVariantSource(getPet(pet.petId)).workingLottieVariants?.length ?? 0
 
   const updatePet = (partial: Partial<PetSettings>): void => {
     updateSetting('pet', { ...pet, ...partial })
