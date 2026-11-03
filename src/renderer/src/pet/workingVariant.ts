@@ -5,16 +5,22 @@ export type WorkingVariantSource = Pick<
   'workingLottieVariants' | 'workingLottieVariantSessions'
 >
 
+type WorkingVariantPet = Pick<
+  PetManifest,
+  'workingLottieVariants' | 'workingLottieVariantSessions' | 'workingSpriteSheet' | 'workingAtlas'
+>
+
 /**
- * The session-count styles of a pet, whether they are Lottie files or sprite-sheet atlases.
- * Pets with neither have no styles, so `workingVariantIndex` always returns 0 for them.
+ * The session-count styles of a pet, whether they are Lottie files, sprite-sheet atlases or
+ * canvas atlases. Pets with none have no styles, so `workingVariantIndex` always returns 0.
  */
-export function workingVariantSource(
-  pet: Pick<
-    PetManifest,
-    'workingLottieVariants' | 'workingLottieVariantSessions' | 'workingSpriteSheet'
-  >
-): WorkingVariantSource {
+export function workingVariantSource(pet: WorkingVariantPet): WorkingVariantSource {
+  if (pet.workingAtlas) {
+    return {
+      workingLottieVariants: pet.workingAtlas.variants.map((variant) => variant.file),
+      workingLottieVariantSessions: pet.workingAtlas.variants.map((variant) => variant.minSessions)
+    }
+  }
   if (pet.workingSpriteSheet) {
     return {
       workingLottieVariants: pet.workingSpriteSheet.variants,
@@ -31,10 +37,7 @@ export function workingVariantSource(
  * Index into `workingLottieVariants` for a session count: the last style whose minimum the count
  * reaches. Counts below the first minimum (and 0) use the first style; nothing is ever skipped.
  */
-export function workingVariantIndex(
-  pet: WorkingVariantSource & Pick<PetManifest, 'workingSpriteSheet'>,
-  workingSessionCount: number
-): number {
+export function workingVariantIndex(pet: WorkingVariantPet, workingSessionCount: number): number {
   const source = workingVariantSource(pet)
   const variants = source.workingLottieVariants ?? []
   const count = Number.isFinite(workingSessionCount) ? Math.floor(workingSessionCount) : 1

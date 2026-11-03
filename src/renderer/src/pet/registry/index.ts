@@ -41,6 +41,9 @@ for (const [manifestPath, manifest] of Object.entries(manifestModules)) {
     resolvedWorkingSpriteSheetVariants: manifest.workingSpriteSheet?.variants.map(
       (relativePath) => assetModules[`${baseDir}/${relativePath}`] ?? relativePath
     ),
+    resolvedWorkingAtlasVariants: manifest.workingAtlas?.variants.map(
+      ({ file }) => assetModules[`${baseDir}/${file}`] ?? file
+    ),
     resolvedLottieAssets: Object.keys(resolvedLottieAssets).length
       ? resolvedLottieAssets
       : undefined

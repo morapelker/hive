@@ -58,6 +58,7 @@
     "preview:french-bulldog": "vite --config vite.web.config.ts --open /french-bulldog-preview.html",
     "preview:udi": "vite --config vite.web.config.ts --open /udi-preview.html",
     "extract:udi": "node scripts/extract-udi-assets.mjs",
+    "preview:bella": "vite --config vite.web.config.ts --open /bella-preview.html",
     "start": "electron-vite preview",
     "postinstall": "electron-builder install-app-deps && node scripts/build-uv-pool-waker.mjs --optional",
     "build:unpack": "pnpm run build && electron-builder --dir",

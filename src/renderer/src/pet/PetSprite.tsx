@@ -1,6 +1,7 @@
 import { motion } from 'motion/react'
 import type * as React from 'react'
 import type { LoadedPet, PetSettings, PetState } from '@shared/types/pet'
+import { CanvasAtlasSprite } from './CanvasAtlasSprite'
 import { DotLottieSprite } from './DotLottieSprite'
 import { SpriteSheetSprite } from './SpriteSheetSprite'
 import { sessionCounterSlots } from './sessionCounter'
@@ -89,14 +90,25 @@ export function PetSprite({
     state === 'working' && sheet
       ? pet.resolvedWorkingSpriteSheetVariants?.[variantIndex]
       : undefined
+  const count = Math.max(0, Math.floor(workingSessionCount))
+  const atlas = pet.workingAtlas
+  // A canvas atlas has no run for zero sessions: the idle portrait stands in, as the reference does.
+  const atlasVariant =
+    state === 'working' && atlas && count >= 1 ? atlas.variants[variantIndex] : undefined
+  const atlasSrc = atlasVariant ? pet.resolvedWorkingAtlasVariants?.[variantIndex] : undefined
   const imageScale = pet.imageScale?.[state] ?? 1
-  const activeAnimation = lottieSrc || sheetSrc ? {} : animationForState(state, speed)
+  const activeAnimation = lottieSrc || sheetSrc || atlasSrc ? {} : animationForState(state, speed)
+  const shadowless =
+    (sheet && sheetSrc && sheet.shadow === false) || (atlas && atlasSrc && atlas.shadow === false)
+  // The stage is as wide as the pet's widest style; the box keeps its right edge in it, so the
+  // pet stays put when a style that extends left (a flame trail) comes and goes.
+  const stageWidth = Math.round(size * (pet.stageWidthRatio ?? 1))
 
   return (
     <button
       type="button"
       className="pet-hit-target"
-      style={{ width: size + 36, height: size + 36, opacity: settings.opacity }}
+      style={{ width: stageWidth + 36, height: size + 36, opacity: settings.opacity }}
       onPointerDown={onPointerDown}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
@@ -104,40 +116,54 @@ export function PetSprite({
       onContextMenu={onContextMenu}
       aria-label="Hive pet"
     >
-      <motion.span
-        className={`pet-sprite pet-sprite-${state}`}
-        data-shadow={sheet && sheetSrc && sheet.shadow === false ? 'none' : undefined}
-        style={
-          { width: size, height: size, '--pet-image-scale': imageScale } as React.CSSProperties
-        }
-        {...activeAnimation}
-      >
-        {state === 'plan_ready' && <span className="pet-glow" />}
-        {sheet && sheetSrc ? (
-          <SpriteSheetSprite
-            sheet={sheet}
-            src={sheetSrc}
-            fallbackSrc={pet.resolvedAssets[state]}
-            variantIndex={variantIndex}
-            count={Math.max(0, Math.floor(workingSessionCount))}
-            speed={speed}
-            state={state}
-          />
-        ) : lottieSrc ? (
-          <DotLottieSprite
-            src={lottieSrc}
-            fallbackSrc={pet.resolvedAssets[state]}
-            scale={lottieScale}
-            size={size}
-            speed={speed}
-            textSlots={sessionCounterSlots(pet.workingSessionCounter, workingSessionCount)}
-            state={state}
-          />
-        ) : (
-          <img src={pet.resolvedAssets[state]} alt="" draggable={false} />
-        )}
-        {overlay && <span className={overlay.className}>{overlay.symbol}</span>}
-      </motion.span>
+      <span className="pet-stage" style={{ width: stageWidth, height: size }}>
+        <motion.span
+          className={`pet-sprite pet-sprite-${state}`}
+          data-shadow={shadowless ? 'none' : undefined}
+          style={
+            { width: size, height: size, '--pet-image-scale': imageScale } as React.CSSProperties
+          }
+          {...activeAnimation}
+        >
+          {state === 'plan_ready' && <span className="pet-glow" />}
+          {atlas && atlasVariant && atlasSrc ? (
+            <CanvasAtlasSprite
+              atlas={atlas}
+              variant={atlasVariant}
+              src={atlasSrc}
+              fallbackSrc={pet.resolvedAssets[state]}
+              variantIndex={variantIndex}
+              count={count}
+              size={size}
+              speed={speed}
+              state={state}
+            />
+          ) : sheet && sheetSrc ? (
+            <SpriteSheetSprite
+              sheet={sheet}
+              src={sheetSrc}
+              fallbackSrc={pet.resolvedAssets[state]}
+              variantIndex={variantIndex}
+              count={count}
+              speed={speed}
+              state={state}
+            />
+          ) : lottieSrc ? (
+            <DotLottieSprite
+              src={lottieSrc}
+              fallbackSrc={pet.resolvedAssets[state]}
+              scale={lottieScale}
+              size={size}
+              speed={speed}
+              textSlots={sessionCounterSlots(pet.workingSessionCounter, workingSessionCount)}
+              state={state}
+            />
+          ) : (
+            <img src={pet.resolvedAssets[state]} alt="" draggable={false} />
+          )}
+          {overlay && <span className={overlay.className}>{overlay.symbol}</span>}
+        </motion.span>
+      </span>
     </button>
   )
 }

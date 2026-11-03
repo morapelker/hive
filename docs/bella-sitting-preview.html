@@ -1,0 +1,479 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bella · A little time to sit</title>
+    <link rel="icon" href="data:," />
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        color: #29272d;
+        background: #f6f4f1;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+      }
+      main {
+        max-width: 1120px;
+        margin: auto;
+        padding: 48px 28px 32px;
+      }
+      header {
+        margin-bottom: 30px;
+      }
+      .eyebrow {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.15em;
+        color: #78717c;
+      }
+      h1 {
+        font-size: clamp(32px, 5vw, 48px);
+        letter-spacing: -0.045em;
+        margin: 14px 0;
+        font-weight: 650;
+      }
+      h2 {
+        font-size: 20px;
+        letter-spacing: -0.025em;
+        margin: 0 0 8px;
+      }
+      p {
+        line-height: 1.6;
+        margin: 0;
+      }
+      .intro {
+        color: #746e78;
+        max-width: 660px;
+      }
+      .review {
+        display: inline-block;
+        border: 1px solid #dacbd4;
+        color: #83566d;
+        background: #f5eaf0;
+        border-radius: 20px;
+        padding: 5px 11px;
+        font-size: 11px;
+        letter-spacing: 0.03em;
+        margin-left: 12px;
+      }
+      .toolbar {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        flex-wrap: wrap;
+        margin-bottom: 18px;
+      }
+      label {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        font-size: 13px;
+        color: #625c67;
+      }
+      select,
+      button {
+        font: inherit;
+        color: #38313c;
+        border: 1px solid #ded9df;
+        background: white;
+        border-radius: 8px;
+        padding: 9px 12px;
+      }
+      button {
+        cursor: pointer;
+      }
+      button:focus-visible,
+      select:focus-visible,
+      a:focus-visible {
+        outline: 3px solid #a86388;
+        outline-offset: 3px;
+      }
+      .comparison {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 16px;
+      }
+      article {
+        overflow: hidden;
+        border: 1px solid #e1dce1;
+        border-radius: 16px;
+        background: #fff;
+      }
+      article.proposed {
+        border-color: #b88ca4;
+        box-shadow: 0 0 0 2px #b88ca415;
+      }
+      .card-label {
+        padding: 16px 18px 0;
+        display: flex;
+        justify-content: space-between;
+        font-size: 12px;
+        color: #77707c;
+      }
+      .card-label strong {
+        font-weight: 600;
+        color: #423746;
+      }
+      .artboard {
+        background-color: #f0edf0;
+        transition: background-color 0.2s;
+      }
+      .portrait {
+        height: 270px;
+        margin: 14px 12px 0;
+        border-radius: 10px;
+        display: grid;
+        place-items: center;
+      }
+      .portrait img {
+        display: block;
+        width: 256px;
+        height: 256px;
+        max-width: 100%;
+        object-fit: contain;
+      }
+      .caption {
+        padding: 18px;
+      }
+      .caption h2 {
+        font-size: 17px;
+      }
+      .caption p {
+        font-size: 13px;
+        color: #77707c;
+      }
+      body[data-backdrop='dark'] .artboard {
+        background-color: #252630;
+      }
+      body[data-backdrop='grid'] .artboard {
+        background-color: #fff;
+        background-image: conic-gradient(
+          #e4e0e7 25%,
+          transparent 0 50%,
+          #e4e0e7 0 75%,
+          transparent 0
+        );
+        background-size: 20px 20px;
+      }
+      .desktop {
+        border: 1px solid #e1dce1;
+        border-radius: 16px;
+        padding: 24px;
+        margin-top: 24px;
+        background: white;
+      }
+      .desktop-heading {
+        display: flex;
+        justify-content: space-between;
+        gap: 24px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .desktop-heading p {
+        color: #77707c;
+        font-size: 13px;
+      }
+      .states {
+        display: flex;
+        gap: 6px;
+      }
+      .states button[aria-pressed='true'] {
+        background: #64465b;
+        color: white;
+        border-color: #64465b;
+      }
+      .sizes {
+        margin-top: 22px;
+        padding: 20px 12px 0;
+        border-radius: 10px;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+      .size-sample {
+        text-align: center;
+        min-width: 0;
+      }
+      .sample-stage {
+        height: 160px;
+        display: flex;
+        align-items: end;
+        justify-content: center;
+        padding-bottom: 12px;
+      }
+      .pet {
+        position: relative;
+        width: var(--size);
+        height: var(--size);
+        filter: drop-shadow(0 8px 12px rgb(0 0 0 / 0.24));
+      }
+      .pet img {
+        width: 100%;
+        height: 100%;
+        display: block;
+        object-fit: contain;
+      }
+      .bubble {
+        display: none;
+        position: absolute;
+        top: 0;
+        right: 0;
+        min-width: 24px;
+        height: 24px;
+        padding: 0 7px;
+        border-radius: 999px;
+        place-items: center;
+        color: white;
+        background: #2563eb;
+        font-size: 16px;
+        font-weight: 800;
+        line-height: 1;
+        box-shadow:
+          0 2px 8px rgb(0 0 0 / 0.24),
+          inset 0 0 0 1px rgb(255 255 255 / 0.45);
+      }
+      body[data-state='question'] .bubble {
+        display: grid;
+      }
+      body[data-state='question'] .pet {
+        animation: question 1.2s ease-in-out infinite;
+      }
+      body[data-state='question'] .pet img {
+        filter: saturate(1.08) hue-rotate(8deg);
+      }
+      body[data-motion='paused'] .pet {
+        animation: none;
+      }
+      @keyframes question {
+        0%,
+        100% {
+          transform: translateY(0) rotate(-3deg);
+        }
+        50% {
+          transform: translateY(-8px) rotate(3deg);
+        }
+      }
+      .size-label {
+        display: inline-block;
+        font-size: 11px;
+        color: #706a76;
+        background: #ffffffdf;
+        border-radius: 6px;
+        padding: 5px 8px;
+        margin: 12px 0 16px;
+      }
+      #state-description {
+        margin-top: 16px;
+        color: #746e78;
+        font-size: 13px;
+      }
+      footer {
+        display: flex;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 12px;
+        font-size: 12px;
+        line-height: 1.6;
+        color: #827a86;
+        padding-top: 24px;
+      }
+      a {
+        color: #80506d;
+        text-underline-offset: 3px;
+      }
+      #load-error {
+        color: #9b2828;
+        padding: 12px 0;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        body[data-state='question'] .pet {
+          animation: none;
+        }
+        .artboard {
+          transition: none;
+        }
+      }
+      @media (max-width: 700px) {
+        main {
+          padding: 28px 16px;
+        }
+        .comparison {
+          grid-template-columns: 1fr;
+        }
+        .portrait {
+          height: 240px;
+        }
+        .portrait img {
+          height: 230px;
+        }
+        .desktop {
+          padding: 16px;
+        }
+        .sizes {
+          padding: 18px 0 0;
+        }
+        .states {
+          flex-wrap: wrap;
+        }
+      }
+    </style>
+  </head>
+  <body data-backdrop="light" data-state="idle" data-motion="playing">
+    <main>
+      <header>
+        <p class="eyebrow">TEDOOO CODE / BELLA <span class="review">APPROVED POSE · V1</span></p>
+        <h1>A little time to sit.</h1>
+        <p class="intro">
+          A relaxed seated pose for Bella when no session is running, and when she has a question.
+          Same friendly face. A more settled stance.
+        </p>
+      </header>
+      <div class="toolbar" aria-label="Preview controls">
+        <label
+          >Background
+          <select id="backdrop">
+            <option value="light">Soft light</option>
+            <option value="dark">Dark desktop</option>
+            <option value="grid">Transparency grid</option>
+          </select></label
+        >
+        <label><input type="checkbox" id="motion" checked /> Animate question</label>
+      </div>
+      <section class="comparison" aria-label="Current pose, proposed pose and corgi reference">
+        <article>
+          <div class="card-label"><strong>Previous Bella</strong><span>Before</span></div>
+          <div class="artboard portrait">
+            <img
+              src="../src/renderer/src/pet/registry/bella/assets/bella-idle.png"
+              alt="Previous Bella standing on all four paws"
+            />
+          </div>
+          <div class="caption">
+            <h2>Standing by</h2>
+            <p>The previous pose at startup and while waiting for an answer.</p>
+          </div>
+        </article>
+        <article class="proposed">
+          <div class="card-label"><strong>Seated Bella</strong><span>After</span></div>
+          <div class="artboard portrait">
+            <img
+              src="../src/renderer/src/pet/registry/bella/assets/bella-sitting.png"
+              alt="Seated Bella sitting on her haunches with front paws together and tail resting beside her"
+            />
+          </div>
+          <div class="caption">
+            <h2>Sitting comfortably</h2>
+            <p>Folded back legs, front paws planted, and her tail resting at her side.</p>
+          </div>
+        </article>
+        <article>
+          <div class="card-label"><strong>Corgi</strong><span>Pose reference</span></div>
+          <div class="artboard portrait">
+            <img
+              src="../src/renderer/src/pet/registry/corgi/assets/corgi-static.png"
+              alt="Existing corgi pet sitting"
+            />
+          </div>
+          <div class="caption">
+            <h2>The inspiration</h2>
+            <p>The corgi’s calm sitting posture, adapted to Bella’s proportions.</p>
+          </div>
+        </article>
+      </section>
+      <section class="desktop" aria-labelledby="desktop-title">
+        <div class="desktop-heading">
+          <div>
+            <h2 id="desktop-title">Try her at desktop size</h2>
+            <p>Approved artwork at the app’s three pet sizes.</p>
+          </div>
+          <div class="states" role="group" aria-label="Pet state">
+            <button type="button" data-state="idle" aria-pressed="true">No active session</button>
+            <button type="button" data-state="question" aria-pressed="false">Has a question</button>
+          </div>
+        </div>
+        <div class="artboard sizes">
+          <div class="size-sample">
+            <div class="sample-stage">
+              <div class="pet" style="--size: 64px">
+                <img
+                  src="../src/renderer/src/pet/registry/bella/assets/bella-sitting.png"
+                  alt="Seated Bella, small"
+                /><span class="bubble" aria-hidden="true">?</span>
+              </div>
+            </div>
+            <span class="size-label">S · 64 px</span>
+          </div>
+          <div class="size-sample">
+            <div class="sample-stage">
+              <div class="pet" style="--size: 96px">
+                <img
+                  src="../src/renderer/src/pet/registry/bella/assets/bella-sitting.png"
+                  alt="Seated Bella, medium"
+                /><span class="bubble" aria-hidden="true">?</span>
+              </div>
+            </div>
+            <span class="size-label">M · 96 px</span>
+          </div>
+          <div class="size-sample">
+            <div class="sample-stage">
+              <div class="pet" style="--size: 128px">
+                <img
+                  src="../src/renderer/src/pet/registry/bella/assets/bella-sitting.png"
+                  alt="Seated Bella, large"
+                /><span class="bubble" aria-hidden="true">?</span>
+              </div>
+            </div>
+            <span class="size-label">L · 128 px</span>
+          </div>
+        </div>
+        <p id="state-description" role="status">
+          Idle · Bella sits quietly when there are no active sessions.
+        </p>
+      </section>
+      <p id="load-error" role="alert" hidden>
+        Some preview artwork could not load. Keep this HTML inside the repository with its assets.
+      </p>
+      <footer>
+        <span>Approved seated pose for idle and questions. Running animations are unchanged.</span>
+        <a href="../src/renderer/src/pet/registry/bella/assets/bella-sitting.png" download
+          >Download seated Bella ↗</a
+        >
+      </footer>
+    </main>
+    <script>
+      // Deliberately standalone: open this file directly, with no build or dependencies.
+      // Question motion and bubble styling mirror PetSprite.tsx / pet.css for visual review.
+      document.querySelector('#backdrop').addEventListener('change', (event) => {
+        document.body.dataset.backdrop = event.target.value
+      })
+      document.querySelector('#motion').addEventListener('change', (event) => {
+        document.body.dataset.motion = event.target.checked ? 'playing' : 'paused'
+      })
+      document.querySelectorAll('button[data-state]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const state = button.dataset.state
+          document.body.dataset.state = state
+          document.querySelectorAll('button[data-state]').forEach((other) => {
+            other.setAttribute('aria-pressed', String(other === button))
+          })
+          document.querySelector('#state-description').textContent =
+            state === 'idle'
+              ? 'Idle · Bella sits quietly when there are no active sessions.'
+              : 'Question · Bella stays seated with the existing blue question bubble and attention bounce.'
+        })
+      })
+      document.querySelectorAll('img').forEach((image) => {
+        const showError = () => {
+          document.querySelector('#load-error').hidden = false
+        }
+        image.addEventListener('error', showError)
+        if (image.complete && !image.naturalWidth) showError()
+      })
+    </script>
+  </body>
+</html>

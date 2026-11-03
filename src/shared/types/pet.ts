@@ -44,6 +44,17 @@ export interface PetManifest {
    * session count with the same rules as `workingLottieVariants`; see `workingVariantSource()`.
    */
   workingSpriteSheet?: PetSpriteSheet
+  /**
+   * Working run cycle drawn on a canvas from lossless atlases with fractional-frame blending.
+   * Styles are chosen by session count with the same rules as `workingLottieVariants`.
+   */
+  workingAtlas?: PetCanvasAtlas
+  /**
+   * Width of the working stage as a multiple of the pet box, for a run cycle whose last style
+   * extends past the box (a flame trail). The box keeps its right edge and the extra width
+   * is on the left; defaults to 1.
+   */
+  stageWidthRatio?: number
   lottieScale?: Partial<Record<PetState, number>>
   imageScale?: Partial<Record<PetState, number>>
   animations?: Partial<
@@ -116,11 +127,68 @@ export interface PetSpriteSheet {
   }
 }
 
+/**
+ * A lossless run-cycle atlas per style, drawn on a canvas: neighbouring frames are blended by
+ * the fractional frame (the last frame into the first), and the live session count is printed
+ * on the outfit at a per-frame anchor.
+ */
+export interface PetCanvasAtlas {
+  frames: number
+  columns: number
+  rows: number
+  /** One full run cycle at normal speed, independent of playback speed. */
+  cycleMs: number
+  /** Source pixel height of one cell; every style shares it. */
+  cellHeight: number
+  /** Draw the overlay's drop shadow under the run cycle; defaults to true. */
+  shadow?: boolean
+  /** Styles in ascending `minSessions` order; the last one the count reaches is drawn. */
+  variants: PetCanvasAtlasVariant[]
+  /** The live session count printed on the outfit from `minSessions` onward. */
+  counter?: PetCanvasAtlasCounter
+}
+
+export interface PetCanvasAtlasVariant {
+  minSessions: number
+  file: string
+  /** Source pixel width of one cell; a cell wider than it is tall extends the stage left of the box. */
+  cellWidth: number
+  cellHeight: number
+  /** Counter centre per frame in cell pixels, interpolated like the frames; null for styles without it. */
+  counterAnchors: number[][] | null
+}
+
+/**
+ * How the count sits on the outfit. `print` is ink multiplied into the fabric so its folds show
+ * through; `jersey` is a filled digit with an outline; `patch` is a round badge and `bib` a
+ * pinned tag, both carrying the digit; `plain` is bare text.
+ */
+export type PetCanvasAtlasCounterStyle = 'plain' | 'print' | 'jersey' | 'patch' | 'bib'
+
+export interface PetCanvasAtlasCounter {
+  minSessions: number
+  /** Defaults to `plain`. */
+  style?: PetCanvasAtlasCounterStyle
+  color: string
+  /** Outline around each digit (cell pixels); `print` ignores it. */
+  outline?: { color: string; width: number }
+  /** The shape under the digits for `patch` (diameter `size`) and `bib` (height `size`). */
+  badge?: { fill: string; rim: string; rimWidth: number; size: number }
+  fontFamily: string
+  fontWeight: number
+  /** Font size in cell pixels by digit count ("1", "2", "3"); longer counts use the last size. */
+  fontSizes: Record<string, number>
+  rotationRadians: number
+  /** Horizontal skew factor applied after the rotation. */
+  skewX: number
+}
+
 export interface LoadedPet extends PetManifest {
   resolvedAssets: Record<PetState, string>
   resolvedLottieAssets?: Partial<Record<PetState, string>>
   resolvedWorkingLottieVariants?: string[]
   resolvedWorkingSpriteSheetVariants?: string[]
+  resolvedWorkingAtlasVariants?: string[]
 }
 
 export interface PetPosition {

@@ -147,13 +147,36 @@ const GERMAN_SHEPHERD_MANIFEST: PetManifest = {
   defaultSize: 'M'
 }
 
+const BELLA_MANIFEST: PetManifest = {
+  id: 'bella',
+  name: 'Bella the Tennis Player',
+  version: '1.0.0',
+  author: 'Hive',
+  assets: {
+    idle: 'assets/bella-idle.png',
+    working: 'assets/bella-idle.png',
+    question: 'assets/bella-idle.png',
+    permission: 'assets/bella-idle.png',
+    plan_ready: 'assets/bella-idle.png'
+  },
+  // Her flame trail from 15 sessions is drawn in 352 x 256 cells, left of the pet box.
+  stageWidthRatio: 352 / 256,
+  defaultSize: 'M'
+}
+
 const PET_MANIFESTS: Record<string, PetManifest> = {
   bee: BEE_MANIFEST,
   corgi: CORGI_MANIFEST,
   'french-bulldog': FRENCH_BULLDOG_MANIFEST,
   dachshund: DACHSHUND_MANIFEST,
   pug: PUG_MANIFEST,
-  'german-shepherd': GERMAN_SHEPHERD_MANIFEST
+  'german-shepherd': GERMAN_SHEPHERD_MANIFEST,
+  bella: BELLA_MANIFEST
+}
+
+interface PetWindowBounds {
+  width: number
+  height: number
 }
 
 const PET_SIZE_PX: Record<PetSize, number> = {
@@ -181,11 +204,20 @@ function ensureRegularMacAppActivation(): void {
   void app.dock?.show()
 }
 
-function petWindowSize(settings = latestSettings): number {
-  return PET_SIZE_PX[settings.size] + PET_PADDING
+/** The window fits the pet's widest style: wider than tall for a run that extends past the box. */
+function petWindowBounds(settings = latestSettings): PetWindowBounds {
+  const size = PET_SIZE_PX[settings.size]
+  const stageWidthRatio = PET_MANIFESTS[settings.petId]?.stageWidthRatio ?? 1
+  return {
+    width: Math.round(size * stageWidthRatio) + PET_PADDING,
+    height: size + PET_PADDING
+  }
 }
 
-function constrainPosition(position: PetPosition, size = petWindowSize()): PetPosition {
+function constrainPosition(
+  position: PetPosition,
+  bounds: PetWindowBounds = petWindowBounds()
+): PetPosition {
   const displays = screen.getAllDisplays()
   const display =
     displays.find((candidate) => {
@@ -195,32 +227,32 @@ function constrainPosition(position: PetPosition, size = petWindowSize()): PetPo
 
   const { x, y, width, height } = display.workArea
   return {
-    x: Math.min(Math.max(position.x, x), x + width - size),
-    y: Math.min(Math.max(position.y, y), y + height - size)
+    x: Math.min(Math.max(position.x, x), x + width - bounds.width),
+    y: Math.min(Math.max(position.y, y), y + height - bounds.height)
   }
 }
 
-function defaultPosition(size = petWindowSize()): PetPosition {
+function defaultPosition(bounds = petWindowBounds()): PetPosition {
   const { x, y, width, height } = screen.getPrimaryDisplay().workArea
   return {
-    x: x + width - size - SCREEN_MARGIN,
-    y: y + height - size - SCREEN_MARGIN
+    x: x + width - bounds.width - SCREEN_MARGIN,
+    y: y + height - bounds.height - SCREEN_MARGIN
   }
 }
 
-export function loadPetPosition(size = petWindowSize()): PetPosition {
+export function loadPetPosition(bounds = petWindowBounds()): PetPosition {
   try {
     if (existsSync(PET_POSITION_FILE)) {
       const parsed = JSON.parse(readFileSync(PET_POSITION_FILE, 'utf-8')) as PetPosition
-      const position = constrainPosition(parsed, size)
+      const position = constrainPosition(parsed, bounds)
       const displays = screen.getAllDisplays()
       const isInsideWorkArea = displays.some((display) => {
         const { x, y, width, height } = display.workArea
         return (
           parsed.x >= x &&
           parsed.y >= y &&
-          parsed.x + size <= x + width &&
-          parsed.y + size <= y + height
+          parsed.x + bounds.width <= x + width &&
+          parsed.y + bounds.height <= y + height
         )
       })
       if (isInsideWorkArea) return position
@@ -228,7 +260,7 @@ export function loadPetPosition(size = petWindowSize()): PetPosition {
   } catch {
     // Ignore invalid persisted position.
   }
-  return defaultPosition(size)
+  return defaultPosition(bounds)
 }
 
 export function savePetPosition(position: PetPosition): void {
@@ -309,12 +341,12 @@ export function createPetWindow(
   ensureRegularMacAppActivation()
   if (petWindow && !petWindow.isDestroyed()) return petWindow
 
-  const size = petWindowSize()
-  const position = loadPetPosition(size)
+  const bounds = petWindowBounds()
+  const position = loadPetPosition(bounds)
 
   petWindow = new BrowserWindow({
-    width: size,
-    height: size,
+    width: bounds.width,
+    height: bounds.height,
     x: position.x,
     y: position.y,
     transparent: true,
@@ -373,7 +405,8 @@ export function destroyPetWindow(): void {
 
 export function movePetWindow(position: PetPosition): void {
   if (!petWindow || petWindow.isDestroyed()) return
-  const constrained = constrainPosition(position, petWindow.getBounds().width)
+  const { width, height } = petWindow.getBounds()
+  const constrained = constrainPosition(position, { width, height })
   petWindow.setPosition(constrained.x, constrained.y, false)
   savePetPosition(constrained)
 }
@@ -392,10 +425,10 @@ export function updatePetSettings(partial: Partial<PetSettings>): void {
   latestSettings = { ...latestSettings, ...partial }
 
   if (petWindow && !petWindow.isDestroyed()) {
-    const size = petWindowSize()
+    const bounds = petWindowBounds()
     const [x, y] = petWindow.getPosition()
-    const constrained = constrainPosition({ x, y }, size)
-    petWindow.setBounds({ ...constrained, width: size, height: size })
+    const constrained = constrainPosition({ x, y }, bounds)
+    petWindow.setBounds({ ...constrained, ...bounds })
     petWindow.setIgnoreMouseEvents(true, { forward: true })
   }
 

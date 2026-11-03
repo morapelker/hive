@@ -1,0 +1,11 @@
+Generated with the built-in imagegen tool for the Bella first-state review.
+Edit target: src/renderer/src/pet/registry/bella/assets/bella-idle.png
+Pose reference: src/renderer/src/pet/registry/corgi/assets/corgi-static.png
+Output: src/renderer/src/pet/registry/bella/assets/bella-sitting.png (transparent PNG)
+Approved by the user. Used for idle, question, and the working fallback at zero sessions.
+
+Prompt:
+Use case: precise-object-edit
+Asset type: transparent desktop pet sprite, square canvas.
+Input images: Image 1 is Bella, the edit target and definitive character identity/style reference. Image 2 is the corgi, a supporting reference ONLY for a naturally seated dog pose.
+Primary request: Change Bella from standing on four legs to sitting comfortably on her haunches, with her two front paws planted together, in the same three-quarter view facing right as the original Bella. Keep Bella's identity: warm tan coat, darker brown floppy ears, brown eyes, white muzzle/blaze/chest and white paws, fluffy tail, friendly open-mouth smile and pink tongue. Preserve the same polished soft 3D cartoon rendering, facial proportions and markings. Do not turn Bella into a corgi. Her rear legs should be visibly folded under her seated hips and her chest upright, a clear relaxed sit. Tail curls around her left side on the ground. Full body with all ears/paws/tail visible, centered, clean silhouette, approximately 80% canvas height with baseline near 90% of canvas. No clothing or accessories, no flames, no colored splashes, no shadow, no text, no background or checkerboard baked into the pixels. Actual transparent alpha background. Output one seated Bella only.

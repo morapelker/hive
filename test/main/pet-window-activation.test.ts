@@ -225,6 +225,30 @@ describe('pet window activation suppression', () => {
     )
   })
 
+  it('widens the panel for a pet whose run extends past the box, keeping its right edge put', () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' })
+    updatePetSettings({ petId: 'bella', size: 'M' })
+
+    createPetWindow()
+
+    // Bella's flame stage is 352 x 256 cells: 96 px tall is 132 px wide, plus the window padding.
+    expect(electronMock.BrowserWindow).toHaveBeenCalledWith(
+      expect.objectContaining({ width: 180, height: 144 })
+    )
+
+    updatePetSettings({ size: 'L' })
+    expect(electronMock.windows[0].setBounds).toHaveBeenLastCalledWith(
+      expect.objectContaining({ width: 224, height: 176 })
+    )
+
+    updatePetSettings({ petId: 'german-shepherd' })
+    expect(electronMock.windows[0].setBounds).toHaveBeenLastCalledWith(
+      expect.objectContaining({ width: 176, height: 176 })
+    )
+
+    updatePetSettings({ petId: 'bee', size: 'M' })
+  })
+
   it('does not create a pet window when configured for headless mode', () => {
     Object.defineProperty(process, 'platform', { value: 'darwin' })
     configurePetWindow({ getMainWindow: () => null, headless: true })

@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bella · Meet the tennis player</title>
+    <link rel="icon" href="data:," />
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">TEDOOO CODE / PET STUDIO</p>
+        <h1>Meet Bella.</h1>
+        <p class="intro">
+          A mixed-breed tennis player with a growing kit and, eventually, a flame trail.<br />More
+          active sessions. More court cred.
+        </p>
+      </header>
+      <section class="toolbar" aria-label="Preview controls">
+        <label
+          >Speed
+          <select id="speed">
+            <option value="0.5">0.5×</option>
+            <option value="1" selected>1×</option>
+            <option value="1.5">1.5×</option>
+            <option value="2">2×</option>
+          </select></label
+        >
+        <button id="play" type="button">Pause</button>
+        <label
+          >Number style
+          <select id="number-style">
+            <option value="manifest" selected>As shipped</option>
+            <option value="before">Before · small plain</option>
+            <option value="print">Print · ink in the fabric</option>
+            <option value="jersey">Jersey · white with outline</option>
+            <option value="patch">Patch · round badge</option>
+            <option value="bib">Bib · pinned tag</option>
+          </select></label
+        >
+        <label
+          >Backdrop
+          <select id="backdrop">
+            <option value="light">Warm white</option>
+            <option value="dark">Midnight</option>
+            <option value="grid">Transparency grid</option>
+          </select></label
+        >
+        <span id="load-status" role="status"
+          >Real pet renderer · one idle portrait + six running stages</span
+        >
+      </section>
+      <section id="gallery" class="gallery" aria-label="Bella stages by session count"></section>
+      <section class="sizing">
+        <div>
+          <p class="eyebrow">ON YOUR DESKTOP</p>
+          <h2>One very good tennis player.</h2>
+          <p>The real pet renderer at each size. Type any count, including above 15.</p>
+        </div>
+        <div class="session-controls">
+          <label
+            >Active sessions <input id="sessions" type="range" min="0" max="15" value="4"
+          /></label>
+          <label
+            >Exact count <input id="session-count" type="number" min="0" step="1" value="4"
+          /></label>
+          <label
+            >State
+            <select id="state">
+              <option value="auto" selected>Follows the count</option>
+              <option value="idle">Idle</option>
+              <option value="working">Working</option>
+              <option value="question">Question</option>
+              <option value="permission">Permission</option>
+              <option value="plan_ready">Plan ready</option>
+            </select></label
+          >
+        </div>
+        <div class="speed-controls">
+          <label><input id="speed-enabled" type="checkbox" />Scale animation speed</label>
+          <label
+            >Max speed
+            <select id="speed-limit" disabled>
+              <option value="2">2×</option>
+              <option value="3">3×</option>
+              <option value="4">4×</option>
+              <option value="5" selected>5×</option>
+            </select>
+          </label>
+          <span
+            >Stages always follow the session count. From four onward, the polo shows the exact
+            number.</span
+          >
+        </div>
+        <div id="desktop-preview"></div>
+      </section>
+      <footer>128-frame blended run cycle · Automatic outfits · A polo that keeps count</footer>
+    </main>
+    <script type="module" src="./src/pet/preview/bella-preview.tsx"></script>
+  </body>
+</html>
