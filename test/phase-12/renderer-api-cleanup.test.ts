@@ -16130,8 +16130,9 @@ describe('renderer API cleanup', () => {
     expect(syncStart).toBeGreaterThan(-1)
     expect(storeStart).toBeGreaterThan(syncStart)
     expect(source).toContain("import { terminalApi } from '@/api/terminal-api'")
-    expect(syncSource).toContain("terminalApi.write(sessionId, '\\x1b[Z')")
-    expect(syncSource).not.toContain("window.terminalOps.write(sessionId, '\\x1b[Z')")
+    expect(syncSource).toContain('terminalApi.write(sessionId, CLI_MODE_CYCLE_KEY)')
+    expect(syncSource).toContain('terminalApi.write(sessionId, CLAUDE_CLI_ENTER_PLAN_MODE)')
+    expect(syncSource).not.toContain('window.terminalOps.write(')
   })
 
   it('routes Ghostty promotion availability checks through terminalApi', () => {

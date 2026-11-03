@@ -566,11 +566,25 @@ function findSessionInState(state: SessionState, sessionId: string): Session | n
   return state.orphanedSessions.get(sessionId) ?? null
 }
 
-// Claude Code cycles permission modes with Shift+Tab in the order
-// normal → accept-edits → plan → normal. Reaching plan from a non-plan mode
-// therefore takes two presses, while returning from plan takes one. The
-// previous code sent a single press in both directions, which landed on
-// accept-edits (not plan) when entering plan mode.
+/**
+ * Claude Code's own command that puts the CLI in plan mode from whatever mode it is in, typed
+ * and submitted in one write. It is a local command: no turn starts and no UserPromptSubmit
+ * fires, and in plan mode already it only answers "Already in plan mode".
+ */
+export const CLAUDE_CLI_ENTER_PLAN_MODE = '/plan\r'
+/** Shift+Tab: one step along the CLI's permission-mode cycle. */
+const CLI_MODE_CYCLE_KEY = '\x1b[Z'
+
+// Moves a live CLI agent into or out of plan mode when the session crosses the plan/build line.
+//
+// Claude Code: Shift+Tab cycles bypass-permissions → auto → default → accept-edits → plan →
+// bypass-permissions (verified against claude 2.1.317 launched with either permission flag), so
+// the number of presses that reach plan depends on the mode the CLI is in and on whether the
+// account has auto mode; a fixed count (two, from when the cycle was default → accept-edits →
+// plan) landed on default, and the session ran — and reported its prompts — outside plan mode.
+// `/plan` reaches plan from any mode. Leaving takes one press: plan is followed by
+// bypass-permissions, which both launch flag sets enable.
+// Codex: the TUI has exactly two collaboration modes (Default ↔ Plan), one press either way.
 export function syncClaudeCliPermissionModeIfNeeded(
   state: SessionState,
   sessionId: string,
@@ -583,12 +597,11 @@ export function syncClaudeCliPermissionModeIfNeeded(
   const isPlanLike = nextMode === 'plan' || nextMode === 'super-plan'
   if (wasPlanLike === isPlanLike) return
 
-  // The codex TUI has exactly two collaboration modes (Default ↔ Plan), so a
-  // single Shift+Tab toggles in either direction.
-  const presses = isCodexCli(session?.agent_sdk) ? 1 : isPlanLike ? 2 : 1
-  for (let i = 0; i < presses; i++) {
-    terminalApi.write(sessionId, '\x1b[Z')
+  if (isPlanLike && !isCodexCli(session?.agent_sdk)) {
+    terminalApi.write(sessionId, CLAUDE_CLI_ENTER_PLAN_MODE)
+    return
   }
+  terminalApi.write(sessionId, CLI_MODE_CYCLE_KEY)
 }
 
 export const useSessionStore = create<SessionState>()(

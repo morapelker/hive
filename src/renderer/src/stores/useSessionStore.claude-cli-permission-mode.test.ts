@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { useSessionStore, syncClaudeCliPermissionModeIfNeeded } from '@/stores/useSessionStore'
+import {
+  useSessionStore,
+  syncClaudeCliPermissionModeIfNeeded,
+  CLAUDE_CLI_ENTER_PLAN_MODE
+} from '@/stores/useSessionStore'
 
 const SHIFT_TAB = '\u001b[Z'
 
@@ -25,34 +29,46 @@ function mockWrite(): ReturnType<typeof vi.fn> {
   return terminalApiMocks.write
 }
 
-describe('syncClaudeCliPermissionModeIfNeeded — Shift+Tab press counts', () => {
+describe('syncClaudeCliPermissionModeIfNeeded — claude-code-cli', () => {
   beforeEach(() => {
     seedSession('claude-code-cli')
   })
 
-  it('sends two Shift+Tab presses entering plan mode (normal → accept-edits → plan)', () => {
+  it("enters plan mode with claude's /plan command, typed and submitted in one write", () => {
+    // Shift+Tab cycles bypass → auto → default → accept-edits → plan (claude 2.1.317), so a
+    // fixed press count cannot reach plan; two presses from a build session landed on default.
     const write = mockWrite()
     syncClaudeCliPermissionModeIfNeeded(useSessionStore.getState(), 's1', 'build', 'plan')
-    expect(write).toHaveBeenCalledTimes(2)
-    expect(write).toHaveBeenNthCalledWith(1, 's1', SHIFT_TAB)
-    expect(write).toHaveBeenNthCalledWith(2, 's1', SHIFT_TAB)
+    expect(CLAUDE_CLI_ENTER_PLAN_MODE).toBe('/plan\r')
+    expect(write).toHaveBeenCalledTimes(1)
+    expect(write).toHaveBeenCalledWith('s1', '/plan\r')
+    expect(write).not.toHaveBeenCalledWith('s1', SHIFT_TAB)
   })
 
-  it('sends one Shift+Tab press leaving plan mode (plan → normal)', () => {
+  it('sends one Shift+Tab press leaving plan mode (plan → bypass permissions)', () => {
     const write = mockWrite()
     syncClaudeCliPermissionModeIfNeeded(useSessionStore.getState(), 's1', 'plan', 'build')
     expect(write).toHaveBeenCalledTimes(1)
     expect(write).toHaveBeenCalledWith('s1', SHIFT_TAB)
   })
 
-  it('treats super-plan as plan-like (two presses to enter, one to leave)', () => {
+  it('treats super-plan as plan-like (/plan to enter, one press to leave)', () => {
     const enter = mockWrite()
     syncClaudeCliPermissionModeIfNeeded(useSessionStore.getState(), 's1', 'build', 'super-plan')
-    expect(enter).toHaveBeenCalledTimes(2)
+    expect(enter).toHaveBeenCalledTimes(1)
+    expect(enter).toHaveBeenCalledWith('s1', CLAUDE_CLI_ENTER_PLAN_MODE)
 
     const leave = mockWrite()
     syncClaudeCliPermissionModeIfNeeded(useSessionStore.getState(), 's1', 'super-plan', 'build')
     expect(leave).toHaveBeenCalledTimes(1)
+    expect(leave).toHaveBeenCalledWith('s1', SHIFT_TAB)
+  })
+
+  it('enters plan mode from super-build too', () => {
+    const write = mockWrite()
+    syncClaudeCliPermissionModeIfNeeded(useSessionStore.getState(), 's1', 'super-build', 'plan')
+    expect(write).toHaveBeenCalledTimes(1)
+    expect(write).toHaveBeenCalledWith('s1', CLAUDE_CLI_ENTER_PLAN_MODE)
   })
 
   it('does nothing when the plan-like boundary is not crossed (plan → super-plan)', () => {
@@ -66,6 +82,20 @@ describe('syncClaudeCliPermissionModeIfNeeded — Shift+Tab press counts', () =>
     const write = mockWrite()
     syncClaudeCliPermissionModeIfNeeded(useSessionStore.getState(), 's1', 'build', 'plan')
     expect(write).not.toHaveBeenCalled()
+  })
+})
+
+describe('setSessionMode — a plan follow-up on a build session', () => {
+  beforeEach(() => {
+    seedSession('claude-code-cli')
+    useSessionStore.setState({ modeBySession: new Map([['s1', 'build']]) } as never)
+  })
+
+  it('puts the CLI in plan mode before the follow-up is pasted', async () => {
+    const write = mockWrite()
+    await useSessionStore.getState().setSessionMode('s1', 'plan')
+    expect(write.mock.calls).toEqual([['s1', CLAUDE_CLI_ENTER_PLAN_MODE]])
+    expect(useSessionStore.getState().modeBySession.get('s1')).toBe('plan')
   })
 })
 
