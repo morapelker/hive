@@ -212,6 +212,11 @@ function isLiveWorkStatus(status: string | null | undefined): boolean {
   )
 }
 
+/** A ticket whose work is not over: not archived, not done or merged. */
+function isLiveTicket(ticket: KanbanTicket): boolean {
+  return !ticket.archived_at && !isTerminalColumn(ticket.column)
+}
+
 /**
  * One session can serve several tickets (pre-assign attaches the worktree's
  * session to every ticket; handoffs relink in bulk). Whether a ticket other
@@ -224,9 +229,16 @@ export async function isSessionSharedWithLiveTicket(
   ticketId: string
 ): Promise<boolean> {
   const linked = await kanban.ticket.getBySession<KanbanTicket>(sessionId)
-  return linked.some(
-    (t) => t.id !== ticketId && !t.archived_at && t.column !== 'done' && t.column !== 'merged'
-  )
+  return linked.some((t) => t.id !== ticketId && isLiveTicket(t))
+}
+
+/**
+ * Whether any live ticket rides `sessionId`. Reads the database, not the store:
+ * the ticket's board may not be loaded. Rejects when the link set cannot be read.
+ */
+export async function isSessionServingLiveTicket(sessionId: string): Promise<boolean> {
+  const linked = await kanban.ticket.getBySession<KanbanTicket>(sessionId)
+  return linked.some(isLiveTicket)
 }
 
 /**

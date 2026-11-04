@@ -1,8 +1,10 @@
 /**
  * A ticket modal (or tiled slot) mounting a session whose agent CLI is not
- * running spawns `claude --resume`; nothing else owns that process, so the
- * last release kills it — after a grace window, and only while no tab, work
- * or newer mount took the session over. The row stays active throughout.
+ * running spawns `claude --resume`. While a live ticket rides the session the
+ * process is that ticket's, and only entering done or merged ends it. Without
+ * one nothing owns the process, so the last release kills it — after a grace
+ * window, and only while no tab, work or newer mount took the session over.
+ * The row stays active throughout.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { KanbanTicket, Session } from '../../../../main/db/types'
@@ -68,11 +70,26 @@ function makeDbSession(overrides: Partial<Session> = {}): Session {
   } as Session
 }
 
+/** The tickets the database links to the session (kanban.ticket.getBySession). */
+let linkedTickets: Partial<KanbanTicket>[] = []
+
 function liveIds(ids: string[]): void {
   rpcRequest.mockImplementation(async (method: string) => {
     if (method === 'terminalOps.getLiveTerminalIds') return { terminalIds: ids }
+    if (method === 'kanban.ticket.getBySession') return linkedTickets
     throw new Error(`unexpected RPC ${method}`)
   })
+}
+
+function linkTicket(overrides: Partial<KanbanTicket> = {}): Partial<KanbanTicket> {
+  return {
+    id: 'ticket-1',
+    column: 'review',
+    current_session_id: SESSION_ID,
+    awaiting_completion: false,
+    archived_at: null,
+    ...overrides
+  }
 }
 
 /** Let the provenance probe's RPC answer land. */
@@ -106,6 +123,7 @@ beforeEach(() => {
   sessionGet.mockResolvedValue(makeDbSession())
   terminalDestroy.mockResolvedValue({ success: true, value: undefined })
   sessionUpdate.mockResolvedValue(makeDbSession({ status: 'completed' }))
+  linkedTickets = []
   liveIds([])
 })
 
@@ -278,7 +296,11 @@ describe('destroyCompletedSessionTerminal — modal-spawned release', () => {
 
   it('waits for an in-flight probe when the modal closes right after opening', async () => {
     let answer: (value: { terminalIds: string[] }) => void = () => {}
-    rpcRequest.mockImplementation(() => new Promise((resolve) => (answer = resolve)))
+    rpcRequest.mockImplementation((method: string) =>
+      method === 'terminalOps.getLiveTerminalIds'
+        ? new Promise((resolve) => (answer = resolve))
+        : Promise.resolve(linkedTickets)
+    )
     useSessionStore.getState().requestSessionMount(SESSION_ID)
 
     const releasing = closeModal()
@@ -369,23 +391,66 @@ describe('destroyCompletedSessionTerminal — modal-spawned release', () => {
     expect(terminalDestroy).not.toHaveBeenCalled()
   })
 
-  it('keeps the process while its In Progress ticket awaits completion (the hourglass)', async () => {
-    useKanbanStore.setState({
-      tickets: new Map([
-        [
-          'project-1',
-          [
-            {
-              id: 'ticket-1',
-              column: 'in_progress',
-              current_session_id: SESSION_ID,
-              awaiting_completion: true,
-              archived_at: null
-            } as KanbanTicket
-          ]
-        ]
-      ])
-    })
+  it.each(['todo', 'in_progress', 'review'] as const)(
+    'keeps the process while its ticket is live in %s',
+    async (column) => {
+      linkedTickets = [linkTicket({ column })]
+      useWorktreeStatusStore.setState({
+        sessionStatuses: {
+          [SESSION_ID]: { status: 'completed', completion: 'completed', timestamp: Date.now() }
+        }
+      })
+      await openModal()
+
+      await closeModalAndWaitOutGrace()
+
+      expect(terminalDestroy).not.toHaveBeenCalled()
+      expect(useSessionStore.getState().closedTerminalSessionIds.has(SESSION_ID)).toBe(false)
+    }
+  )
+
+  it('keeps the process of a ticket dragged out of Done into Review during the grace window', async () => {
+    linkedTickets = [linkTicket({ column: 'done' })]
+    await openModal()
+
+    const releasing = closeModal()
+    await vi.advanceTimersByTimeAsync(MODAL_SPAWNED_RELEASE_GRACE_MS - 1)
+    linkedTickets = [linkTicket({ column: 'review' })]
+    await vi.advanceTimersByTimeAsync(1)
+    await releasing
+
+    expect(terminalDestroy).not.toHaveBeenCalled()
+  })
+
+  it('kills the process of a ticket that entered Done during the grace window', async () => {
+    linkedTickets = [linkTicket({ column: 'review' })]
+    await openModal()
+
+    const releasing = closeModal()
+    await vi.advanceTimersByTimeAsync(MODAL_SPAWNED_RELEASE_GRACE_MS - 1)
+    linkedTickets = [linkTicket({ column: 'done' })]
+    await vi.advanceTimersByTimeAsync(1)
+    await releasing
+
+    expect(terminalDestroy).toHaveBeenCalledWith(SESSION_ID)
+  })
+
+  it('keeps the process through every later open and close of a Review ticket', async () => {
+    linkedTickets = [linkTicket()]
+    await openModal()
+    await closeModalAndWaitOutGrace()
+
+    await openModal()
+    await closeModalAndWaitOutGrace()
+
+    expect(terminalDestroy).not.toHaveBeenCalled()
+  })
+
+  it('keeps the process while any one of the tickets riding the session is live', async () => {
+    linkedTickets = [
+      linkTicket({ id: 'ticket-done', column: 'done' }),
+      linkTicket({ id: 'ticket-live', column: 'review' })
+    ]
     await openModal()
 
     await closeModalAndWaitOutGrace()
@@ -393,28 +458,29 @@ describe('destroyCompletedSessionTerminal — modal-spawned release', () => {
     expect(terminalDestroy).not.toHaveBeenCalled()
   })
 
-  it('still kills the process of a ticket that is not awaiting completion', async () => {
-    useKanbanStore.setState({
-      tickets: new Map([
-        [
-          'project-1',
-          [
-            {
-              id: 'ticket-1',
-              column: 'review',
-              current_session_id: SESSION_ID,
-              awaiting_completion: false,
-              archived_at: null
-            } as KanbanTicket
-          ]
-        ]
-      ])
-    })
-    useWorktreeStatusStore.setState({
-      sessionStatuses: {
-        [SESSION_ID]: { status: 'completed', completion: 'completed', timestamp: Date.now() }
-      }
-    })
+  it('keeps the process when the ticket links cannot be read (fail-safe)', async () => {
+    await openModal()
+    rpcRequest.mockRejectedValue(new Error('rpc down'))
+
+    await closeModalAndWaitOutGrace()
+
+    expect(terminalDestroy).not.toHaveBeenCalled()
+  })
+
+  it.each(['done', 'merged'] as const)(
+    'still kills the process once its ticket is settled in %s',
+    async (column) => {
+      linkedTickets = [linkTicket({ column })]
+      await openModal()
+
+      await closeModalAndWaitOutGrace()
+
+      expect(terminalDestroy).toHaveBeenCalledWith(SESSION_ID)
+    }
+  )
+
+  it('still kills the process of an archived ticket, whatever its column', async () => {
+    linkedTickets = [linkTicket({ archived_at: '2026-01-02T00:00:00.000Z' })]
     await openModal()
 
     await closeModalAndWaitOutGrace()

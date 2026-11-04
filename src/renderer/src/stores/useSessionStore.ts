@@ -94,9 +94,11 @@ function unmarkReactivating(sessionId: string): void {
 
 // ─── Modal-spawned session processes ────────────────────────────────────────
 // Opening a ticket modal or a tiled slot mounts the session's terminal view,
-// and mounting spawns `claude --resume` whenever no process is alive. Nothing
-// owns that process afterwards — no tab ever showed it — so the last release
-// kills it (destroyCompletedSessionTerminal). Provenance is decided once, on
+// and mounting spawns `claude --resume` whenever no process is alive. While a
+// live ticket rides the session the process is that ticket's, and only
+// entering done or merged ends it. Without one nothing owns the process — no
+// tab ever showed it — so the last release kills it
+// (destroyCompletedSessionTerminal). Provenance is decided once, on
 // the first mount request: a session with no mounted view and no live PTY
 // at that moment gets its process from the mount. The probe asks the backend
 // before the view mounts; an answer that arrives after the spawn says "live",
@@ -690,11 +692,13 @@ export const useSessionStore = create<SessionState>()(
       // - its row is completed: ticket modals resume completed sessions of
       //   Done tickets on open, and the respawned process would otherwise
       //   outlive the modal with no tab left to close it from; or
-      // - the mount itself spawned the process (modalSpawnedSessionIds), as
-      //   opening the modal of a Review / Merged ticket does. Only the process
-      //   dies: the row stays active, the tabs are untouched, and the next
-      //   mount resumes the session. A short grace window lets a quick
-      //   re-open re-attach instead.
+      // - the mount itself spawned the process (modalSpawnedSessionIds) and no
+      //   live ticket rides the session. A ticket that is not done, merged or
+      //   archived keeps its process whoever spawned it: a session only ends
+      //   when its ticket enters done or merged (moveTicket), never because a
+      //   modal closed on it in Review. Only the process dies: the row stays
+      //   active, the tabs are untouched, and the next mount resumes the
+      //   session. A short grace window lets a quick re-open re-attach instead.
       // Guards: never kill a session that was re-engaged in the meantime —
       // re-mounted by another modal, navigated to (active / pinned / inline
       // session), or actively working/awaiting input per its hook-driven
@@ -743,23 +747,18 @@ export const useSessionStore = create<SessionState>()(
             // A turn that only paused (a scheduled wakeup, /loop, a cron, a
             // monitor): those live in the CLI process and die with it.
             if (isPausedSessionEntry(entry) || (entry?.pendingWakeups ?? 0) > 0) return true
-            if (sessionId in statusState.backgroundWorkBySession) return true
-            // Same pause seen from the board (the hourglass), which survives
-            // a status entry that was cleared or never arrived.
-            const { useKanbanStore } = await import('./useKanbanStore')
-            for (const tickets of useKanbanStore.getState().tickets.values()) {
-              for (const t of tickets) {
-                if (
-                  t.current_session_id === sessionId &&
-                  t.column === 'in_progress' &&
-                  t.awaiting_completion &&
-                  !t.archived_at
-                ) {
-                  return true
-                }
-              }
+            return sessionId in statusState.backgroundWorkBySession
+          }
+          // Decided here rather than when the modal opened: the ticket can
+          // change column during the grace window. Links that cannot be read
+          // keep the process.
+          const servesLiveTicket = async (): Promise<boolean> => {
+            try {
+              const { isSessionServingLiveTicket } = await import('./useKanbanStore')
+              return await isSessionServingLiveTicket(sessionId)
+            } catch {
+              return true
             }
-            return false
           }
 
           if (await isReEngaged()) return
@@ -776,8 +775,9 @@ export const useSessionStore = create<SessionState>()(
           const isModalSpawned = (): boolean =>
             get().modalSpawnedSessionIds.has(sessionId) && isAgentCli(dbSession?.agent_sdk)
           if (!isCompleted && !isModalSpawned()) return
+          if (!isCompleted && (await servesLiveTicket())) return
           // Re-check after the async gap — the session may have been re-engaged
-          // while the DB read was in flight.
+          // while the DB reads were in flight.
           if (await isReEngaged()) return
           if (!isCompleted && (!isModalSpawned() || (await hasPendingWork()))) return
           try {

@@ -242,7 +242,7 @@ function ClaudeCliPortalSlot({ sessionId }: { sessionId: string }): React.JSX.El
       // Kill the PTY when the last mount request goes away if this modal
       // brought it to life (a resumed Done-ticket session, or any session
       // with no live process when the modal opened) — the row and tabs stay;
-      // no-op for processes that a tab or the background already owned.
+      // no-op for processes that a tab, the background or a live ticket owns.
       void useSessionStore.getState().destroyCompletedSessionTerminal(sessionId)
     }
   }, [registerTarget, releaseSessionMount, requestSessionMount, sessionId])
