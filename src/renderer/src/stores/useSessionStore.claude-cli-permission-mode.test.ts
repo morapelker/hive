@@ -34,14 +34,16 @@ describe('syncClaudeCliPermissionModeIfNeeded — claude-code-cli', () => {
     seedSession('claude-code-cli')
   })
 
-  it("enters plan mode with claude's /plan command, typed and submitted in one write", () => {
+  it("enters plan mode with claude's /plan command after clearing the input line, in one write", () => {
     // Shift+Tab cycles bypass → auto → default → accept-edits → plan (claude 2.1.317), so a
     // fixed press count cannot reach plan; two presses from a build session landed on default.
+    // The command types into the input box, so a half-typed draft there is cleared first
+    // (Ctrl+U) rather than submitted with `/plan` appended.
     const write = mockWrite()
     syncClaudeCliPermissionModeIfNeeded(useSessionStore.getState(), 's1', 'build', 'plan')
-    expect(CLAUDE_CLI_ENTER_PLAN_MODE).toBe('/plan\r')
+    expect(CLAUDE_CLI_ENTER_PLAN_MODE).toBe('\x15/plan\r')
     expect(write).toHaveBeenCalledTimes(1)
-    expect(write).toHaveBeenCalledWith('s1', '/plan\r')
+    expect(write).toHaveBeenCalledWith('s1', '\x15/plan\r')
     expect(write).not.toHaveBeenCalledWith('s1', SHIFT_TAB)
   })
 

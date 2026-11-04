@@ -566,12 +566,17 @@ function findSessionInState(state: SessionState, sessionId: string): Session | n
   return state.orphanedSessions.get(sessionId) ?? null
 }
 
+/** Ctrl+U: Claude Code's "delete to line start" in its input box. */
+const CLI_CLEAR_INPUT_LINE = '\x15'
 /**
  * Claude Code's own command that puts the CLI in plan mode from whatever mode it is in, typed
  * and submitted in one write. It is a local command: no turn starts and no UserPromptSubmit
- * fires, and in plan mode already it only answers "Already in plan mode".
+ * fires, and in plan mode already it only answers "Already in plan mode". The line is cleared
+ * first: unlike Shift+Tab, the command goes through the input box, and a draft the person had
+ * typed there would otherwise be submitted with `/plan` appended to it (a draft of several
+ * lines keeps the lines above the cursor's).
  */
-export const CLAUDE_CLI_ENTER_PLAN_MODE = '/plan\r'
+export const CLAUDE_CLI_ENTER_PLAN_MODE = `${CLI_CLEAR_INPUT_LINE}/plan\r`
 /** Shift+Tab: one step along the CLI's permission-mode cycle. */
 const CLI_MODE_CYCLE_KEY = '\x1b[Z'
 
@@ -1071,238 +1076,211 @@ export const useSessionStore = create<SessionState>()(
         opts?: { abortIfRevived?: boolean; stopRemote?: boolean }
       ) =>
         withSessionLifecycleLock(sessionId, async () => {
-        // Atomic guard for background closes (ticket entered Done): a revival
-        // that queued behind this lock marked itself synchronously before
-        // waiting, so checking here — inside the lock, before the
-        // completed-write — makes guard and transition atomic. Explicit user
-        // closes (tab X, archive) do not pass the flag and always proceed.
-        if (opts?.abortIfRevived && isSessionReactivating(sessionId)) {
-          return { success: false, aborted: true, error: 'Session was revived concurrently' }
-        }
-        try {
-          // Find the session to determine type and gather disconnect info
-          let isTerminalSession = false
-          let opencodeSessionId: string | null = null
-          let sessionWorktreeId: string | null = null
-          let remoteLaunchRaw: string | null = null
-          let foundInStore = false
-
-          for (const [worktreeId, sessions] of get().sessionsByWorktree.entries()) {
-            const found = sessions.find((s) => s.id === sessionId)
-            if (found) {
-              isTerminalSession = isTerminalBacked(found.agent_sdk)
-              opencodeSessionId = found.opencode_session_id
-              sessionWorktreeId = worktreeId
-              remoteLaunchRaw = found.remote_launch ?? null
-              foundInStore = true
-              break
-            }
+          // Atomic guard for background closes (ticket entered Done): a revival
+          // that queued behind this lock marked itself synchronously before
+          // waiting, so checking here — inside the lock, before the
+          // completed-write — makes guard and transition atomic. Explicit user
+          // closes (tab X, archive) do not pass the flag and always proceed.
+          if (opts?.abortIfRevived && isSessionReactivating(sessionId)) {
+            return { success: false, aborted: true, error: 'Session was revived concurrently' }
           }
-          if (!sessionWorktreeId) {
-            for (const sessions of get().sessionsByConnection.values()) {
+          try {
+            // Find the session to determine type and gather disconnect info
+            let isTerminalSession = false
+            let opencodeSessionId: string | null = null
+            let sessionWorktreeId: string | null = null
+            let remoteLaunchRaw: string | null = null
+            let foundInStore = false
+
+            for (const [worktreeId, sessions] of get().sessionsByWorktree.entries()) {
               const found = sessions.find((s) => s.id === sessionId)
               if (found) {
                 isTerminalSession = isTerminalBacked(found.agent_sdk)
                 opencodeSessionId = found.opencode_session_id
+                sessionWorktreeId = worktreeId
                 remoteLaunchRaw = found.remote_launch ?? null
                 foundInStore = true
                 break
               }
             }
-          }
-          // Board-driven closes (ticket moved to done) can target sessions of
-          // worktrees never loaded into this store — fall back to the DB row so
-          // terminal-backed sessions still get their PTY destroyed.
-          if (!foundInStore) {
-            try {
-              const dbSession = await dbApi.session.get<Session>(sessionId)
-              if (dbSession) {
-                isTerminalSession = isTerminalBacked(dbSession.agent_sdk)
-                opencodeSessionId = dbSession.opencode_session_id
-                sessionWorktreeId = dbSession.worktree_id
-                remoteLaunchRaw = dbSession.remote_launch ?? null
-              }
-            } catch {
-              // Best-effort — proceed with the store-derived (empty) info
-            }
-          }
-
-          // Ticket-done closes stop remote-launched agents (a tmux on a
-          // remote host) before completing: a local-only close would leave
-          // that agent running forever. This runs INSIDE the lifecycle lock,
-          // after the abortIfRevived check, so a queued revival can never
-          // lose its remote process to a stale stop. On failure the session
-          // stays linked (and alive) — the caller surfaces the error.
-          if (opts?.stopRemote) {
-            // The store copy can predate a later remote launch (teleport
-            // writes remote_launch to the DB row only) — the DB is the
-            // authority on whether a remote agent exists.
-            if (foundInStore) {
-              try {
-                const freshRow = await dbApi.session.get<Session>(sessionId)
-                if (freshRow) remoteLaunchRaw = freshRow.remote_launch ?? null
-              } catch {
-                // Fall back to the store copy
-              }
-            }
-            const remoteInfo = parseRemoteLaunch(remoteLaunchRaw)
-            if (remoteInfo?.role === 'client' && !remoteInfo.stoppedAt) {
-              try {
-                await remoteLaunchApi.stop({ sessionId })
-              } catch (error) {
-                return {
-                  success: false,
-                  error: `remote stop failed: ${error instanceof Error ? error.message : String(error)}`
-                }
-              }
-              try {
-                const { useRemoteLaunchStore } = await import('./useRemoteLaunchStore')
-                useRemoteLaunchStore.getState().markStopped(sessionId)
-              } catch {
-                // Bookkeeping only — the remote agent is already stopped
-              }
-            }
-          }
-
-          // Mark session as completed instead of deleting
-          // This preserves it in session history
-          await dbApi.session.update<Session>(sessionId, {
-            status: 'completed',
-            completed_at: new Date().toISOString()
-          })
-
-          // A revival may have started while the completed-write above was in
-          // flight — re-check before tearing down the process. The revival
-          // flips the row back to active and keeps (or respawns into) the
-          // live PTY, so skipping the destroy here is the consistent outcome.
-          const revivedMidClose = isSessionReactivating(sessionId)
-
-          // Destroy PTY for terminal sessions
-          if (isTerminalSession && !revivedMidClose) {
-            try {
-              unwrapEnvelope(await terminalApi.destroy(sessionId))
-            } catch {
-              // Best-effort cleanup — PTY may already be gone
-            }
-          }
-
-          // A closed session has no live status. The destroy path above
-          // removes exit listeners before killing, so no pty_exit status
-          // overwrites a pre-close 'working' — left in place, that stale
-          // entry would later veto the modal-release cleanup of a
-          // modal-resumed PTY (isReEngaged) and strand the process.
-          if (!revivedMidClose) {
-            try {
-              const { useWorktreeStatusStore } = await import('./useWorktreeStatusStore')
-              useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
-            } catch {
-              // Best-effort — a stale badge is preferable to a failed close
-            }
-          }
-
-          // Disconnect agent SDK session to free main-process resources
-          // (session state, abort controllers, cached data).
-          // Best-effort — session may already be disconnected.
-          if (!isTerminalSession && !revivedMidClose && opencodeSessionId && sessionWorktreeId) {
-            try {
-              // Resolve worktree filesystem path from worktree ID
-              let worktreePath: string | null = null
-              for (const worktrees of useWorktreeStore.getState().worktreesByProject.values()) {
-                const wt = worktrees.find((w) => w.id === sessionWorktreeId)
-                if (wt) {
-                  worktreePath = wt.path
+            if (!sessionWorktreeId) {
+              for (const sessions of get().sessionsByConnection.values()) {
+                const found = sessions.find((s) => s.id === sessionId)
+                if (found) {
+                  isTerminalSession = isTerminalBacked(found.agent_sdk)
+                  opencodeSessionId = found.opencode_session_id
+                  remoteLaunchRaw = found.remote_launch ?? null
+                  foundInStore = true
                   break
                 }
               }
-              if (!worktreePath) {
-                // Board-driven closes can target sessions of projects never
-                // loaded into the store — resolve from the DB so the SDK
-                // session still gets disconnected instead of leaking
-                // main-process implementer state.
-                worktreePath =
-                  (await dbApi.worktree.get<{ path: string }>(sessionWorktreeId))?.path ?? null
-              }
-              if (worktreePath) {
-                unwrapEnvelope(await opencodeApi.disconnect(worktreePath, opencodeSessionId))
-              }
-            } catch {
-              // Best-effort cleanup — session may already be disconnected
             }
-          }
-
-          // A closed session's process is gone for good: no modal release may
-          // act on it any more.
-          cancelModalSpawnProbe(sessionId)
-          set((state) => {
-            const newWorktreeSessionsMap = new Map(state.sessionsByWorktree)
-            const newWorktreeTabOrderMap = new Map(state.tabOrderByWorktree)
-            const newConnectionSessionsMap = new Map(state.sessionsByConnection)
-            const newConnectionTabOrderMap = new Map(state.tabOrderByConnection)
-            const newOrphanedSessions = new Map(state.orphanedSessions)
-            // Clone up-front so both the orphan early-return and the main path
-            // drop any queued follow-up messages for the closed session — keeping
-            // the renderer map consistent with the main-process `Set` cleared below.
-            const newPendingFollowUps = new Map(state.pendingFollowUpMessages)
-            newPendingFollowUps.delete(sessionId)
-            let newActiveSessionId = state.activeSessionId
-
-            // Check if this is an orphaned session
-            if (newOrphanedSessions.has(sessionId)) {
-              newOrphanedSessions.delete(sessionId)
-              if (state.activeSessionId === sessionId) {
-                newActiveSessionId = null
-              }
-              return {
-                orphanedSessions: newOrphanedSessions,
-                activeSessionId: newActiveSessionId,
-                pendingFollowUpMessages: newPendingFollowUps,
-                modalSpawnedSessionIds: withoutModalSpawned(
-                  state.modalSpawnedSessionIds,
-                  sessionId
-                )
+            // Board-driven closes (ticket moved to done) can target sessions of
+            // worktrees never loaded into this store — fall back to the DB row so
+            // terminal-backed sessions still get their PTY destroyed.
+            if (!foundInStore) {
+              try {
+                const dbSession = await dbApi.session.get<Session>(sessionId)
+                if (dbSession) {
+                  isTerminalSession = isTerminalBacked(dbSession.agent_sdk)
+                  opencodeSessionId = dbSession.opencode_session_id
+                  sessionWorktreeId = dbSession.worktree_id
+                  remoteLaunchRaw = dbSession.remote_launch ?? null
+                }
+              } catch {
+                // Best-effort — proceed with the store-derived (empty) info
               }
             }
 
-            // Check worktree sessions first
-            let foundInWorktree = false
-            for (const [worktreeId, sessions] of newWorktreeSessionsMap.entries()) {
-              const filtered = sessions.filter((s) => s.id !== sessionId)
-              if (filtered.length !== sessions.length) {
-                foundInWorktree = true
-                newWorktreeSessionsMap.set(worktreeId, filtered)
-
-                // Update tab order
-                const tabOrder = newWorktreeTabOrderMap.get(worktreeId) || []
-                const sessionIndex = tabOrder.indexOf(sessionId)
-                const newOrder = tabOrder.filter((id) => id !== sessionId)
-                newWorktreeTabOrderMap.set(worktreeId, newOrder)
-
-                // If closing the active session, select another one
-                if (state.activeSessionId === sessionId) {
-                  if (newOrder.length > 0) {
-                    const newIndex = Math.min(sessionIndex, newOrder.length - 1)
-                    newActiveSessionId = newOrder[newIndex]
-                  } else {
-                    const boardMode = useSettingsStore.getState().boardMode
-                    newActiveSessionId = boardMode === 'sticky-tab' ? BOARD_TAB_ID : null
+            // Ticket-done closes stop remote-launched agents (a tmux on a
+            // remote host) before completing: a local-only close would leave
+            // that agent running forever. This runs INSIDE the lifecycle lock,
+            // after the abortIfRevived check, so a queued revival can never
+            // lose its remote process to a stale stop. On failure the session
+            // stays linked (and alive) — the caller surfaces the error.
+            if (opts?.stopRemote) {
+              // The store copy can predate a later remote launch (teleport
+              // writes remote_launch to the DB row only) — the DB is the
+              // authority on whether a remote agent exists.
+              if (foundInStore) {
+                try {
+                  const freshRow = await dbApi.session.get<Session>(sessionId)
+                  if (freshRow) remoteLaunchRaw = freshRow.remote_launch ?? null
+                } catch {
+                  // Fall back to the store copy
+                }
+              }
+              const remoteInfo = parseRemoteLaunch(remoteLaunchRaw)
+              if (remoteInfo?.role === 'client' && !remoteInfo.stoppedAt) {
+                try {
+                  await remoteLaunchApi.stop({ sessionId })
+                } catch (error) {
+                  return {
+                    success: false,
+                    error: `remote stop failed: ${error instanceof Error ? error.message : String(error)}`
                   }
                 }
-                break
+                try {
+                  const { useRemoteLaunchStore } = await import('./useRemoteLaunchStore')
+                  useRemoteLaunchStore.getState().markStopped(sessionId)
+                } catch {
+                  // Bookkeeping only — the remote agent is already stopped
+                }
               }
             }
 
-            // Check connection sessions if not found in worktree
-            if (!foundInWorktree) {
-              for (const [connectionId, sessions] of newConnectionSessionsMap.entries()) {
+            // Mark session as completed instead of deleting
+            // This preserves it in session history
+            await dbApi.session.update<Session>(sessionId, {
+              status: 'completed',
+              completed_at: new Date().toISOString()
+            })
+
+            // A revival may have started while the completed-write above was in
+            // flight — re-check before tearing down the process. The revival
+            // flips the row back to active and keeps (or respawns into) the
+            // live PTY, so skipping the destroy here is the consistent outcome.
+            const revivedMidClose = isSessionReactivating(sessionId)
+
+            // Destroy PTY for terminal sessions
+            if (isTerminalSession && !revivedMidClose) {
+              try {
+                unwrapEnvelope(await terminalApi.destroy(sessionId))
+              } catch {
+                // Best-effort cleanup — PTY may already be gone
+              }
+            }
+
+            // A closed session has no live status. The destroy path above
+            // removes exit listeners before killing, so no pty_exit status
+            // overwrites a pre-close 'working' — left in place, that stale
+            // entry would later veto the modal-release cleanup of a
+            // modal-resumed PTY (isReEngaged) and strand the process.
+            if (!revivedMidClose) {
+              try {
+                const { useWorktreeStatusStore } = await import('./useWorktreeStatusStore')
+                useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+              } catch {
+                // Best-effort — a stale badge is preferable to a failed close
+              }
+            }
+
+            // Disconnect agent SDK session to free main-process resources
+            // (session state, abort controllers, cached data).
+            // Best-effort — session may already be disconnected.
+            if (!isTerminalSession && !revivedMidClose && opencodeSessionId && sessionWorktreeId) {
+              try {
+                // Resolve worktree filesystem path from worktree ID
+                let worktreePath: string | null = null
+                for (const worktrees of useWorktreeStore.getState().worktreesByProject.values()) {
+                  const wt = worktrees.find((w) => w.id === sessionWorktreeId)
+                  if (wt) {
+                    worktreePath = wt.path
+                    break
+                  }
+                }
+                if (!worktreePath) {
+                  // Board-driven closes can target sessions of projects never
+                  // loaded into the store — resolve from the DB so the SDK
+                  // session still gets disconnected instead of leaking
+                  // main-process implementer state.
+                  worktreePath =
+                    (await dbApi.worktree.get<{ path: string }>(sessionWorktreeId))?.path ?? null
+                }
+                if (worktreePath) {
+                  unwrapEnvelope(await opencodeApi.disconnect(worktreePath, opencodeSessionId))
+                }
+              } catch {
+                // Best-effort cleanup — session may already be disconnected
+              }
+            }
+
+            // A closed session's process is gone for good: no modal release may
+            // act on it any more.
+            cancelModalSpawnProbe(sessionId)
+            set((state) => {
+              const newWorktreeSessionsMap = new Map(state.sessionsByWorktree)
+              const newWorktreeTabOrderMap = new Map(state.tabOrderByWorktree)
+              const newConnectionSessionsMap = new Map(state.sessionsByConnection)
+              const newConnectionTabOrderMap = new Map(state.tabOrderByConnection)
+              const newOrphanedSessions = new Map(state.orphanedSessions)
+              // Clone up-front so both the orphan early-return and the main path
+              // drop any queued follow-up messages for the closed session — keeping
+              // the renderer map consistent with the main-process `Set` cleared below.
+              const newPendingFollowUps = new Map(state.pendingFollowUpMessages)
+              newPendingFollowUps.delete(sessionId)
+              let newActiveSessionId = state.activeSessionId
+
+              // Check if this is an orphaned session
+              if (newOrphanedSessions.has(sessionId)) {
+                newOrphanedSessions.delete(sessionId)
+                if (state.activeSessionId === sessionId) {
+                  newActiveSessionId = null
+                }
+                return {
+                  orphanedSessions: newOrphanedSessions,
+                  activeSessionId: newActiveSessionId,
+                  pendingFollowUpMessages: newPendingFollowUps,
+                  modalSpawnedSessionIds: withoutModalSpawned(
+                    state.modalSpawnedSessionIds,
+                    sessionId
+                  )
+                }
+              }
+
+              // Check worktree sessions first
+              let foundInWorktree = false
+              for (const [worktreeId, sessions] of newWorktreeSessionsMap.entries()) {
                 const filtered = sessions.filter((s) => s.id !== sessionId)
                 if (filtered.length !== sessions.length) {
-                  newConnectionSessionsMap.set(connectionId, filtered)
+                  foundInWorktree = true
+                  newWorktreeSessionsMap.set(worktreeId, filtered)
 
                   // Update tab order
-                  const tabOrder = newConnectionTabOrderMap.get(connectionId) || []
+                  const tabOrder = newWorktreeTabOrderMap.get(worktreeId) || []
                   const sessionIndex = tabOrder.indexOf(sessionId)
                   const newOrder = tabOrder.filter((id) => id !== sessionId)
-                  newConnectionTabOrderMap.set(connectionId, newOrder)
+                  newWorktreeTabOrderMap.set(worktreeId, newOrder)
 
                   // If closing the active session, select another one
                   if (state.activeSessionId === sessionId) {
@@ -1317,64 +1295,94 @@ export const useSessionStore = create<SessionState>()(
                   break
                 }
               }
-            }
 
-            // Update persisted active session mappings
-            const newActiveByWorktree = { ...state.activeSessionByWorktree }
-            for (const [worktreeId] of newWorktreeSessionsMap.entries()) {
-              if (newActiveByWorktree[worktreeId] === sessionId) {
-                if (newActiveSessionId) {
-                  newActiveByWorktree[worktreeId] = newActiveSessionId
-                } else {
-                  delete newActiveByWorktree[worktreeId]
+              // Check connection sessions if not found in worktree
+              if (!foundInWorktree) {
+                for (const [connectionId, sessions] of newConnectionSessionsMap.entries()) {
+                  const filtered = sessions.filter((s) => s.id !== sessionId)
+                  if (filtered.length !== sessions.length) {
+                    newConnectionSessionsMap.set(connectionId, filtered)
+
+                    // Update tab order
+                    const tabOrder = newConnectionTabOrderMap.get(connectionId) || []
+                    const sessionIndex = tabOrder.indexOf(sessionId)
+                    const newOrder = tabOrder.filter((id) => id !== sessionId)
+                    newConnectionTabOrderMap.set(connectionId, newOrder)
+
+                    // If closing the active session, select another one
+                    if (state.activeSessionId === sessionId) {
+                      if (newOrder.length > 0) {
+                        const newIndex = Math.min(sessionIndex, newOrder.length - 1)
+                        newActiveSessionId = newOrder[newIndex]
+                      } else {
+                        const boardMode = useSettingsStore.getState().boardMode
+                        newActiveSessionId = boardMode === 'sticky-tab' ? BOARD_TAB_ID : null
+                      }
+                    }
+                    break
+                  }
                 }
               }
-            }
 
-            const newActiveByConnection = { ...state.activeSessionByConnection }
-            for (const [connectionId] of newConnectionSessionsMap.entries()) {
-              if (newActiveByConnection[connectionId] === sessionId) {
-                if (newActiveSessionId) {
-                  newActiveByConnection[connectionId] = newActiveSessionId
-                } else {
-                  delete newActiveByConnection[connectionId]
+              // Update persisted active session mappings
+              const newActiveByWorktree = { ...state.activeSessionByWorktree }
+              for (const [worktreeId] of newWorktreeSessionsMap.entries()) {
+                if (newActiveByWorktree[worktreeId] === sessionId) {
+                  if (newActiveSessionId) {
+                    newActiveByWorktree[worktreeId] = newActiveSessionId
+                  } else {
+                    delete newActiveByWorktree[worktreeId]
+                  }
                 }
               }
-            }
 
-            const newClosedTerminals = isTerminalSession
-              ? new Set([...state.closedTerminalSessionIds, sessionId])
-              : state.closedTerminalSessionIds
+              const newActiveByConnection = { ...state.activeSessionByConnection }
+              for (const [connectionId] of newConnectionSessionsMap.entries()) {
+                if (newActiveByConnection[connectionId] === sessionId) {
+                  if (newActiveSessionId) {
+                    newActiveByConnection[connectionId] = newActiveSessionId
+                  } else {
+                    delete newActiveByConnection[connectionId]
+                  }
+                }
+              }
 
-            // Clean up pinned session state if the closed session was pinned
-            const newPinnedIds = new Set(state.pinnedSessionIds)
-            newPinnedIds.delete(sessionId)
+              const newClosedTerminals = isTerminalSession
+                ? new Set([...state.closedTerminalSessionIds, sessionId])
+                : state.closedTerminalSessionIds
 
+              // Clean up pinned session state if the closed session was pinned
+              const newPinnedIds = new Set(state.pinnedSessionIds)
+              newPinnedIds.delete(sessionId)
+
+              return {
+                sessionsByWorktree: newWorktreeSessionsMap,
+                tabOrderByWorktree: newWorktreeTabOrderMap,
+                sessionsByConnection: newConnectionSessionsMap,
+                tabOrderByConnection: newConnectionTabOrderMap,
+                activeSessionId: newActiveSessionId,
+                activeSessionByWorktree: newActiveByWorktree,
+                activeSessionByConnection: newActiveByConnection,
+                closedTerminalSessionIds: newClosedTerminals,
+                pinnedSessionIds: newPinnedIds,
+                pendingFollowUpMessages: newPendingFollowUps,
+                modalSpawnedSessionIds: withoutModalSpawned(
+                  state.modalSpawnedSessionIds,
+                  sessionId
+                ),
+                activePinnedSessionId:
+                  state.activePinnedSessionId === sessionId ? null : state.activePinnedSessionId
+              }
+            })
+
+            pushQueuedState(sessionId, false)
+            return { success: true }
+          } catch (error) {
             return {
-              sessionsByWorktree: newWorktreeSessionsMap,
-              tabOrderByWorktree: newWorktreeTabOrderMap,
-              sessionsByConnection: newConnectionSessionsMap,
-              tabOrderByConnection: newConnectionTabOrderMap,
-              activeSessionId: newActiveSessionId,
-              activeSessionByWorktree: newActiveByWorktree,
-              activeSessionByConnection: newActiveByConnection,
-              closedTerminalSessionIds: newClosedTerminals,
-              pinnedSessionIds: newPinnedIds,
-              pendingFollowUpMessages: newPendingFollowUps,
-              modalSpawnedSessionIds: withoutModalSpawned(state.modalSpawnedSessionIds, sessionId),
-              activePinnedSessionId:
-                state.activePinnedSessionId === sessionId ? null : state.activePinnedSessionId
+              success: false,
+              error: error instanceof Error ? error.message : 'Failed to close session'
             }
-          })
-
-          pushQueuedState(sessionId, false)
-          return { success: true }
-        } catch (error) {
-          return {
-            success: false,
-            error: error instanceof Error ? error.message : 'Failed to close session'
           }
-        }
         }),
 
       // Reopen a closed session (from history) - marks as active and adds to tabs.
@@ -1387,86 +1395,86 @@ export const useSessionStore = create<SessionState>()(
         opts?: { activate?: boolean; skipLifecycleLock?: boolean }
       ) => {
         const run = async (): Promise<{ success: boolean; error?: string }> => {
-        const activate = opts?.activate !== false
-        // Guard the revival window: a concurrent completed-session cleanup
-        // must not kill the PTY while the DB flip is in flight.
-        markReactivating(sessionId)
-        try {
-          // 1. Update database status first - this ensures persistence
-          const updatedSession = await dbApi.session.update<Session>(sessionId, {
-            status: 'active',
-            completed_at: null
-          })
+          const activate = opts?.activate !== false
+          // Guard the revival window: a concurrent completed-session cleanup
+          // must not kill the PTY while the DB flip is in flight.
+          markReactivating(sessionId)
+          try {
+            // 1. Update database status first - this ensures persistence
+            const updatedSession = await dbApi.session.update<Session>(sessionId, {
+              status: 'active',
+              completed_at: null
+            })
 
-          if (!updatedSession) {
-            return { success: false, error: 'Session not found' }
-          }
-
-          // 2. Clear all prompt stores BEFORE activating session to prevent stale/malformed data
-          const [
-            { useQuestionStore },
-            { usePermissionStore },
-            { useCommandApprovalStore },
-            { useFileViewerStore }
-          ] = await Promise.all([
-            import('./useQuestionStore'),
-            import('./usePermissionStore'),
-            import('./useCommandApprovalStore'),
-            import('./useFileViewerStore')
-          ])
-
-          // Clear any stale prompts from previous session state
-          useQuestionStore.getState().clearSession(sessionId)
-          usePermissionStore.getState().clearSession(sessionId)
-          useCommandApprovalStore.getState().clearSession(sessionId)
-          if (activate) {
-            // Clear file viewer so session takes focus
-            useFileViewerStore.getState().setActiveFile(null)
-            useFileViewerStore.getState().clearActiveDiff()
-          }
-
-          // 3. Update state to add the session to tabs (and make it active)
-          set((state) => {
-            const newSessionsMap = new Map(state.sessionsByWorktree)
-            const existingSessions = newSessionsMap.get(worktreeId) || []
-
-            // Add the reopened session if not already present
-            let updatedSessions: typeof existingSessions
-            const existingIndex = existingSessions.findIndex((s) => s.id === sessionId)
-            if (existingIndex >= 0) {
-              // Update the existing session with fresh data
-              updatedSessions = [...existingSessions]
-              updatedSessions[existingIndex] = updatedSession
-            } else {
-              // Prepend the reopened session to the list
-              updatedSessions = [updatedSession, ...existingSessions]
+            if (!updatedSession) {
+              return { success: false, error: 'Session not found' }
             }
 
-            newSessionsMap.set(worktreeId, updatedSessions)
+            // 2. Clear all prompt stores BEFORE activating session to prevent stale/malformed data
+            const [
+              { useQuestionStore },
+              { usePermissionStore },
+              { useCommandApprovalStore },
+              { useFileViewerStore }
+            ] = await Promise.all([
+              import('./useQuestionStore'),
+              import('./usePermissionStore'),
+              import('./useCommandApprovalStore'),
+              import('./useFileViewerStore')
+            ])
 
-            // Add to tab order if not already there
-            const newTabOrderMap = new Map(state.tabOrderByWorktree)
-            const existingOrder = newTabOrderMap.get(worktreeId) || []
-            if (!existingOrder.includes(sessionId)) {
-              newTabOrderMap.set(worktreeId, [...existingOrder, sessionId])
+            // Clear any stale prompts from previous session state
+            useQuestionStore.getState().clearSession(sessionId)
+            usePermissionStore.getState().clearSession(sessionId)
+            useCommandApprovalStore.getState().clearSession(sessionId)
+            if (activate) {
+              // Clear file viewer so session takes focus
+              useFileViewerStore.getState().setActiveFile(null)
+              useFileViewerStore.getState().clearActiveDiff()
             }
 
+            // 3. Update state to add the session to tabs (and make it active)
+            set((state) => {
+              const newSessionsMap = new Map(state.sessionsByWorktree)
+              const existingSessions = newSessionsMap.get(worktreeId) || []
+
+              // Add the reopened session if not already present
+              let updatedSessions: typeof existingSessions
+              const existingIndex = existingSessions.findIndex((s) => s.id === sessionId)
+              if (existingIndex >= 0) {
+                // Update the existing session with fresh data
+                updatedSessions = [...existingSessions]
+                updatedSessions[existingIndex] = updatedSession
+              } else {
+                // Prepend the reopened session to the list
+                updatedSessions = [updatedSession, ...existingSessions]
+              }
+
+              newSessionsMap.set(worktreeId, updatedSessions)
+
+              // Add to tab order if not already there
+              const newTabOrderMap = new Map(state.tabOrderByWorktree)
+              const existingOrder = newTabOrderMap.get(worktreeId) || []
+              if (!existingOrder.includes(sessionId)) {
+                newTabOrderMap.set(worktreeId, [...existingOrder, sessionId])
+              }
+
+              return {
+                sessionsByWorktree: newSessionsMap,
+                tabOrderByWorktree: newTabOrderMap,
+                ...(activate ? { activeSessionId: sessionId, activeWorktreeId: worktreeId } : {})
+              }
+            })
+
+            return { success: true }
+          } catch (error) {
             return {
-              sessionsByWorktree: newSessionsMap,
-              tabOrderByWorktree: newTabOrderMap,
-              ...(activate ? { activeSessionId: sessionId, activeWorktreeId: worktreeId } : {})
+              success: false,
+              error: error instanceof Error ? error.message : 'Failed to reopen session'
             }
-          })
-
-          return { success: true }
-        } catch (error) {
-          return {
-            success: false,
-            error: error instanceof Error ? error.message : 'Failed to reopen session'
+          } finally {
+            unmarkReactivating(sessionId)
           }
-        } finally {
-          unmarkReactivating(sessionId)
-        }
         }
         // reactivateSession already holds the lifecycle lock — a nested
         // acquisition would deadlock, so it opts out here.
@@ -1481,88 +1489,88 @@ export const useSessionStore = create<SessionState>()(
         opts?: { activate?: boolean; skipLifecycleLock?: boolean }
       ) => {
         const run = async (): Promise<{ success: boolean; error?: string }> => {
-        const activate = opts?.activate !== false
-        markReactivating(sessionId)
-        try {
-          // 1. Update database status first - this ensures persistence
-          const updatedSession = await dbApi.session.update<Session>(sessionId, {
-            status: 'active',
-            completed_at: null
-          })
+          const activate = opts?.activate !== false
+          markReactivating(sessionId)
+          try {
+            // 1. Update database status first - this ensures persistence
+            const updatedSession = await dbApi.session.update<Session>(sessionId, {
+              status: 'active',
+              completed_at: null
+            })
 
-          if (!updatedSession) {
-            return { success: false, error: 'Session not found' }
-          }
-
-          // 2. Clear all prompt stores BEFORE activating session
-          const [
-            { useQuestionStore },
-            { usePermissionStore },
-            { useCommandApprovalStore },
-            { useFileViewerStore }
-          ] = await Promise.all([
-            import('./useQuestionStore'),
-            import('./usePermissionStore'),
-            import('./useCommandApprovalStore'),
-            import('./useFileViewerStore')
-          ])
-
-          useQuestionStore.getState().clearSession(sessionId)
-          usePermissionStore.getState().clearSession(sessionId)
-          useCommandApprovalStore.getState().clearSession(sessionId)
-          if (activate) {
-            useFileViewerStore.getState().setActiveFile(null)
-            useFileViewerStore.getState().clearActiveDiff()
-          }
-
-          // 3. Update state to add the session to tabs (and make it active)
-          set((state) => {
-            const newSessionsMap = new Map(state.sessionsByConnection)
-            const existingSessions = newSessionsMap.get(connectionId) || []
-
-            // Add the reopened session if not already present
-            let updatedSessions: typeof existingSessions
-            const existingIndex = existingSessions.findIndex((s) => s.id === sessionId)
-            if (existingIndex >= 0) {
-              // Update the existing session with fresh data
-              updatedSessions = [...existingSessions]
-              updatedSessions[existingIndex] = updatedSession
-            } else {
-              // Prepend the reopened session to the list
-              updatedSessions = [updatedSession, ...existingSessions]
+            if (!updatedSession) {
+              return { success: false, error: 'Session not found' }
             }
 
-            newSessionsMap.set(connectionId, updatedSessions)
+            // 2. Clear all prompt stores BEFORE activating session
+            const [
+              { useQuestionStore },
+              { usePermissionStore },
+              { useCommandApprovalStore },
+              { useFileViewerStore }
+            ] = await Promise.all([
+              import('./useQuestionStore'),
+              import('./usePermissionStore'),
+              import('./useCommandApprovalStore'),
+              import('./useFileViewerStore')
+            ])
 
-            // Add to tab order if not already there
-            const newTabOrderMap = new Map(state.tabOrderByConnection)
-            const existingOrder = newTabOrderMap.get(connectionId) || []
-            if (!existingOrder.includes(sessionId)) {
-              newTabOrderMap.set(connectionId, [...existingOrder, sessionId])
+            useQuestionStore.getState().clearSession(sessionId)
+            usePermissionStore.getState().clearSession(sessionId)
+            useCommandApprovalStore.getState().clearSession(sessionId)
+            if (activate) {
+              useFileViewerStore.getState().setActiveFile(null)
+              useFileViewerStore.getState().clearActiveDiff()
             }
 
+            // 3. Update state to add the session to tabs (and make it active)
+            set((state) => {
+              const newSessionsMap = new Map(state.sessionsByConnection)
+              const existingSessions = newSessionsMap.get(connectionId) || []
+
+              // Add the reopened session if not already present
+              let updatedSessions: typeof existingSessions
+              const existingIndex = existingSessions.findIndex((s) => s.id === sessionId)
+              if (existingIndex >= 0) {
+                // Update the existing session with fresh data
+                updatedSessions = [...existingSessions]
+                updatedSessions[existingIndex] = updatedSession
+              } else {
+                // Prepend the reopened session to the list
+                updatedSessions = [updatedSession, ...existingSessions]
+              }
+
+              newSessionsMap.set(connectionId, updatedSessions)
+
+              // Add to tab order if not already there
+              const newTabOrderMap = new Map(state.tabOrderByConnection)
+              const existingOrder = newTabOrderMap.get(connectionId) || []
+              if (!existingOrder.includes(sessionId)) {
+                newTabOrderMap.set(connectionId, [...existingOrder, sessionId])
+              }
+
+              return {
+                sessionsByConnection: newSessionsMap,
+                tabOrderByConnection: newTabOrderMap,
+                ...(activate
+                  ? {
+                      activeSessionId: sessionId,
+                      activeConnectionId: connectionId,
+                      activeWorktreeId: null
+                    }
+                  : {})
+              }
+            })
+
+            return { success: true }
+          } catch (error) {
             return {
-              sessionsByConnection: newSessionsMap,
-              tabOrderByConnection: newTabOrderMap,
-              ...(activate
-                ? {
-                    activeSessionId: sessionId,
-                    activeConnectionId: connectionId,
-                    activeWorktreeId: null
-                  }
-                : {})
+              success: false,
+              error: error instanceof Error ? error.message : 'Failed to reopen connection session'
             }
-          })
-
-          return { success: true }
-        } catch (error) {
-          return {
-            success: false,
-            error: error instanceof Error ? error.message : 'Failed to reopen connection session'
+          } finally {
+            unmarkReactivating(sessionId)
           }
-        } finally {
-          unmarkReactivating(sessionId)
-        }
         }
         return opts?.skipLifecycleLock ? run() : withSessionLifecycleLock(sessionId, run)
       },
@@ -1579,33 +1587,33 @@ export const useSessionStore = create<SessionState>()(
         markReactivating(sessionId)
         try {
           await withSessionLifecycleLock(sessionId, async () => {
-          let dbSession: Session | null = null
-          try {
-            dbSession = await dbApi.session.get<Session>(sessionId)
-          } catch {
-            return
-          }
-          if (!dbSession || dbSession.status !== 'completed') return
-          if (dbSession.worktree_id) {
-            await get().reopenSession(sessionId, dbSession.worktree_id, {
-              activate: false,
-              skipLifecycleLock: true
-            })
-          } else if (dbSession.connection_id) {
-            await get().reopenConnectionSession(sessionId, dbSession.connection_id, {
-              activate: false,
-              skipLifecycleLock: true
-            })
-          } else {
+            let dbSession: Session | null = null
             try {
-              await dbApi.session.update<Session>(sessionId, {
-                status: 'active',
-                completed_at: null
-              })
+              dbSession = await dbApi.session.get<Session>(sessionId)
             } catch {
-              // Best-effort — the session stays completed
+              return
             }
-          }
+            if (!dbSession || dbSession.status !== 'completed') return
+            if (dbSession.worktree_id) {
+              await get().reopenSession(sessionId, dbSession.worktree_id, {
+                activate: false,
+                skipLifecycleLock: true
+              })
+            } else if (dbSession.connection_id) {
+              await get().reopenConnectionSession(sessionId, dbSession.connection_id, {
+                activate: false,
+                skipLifecycleLock: true
+              })
+            } else {
+              try {
+                await dbApi.session.update<Session>(sessionId, {
+                  status: 'active',
+                  completed_at: null
+                })
+              } catch {
+                // Best-effort — the session stays completed
+              }
+            }
           })
         } finally {
           unmarkReactivating(sessionId)
@@ -2113,7 +2121,8 @@ export const useSessionStore = create<SessionState>()(
                 ? {
                     ...s,
                     model_id: model.modelId,
-                    model_variant: model.modelVariant !== undefined ? model.modelVariant : s.model_variant
+                    model_variant:
+                      model.modelVariant !== undefined ? model.modelVariant : s.model_variant
                   }
                 : s
             )
@@ -2129,7 +2138,8 @@ export const useSessionStore = create<SessionState>()(
                 ? {
                     ...s,
                     model_id: model.modelId,
-                    model_variant: model.modelVariant !== undefined ? model.modelVariant : s.model_variant
+                    model_variant:
+                      model.modelVariant !== undefined ? model.modelVariant : s.model_variant
                   }
                 : s
             )
@@ -2740,7 +2750,8 @@ export const useSessionStore = create<SessionState>()(
           const restoredIsValid =
             restoredSessionId === BOARD_TAB_ID
               ? boardMode === 'sticky-tab'
-              : !!restoredSessionId && !!scopeSessions?.some((sess) => sess.id === restoredSessionId)
+              : !!restoredSessionId &&
+                !!scopeSessions?.some((sess) => sess.id === restoredSessionId)
           if (!restoredIsValid) {
             restoredSessionId =
               boardMode === 'sticky-tab' && (worktreeId || connectionId)
@@ -3057,7 +3068,11 @@ export const useSessionStore = create<SessionState>()(
 
         if (connectionId === state.activeConnectionId) return
 
-        set({ activeConnectionId: connectionId, activeWorktreeId: null, isTiledSessionsActive: false })
+        set({
+          activeConnectionId: connectionId,
+          activeWorktreeId: null,
+          isTiledSessionsActive: false
+        })
 
         if (connectionId) {
           const existingSessions = (state.sessionsByConnection.get(connectionId) || []).filter(
