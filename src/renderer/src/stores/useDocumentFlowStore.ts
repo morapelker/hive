@@ -47,6 +47,11 @@ interface DocumentFlowState {
   /** Run shown in the run dashboard dialog; null = closed. */
   dashboardRunId: string | null
   prefs: DocumentFlowPrefs
+  /**
+   * The run tickets whose folded rows are open on the board (DocumentRunChildren): a strip is
+   * collapsed unless its ticket id is here. Persisted, so a run stays as the user left it.
+   */
+  expandedRunTickets: Record<string, true>
 
   // ── Data ──
   /** Fetch the runs of a project (or all runs). Never throws; failures are logged. */
@@ -116,6 +121,8 @@ interface DocumentFlowState {
    */
   skipDocumentUpdate: (runId: string, itemId: string) => Promise<void>
   setPrefs: (patch: Partial<DocumentFlowPrefs>) => void
+  /** Open or collapse the folded rows of a run's ticket on the board. */
+  toggleRunTicketsExpanded: (ticketId: string) => void
 }
 
 const DEFAULT_PREFS: DocumentFlowPrefs = {
@@ -198,6 +205,7 @@ export const useDocumentFlowStore = create<DocumentFlowState>()(
       wizard: { open: false, projectId: null, runId: null },
       dashboardRunId: null,
       prefs: DEFAULT_PREFS,
+      expandedRunTickets: {},
 
       loadRuns: async (projectId) => {
         try {
@@ -461,17 +469,35 @@ export const useDocumentFlowStore = create<DocumentFlowState>()(
         })
       },
 
-      setPrefs: (patch) => set((state) => ({ prefs: { ...state.prefs, ...patch } }))
+      setPrefs: (patch) => set((state) => ({ prefs: { ...state.prefs, ...patch } })),
+
+      toggleRunTicketsExpanded: (ticketId) =>
+        set((state) => {
+          const expandedRunTickets = { ...state.expandedRunTickets }
+          if (expandedRunTickets[ticketId]) delete expandedRunTickets[ticketId]
+          else expandedRunTickets[ticketId] = true
+          return { expandedRunTickets }
+        })
     }),
     {
       name: 'hive-document-flow',
       storage: createJSONStorage(() => localStorage),
-      // Inclusion-based: only the remembered run settings persist; runs always refetch.
-      partialize: (state) => ({ prefs: state.prefs }),
-      merge: (persisted, current) => ({
-        ...current,
-        prefs: { ...DEFAULT_PREFS, ...((persisted as { prefs?: DocumentFlowPrefs })?.prefs ?? {}) }
-      })
+      // Inclusion-based: only the remembered run settings and the open strips persist; runs
+      // always refetch.
+      partialize: (state) => ({
+        prefs: state.prefs,
+        expandedRunTickets: state.expandedRunTickets
+      }),
+      merge: (persisted, current) => {
+        const saved = persisted as
+          | { prefs?: DocumentFlowPrefs; expandedRunTickets?: Record<string, true> }
+          | undefined
+        return {
+          ...current,
+          prefs: { ...DEFAULT_PREFS, ...(saved?.prefs ?? {}) },
+          expandedRunTickets: saved?.expandedRunTickets ?? {}
+        }
+      }
     }
   )
 )

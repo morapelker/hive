@@ -143,6 +143,11 @@ export interface AppSettings {
   automaticallyCreateTicket: boolean
   /** Show the optional Merged column on the board between Review and Done. */
   showMergedColumn: boolean
+  /**
+   * Fold the tickets of an "Implement document" run into the run's card on the board (a
+   * collapsible strip of compact rows) instead of laying each out as a card of its own.
+   */
+  nestDocumentRunTickets: boolean
 
   // Editor
   defaultEditor: EditorOption
@@ -309,6 +314,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   autoPinOnBoardPrompt: 'off',
   automaticallyCreateTicket: false,
   showMergedColumn: false,
+  nestDocumentRunTickets: false,
   defaultEditor: 'vscode',
   customEditorCommand: '',
   defaultTerminal: 'terminal',
@@ -549,6 +555,7 @@ function extractSettings(state: SettingsState): AppSettings {
     autoPinOnBoardPrompt: state.autoPinOnBoardPrompt,
     automaticallyCreateTicket: state.automaticallyCreateTicket,
     showMergedColumn: state.showMergedColumn,
+    nestDocumentRunTickets: state.nestDocumentRunTickets,
     defaultEditor: state.defaultEditor,
     customEditorCommand: state.customEditorCommand,
     defaultTerminal: state.defaultTerminal,
@@ -968,6 +975,7 @@ export const useSettingsStore = create<SettingsState>()(
         autoPinOnBoardPrompt: state.autoPinOnBoardPrompt,
         automaticallyCreateTicket: state.automaticallyCreateTicket,
         showMergedColumn: state.showMergedColumn,
+        nestDocumentRunTickets: state.nestDocumentRunTickets,
         defaultEditor: state.defaultEditor,
         customEditorCommand: state.customEditorCommand,
         defaultTerminal: state.defaultTerminal,

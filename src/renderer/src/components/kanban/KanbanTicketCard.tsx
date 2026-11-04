@@ -144,6 +144,7 @@ import { documentRunIdOf } from '@shared/document-flow/run-ticket'
 import { copyTicketLabelsForNewTicket, ticketLabelsOf } from '@shared/lib/ticket-labels'
 import { DocumentRunTicketBody } from '@/components/document-flow/DocumentRunTicketBody'
 import { DocumentRunPRLinks } from '@/components/document-flow/DocumentRunPRActions'
+import { DocumentRunChildren } from '@/components/document-flow/DocumentRunChildren'
 import { useDocumentRunPRs } from '@/components/document-flow/useDocumentRunPRs'
 import {
   documentRunTicketToneClass,
@@ -1865,6 +1866,9 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             {documentRunId && documentRunView && (
               <DocumentRunPRLinks runId={documentRunId} prs={documentRunPRs} />
             )}
+            {/* Document run: its tickets, folded into this card as rows (a setting; the board
+                hides their own cards then). A peer's run has no local rows to fold. */}
+            {documentRunId && !remoteOrigin && <DocumentRunChildren runTicket={ticket} />}
 
             {/* Description match snippet (board search) */}
             {descriptionSnippet && (

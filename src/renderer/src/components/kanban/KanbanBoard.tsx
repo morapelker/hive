@@ -23,6 +23,7 @@ import { toast } from '@/lib/toast'
 import { useMarkdownKanbanWatcher } from '@/hooks/useMarkdownKanbanWatcher'
 import { cardOccurrenceKeys } from '@/components/kanban/kanban-card-identity'
 import { normalizeSearchText, ticketMatchesQuery } from '@/lib/board-search'
+import { nestedRunChildIds } from '@/lib/document-flow/run-children'
 import type { KanbanTicket, KanbanTicketColumn } from '../../../../main/db/types'
 
 const COLUMNS: KanbanTicketColumn[] = ['todo', 'in_progress', 'review', 'done']
@@ -117,7 +118,7 @@ export function KanbanBoard({ projectId, connectionId, isPinnedMode }: KanbanBoa
   const [svgPaths, setSvgPaths] = useState<Array<{ key: string; d: string }>>([])
   const [svgSize, setSvgSize] = useState({ width: 0, height: 0 })
 
-  useKanbanStore((state) => state.tickets)
+  const allTickets = useKanbanStore((state) => state.tickets)
   // Re-render (and re-run the column getters) when a per-column sort toggle flips
   useKanbanStore((state) => state.transitionSortByColumn)
 
@@ -406,15 +407,29 @@ export function KanbanBoard({ projectId, connectionId, isPinnedMode }: KanbanBoa
       )
     )
 
+  // The tickets of an "Implement document" run fold into the run's card (a setting): their
+  // own cards leave the columns. A board search lays them out again so every match is a card.
+  const nestRunTickets = useSettingsStore((state) => state.nestDocumentRunTickets)
+  const nestedChildIds = new Set<string>()
+  if (nestRunTickets && !searchActive) {
+    for (const pid of watchedProjectIds) {
+      for (const id of nestedRunChildIds(allTickets.get(pid) ?? [])) nestedChildIds.add(id)
+    }
+  }
+  const withoutNestedChildren = <T extends { id: string }>(list: T[]): T[] =>
+    nestedChildIds.size === 0 ? list : list.filter((t) => !nestedChildIds.has(t.id))
+
   const ticketsFor = (column: KanbanTicketColumn): KanbanTicket[] =>
     filterBoardTickets(
-      isPinnedMode
-        ? getTicketsByColumnForPinned(column)
-        : isConnectionMode
-          ? getTicketsByColumnForConnection(connectionId, column)
-          : projectId
-            ? getTicketsByColumn(projectId, column)
-            : []
+      withoutNestedChildren(
+        isPinnedMode
+          ? getTicketsByColumnForPinned(column)
+          : isConnectionMode
+            ? getTicketsByColumnForConnection(connectionId, column)
+            : projectId
+              ? getTicketsByColumn(projectId, column)
+              : []
+      )
     )
 
   // Aggregate archived tickets across all connection member projects for the done column

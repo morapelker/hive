@@ -41,6 +41,7 @@ export function SettingsGeneral(): React.JSX.Element {
     followUpTriggerColumn,
     automaticallyCreateTicket,
     showMergedColumn,
+    nestDocumentRunTickets,
     vimModeEnabled,
     ticketAutocompleteEnabled,
     keepAwakeEnabled,
@@ -335,6 +336,34 @@ export function SettingsGeneral(): React.JSX.Element {
             className={cn(
               'pointer-events-none block h-4 w-4 rounded-full bg-background ring-0 transition-transform',
               showMergedColumn ? 'translate-x-4' : 'translate-x-0'
+            )}
+          />
+        </button>
+      </div>
+
+      {/* Document run tickets folded into the run's card */}
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <label className="text-sm font-medium">Group document run tickets</label>
+          <p className="text-xs text-muted-foreground">
+            Show the tickets of an Implement document run inside the run&apos;s card, as a
+            collapsible list of small rows, instead of as separate cards in each column.
+          </p>
+        </div>
+        <button
+          role="switch"
+          aria-checked={nestDocumentRunTickets}
+          onClick={() => updateSetting('nestDocumentRunTickets', !nestDocumentRunTickets)}
+          className={cn(
+            'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors',
+            nestDocumentRunTickets ? 'bg-primary' : 'bg-muted'
+          )}
+          data-testid="nest-document-run-tickets-toggle"
+        >
+          <span
+            className={cn(
+              'pointer-events-none block h-4 w-4 rounded-full bg-background ring-0 transition-transform',
+              nestDocumentRunTickets ? 'translate-x-4' : 'translate-x-0'
             )}
           />
         </button>
