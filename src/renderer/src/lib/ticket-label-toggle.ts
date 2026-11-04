@@ -1,8 +1,8 @@
 // src/renderer/src/lib/ticket-label-toggle.ts
 
 /**
- * Writes one tick or untick of the Labels menu (or the label the create dialog just made) to
- * its ticket.
+ * Writes one tick or untick of the Labels menu (or the label the create dialog just made, or a
+ * one-off the dialog just edited) to its ticket.
  *
  * The menu stays open, so labels get ticked in quick succession. Each toggle waits for the
  * previous one on the same ticket, so the writes reach the server in the order they were made,
@@ -29,7 +29,11 @@ import { reloadBoard } from '@/lib/board-reload'
 import { toast } from '@/lib/toast'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useTicketLabelsStore } from '@/stores/useTicketLabelsStore'
-import { nextTicketLabels, type TicketLabelSession } from './ticket-label-session'
+import {
+  editedTicketLabels,
+  nextTicketLabels,
+  type TicketLabelSession
+} from './ticket-label-session'
 
 export interface TicketLabelTarget {
   projectId: string
@@ -38,9 +42,9 @@ export interface TicketLabelTarget {
 
 /**
  * What a toggle did: `applied` when the ticket's labels were written, `unchanged` when there was
- * nothing to write (the ticket is gone, the label is already in that state, the ticket is full,
- * or another of its labels has the name), `failed` when the write failed (after the failure
- * toast and the reload).
+ * nothing to write (the ticket or the edited label is gone, the label is already in that state,
+ * the ticket is full, or another of its labels has the name), `failed` when the write failed
+ * (after the failure toast and the reload).
  */
 export type TicketLabelWriteOutcome = 'applied' | 'unchanged' | 'failed'
 
@@ -52,6 +56,12 @@ const queues = new Map<string, Promise<TicketLabelWriteOutcome>>()
  * has not drained. Dropped with the queue, and after a failed write (the reload is the truth).
  */
 const lastWritten = new Map<string, readonly TicketLabel[]>()
+
+/** The ticket's labels after a write, from the list it applies to; that list itself for none. */
+type TicketLabelChange = (
+  current: readonly TicketLabel[],
+  catalogOrder: ReadonlyMap<string, number>
+) => readonly TicketLabel[]
 
 /**
  * Ticks (`on`) or unticks `label` on the ticket, after any toggle of the same ticket still
@@ -65,10 +75,30 @@ export function setTicketLabel(
   on: boolean,
   session: TicketLabelSession
 ): Promise<TicketLabelWriteOutcome> {
+  return queueTicketLabelWrite(ref, (current, catalogOrder) =>
+    nextTicketLabels(current, label, on, session, catalogOrder)
+  )
+}
+
+/**
+ * Replaces the ticket's label of `label.id` with `label`, in place, after any write of the same
+ * ticket still pending. Fails and resolves the way setTicketLabel does.
+ */
+export function editTicketLabel(
+  ref: TicketLabelTarget,
+  label: TicketLabel
+): Promise<TicketLabelWriteOutcome> {
+  return queueTicketLabelWrite(ref, (current) => editedTicketLabels(current, label))
+}
+
+function queueTicketLabelWrite(
+  ref: TicketLabelTarget,
+  change: TicketLabelChange
+): Promise<TicketLabelWriteOutcome> {
   const key = `${ref.projectId}:${ref.ticketId}`
   // The queue never stalls: the next toggle runs even if this one threw unexpectedly.
   const outcome = (queues.get(key) ?? Promise.resolve())
-    .then(() => applyTicketLabel(key, ref, label, on, session))
+    .then(() => applyTicketLabelChange(key, ref, change))
     .catch((): TicketLabelWriteOutcome => {
       lastWritten.delete(key)
       return 'failed'
@@ -82,12 +112,10 @@ export function setTicketLabel(
   return outcome
 }
 
-async function applyTicketLabel(
+async function applyTicketLabelChange(
   key: string,
   { projectId, ticketId }: TicketLabelTarget,
-  label: TicketLabel,
-  on: boolean,
-  session: TicketLabelSession
+  change: TicketLabelChange
 ): Promise<TicketLabelWriteOutcome> {
   const ticket = useKanbanStore
     .getState()
@@ -99,7 +127,7 @@ async function applyTicketLabel(
   // Mid-burst, the previous toggle's list: the store copy may have been put back since.
   const current = lastWritten.get(key) ?? ticketLabelsOf(ticket)
   const catalogOrder = ticketLabelCatalogOrder(useTicketLabelsStore.getState().labels)
-  const next = nextTicketLabels(current, label, on, session, catalogOrder)
+  const next = change(current, catalogOrder)
   if (next === current) return 'unchanged'
 
   try {

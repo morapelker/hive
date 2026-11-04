@@ -44,6 +44,8 @@ interface TicketLabelsMenuProps {
   labels: readonly TicketLabel[]
   /** The open menu's one-off memory (useTicketLabelSession, owned by the card). */
   session: TicketLabelSession | null
+  /** Closes the card's whole context menu. */
+  onCloseMenu: () => void
 }
 
 /**
@@ -53,9 +55,16 @@ interface TicketLabelsMenuProps {
  *
  * Rows never move or vanish while the menu is open: ticking keeps the menu open (the item's
  * onSelect is prevented) for several picks, and an unticked one-off stays listed, faded, until
- * the menu closes.
+ * the menu closes. Right-clicking a one-off still on the ticket edits it: a saved label belongs
+ * to the catalog (Manage labels…), and a removed one-off is no longer there to edit.
  */
-export function TicketLabelsMenuItems({ projectId, ticketId, labels, session }: TicketLabelsMenuProps) {
+export function TicketLabelsMenuItems({
+  projectId,
+  ticketId,
+  labels,
+  session,
+  onCloseMenu
+}: TicketLabelsMenuProps) {
   const catalog = useTicketLabelsStore(savedTicketLabelsOf)
   const loaded = useTicketLabelsStore((s) => s.loaded)
   const catalogIds = useMemo(() => catalogIdsOf(catalog), [catalog])
@@ -70,6 +79,14 @@ export function TicketLabelsMenuItems({ projectId, ticketId, labels, session }: 
   // never rejects); the menu has no use for the outcome
   const toggle = (label: TicketLabel, on: boolean): void => {
     void setTicketLabel({ projectId, ticketId }, label, on, memory)
+  }
+
+  const edit = (e: React.MouseEvent, label: TicketLabel): void => {
+    e.preventDefault()
+    // The menu is portalled, so this would otherwise bubble on to the card's React parents
+    e.stopPropagation()
+    onCloseMenu()
+    openDialogAfterMenu({ kind: 'edit', projectId, ticketId, labelId: label.id })
   }
 
   return (
@@ -125,6 +142,9 @@ export function TicketLabelsMenuItems({ projectId, ticketId, labels, session }: 
                 className={cn(nameTaken && NAME_TAKEN_ROW_CLASS)}
                 onSelect={(e) => e.preventDefault()}
                 onCheckedChange={(on) => toggle(label, on)}
+                onContextMenu={
+                  checked && label.kind === 'once' ? (e) => edit(e, label) : undefined
+                }
               >
                 <TicketLabelChip
                   label={label}

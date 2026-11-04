@@ -12,11 +12,13 @@ import { useKanbanStore } from './useKanbanStore'
 
 /**
  * The board-level label dialog that is open. `create` attaches the new label to one ticket
- * (`mode` picks the initial state of "Save for reuse"); `manage` edits the catalog. The ref
- * carries the project because markdown ticket ids are only unique per project.
+ * (`mode` picks the initial state of "Save for reuse"); `edit` changes a one-off on its ticket;
+ * `manage` edits the catalog. The ref carries the project because markdown ticket ids are only
+ * unique per project.
  */
 export type TicketLabelDialog =
   | { kind: 'create'; projectId: string; ticketId: string; mode: 'saved' | 'once' }
+  | { kind: 'edit'; projectId: string; ticketId: string; labelId: string }
   | { kind: 'manage' }
 
 interface TicketLabelsState {

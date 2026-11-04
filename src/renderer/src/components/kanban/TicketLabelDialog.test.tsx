@@ -2,7 +2,7 @@
  * The "New label" / "One-off label" dialog: a saved label joins the catalog and goes on the
  * ticket; a one-off goes on the ticket only (never into the catalog). A name already on the
  * ticket is refused, and a name the catalog already has is offered for reuse instead of being
- * created twice.
+ * created twice. "Edit one-off label" is the same dialog, prefilled, changing a one-off in place.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
@@ -16,14 +16,15 @@ import {
 import type { TicketLabelWriteOutcome } from '@/lib/ticket-label-toggle'
 
 vi.mock('@/lib/ticket-label-toggle', () => ({
-  setTicketLabel: vi.fn(async (): Promise<TicketLabelWriteOutcome> => 'applied')
+  setTicketLabel: vi.fn(async (): Promise<TicketLabelWriteOutcome> => 'applied'),
+  editTicketLabel: vi.fn(async (): Promise<TicketLabelWriteOutcome> => 'applied')
 }))
 vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() }
 }))
 
 import { TicketLabelDialog } from './TicketLabelDialog'
-import { setTicketLabel } from '@/lib/ticket-label-toggle'
+import { editTicketLabel, setTicketLabel } from '@/lib/ticket-label-toggle'
 import { toast } from '@/lib/toast'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useTicketLabelsStore } from '@/stores/useTicketLabelsStore'
@@ -61,6 +62,15 @@ function openDialog(mode: 'saved' | 'once', create = vi.fn()): ReturnType<typeof
   } as never)
   render(<TicketLabelDialog />)
   return create
+}
+
+function openEditDialog(labelId = until.id): void {
+  useTicketLabelsStore.setState({
+    labels: [joySaved, blockedSaved],
+    loaded: true,
+    dialog: { kind: 'edit', ...ref, labelId }
+  } as never)
+  render(<TicketLabelDialog />)
 }
 
 const input = (): HTMLInputElement => screen.getByTestId('ticket-label-name-input') as HTMLInputElement
@@ -328,5 +338,170 @@ describe('TicketLabelDialog', () => {
     fireEvent.keyDown(input(), { key: 'Enter', keyCode: 229 })
 
     expect(create).not.toHaveBeenCalled()
+  })
+
+  describe('editing a one-off', () => {
+    const teal: TicketLabel = { ...until, color: 'teal' }
+
+    it('opens prefilled, with only what editing needs', () => {
+      seedTicket([teal])
+      openEditDialog()
+
+      expect(screen.getByText('Edit one-off label')).toBeInTheDocument()
+      expect(input().value).toBe('Waiting until 21/10')
+      expect(screen.getByTestId('ticket-label-color-teal')).toHaveAttribute('aria-checked', 'true')
+      expect(submit()).toHaveTextContent('Save')
+      expect(screen.queryByTestId('ticket-label-save-checkbox')).toBeNull()
+    })
+
+    it('writes the new name and colour under the same id', async () => {
+      seedTicket([teal])
+      openEditDialog()
+
+      fireEvent.change(input(), { target: { value: '  Waiting until   22/10 ' } })
+      fireEvent.click(screen.getByTestId('ticket-label-color-red'))
+      fireEvent.click(submit())
+
+      await waitFor(() => expect(useTicketLabelsStore.getState().dialog).toBeNull())
+      expect(editTicketLabel).toHaveBeenCalledWith(ref, {
+        id: 'once-1',
+        kind: 'once',
+        name: 'Waiting until 22/10',
+        color: 'red'
+      })
+      expect(setTicketLabel).not.toHaveBeenCalled()
+    })
+
+    it('closes without a write when nothing changed', async () => {
+      seedTicket([teal])
+      openEditDialog()
+
+      fireEvent.keyDown(input(), { key: 'Enter' })
+
+      await waitFor(() => expect(useTicketLabelsStore.getState().dialog).toBeNull())
+      expect(editTicketLabel).not.toHaveBeenCalled()
+    })
+
+    it('allows a change of case alone', async () => {
+      seedTicket([teal])
+      openEditDialog()
+
+      fireEvent.change(input(), { target: { value: 'WAITING until 21/10' } })
+      expect(screen.queryByTestId('ticket-label-on-ticket')).toBeNull()
+      fireEvent.click(submit())
+
+      await waitFor(() => expect(editTicketLabel).toHaveBeenCalledTimes(1))
+      expect(vi.mocked(editTicketLabel).mock.calls[0][1].name).toBe('WAITING until 21/10')
+    })
+
+    it('refuses the name of another label on the ticket', () => {
+      seedTicket([{ id: 'lbl-joy', kind: 'saved', name: 'Waiting for Joy', color: 'yellow' }, teal])
+      openEditDialog()
+
+      fireEvent.change(input(), { target: { value: 'waiting for joy' } })
+
+      expect(screen.getByTestId('ticket-label-on-ticket')).toBeInTheDocument()
+      expect(submit()).toBeDisabled()
+    })
+
+    it('recolours a one-off that shares its name with another label', async () => {
+      // A catalog rename can leave a saved label and a one-off of one name on a ticket
+      seedTicket([{ id: 'lbl-x', kind: 'saved', name: until.name, color: 'yellow' }, teal])
+      openEditDialog()
+
+      expect(screen.queryByTestId('ticket-label-on-ticket')).toBeNull()
+      fireEvent.click(screen.getByTestId('ticket-label-color-red'))
+      fireEvent.click(submit())
+
+      await waitFor(() => expect(editTicketLabel).toHaveBeenCalledTimes(1))
+    })
+
+    it('can be edited on a full ticket', () => {
+      const others: TicketLabel[] = Array.from({ length: TICKET_LABELS_MAX - 1 }, (_, index) => ({
+        id: `other-${index}`,
+        kind: 'once',
+        name: `Label ${index}`,
+        color: 'gray'
+      }))
+      seedTicket([...others, teal])
+      openEditDialog()
+
+      fireEvent.change(input(), { target: { value: 'Waiting until 22/10' } })
+      expect(screen.queryByText(/the most it can carry/)).toBeNull()
+      expect(submit()).toBeEnabled()
+    })
+
+    it('does not offer a saved label of the new name in place of the one-off', () => {
+      seedTicket([teal])
+      openEditDialog()
+
+      fireEvent.change(input(), { target: { value: 'Blocked' } })
+
+      expect(screen.queryByTestId('ticket-label-saved-match')).toBeNull()
+      expect(submit()).toBeEnabled()
+    })
+
+    it('keeps a colour this build does not know unless a swatch is picked', async () => {
+      seedTicket([{ ...until, color: 'magenta' }])
+      openEditDialog()
+
+      expect(screen.getByTestId('ticket-label-color-gray')).toHaveAttribute('aria-checked', 'true')
+      fireEvent.change(input(), { target: { value: 'Waiting until 22/10' } })
+      fireEvent.click(submit())
+
+      await waitFor(() => expect(editTicketLabel).toHaveBeenCalledTimes(1))
+      expect(vi.mocked(editTicketLabel).mock.calls[0][1].color).toBe('magenta')
+    })
+
+    it('stays open with what was typed when the write fails', async () => {
+      seedTicket([teal])
+      openEditDialog()
+      vi.mocked(editTicketLabel).mockResolvedValueOnce('failed')
+
+      fireEvent.change(input(), { target: { value: 'Waiting until 22/10' } })
+      fireEvent.click(submit())
+
+      expect(await screen.findByTestId('ticket-label-error')).toHaveTextContent(
+        "Couldn't update the label. Try again."
+      )
+      expect(input().value).toBe('Waiting until 22/10')
+      expect(useTicketLabelsStore.getState().dialog).not.toBeNull()
+    })
+
+    it('closes when a write reported failed turns out to have landed', async () => {
+      seedTicket([teal])
+      openEditDialog()
+      vi.mocked(editTicketLabel).mockImplementationOnce(async (_ref, label) => {
+        seedTicket([label])
+        return 'failed'
+      })
+
+      fireEvent.change(input(), { target: { value: 'Waiting until 22/10' } })
+      fireEvent.click(submit())
+
+      await waitFor(() => expect(useTicketLabelsStore.getState().dialog).toBeNull())
+    })
+
+    it('closes with a toast when the label is gone before the edit went on', async () => {
+      seedTicket([teal])
+      openEditDialog()
+      vi.mocked(editTicketLabel).mockImplementationOnce(async () => {
+        seedTicket([])
+        return 'unchanged'
+      })
+
+      fireEvent.change(input(), { target: { value: 'Waiting until 22/10' } })
+      fireEvent.click(submit())
+
+      await waitFor(() => expect(useTicketLabelsStore.getState().dialog).toBeNull())
+      expect(toast.error).toHaveBeenCalledWith("The label is gone, so it wasn't changed")
+    })
+
+    it('never edits a saved label', () => {
+      seedTicket([{ id: 'lbl-joy', kind: 'saved', name: 'Waiting for Joy', color: 'yellow' }])
+      openEditDialog('lbl-joy')
+
+      expect(screen.queryByTestId('ticket-label-dialog')).toBeNull()
+    })
   })
 })

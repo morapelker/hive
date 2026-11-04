@@ -13,7 +13,7 @@ import { reloadBoard } from '@/lib/board-reload'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useTicketLabelsStore } from '@/stores/useTicketLabelsStore'
 import { openTicketLabelSession } from './ticket-label-session'
-import { setTicketLabel } from './ticket-label-toggle'
+import { editTicketLabel, setTicketLabel } from './ticket-label-toggle'
 
 const initialKanbanState = useKanbanStore.getState()
 
@@ -142,6 +142,69 @@ afterEach(async () => {
   useKanbanStore.setState(initialKanbanState, true)
   useTicketLabelsStore.setState({ labels: [], loaded: false, dialog: null })
   vi.restoreAllMocks()
+})
+
+describe('editTicketLabel', () => {
+  const edited: TicketLabel = { ...O1, name: 'Until 22/10', color: 'red' }
+
+  const seed = (tickets: KanbanTicket[]): void => {
+    useKanbanStore.setState({ tickets: new Map([['p1', tickets]]) })
+  }
+
+  const storedLabels = (): readonly TicketLabel[] | undefined =>
+    useKanbanStore.getState().tickets.get('p1')?.[0]?.labels
+
+  it('shows the edit at once, in place, and writes it', async () => {
+    seed([makeTicket({ labels: [A, O1, O2] })])
+
+    const outcome = editTicketLabel(ref(), edited)
+    await flush()
+
+    expect(storedLabels()).toEqual([A, edited, O2])
+    expect(updates).toHaveLength(1)
+    expect(updates[0].labels).toEqual([A, edited, O2])
+
+    updates[0].resolve()
+    await expect(outcome).resolves.toBe('applied')
+  })
+
+  it('waits for a pending toggle and builds on what it wrote', async () => {
+    seed([makeTicket({ labels: [O1] })])
+
+    void setTicketLabel(ref(), A, true, [])
+    const outcome = editTicketLabel(ref(), edited)
+    await flush()
+    expect(updates).toHaveLength(1)
+
+    updates[0].resolve()
+    await flush()
+    expect(updates).toHaveLength(2)
+    expect(updates[1].labels).toEqual([A, edited])
+
+    updates[1].resolve()
+    await expect(outcome).resolves.toBe('applied')
+  })
+
+  it('writes nothing for a label no longer on the ticket', async () => {
+    seed([makeTicket({ labels: [O2] })])
+
+    await expect(editTicketLabel(ref(), edited)).resolves.toBe('unchanged')
+    expect(updates).toHaveLength(0)
+  })
+
+  it('toasts and reloads after a failed write', async () => {
+    seed([makeTicket({ labels: [O1] })])
+    serverTickets = [makeTicket({ labels: [O1] })]
+
+    const outcome = editTicketLabel(ref(), edited)
+    await flush()
+    updates[0].reject(new Error('boom'))
+
+    await expect(outcome).resolves.toBe('failed')
+    expect(toastError).toHaveBeenCalledWith("Couldn't update labels")
+    expect(loadTicketsForProjectInAggregate).toHaveBeenCalled()
+    expect(storedLabels()).toEqual([O1])
+  })
 })
 
 describe('setTicketLabel', () => {

@@ -6,7 +6,7 @@
  * The Radix menu primitives are replaced by plain elements: opening the real context menu
  * takes 10–30 s under jsdom (see KanbanTicketCard.labels.test.tsx), and only the rows matter.
  */
-import type { ReactNode } from 'react'
+import type { MouseEventHandler, ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import type { SavedTicketLabel, TicketLabel } from '@shared/lib/ticket-labels'
@@ -19,6 +19,7 @@ vi.mock('@/components/ui/context-menu', () => {
     className?: string
     onCheckedChange?: (on: boolean) => void
     onSelect?: (event: Event) => void
+    onContextMenu?: MouseEventHandler
     textValue?: string
     'data-testid'?: string
     'data-removed'?: string
@@ -31,6 +32,7 @@ vi.mock('@/components/ui/context-menu', () => {
       disabled,
       className,
       onCheckedChange,
+      onContextMenu,
       ...rest
     }: ItemProps) => (
       <div
@@ -40,6 +42,7 @@ vi.mock('@/components/ui/context-menu', () => {
         data-testid={rest['data-testid']}
         data-removed={rest['data-removed']}
         className={className}
+        onContextMenu={onContextMenu}
         onClick={() => {
           if (!disabled) onCheckedChange?.(!checked)
         }}
@@ -98,19 +101,36 @@ const row = (id: string): HTMLElement => screen.getByTestId(`ctx-label-${id}`)
 const chipTitle = (id: string): string | null =>
   within(row(id)).getByTestId('ticket-label-chip').getAttribute('title')
 
+const onCloseMenu = vi.fn()
+
 function renderRows(
   labels: readonly TicketLabel[],
   session = openTicketLabelSession(labels, catalogIds)
 ): void {
-  render(<TicketLabelsMenuItems projectId="p1" ticketId="t1" labels={labels} session={session} />)
+  render(
+    <TicketLabelsMenuItems
+      projectId="p1"
+      ticketId="t1"
+      labels={labels}
+      session={session}
+      onCloseMenu={onCloseMenu}
+    />
+  )
 }
 
 beforeEach(() => {
   useTicketLabelsStore.setState({ labels: [joyRow, blockedRow], loaded: true })
+  // The dialog opens on the frame after the menu closes
+  vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+    callback(0)
+    return 0
+  })
 })
 
 afterEach(() => {
   cleanup()
+  vi.restoreAllMocks()
+  onCloseMenu.mockClear()
   vi.mocked(setTicketLabel).mockClear()
   useTicketLabelsStore.setState({ labels: [], loaded: false, dialog: null })
 })
@@ -162,5 +182,59 @@ describe('TicketLabelsMenuItems', () => {
     expect(row('lbl-blocked')).not.toHaveAttribute('aria-disabled')
     expect(row('once-1')).toHaveAttribute('aria-checked', 'true')
     expect(row('once-1')).not.toHaveAttribute('aria-disabled')
+  })
+
+  describe('right-click', () => {
+    it('closes the menu and opens the edit dialog for a one-off on the ticket', () => {
+      renderRows([blockedOnce])
+
+      // fireEvent returns false when the handler called preventDefault
+      expect(fireEvent.contextMenu(row('once-1'))).toBe(false)
+
+      expect(onCloseMenu).toHaveBeenCalledTimes(1)
+      expect(useTicketLabelsStore.getState().dialog).toEqual({
+        kind: 'edit',
+        projectId: 'p1',
+        ticketId: 't1',
+        labelId: 'once-1'
+      })
+      expect(setTicketLabel).not.toHaveBeenCalled()
+    })
+
+    it('does not reach the card behind the portalled menu', () => {
+      const behind = vi.fn()
+      render(
+        <div onContextMenu={behind}>
+          <TicketLabelsMenuItems
+            projectId="p1"
+            ticketId="t1"
+            labels={[blockedOnce]}
+            session={[blockedOnce]}
+            onCloseMenu={onCloseMenu}
+          />
+        </div>
+      )
+
+      fireEvent.contextMenu(row('once-1'))
+      expect(behind).not.toHaveBeenCalled()
+    })
+
+    it.each<[string, readonly TicketLabel[], TicketLabel[], string]>([
+      ['a saved label', [blockedSaved], [], 'lbl-blocked'],
+      [
+        'a saved label the catalog lost',
+        [{ id: 'lbl-gone', kind: 'saved', name: 'Gone', color: 'red' }],
+        [{ id: 'lbl-gone', kind: 'saved', name: 'Gone', color: 'red' }],
+        'lbl-gone'
+      ],
+      ['a one-off unticked in this menu', [], [blockedOnce], 'once-1']
+    ])('does nothing on %s', (_name, labels, session, id) => {
+      renderRows(labels, session)
+
+      fireEvent.contextMenu(row(id))
+
+      expect(onCloseMenu).not.toHaveBeenCalled()
+      expect(useTicketLabelsStore.getState().dialog).toBeNull()
+    })
   })
 })

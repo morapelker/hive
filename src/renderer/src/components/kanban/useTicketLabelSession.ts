@@ -27,8 +27,9 @@ interface TicketLabelSessionOptions {
 /**
  * The one-off memory of the card's Labels menu, owned by the card's ROOT context menu: Radix
  * unmounts the submenu's content whenever the pointer leaves it, so a memory kept there would
- * forget a removed one-off while the menu is still open. Wire `onMenuOpenChange` to the root
- * <ContextMenu onOpenChange>.
+ * forget a removed one-off while the menu is still open. Wire `menuOpen` and `onMenuOpenChange`
+ * to the root <ContextMenu open onOpenChange>: the menu is controlled so that `closeMenu` can
+ * shut it from a right-click, which is not a selection and so would leave it open.
  *
  * On open it snapshots the ticket's ticket-only labels (from the store, the freshest copy);
  * while open it remembers any that appear (a one-off ticked back on, or one added elsewhere);
@@ -42,14 +43,18 @@ export function useTicketLabelSession({
   enabled
 }: TicketLabelSessionOptions): {
   session: TicketLabelSession | null
+  menuOpen: boolean
   onMenuOpenChange: (open: boolean) => void
+  closeMenu: () => void
 } {
+  const [menuOpen, setMenuOpen] = useState(false)
   const [session, setSession] = useState<TicketLabelSession | null>(null)
   const current = labels ?? NO_LABELS
   const isOpen = session !== null
 
   const onMenuOpenChange = useCallback(
     (open: boolean) => {
+      setMenuOpen(open)
       if (!open || !enabled) {
         setSession(null)
         return
@@ -67,6 +72,8 @@ export function useTicketLabelSession({
     [enabled, projectId, ticketId, current]
   )
 
+  const closeMenu = useCallback(() => onMenuOpenChange(false), [onMenuOpenChange])
+
   // While the menu is open, a ticket-only label that shows up on the ticket joins the memory,
   // so unticking it later keeps its row
   useEffect(() => {
@@ -75,5 +82,5 @@ export function useTicketLabelSession({
     setSession((prev) => (prev === null ? prev : extendTicketLabelSession(prev, current, catalogIds)))
   }, [isOpen, current])
 
-  return { session, onMenuOpenChange }
+  return { session, menuOpen, onMenuOpenChange, closeMenu }
 }

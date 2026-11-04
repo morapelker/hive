@@ -4,12 +4,13 @@ import type { KanbanTicket } from '../../../../main/db/types'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useTicketLabelsStore } from '@/stores/useTicketLabelsStore'
 import {
+  editTicketLabel,
   setTicketLabel,
   type TicketLabelTarget,
   type TicketLabelWriteOutcome
 } from '@/lib/ticket-label-toggle'
 import { canAddTicketLabel, type TicketLabelSession } from '@/lib/ticket-label-session'
-import { leastUsedTicketLabelColor } from '@/lib/ticket-label-colors'
+import { leastUsedTicketLabelColor, ticketLabelColorOf } from '@/lib/ticket-label-colors'
 import { isComposingKeyboardEvent } from '@/lib/message-composer-shortcuts'
 import { toast } from '@/lib/toast'
 import { visibleTicketTitle } from '@/lib/ticket-key-display'
@@ -84,16 +85,17 @@ function notAddedMessage(
 }
 
 /**
- * Board-level host for the "New label" / "One-off label" dialog, driven by the labels store's
- * dialog (the card's Labels submenu opens it). Mounted once per board, beside RenameTicketDialog,
- * rather than inside the card: the card's menu has closed by the time it opens, and the ticket
- * is looked up by project and id (markdown ticket ids are only unique within a project).
+ * Board-level host for the "New label" / "One-off label" / "Edit one-off label" dialog, driven
+ * by the labels store's dialog (the card's Labels submenu opens it). Mounted once per board,
+ * beside RenameTicketDialog, rather than inside the card: the card's menu has closed by the time
+ * it opens, and the ticket is looked up by project and id (markdown ticket ids are only unique
+ * within a project).
  */
 export function TicketLabelDialog() {
   const dialog = useTicketLabelsStore((s) => s.dialog)
-  const createDialog = dialog?.kind === 'create' ? dialog : null
-  const projectId = createDialog?.projectId ?? null
-  const ticketId = createDialog?.ticketId ?? null
+  const ticketDialog = dialog?.kind === 'create' || dialog?.kind === 'edit' ? dialog : null
+  const projectId = ticketDialog?.projectId ?? null
+  const ticketId = ticketDialog?.ticketId ?? null
   const ticket = useKanbanStore(
     useCallback(
       (s) =>
@@ -104,21 +106,38 @@ export function TicketLabelDialog() {
     )
   )
 
-  if (!createDialog || !ticket) return null
+  if (!ticketDialog || !ticket) return null
+
+  if (ticketDialog.kind === 'edit') {
+    const editing = ticketLabelsOf(ticket).find(
+      (label) => label.id === ticketDialog.labelId && label.kind === 'once'
+    )
+    if (!editing) return null
+    return (
+      <TicketLabelFormDialog
+        key={`${ticketDialog.projectId}:${ticketDialog.ticketId}:${editing.id}`}
+        ticket={ticket}
+        initialMode="once"
+        editing={editing}
+      />
+    )
+  }
 
   return (
-    <TicketLabelCreateDialog
-      key={`${createDialog.projectId}:${createDialog.ticketId}:${createDialog.mode}`}
+    <TicketLabelFormDialog
+      key={`${ticketDialog.projectId}:${ticketDialog.ticketId}:${ticketDialog.mode}`}
       ticket={ticket}
-      initialMode={createDialog.mode}
+      initialMode={ticketDialog.mode}
     />
   )
 }
 
-interface TicketLabelCreateDialogProps {
+interface TicketLabelFormDialogProps {
   ticket: KanbanTicket
   /** Which menu entry opened it; the "Save for reuse" checkbox switches it in place. */
   initialMode: TicketLabelMode
+  /** The one-off being edited, as the ticket has it now; absent when adding a new label. */
+  editing?: TicketLabel
 }
 
 /**
@@ -126,11 +145,14 @@ interface TicketLabelCreateDialogProps {
  * catalog (offered on every ticket's menu); a one-off lives on this ticket only and leaves no
  * record once removed. The name is checked against the ticket (no label twice) and the catalog
  * (reuse the saved label rather than make a second one).
+ *
+ * With `editing` it changes that one-off in place instead: prefilled, same id and position, and
+ * none of what only concerns adding a label (the catalog, "Save for reuse", a full ticket).
  */
-function TicketLabelCreateDialog({ ticket, initialMode }: TicketLabelCreateDialogProps) {
+function TicketLabelFormDialog({ ticket, initialMode, editing }: TicketLabelFormDialogProps) {
   const catalog = useTicketLabelsStore(savedTicketLabelsOf)
   const [mode, setMode] = useState<TicketLabelMode>(initialMode)
-  const [name, setName] = useState('')
+  const [name, setName] = useState(editing?.name ?? '')
   // The default colour of a saved label is fixed when the dialog opens: one created elsewhere
   // meanwhile must not change the swatch under the user. A colour picked by hand is kept when
   // the mode changes; until then a one-off defaults to gray.
@@ -143,18 +165,25 @@ function TicketLabelCreateDialog({ ticket, initialMode }: TicketLabelCreateDialo
   const inputId = useId()
   const saveId = useId()
 
-  const color = pickedColor ?? (mode === 'saved' ? savedDefaultColor : 'gray')
+  const defaultColor = editing
+    ? ticketLabelColorOf(editing.color)
+    : mode === 'saved'
+      ? savedDefaultColor
+      : 'gray'
+  const color = pickedColor ?? defaultColor
   const ref = { projectId: ticket.project_id, ticketId: ticket.id }
   const labels = ticketLabelsOf(ticket)
   const normalized = normalizeTicketLabelName(name)
   const isEmpty = normalized.length === 0
-  const onTicket = !isEmpty && hasTicketLabelNamed(labels, normalized)
   const nameKey = ticketLabelNameKey(normalized)
+  // A one-off keeps its own name; only a new name can clash with the ticket's other labels
+  const keepsName = editing !== undefined && ticketLabelNameKey(editing.name) === nameKey
+  const onTicket = !isEmpty && !keepsName && hasTicketLabelNamed(labels, normalized)
   const savedMatch: SavedTicketLabel | null =
-    isEmpty || onTicket
+    editing || isEmpty || onTicket
       ? null
       : (catalog.find((label) => ticketLabelNameKey(label.name) === nameKey) ?? null)
-  const isFull = !canAddTicketLabel(labels)
+  const isFull = !editing && !canAddTicketLabel(labels)
   // A saved label of that name exists: offer it rather than create a duplicate
   const blockedBySaved = mode === 'saved' && savedMatch !== null
   const canSubmit = !isEmpty && !onTicket && !isFull && !blockedBySaved && !busy
@@ -198,8 +227,50 @@ function TicketLabelCreateDialog({ ticket, initialMode }: TicketLabelCreateDialo
     }
   }
 
+  /**
+   * Writes the edit, then closes; the card shows it at once (the write is optimistic). As when
+   * adding, a write that did not land keeps the dialog open with the reason. A colour token this
+   * build does not know stays as it is unless a swatch was picked.
+   */
+  const saveEdit = async (label: TicketLabel): Promise<void> => {
+    const edited: TicketLabel = { ...label, name: normalized, color: pickedColor ?? label.color }
+    const isSaved = (entry: TicketLabel): boolean =>
+      entry.name === edited.name && entry.color === edited.color
+    if (isSaved(label)) {
+      close()
+      return
+    }
+    setBusy(true)
+    setError(null)
+    const outcome = await editTicketLabel(ref, edited)
+    setBusy(false)
+    if (outcome === 'applied') {
+      close()
+      return
+    }
+    const latest = findTicket(ref)
+    const current = latest && ticketLabelsOf(latest).find((entry) => entry.id === label.id)
+    if (!current) {
+      // Removed meanwhile, or its ticket is gone, and the dialog went with it. A failed write
+      // has already said so in its own toast.
+      close()
+      if (outcome === 'unchanged') toast.error("The label is gone, so it wasn't changed")
+      return
+    }
+    // Already so (a write reported failed that landed after all, as the reload shows)
+    if (isSaved(current)) {
+      close()
+      return
+    }
+    setError("Couldn't update the label. Try again.")
+  }
+
   const handleSubmit = async (): Promise<void> => {
     if (!canSubmit) return
+    if (editing) {
+      await saveEdit(editing)
+      return
+    }
     if (mode === 'once') {
       await attach({ id: crypto.randomUUID(), kind: 'once', name: normalized, color })
       return
@@ -245,7 +316,7 @@ function TicketLabelCreateDialog({ ticket, initialMode }: TicketLabelCreateDialo
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-sm">
             <Icon className="h-4 w-4" />
-            {mode === 'saved' ? 'New label' : 'One-off label'}
+            {editing ? 'Edit one-off label' : mode === 'saved' ? 'New label' : 'One-off label'}
           </DialogTitle>
           <DialogDescription className="truncate text-xs">
             {visibleTicketTitle(ticket)}
@@ -338,28 +409,30 @@ function TicketLabelCreateDialog({ ticket, initialMode }: TicketLabelCreateDialo
             />
           </div>
 
-          <div className="flex flex-col gap-1">
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id={saveId}
-                data-testid="ticket-label-save-checkbox"
-                checked={mode === 'saved'}
-                onCheckedChange={(checked) => {
-                  setMode(checked ? 'saved' : 'once')
-                  setError(null)
-                }}
-                disabled={busy}
-              />
-              <label htmlFor={saveId} className="text-xs">
-                Save for reuse on other tickets
-              </label>
+          {!editing && (
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id={saveId}
+                  data-testid="ticket-label-save-checkbox"
+                  checked={mode === 'saved'}
+                  onCheckedChange={(checked) => {
+                    setMode(checked ? 'saved' : 'once')
+                    setError(null)
+                  }}
+                  disabled={busy}
+                />
+                <label htmlFor={saveId} className="text-xs">
+                  Save for reuse on other tickets
+                </label>
+              </div>
+              {mode === 'once' && (
+                <p className="pl-6 text-[11px] text-muted-foreground">
+                  Only on this ticket. Once removed, it&rsquo;s gone for good.
+                </p>
+              )}
             </div>
-            {mode === 'once' && (
-              <p className="pl-6 text-[11px] text-muted-foreground">
-                Only on this ticket. Once removed, it&rsquo;s gone for good.
-              </p>
-            )}
-          </div>
+          )}
 
           <p className="text-[11px] text-muted-foreground">
             Labels only show on the board. They&rsquo;re never sent to the model.
@@ -376,7 +449,7 @@ function TicketLabelCreateDialog({ ticket, initialMode }: TicketLabelCreateDialo
             onClick={() => void handleSubmit()}
             disabled={!canSubmit}
           >
-            {busy ? 'Adding…' : 'Add label'}
+            {editing ? (busy ? 'Saving…' : 'Save') : busy ? 'Adding…' : 'Add label'}
           </Button>
         </DialogFooter>
       </DialogContent>

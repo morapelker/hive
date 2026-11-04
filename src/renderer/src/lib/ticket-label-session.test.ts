@@ -7,6 +7,7 @@ import {
 } from '@shared/lib/ticket-labels'
 import {
   canAddTicketLabel,
+  editedTicketLabels,
   extendTicketLabelSession,
   isTicketLabelNameTaken,
   isTicketOnlyLabel,
@@ -268,6 +269,37 @@ describe('a session opened before the catalog loaded', () => {
     expect(ticketOnlyLabelRows(session, after, catalogIds)).toEqual([
       { label: lost, checked: false }
     ])
+  })
+})
+
+describe('editedTicketLabels', () => {
+  const first = once('o1', 'First')
+  const second = once('o2', 'Second')
+  const current = [B, first, second]
+
+  it('replaces the label where it is', () => {
+    const edited = { ...first, name: 'Renamed', color: 'teal' }
+    expect(editedTicketLabels(current, edited)).toEqual([B, edited, second])
+  })
+
+  it('returns the current array when the label is gone or nothing changed', () => {
+    expect(editedTicketLabels(current, { ...first, id: 'gone' })).toBe(current)
+    expect(editedTicketLabels(current, { ...first })).toBe(current)
+  })
+
+  it('refuses a name another label on the ticket has, whatever its case', () => {
+    expect(editedTicketLabels(current, { ...first, name: 'blocked' })).toBe(current)
+  })
+
+  it('accepts a change of case to its own name', () => {
+    const edited = { ...first, name: 'FIRST' }
+    expect(editedTicketLabels(current, edited)).toEqual([B, edited, second])
+  })
+
+  it('recolours a label whose name is already clashing', () => {
+    const clashing = { ...first, name: 'Blocked' }
+    const edited = { ...clashing, color: 'teal' }
+    expect(editedTicketLabels([B, clashing], edited)).toEqual([B, edited])
   })
 })
 

@@ -248,13 +248,17 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   // Labels submenu remembers the one-offs unticked while the menu is open — that memory belongs
   // to the root context menu (see useTicketLabelSession) and is dropped when it closes.
   const ticketLabels = ticketLabelsOf(ticket)
-  const { session: labelSession, onMenuOpenChange: handleLabelMenuOpenChange } =
-    useTicketLabelSession({
-      projectId: ticket.project_id,
-      ticketId: ticket.id,
-      labels: ticket.labels,
-      enabled: true
-    })
+  const {
+    session: labelSession,
+    menuOpen: isContextMenuOpen,
+    onMenuOpenChange: handleLabelMenuOpenChange,
+    closeMenu: closeContextMenu
+  } = useTicketLabelSession({
+    projectId: ticket.project_id,
+    ticketId: ticket.id,
+    labels: ticket.labels,
+    enabled: true
+  })
   // The ticket of a document run: a ticket like any other on the board (drag, merge on Done),
   // but it shows the run and opens the run dashboard; it has no session to launch or continue.
   const documentRunId = documentRunIdOf(ticket)
@@ -1683,7 +1687,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   return (
     <>
       <Popover open={showPRPicker} onOpenChange={setShowPRPicker}>
-        <ContextMenu onOpenChange={handleLabelMenuOpenChange}>
+        <ContextMenu open={isContextMenuOpen} onOpenChange={handleLabelMenuOpenChange}>
           <ContextMenuTrigger asChild>
             <PopoverAnchor asChild>
               <div
@@ -2680,6 +2684,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             ticketId={ticket.id}
             labels={ticketLabels}
             session={labelSession}
+            onCloseMenu={closeContextMenu}
           />
 
           {canToggleAutoApprove && !isDocumentRunTicket && (

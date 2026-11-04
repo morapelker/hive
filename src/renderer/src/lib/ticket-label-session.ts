@@ -136,3 +136,21 @@ export function nextTicketLabels(
     .map(({ entry }) => entry)
   return sortTicketLabels([...saved, ...ordered], catalogOrder)
 }
+
+/**
+ * The ticket's labels after editing one in place: same id, same position. Returns `current`
+ * itself when nothing changes (the label is gone, it already reads this way, or the new name
+ * belongs to another label on the ticket). A name that is not really changing is never refused,
+ * so a one-off that a catalog rename left clashing can still be recoloured.
+ */
+export function editedTicketLabels(
+  current: readonly TicketLabel[],
+  label: TicketLabel
+): readonly TicketLabel[] {
+  const existing = current.find((entry) => entry.id === label.id)
+  if (!existing) return current
+  if (existing.name === label.name && existing.color === label.color) return current
+  const renamed = ticketLabelNameKey(existing.name) !== ticketLabelNameKey(label.name)
+  if (renamed && isTicketLabelNameTaken(current, label)) return current
+  return current.map((entry) => (entry.id === label.id ? label : entry))
+}
