@@ -21,6 +21,9 @@ import { parseAttachmentUrl } from '@/lib/attachment-utils'
 import type { AttachmentInfo } from '@/lib/attachment-utils'
 import { fileApi } from '@/api/file-api'
 import { attachmentApi } from '@/api/attachment-api'
+import { projectApi } from '@/api/project-api'
+import { isMac } from '@/lib/platform'
+import { toast } from '@/lib/toast'
 
 export interface TicketAttachment extends AttachmentInfo {
   url: string
@@ -177,6 +180,24 @@ export function TicketAttachmentEditor({
   )
 }
 
+/**
+ * Open an attachment the way its kind wants: links (Jira, Figma) in the default browser — the
+ * main window hands window.open to shell.openExternal — and local files and images in their
+ * default app. openPath answers a missing file with an error text, not a rejection.
+ */
+function openTicketAttachment(attachment: TicketAttachment): void {
+  if (attachment.type === 'jira' || attachment.type === 'figma') {
+    window.open(attachment.url, '_blank')
+    return
+  }
+  void projectApi
+    .openPath(attachment.url)
+    .then((failure) => {
+      if (failure) toast.info(`${attachment.label} is no longer on disk.`)
+    })
+    .catch(() => toast.error(`Could not open ${attachment.label}.`))
+}
+
 // ── Attachment Chip with Thumbnail ──────────────────────────────────
 
 function AttachmentChip({
@@ -210,6 +231,12 @@ function AttachmentChip({
   return (
     <span
       data-testid={`${testIdPrefix}-attachment-chip-${index}`}
+      title={`${isMac() ? '⌘' : 'Ctrl'}+click to open`}
+      onClick={(e) => {
+        if (!e.metaKey && !e.ctrlKey) return
+        e.preventDefault()
+        openTicketAttachment(attachment)
+      }}
       className="inline-flex items-center gap-1.5 rounded-md border bg-muted/40 px-2 py-1 text-xs"
     >
       {attachment.type === 'image' && thumbnailSrc ? (
@@ -228,7 +255,12 @@ function AttachmentChip({
       <span className="max-w-[180px] truncate">{attachment.label}</span>
       <button
         data-testid={`${testIdPrefix}-attachment-remove-${index}`}
-        onClick={() => onRemove(index)}
+        type="button"
+        onClick={(e) => {
+          // A modifier-click on the X still only removes: it must not reach the chip and open.
+          e.stopPropagation()
+          onRemove(index)
+        }}
         className="ml-0.5 rounded-sm hover:bg-muted transition-colors"
       >
         <X className="h-3 w-3 text-muted-foreground hover:text-foreground" />
