@@ -45,6 +45,8 @@ const voiceHud = {
   ready: (): void => ipcRenderer.send('voice:hud:ready'),
   clickStop: (): void => ipcRenderer.send('voice:hud:click-stop'),
   clickCancel: (): void => ipcRenderer.send('voice:hud:click-cancel'),
+  setInteractive: (interactive: boolean): void =>
+    ipcRenderer.send('voice:hud:interactive', interactive),
   captureStarted: (): void => ipcRenderer.send('voice:hud:capture-started'),
   captureError: (message: string): void => ipcRenderer.send('voice:hud:capture-error', message),
   submitAudio: (payload: {

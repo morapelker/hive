@@ -9,10 +9,26 @@ import { voiceTestClips } from './voice-test-clips'
 const log = createLogger({ component: 'VoiceHud' })
 
 /** Transparent window large enough for the widest notice; the pill centres inside. */
-const HUD_WIDTH = 520
-const HUD_HEIGHT = 72
+export const HUD_WIDTH = 520
+/** The strip at the bottom of the window the pill centres in. */
+export const HUD_PILL_HEIGHT = 72
+/**
+ * Room above the pill for the live transcript preview (VOICE-07): up to four
+ * lines of text plus padding, the gap to the pill and the panel's shadow.
+ */
+export const HUD_PREVIEW_HEIGHT = 112
+export const HUD_HEIGHT = HUD_PILL_HEIGHT + HUD_PREVIEW_HEIGHT
 /** The pill's bottom edge sits this far above the main window's bottom edge (Wispelker: 80pt above the Dock). */
-const HUD_BOTTOM_MARGIN = 80
+export const HUD_BOTTOM_MARGIN = 80
+
+/**
+ * Where the window can let clicks through its transparent parts while still
+ * seeing the mouse move (`setIgnoreMouseEvents(true, { forward: true })` is
+ * macOS/Windows only). Elsewhere the whole window takes clicks, as before.
+ */
+function supportsClickThrough(platform: NodeJS.Platform): boolean {
+  return platform === 'darwin' || platform === 'win32'
+}
 
 /**
  * The floating recording pill — Wispelker's non-activating NSPanel, as an
@@ -21,6 +37,11 @@ const HUD_BOTTOM_MARGIN = 80
  * throughout), following the main window when it moves. It also owns the
  * microphone: audio is captured in this window's renderer and handed to the
  * main process when recording stops.
+ *
+ * The window is taller than the pill to fit the live transcript preview above
+ * it, so most of it is transparent. Those parts let clicks through to the app
+ * underneath: the window ignores the mouse except while the cursor is over the
+ * pill or the preview panel (the renderer reports that, see setInteractive).
  */
 export class VoiceHudWindow {
   private window: BrowserWindow | null = null
@@ -29,6 +50,13 @@ export class VoiceHudWindow {
   private getMainWindow: () => BrowserWindow | null = () => null
   private followTargets = new WeakSet<BrowserWindow>()
   private readyWaiters: Array<() => void> = []
+  /** The window takes mouse clicks (the cursor is over the pill or the preview). */
+  private interactive = false
+  private readonly clickThrough: boolean
+
+  constructor({ platform = process.platform }: { platform?: NodeJS.Platform } = {}) {
+    this.clickThrough = supportsClickThrough(platform)
+  }
 
   configure(options: { getMainWindow: () => BrowserWindow | null }): void {
     this.getMainWindow = options.getMainWindow
@@ -76,6 +104,7 @@ export class VoiceHudWindow {
     window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
     window.setAlwaysOnTop(true, 'floating')
     window.setMenuBarVisibility(false)
+    if (this.clickThrough) window.setIgnoreMouseEvents(true, { forward: true })
 
     window.on('closed', () => {
       if (this.window === window) {
@@ -97,6 +126,7 @@ export class VoiceHudWindow {
 
     this.window = window
     this.ready = false
+    this.interactive = false
     this.followMainWindow()
     return window
   }
@@ -142,6 +172,8 @@ export class VoiceHudWindow {
     const window = this.ensureCreated()
     this.reposition()
     if (!window.isVisible()) {
+      // A freshly shown pill lets clicks through until the cursor moves onto it.
+      this.setInteractive(false, { force: true })
       window.showInactive()
     }
   }
@@ -150,6 +182,33 @@ export class VoiceHudWindow {
     if (this.window && !this.window.isDestroyed() && this.window.isVisible()) {
       this.window.hide()
     }
+    this.setInteractive(false)
+  }
+
+  /**
+   * The HUD renderer reports whether the cursor is over a visible part of the
+   * HUD (the pill or the preview panel). Only then does the window take mouse
+   * clicks; everywhere else they go to the app underneath. Mouse moves are
+   * still forwarded while ignoring, so the renderer sees the cursor arrive.
+   * Never affects focus: the window stays unfocusable either way.
+   */
+  setInteractive(interactive: boolean, { force = false }: { force?: boolean } = {}): void {
+    const window = this.window
+    if (!this.clickThrough || !window || window.isDestroyed()) return
+    // A late report from a pill that has just been hidden must not leave the
+    // whole window blocking clicks the next time it shows.
+    if (interactive && !window.isVisible()) return
+    if (!force && interactive === this.interactive) return
+    this.interactive = interactive
+    if (interactive) {
+      window.setIgnoreMouseEvents(false)
+    } else {
+      window.setIgnoreMouseEvents(true, { forward: true })
+    }
+  }
+
+  isInteractive(): boolean {
+    return this.interactive
   }
 
   isVisible(): boolean {
@@ -203,7 +262,12 @@ export class VoiceHudWindow {
     }
   }
 
-  /** Bottom-centre of the main window, clamped to that display's work area. */
+  /**
+   * Bottom-centre of the main window, clamped to that display's work area: the
+   * pill sits HUD_BOTTOM_MARGIN above the main window's bottom edge and the
+   * preview room extends upwards from it. Near a screen edge the whole window
+   * (pill and preview) is pushed back onto the screen.
+   */
   reposition(): void {
     const hud = this.window
     if (!hud || hud.isDestroyed()) return

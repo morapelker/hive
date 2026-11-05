@@ -739,6 +739,10 @@ export class VoiceController {
       this.hudTranscript = new DictionaryReplacer(this.settings.dictionary).apply(raw.trim())
       if (this.settings.cleanup.enabled) {
         this.setHudPhase({ kind: 'enhancing', progress: null, showsProgress: false })
+      } else {
+        // No AI step: the preview still swaps to the final text for the
+        // moment until delivery hides the pill.
+        this.setHudPhase(this.hudPhase)
       }
       this.dictation?.markAiStarted()
       const outcome = await enhanceTranscript(raw, this.settings, { db: this.db })

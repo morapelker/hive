@@ -138,6 +138,13 @@ export function initVoiceDictation(options: {
     voiceController.cancel('hud-click')
   })
 
+  // The cursor moved onto / off the visible pill or preview: only then does the
+  // HUD window take clicks (its transparent parts let them through).
+  ipcMain.on('voice:hud:interactive', (event, interactive: unknown) => {
+    if (!isHud(event)) return
+    voiceHud.setInteractive(interactive === true)
+  })
+
   ipcMain.on('voice:hud:capture-started', (event) => {
     if (!isHud(event)) return
     voiceController.onCaptureStarted()
@@ -200,8 +207,7 @@ export function registerVoiceTestClipIpc(guards: {
   const options = (raw: unknown): VoiceTestSelectOptions => {
     const record = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
     return {
-      autoStopAfterMs:
-        typeof record.autoStopAfterMs === 'number' ? record.autoStopAfterMs : null
+      autoStopAfterMs: typeof record.autoStopAfterMs === 'number' ? record.autoStopAfterMs : null
     }
   }
 

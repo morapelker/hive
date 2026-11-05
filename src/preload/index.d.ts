@@ -74,6 +74,8 @@ declare global {
     ready: () => void
     clickStop: () => void
     clickCancel: () => void
+    /** The cursor is over the visible pill or preview: the HUD window takes clicks only then. */
+    setInteractive: (interactive: boolean) => void
     captureStarted: () => void
     captureError: (message: string) => void
     submitAudio: (payload: {

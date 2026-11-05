@@ -120,6 +120,15 @@ HIVE_VOICE_TEST_CLIPS=1 \
   `{ updates, firstAtMs, lastAtMs, text, history: [{ atMs, chars }] }`, timed from capture start;
   poll it during a dictation to watch it grow. The HUD target receives it as
   `VoiceHudState.transcript`.
+- The HUD renders that text above the pill (VOICE-07): `[data-testid=voice-hud-preview]` is the
+  panel and `[data-testid=voice-hud-preview-text]` its full text (only ~4 lines are visible; the
+  element always holds the whole transcript). Absent until the first words. With Parakeet it only
+  appears during the AI step. The HUD window is now 520×184 and lets clicks through everywhere but
+  the pill and the panel (macOS/Windows), so read it with `tab-select` on the HUD target only after
+  the recording, or screenshot the screen instead: `screencapture -x -R<x>,<y>,<w>,<h> out.png`
+  around the main window's bottom edge (`window.screenX/screenY/outerWidth/outerHeight` from the
+  main window). To exercise click-through with real OS clicks use `cliclick`, moving onto the pill
+  first (`m:x,y w:300 c:x,y`): a warped click with no hover beforehand passes through to the app.
 - Every dictation ends with one `Dictation summary` log line: `streamed`, `textSource`
   (`streamed` / `fallback` / `whole-clip`), `fallbackReason`, `stopToTranscriptMs`,
   `previewUpdates`, `captureToPreviewMs`, … `grep "Dictation summary"` the day's log.

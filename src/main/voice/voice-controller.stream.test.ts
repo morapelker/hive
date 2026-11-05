@@ -983,7 +983,16 @@ describe('VoiceController streaming dictation flow (VOICE-06)', () => {
       expect(testClips.reportPreview).toHaveBeenCalledTimes(2)
       controller.onAudio({ samples: clip, sampleRate: 16_000, durationMs: 0 })
       await vi.waitFor(() => expect(controller.getStatus().state).toBe('idle'))
-      expect(hudStates().at(-1)).toEqual({ phase: { kind: 'hidden' }, sounds: true })
+      // …then, with no AI step, the final transcript (dictionary applied) replaces
+      // it on the pill just before delivery hides it.
+      expect(hudStates().slice(-2)).toEqual([
+        {
+          phase: { kind: 'transcribing', progress: null, showsProgress: false, target: 'paste' },
+          sounds: true,
+          transcript: 'open Tedooo settings'
+        },
+        { phase: { kind: 'hidden' }, sounds: true }
+      ])
       expect(onlySummary()).toMatchObject({ previewUpdates: 2 })
       expect(onlySummary().captureToPreviewMs).toEqual(expect.any(Number))
     })

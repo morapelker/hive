@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { VoiceHudPhase, VoiceHudState } from '@shared/types/voice'
 import { VoiceRecorder } from './audio-capture'
 import { VoiceSoundPlayer } from './sounds'
@@ -75,8 +75,77 @@ function RecordingTimer({ since }: { since: number }): React.JSX.Element | null 
   return <span className="voice-text voice-timer">{formatElapsed(seconds)}</span>
 }
 
+/** Marks the visible parts of the HUD: only over these does the window take clicks. */
+const HIT_ATTRIBUTE = 'data-hud-hit'
+const hit = { [HIT_ATTRIBUTE]: '' }
+
+/**
+ * The live transcript above the pill (VOICE-07): the text so far while a
+ * streaming model records, then the final transcript until the pill goes away.
+ * At most ~4 lines show; the newest text stays at the bottom and older lines
+ * give way at the top, fading once there is more than fits.
+ */
+function TranscriptPreview({ text }: { text: string }): React.JSX.Element {
+  const boxRef = useRef<HTMLDivElement | null>(null)
+  const textRef = useRef<HTMLParagraphElement | null>(null)
+  const [overflowing, setOverflowing] = useState(false)
+  useLayoutEffect(() => {
+    const box = boxRef.current
+    const content = textRef.current
+    if (!box || !content) return
+    // The box is bottom-aligned, so text it can't fit is cut off at the top
+    // (and isn't counted in its scrollHeight): compare the text's own height.
+    setOverflowing(content.offsetHeight > box.clientHeight + 1)
+  }, [text])
+  return (
+    <div
+      className={`voice-preview${overflowing ? ' voice-preview--overflow' : ''}`}
+      data-testid="voice-hud-preview"
+      onMouseDown={(event) => event.preventDefault()}
+      {...hit}
+    >
+      <div className="voice-preview-box" ref={boxRef}>
+        <p className="voice-preview-text" ref={textRef} data-testid="voice-hud-preview-text">
+          {text}
+        </p>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Tell main whether the cursor is over a visible part of the HUD. The window
+ * ignores the mouse elsewhere (its transparent parts let clicks through to the
+ * app underneath) but still gets mouse moves, so this sees the cursor arrive.
+ */
+function useClickThrough(visible: boolean): void {
+  const interactiveRef = useRef(false)
+  useEffect(() => {
+    const bridge = window.desktopBridge?.voiceHud
+    if (!bridge?.setInteractive || !visible) return
+    const report = (target: EventTarget | null): void => {
+      const over = target instanceof Element && target.closest(`[${HIT_ATTRIBUTE}]`) !== null
+      if (over === interactiveRef.current) return
+      interactiveRef.current = over
+      bridge.setInteractive(over)
+    }
+    const onMove = (event: MouseEvent): void => report(event.target)
+    const onLeave = (): void => report(null)
+    const root = document.documentElement
+    document.addEventListener('mousemove', onMove)
+    root.addEventListener('mouseleave', onLeave)
+    return () => {
+      document.removeEventListener('mousemove', onMove)
+      root.removeEventListener('mouseleave', onLeave)
+      // Main lets clicks through again whenever it hides the pill.
+      interactiveRef.current = false
+    }
+  }, [visible])
+}
+
 export function VoiceHudApp(): React.JSX.Element | null {
   const [phase, setPhase] = useState<VoiceHudPhase>({ kind: 'hidden' })
+  const [transcript, setTranscript] = useState('')
   const [levels, setLevels] = useState<number[]>(EMPTY_LEVELS)
   const [recordingSince, setRecordingSince] = useState(0)
   const recorderRef = useRef<VoiceRecorder | null>(null)
@@ -125,6 +194,7 @@ export function VoiceHudApp(): React.JSX.Element | null {
           return state.phase
         })
         if (startsRecording) setLevels(EMPTY_LEVELS)
+        setTranscript(state.transcript ?? '')
       }),
       bridge.onSound((name) => {
         if (!soundsEnabledRef.current) return
@@ -188,6 +258,8 @@ export function VoiceHudApp(): React.JSX.Element | null {
     }
   }, [getRecorder])
 
+  useClickThrough(phase.kind !== 'hidden')
+
   // Never let a click steal focus from the text field being dictated into.
   const preventFocus = (event: React.MouseEvent): void => {
     event.preventDefault()
@@ -197,56 +269,63 @@ export function VoiceHudApp(): React.JSX.Element | null {
 
   const bridge = window.desktopBridge?.voiceHud
 
+  // Nothing above the pill until the first words; never with a notice.
+  const preview =
+    phase.kind !== 'notice' && transcript ? <TranscriptPreview text={transcript} /> : null
+  const layout = (pill: React.JSX.Element): React.JSX.Element => (
+    <div className="voice-hud-root">
+      {preview}
+      <div className="voice-pill-slot">{pill}</div>
+    </div>
+  )
+
   if (phase.kind === 'recording') {
-    return (
-      <div className="voice-hud-root">
-        <div
-          className="voice-pill voice-pill--clickable"
-          title="Click to stop · Esc to cancel"
-          onMouseDown={preventFocus}
-          onClick={() => bridge?.clickStop()}
-          data-testid="voice-hud-recording"
-        >
-          <RecordingBars levels={levels} />
-          <RecordingTimer since={recordingSince} />
-        </div>
+    return layout(
+      <div
+        className="voice-pill voice-pill--clickable"
+        title="Click to stop · Esc to cancel"
+        onMouseDown={preventFocus}
+        onClick={() => bridge?.clickStop()}
+        data-testid="voice-hud-recording"
+        {...hit}
+      >
+        <RecordingBars levels={levels} />
+        <RecordingTimer since={recordingSince} />
       </div>
     )
   }
 
   if (phase.kind === 'transcribing' || phase.kind === 'enhancing') {
     const showPercent = phase.showsProgress && phase.progress !== null
-    return (
-      <div className="voice-hud-root">
-        <div
-          className="voice-pill"
-          title={phase.kind === 'enhancing' ? 'Polishing…' : 'Transcribing…'}
-          onMouseDown={preventFocus}
-          data-testid="voice-hud-processing"
-        >
-          <ProcessingWave />
-          {showPercent && (
-            <span className="voice-text voice-percent">
-              {Math.round((phase.progress ?? 0) * 100)}%
-            </span>
-          )}
-        </div>
+    return layout(
+      <div
+        className="voice-pill"
+        title={phase.kind === 'enhancing' ? 'Polishing…' : 'Transcribing…'}
+        onMouseDown={preventFocus}
+        data-testid="voice-hud-processing"
+        {...hit}
+      >
+        <ProcessingWave />
+        {showPercent && (
+          <span className="voice-text voice-percent">
+            {Math.round((phase.progress ?? 0) * 100)}%
+          </span>
+        )}
       </div>
     )
   }
 
-  return (
-    <div className="voice-hud-root">
-      <div
-        className="voice-pill voice-pill--clickable"
-        onMouseDown={preventFocus}
-        onClick={() => bridge?.clickCancel()}
-        data-testid="voice-hud-notice"
-      >
-        <span className="voice-text voice-text--notice" title={phase.text}>
-          {phase.text}
-        </span>
-      </div>
+  return layout(
+    <div
+      className="voice-pill voice-pill--clickable"
+      onMouseDown={preventFocus}
+      onClick={() => bridge?.clickCancel()}
+      data-testid="voice-hud-notice"
+      {...hit}
+    >
+      <span className="voice-text voice-text--notice" title={phase.text}>
+        {phase.text}
+      </span>
     </div>
   )
 }

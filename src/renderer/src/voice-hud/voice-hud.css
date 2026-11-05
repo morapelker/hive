@@ -23,13 +23,77 @@ body {
   cursor: default;
 }
 
+/*
+ * The window is taller than the pill: the pill sits in a 72px strip at the
+ * bottom (where the old 72px window was) and the live transcript preview
+ * stacks directly above it. Everything else is transparent and lets clicks
+ * through to the app underneath (see voice-hud-window.ts).
+ */
 .voice-hud-root {
   width: 100%;
   height: 100%;
   display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  background: transparent;
+}
+
+.voice-pill-slot {
+  flex: 0 0 72px;
+  display: flex;
   align-items: center;
   justify-content: center;
-  background: transparent;
+}
+
+/*
+ * Live transcript preview: same black glass and hairline as the pill, at most
+ * four lines, no wider than the HUD. Sized to its text, so a few words make a
+ * small panel and nothing shows before the first words.
+ */
+.voice-preview {
+  box-sizing: border-box;
+  max-width: 472px;
+  margin-bottom: -6px;
+  padding: 8px 14px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.88);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.1),
+    0 8px 24px rgba(0, 0, 0, 0.35);
+  animation: voice-pill-in 160ms ease-out;
+}
+
+/* Bottom-aligned: the newest words stay in view and older lines are cut off at the top. */
+.voice-preview-box {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  max-height: calc(4 * 18px);
+  overflow: hidden;
+}
+
+.voice-preview--overflow .voice-preview-box {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 22px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 22px);
+}
+
+.voice-preview-text {
+  flex-shrink: 0;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+  color: rgba(255, 255, 255, 0.92);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-pill,
+  .voice-preview {
+    animation: none;
+  }
 }
 
 /* Wispelker's pill: black capsule, 16/10 padding, 1pt inset hairline. */
