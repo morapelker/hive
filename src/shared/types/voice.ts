@@ -62,7 +62,19 @@ export const VOICE_SPEECH_MODELS: readonly VoiceSpeechModelInfo[] = [
   }
 ]
 
-export const DEFAULT_VOICE_SPEECH_MODEL: VoiceSpeechModelId = 'parakeet-tdt-0.6b-v2'
+/**
+ * The speech model for new setups: the streaming model, recommended for
+ * English because it powers the live preview. Existing profiles keep the
+ * model they have (see `migrateVoiceSpeechModelDefault`).
+ */
+export const DEFAULT_VOICE_SPEECH_MODEL: VoiceSpeechModelId = 'nemotron-speech-streaming-en-0.6b'
+
+/**
+ * The default before the streaming model existed. A saved voice blob without a
+ * valid model id means this one, so an upgrade never silently changes the
+ * model of someone who may already have it downloaded.
+ */
+export const LEGACY_VOICE_SPEECH_MODEL: VoiceSpeechModelId = 'parakeet-tdt-0.6b-v2'
 
 export function findVoiceSpeechModel(id: string | null | undefined): VoiceSpeechModelInfo {
   return VOICE_SPEECH_MODELS.find((m) => m.id === id) ?? VOICE_SPEECH_MODELS[0]
@@ -106,6 +118,13 @@ export interface VoiceSettings {
   restoreClipboardDelayMs: number
   /** Free the ~1.4 GB speech model after this many idle minutes; 0 keeps it loaded. */
   unloadModelAfterMinutes: number
+  /**
+   * The one-time check that moves profiles which never used voice to the new
+   * default speech model has run (always true for new setups).
+   */
+  speechModelDefaultMigrated: boolean
+  /** The user dismissed the Settings suggestion to switch from Parakeet v2 to the streaming model. */
+  streamingSuggestionDismissed: boolean
 }
 
 export const VOICE_DEFAULT_HOTKEY = 'option+space'
@@ -129,7 +148,9 @@ export const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
   },
   dictionary: [],
   restoreClipboardDelayMs: 400,
-  unloadModelAfterMinutes: 10
+  unloadModelAfterMinutes: 10,
+  speechModelDefaultMigrated: true,
+  streamingSuggestionDismissed: false
 }
 
 function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
@@ -185,9 +206,12 @@ export function sanitizeVoiceSettings(value: unknown): VoiceSettings {
     record.cleanup && typeof record.cleanup === 'object'
       ? (record.cleanup as Record<string, unknown>)
       : {}
+  // A saved blob predates (or was written without) a choice of model: it meant
+  // the old default, which may already be on disk. Only new setups (no blob at
+  // all, handled above) get the streaming default from here.
   const speechModel = VOICE_SPEECH_MODELS.some((m) => m.id === record.speechModel)
     ? (record.speechModel as VoiceSpeechModelId)
-    : defaults.speechModel
+    : LEGACY_VOICE_SPEECH_MODEL
   return {
     enabled: record.enabled === true,
     speechModel,
@@ -226,8 +250,48 @@ export function sanitizeVoiceSettings(value: unknown): VoiceSettings {
       0,
       24 * 60,
       defaults.unloadModelAfterMinutes
-    )
+    ),
+    // Missing on blobs saved before the streaming default: the migration has not run.
+    speechModelDefaultMigrated: record.speechModelDefaultMigrated === true,
+    streamingSuggestionDismissed: record.streamingSuggestionDismissed === true
   }
+}
+
+/**
+ * One-time move of profiles that never used voice to the new default speech
+ * model. A profile switches only when voice is off, it is still on the old
+ * default (Parakeet v2), and none of that model is on disk (no files, no
+ * partial download), so nothing that was downloaded is abandoned and nothing
+ * downloads until the user turns voice on. Everyone else keeps their model.
+ * Either way the check is marked done, so it never runs again for this profile.
+ * Returns null when there is nothing to do.
+ */
+export function migrateVoiceSpeechModelDefault(
+  settings: VoiceSettings,
+  hasLocalFiles: (modelId: VoiceSpeechModelId) => boolean
+): { settings: VoiceSettings; switched: boolean } | null {
+  if (settings.speechModelDefaultMigrated) return null
+  const switched =
+    !settings.enabled &&
+    settings.speechModel === LEGACY_VOICE_SPEECH_MODEL &&
+    !hasLocalFiles(LEGACY_VOICE_SPEECH_MODEL)
+  return {
+    settings: {
+      ...settings,
+      speechModel: switched ? DEFAULT_VOICE_SPEECH_MODEL : settings.speechModel,
+      speechModelDefaultMigrated: true
+    },
+    switched
+  }
+}
+
+/** Show the Settings suggestion to move from Parakeet v2 to the streaming model. */
+export function shouldSuggestStreamingModel(settings: VoiceSettings): boolean {
+  return (
+    settings.enabled &&
+    settings.speechModel === LEGACY_VOICE_SPEECH_MODEL &&
+    !settings.streamingSuggestionDismissed
+  )
 }
 
 /** Speech-model lifecycle as shown in Settings and the header icon tooltip. */

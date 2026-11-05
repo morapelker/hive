@@ -6,7 +6,9 @@ import {
   Loader2,
   MinusCircle,
   PlusCircle,
-  Trash2
+  Sparkles,
+  Trash2,
+  X
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -17,7 +19,9 @@ import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { getVoiceBridge, isVoiceAvailable, useVoiceStore } from '@/stores/useVoiceStore'
 import {
+  DEFAULT_VOICE_SPEECH_MODEL,
   findVoiceSpeechModel,
+  shouldSuggestStreamingModel,
   VOICE_CLEANUP_TIMEOUT_MAX_SECONDS,
   VOICE_CLEANUP_TIMEOUT_MIN_SECONDS,
   VOICE_RESTORE_CLIPBOARD_MAX_MS,
@@ -31,6 +35,24 @@ import { validateHotkey } from '@shared/voice/hotkey-spec'
 
 function formatMb(bytes: number): string {
   return `${Math.round(bytes / (1024 * 1024))} MB`
+}
+
+/** The recommended (default) model first, then the rest in catalog order. */
+const SPEECH_MODEL_OPTIONS = [
+  ...VOICE_SPEECH_MODELS.filter((m) => m.id === DEFAULT_VOICE_SPEECH_MODEL),
+  ...VOICE_SPEECH_MODELS.filter((m) => m.id !== DEFAULT_VOICE_SPEECH_MODEL)
+]
+const RECOMMENDED_SPEECH_MODEL = findVoiceSpeechModel(DEFAULT_VOICE_SPEECH_MODEL)
+
+function Badge({ children, testId }: { children: string; testId: string }): React.JSX.Element {
+  return (
+    <span
+      className="rounded-full border border-border bg-muted/40 px-1.5 py-px text-[10px] font-medium text-muted-foreground"
+      data-testid={testId}
+    >
+      {children}
+    </span>
+  )
 }
 
 interface ToggleRowProps {
@@ -284,9 +306,50 @@ export function SettingsVoice(): React.JSX.Element {
               <p className="text-xs text-muted-foreground">
                 Runs locally with sherpa-onnx. Switching models downloads the other one.
               </p>
+              <p className="text-xs text-muted-foreground" data-testid="voice-live-preview-hint">
+                Live preview shows your words above the pill as you speak; nothing is typed until
+                you stop.
+              </p>
             </div>
+            {shouldSuggestStreamingModel(voice) && (
+              <div
+                className="flex items-start gap-2 rounded-md border border-border bg-muted/30 p-2.5 text-xs"
+                data-testid="voice-streaming-suggestion"
+              >
+                <Sparkles className="h-3.5 w-3.5 shrink-0 mt-0.5 text-muted-foreground" />
+                <div className="flex-1 space-y-2">
+                  <p>
+                    Switch to {RECOMMENDED_SPEECH_MODEL.name} to see your words while you speak.
+                    English only, {formatMb(RECOMMENDED_SPEECH_MODEL.downloadBytes)} download.
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7"
+                    onClick={() =>
+                      update({
+                        speechModel: RECOMMENDED_SPEECH_MODEL.id,
+                        streamingSuggestionDismissed: true
+                      })
+                    }
+                    data-testid="voice-streaming-suggestion-switch"
+                  >
+                    Switch
+                  </Button>
+                </div>
+                <button
+                  type="button"
+                  className="text-muted-foreground hover:text-foreground transition-colors"
+                  onClick={() => update({ streamingSuggestionDismissed: true })}
+                  aria-label="Dismiss suggestion"
+                  data-testid="voice-streaming-suggestion-dismiss"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
             <div className="space-y-1">
-              {VOICE_SPEECH_MODELS.map((option) => {
+              {SPEECH_MODEL_OPTIONS.map((option) => {
                 const selected = voice.speechModel === option.id
                 return (
                   <button
@@ -301,9 +364,21 @@ export function SettingsVoice(): React.JSX.Element {
                     data-testid={`voice-speech-model-${option.id}`}
                   >
                     <div className="flex-1">
-                      <span>{option.name}</span>
+                      <span className="flex flex-wrap items-center gap-1.5">
+                        {option.name}
+                        {option.id === DEFAULT_VOICE_SPEECH_MODEL && (
+                          <Badge testId="voice-speech-model-recommended">
+                            Recommended for English
+                          </Badge>
+                        )}
+                        {option.streaming && (
+                          <Badge testId="voice-speech-model-live-preview">Live preview</Badge>
+                        )}
+                      </span>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        {option.description} {formatMb(option.downloadBytes)} download.
+                        {option.description}
+                        {option.streaming ? '' : ' No live preview.'}{' '}
+                        {formatMb(option.downloadBytes)} download.
                       </p>
                     </div>
                     {selected && (
@@ -343,8 +418,8 @@ export function SettingsVoice(): React.JSX.Element {
             ) : (
               <p className="text-xs text-muted-foreground">
                 Press {hotkeyValidation.spec?.display} anywhere in the app to start or stop
-                dictation. Esc cancels. Modifiers: cmd, option, ctrl, shift; keys: letters, digits,
-                space, f1–f20.
+                dictation. Esc cancels while recording; while polishing, Esc or the hotkey skips the
+                AI. Modifiers: cmd, option, ctrl, shift; keys: letters, digits, space, f1–f20.
               </p>
             )}
           </div>
@@ -381,6 +456,16 @@ export function SettingsVoice(): React.JSX.Element {
               onChange={(enabled) => updateCleanup({ enabled })}
               testId="voice-cleanup-toggle"
             />
+            <p
+              className={cn(
+                'text-xs text-muted-foreground',
+                !voice.cleanup.enabled && 'opacity-50'
+              )}
+              data-testid="voice-cleanup-skip-hint"
+            >
+              While it polishes, the transcript stays on screen above the pill. Press Esc, the
+              hotkey or Skip to paste it as is, without waiting for the AI.
+            </p>
             <div
               className={cn(
                 'space-y-4 pl-4',

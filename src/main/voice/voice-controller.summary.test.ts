@@ -120,6 +120,8 @@ import { DICTATION_SUMMARY_MESSAGE, type DictationSummary } from './voice-dictat
 const ENABLED: VoiceSettings = {
   ...DEFAULT_VOICE_SETTINGS,
   enabled: true,
+  // The offline (whole-clip) flow; the streaming default is covered in voice-controller.stream.test.ts.
+  speechModel: 'parakeet-tdt-0.6b-v2',
   cleanup: { ...DEFAULT_VOICE_SETTINGS.cleanup, enabled: true }
 }
 

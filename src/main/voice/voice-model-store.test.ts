@@ -216,3 +216,24 @@ describe('VoiceModelStore with the Nemotron streaming model', () => {
     expect(requests.at(-1)?.range).toBeUndefined()
   })
 })
+
+describe('VoiceModelStore.hasLocalFiles', () => {
+  it('tells whether any of a model is on disk: nothing, a partial download, or its files', async () => {
+    const store = new VoiceModelStore()
+    expect(store.hasLocalFiles(MODEL_ID)).toBe(false)
+
+    mkdirSync(modelsDir(), { recursive: true })
+    const partial = join(modelsDir(), `${MODEL.archive}.tar.bz2.partial`)
+    writeFileSync(partial, 'some bytes')
+    expect(store.hasLocalFiles(MODEL_ID)).toBe(true)
+    expect(store.hasLocalFiles('parakeet-tdt-0.6b-v2')).toBe(false)
+
+    rmSync(partial)
+    await store.download(MODEL_ID)
+    expect(store.isReady(MODEL_ID)).toBe(true)
+    expect(store.hasLocalFiles(MODEL_ID)).toBe(true)
+
+    await store.delete(MODEL_ID)
+    expect(store.hasLocalFiles(MODEL_ID)).toBe(false)
+  })
+})

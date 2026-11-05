@@ -44,7 +44,7 @@ import { voiceMedia } from './voice-media'
 import { voiceModelStore } from './voice-model-store'
 import { deliverVoiceText } from './voice-paste'
 import { PreviewThrottle } from './voice-preview-throttle'
-import { readVoiceSettings } from './voice-settings'
+import { loadVoiceSettingsOnStartup, readVoiceSettings } from './voice-settings'
 import type { VoiceSoundName } from './voice-sounds'
 import { voiceTestClips } from './voice-test-clips'
 
@@ -227,7 +227,10 @@ export class VoiceController {
       app.off('browser-window-blur', onBlur)
     })
 
-    this.applySettings(readVoiceSettings(options.db), { initial: true })
+    this.applySettings(
+      loadVoiceSettingsOnStartup(options.db, (modelId) => voiceModelStore.hasLocalFiles(modelId)),
+      { initial: true }
+    )
   }
 
   dispose(): void {

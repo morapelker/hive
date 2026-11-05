@@ -59,6 +59,15 @@ export class VoiceModelStore {
     return voiceModelFilesPresent(this.getModelDir(modelId))
   }
 
+  /** Any of the model is on disk: its files (complete or not) or a partial download. */
+  hasLocalFiles(modelId: VoiceSpeechModelId): boolean {
+    const model = findVoiceSpeechModel(modelId)
+    return (
+      existsSync(this.getModelDir(modelId)) ||
+      existsSync(join(getVoiceModelsDir(), `${model.archive}.tar.bz2.partial`))
+    )
+  }
+
   getState(modelId: VoiceSpeechModelId): VoiceModelState {
     const inFlight = this.progress.get(modelId)
     if (inFlight) return inFlight

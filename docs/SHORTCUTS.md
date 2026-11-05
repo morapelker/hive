@@ -77,6 +77,18 @@ These shortcuts work anywhere in the application:
 | `Cmd+S` | Save Session | Save current session |
 | `Esc` | Cancel Operation | Stop current AI operation |
 
+## Voice Dictation
+
+Turn dictation on in Settings › Voice. The hotkey can be changed there.
+
+| Shortcut | Action | Description |
+|----------|--------|-------------|
+| `Option+Space` | Start/Stop Dictation | Press to start recording, press again to stop (or click the pill) |
+| `Esc` (while recording) | Cancel Dictation | Discard the recording; nothing is pasted |
+| `Esc`, `Option+Space` or **Skip** (while polishing) | Skip AI Polishing | Paste the transcript shown above the pill right away, without waiting for the AI |
+
+With a live preview model (Nemotron Speech Streaming, the default for English), your words appear above the pill as you speak; nothing is typed until you stop. Parakeet models have no live preview.
+
 ## File Operations
 
 | Shortcut | Action | Description |

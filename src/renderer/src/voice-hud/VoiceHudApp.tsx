@@ -301,7 +301,7 @@ export function VoiceHudApp(): React.JSX.Element | null {
     return layout(
       <div
         className="voice-pill"
-        title="Polishing… Esc to skip"
+        title="Polishing… Esc or the hotkey to skip"
         onMouseDown={preventFocus}
         data-testid="voice-hud-processing"
         {...hit}

@@ -1,12 +1,17 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   DEFAULT_VOICE_SETTINGS,
+  DEFAULT_VOICE_SPEECH_MODEL,
+  LEGACY_VOICE_SPEECH_MODEL,
   VOICE_SPEECH_MODELS,
   VOICE_AUDIO_CHUNK_MAX_SAMPLES,
   findVoiceSpeechModel,
+  migrateVoiceSpeechModelDefault,
   sanitizeVoiceAudioChunk,
   sanitizeVoiceSettings,
-  voiceHistoryPreview
+  shouldSuggestStreamingModel,
+  voiceHistoryPreview,
+  type VoiceSettings
 } from './voice'
 
 describe('sanitizeVoiceSettings', () => {
@@ -66,7 +71,7 @@ describe('sanitizeVoiceSettings', () => {
       speechModel: 'whisper',
       cleanup: { model: { providerID: '', modelID: 'x' } }
     })
-    expect(result.speechModel).toBe(DEFAULT_VOICE_SETTINGS.speechModel)
+    expect(result.speechModel).toBe(LEGACY_VOICE_SPEECH_MODEL)
     expect(result.cleanup.model).toBeNull()
   })
 
@@ -75,12 +80,122 @@ describe('sanitizeVoiceSettings', () => {
     expect(result.speechModel).toBe('nemotron-speech-streaming-en-0.6b')
   })
 
-  it('does not make the streaming model the default yet', () => {
-    expect(DEFAULT_VOICE_SETTINGS.speechModel).toBe('parakeet-tdt-0.6b-v2')
+  it('makes the streaming model the default for new setups only', () => {
+    expect(DEFAULT_VOICE_SPEECH_MODEL).toBe('nemotron-speech-streaming-en-0.6b')
+    expect(findVoiceSpeechModel(DEFAULT_VOICE_SPEECH_MODEL).streaming).toBe(true)
+    expect(DEFAULT_VOICE_SETTINGS.speechModel).toBe('nemotron-speech-streaming-en-0.6b')
+    // No voice settings saved yet.
+    expect(sanitizeVoiceSettings(undefined).speechModel).toBe('nemotron-speech-streaming-en-0.6b')
+    expect(sanitizeVoiceSettings(null).speechModel).toBe('nemotron-speech-streaming-en-0.6b')
+    // A saved blob without a valid model meant the old default.
     expect(sanitizeVoiceSettings({}).speechModel).toBe('parakeet-tdt-0.6b-v2')
     expect(sanitizeVoiceSettings({ speechModel: 'nemotron' }).speechModel).toBe(
       'parakeet-tdt-0.6b-v2'
     )
+  })
+
+  it('keeps an existing Parakeet v2 profile as it was', () => {
+    const saved = { enabled: true, speechModel: 'parakeet-tdt-0.6b-v2', hotkey: 'f19' }
+    const result = sanitizeVoiceSettings(saved)
+    expect(result.speechModel).toBe('parakeet-tdt-0.6b-v2')
+    expect(result.enabled).toBe(true)
+    expect(result.streamingSuggestionDismissed).toBe(false)
+  })
+
+  it('marks the default check as done for new setups and pending for older blobs', () => {
+    expect(sanitizeVoiceSettings(undefined).speechModelDefaultMigrated).toBe(true)
+    expect(sanitizeVoiceSettings(DEFAULT_VOICE_SETTINGS).speechModelDefaultMigrated).toBe(true)
+    expect(
+      sanitizeVoiceSettings({ speechModel: 'parakeet-tdt-0.6b-v2' }).speechModelDefaultMigrated
+    ).toBe(false)
+    expect(
+      sanitizeVoiceSettings({ speechModelDefaultMigrated: 'yes' }).speechModelDefaultMigrated
+    ).toBe(false)
+  })
+
+  it('keeps a dismissed streaming suggestion dismissed', () => {
+    expect(
+      sanitizeVoiceSettings({ streamingSuggestionDismissed: true }).streamingSuggestionDismissed
+    ).toBe(true)
+    expect(
+      sanitizeVoiceSettings({ streamingSuggestionDismissed: 1 }).streamingSuggestionDismissed
+    ).toBe(false)
+    expect(DEFAULT_VOICE_SETTINGS.streamingSuggestionDismissed).toBe(false)
+  })
+})
+
+describe('migrateVoiceSpeechModelDefault', () => {
+  /** An existing profile saved before the streaming default (no marker yet). */
+  const legacy = (partial: Partial<VoiceSettings> = {}): VoiceSettings => ({
+    ...sanitizeVoiceSettings({ speechModel: 'parakeet-tdt-0.6b-v2' }),
+    ...partial
+  })
+  const nothingOnDisk = (): boolean => false
+  const v2OnDisk = (id: string): boolean => id === 'parakeet-tdt-0.6b-v2'
+
+  it('moves a profile that never used voice to the streaming model', () => {
+    const result = migrateVoiceSpeechModelDefault(legacy(), nothingOnDisk)
+    expect(result).toEqual({
+      settings: {
+        ...legacy(),
+        speechModel: 'nemotron-speech-streaming-en-0.6b',
+        speechModelDefaultMigrated: true
+      },
+      switched: true
+    })
+  })
+
+  it('keeps Parakeet v2 when any of it is on disk, even with voice off', () => {
+    const result = migrateVoiceSpeechModelDefault(legacy(), v2OnDisk)
+    expect(result?.switched).toBe(false)
+    expect(result?.settings.speechModel).toBe('parakeet-tdt-0.6b-v2')
+    expect(result?.settings.speechModelDefaultMigrated).toBe(true)
+  })
+
+  it('keeps the model of anyone with voice on, whatever is on disk', () => {
+    const result = migrateVoiceSpeechModelDefault(legacy({ enabled: true }), nothingOnDisk)
+    expect(result?.switched).toBe(false)
+    expect(result?.settings).toEqual({
+      ...legacy({ enabled: true }),
+      speechModelDefaultMigrated: true
+    })
+  })
+
+  it('keeps a model the user picked other than the old default', () => {
+    const v3 = legacy({ speechModel: 'parakeet-tdt-0.6b-v3' })
+    expect(migrateVoiceSpeechModelDefault(v3, nothingOnDisk)?.settings.speechModel).toBe(
+      'parakeet-tdt-0.6b-v3'
+    )
+  })
+
+  it('runs once: nothing to do once marked, or for new setups', () => {
+    const hasLocalFiles = vi.fn(() => false)
+    const once = migrateVoiceSpeechModelDefault(legacy({ enabled: true }), hasLocalFiles)
+    expect(once).not.toBeNull()
+    // Voice later turned off with the files deleted: the user's choice stands.
+    const later = { ...once!.settings, enabled: false }
+    expect(migrateVoiceSpeechModelDefault(later, hasLocalFiles)).toBeNull()
+    expect(migrateVoiceSpeechModelDefault(DEFAULT_VOICE_SETTINGS, hasLocalFiles)).toBeNull()
+  })
+})
+
+describe('shouldSuggestStreamingModel', () => {
+  const on = { ...DEFAULT_VOICE_SETTINGS, enabled: true }
+
+  it('suggests switching only to Parakeet v2 users with voice on who have not dismissed it', () => {
+    expect(shouldSuggestStreamingModel({ ...on, speechModel: 'parakeet-tdt-0.6b-v2' })).toBe(true)
+    expect(shouldSuggestStreamingModel({ ...on, speechModel: 'parakeet-tdt-0.6b-v3' })).toBe(false)
+    expect(shouldSuggestStreamingModel(on)).toBe(false)
+    expect(
+      shouldSuggestStreamingModel({
+        ...on,
+        speechModel: 'parakeet-tdt-0.6b-v2',
+        streamingSuggestionDismissed: true
+      })
+    ).toBe(false)
+    expect(
+      shouldSuggestStreamingModel({ ...on, enabled: false, speechModel: 'parakeet-tdt-0.6b-v2' })
+    ).toBe(false)
   })
 })
 
