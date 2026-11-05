@@ -162,6 +162,36 @@ body {
   color: rgba(255, 255, 255, 0.7);
 }
 
+/* "Esc to skip" next to "Polishing…" while the AI step runs. */
+.voice-hint {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+/* Skip while polishing: a small capsule inside the pill. Never takes focus (see VoiceHudApp). */
+.voice-skip {
+  appearance: none;
+  margin: 0 -6px 0 2px;
+  padding: 3px 10px;
+  border: 0;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.16);
+  color: rgba(255, 255, 255, 0.95);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 14px;
+  cursor: pointer;
+  outline: none;
+}
+
+.voice-skip:hover {
+  background: rgba(255, 255, 255, 0.26);
+}
+
+.voice-skip:active {
+  background: rgba(255, 255, 255, 0.34);
+}
+
 .voice-text--notice {
   max-width: 360px;
   overflow: hidden;

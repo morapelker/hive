@@ -659,6 +659,39 @@ describe('VoiceController streaming dictation flow (VOICE-06)', () => {
       expect(hudStates().at(-1)).toEqual({ phase: { kind: 'hidden' }, sounds: true })
     })
 
+    it('lets the user skip polishing: the shown streamed text is pasted at once (VOICE-08)', async () => {
+      controller.applySettings({
+        ...STREAMING,
+        cleanup: { ...STREAMING.cleanup, enabled: true },
+        dictionary: [{ word: 'Tedooo', soundsLike: ['tedo'], caseSensitive: false }]
+      })
+      let signal: AbortSignal | undefined
+      cleanup.enhanceTranscript.mockImplementationOnce(
+        (_raw: string, _settings?: unknown, deps?: { signal?: AbortSignal }) => {
+          signal = deps?.signal
+          return new Promise<never>(() => {})
+        }
+      )
+      const session = await record()
+      const clip = recording(12 * CHUNK)
+      session.finish.mockResolvedValueOnce(streamedResult('open tedo settings', clip))
+      for (const chunk of chunksOf(clip, streamId())) controller.onAudioChunk(chunk)
+      controller.onHudStopClick()
+      controller.onAudio({ samples: clip, sampleRate: 16_000, durationMs: 0 })
+      await vi.waitFor(() => expect(hudStates().at(-1)?.phase.kind).toBe('enhancing'))
+
+      expect(controller.skipPolishing('click')).toBe(true)
+      await vi.waitFor(() => expect(controller.getStatus().state).toBe('idle'))
+      expect(pasted()).toEqual(['open Tedooo settings'])
+      expect(signal?.aborted).toBe(true)
+      expect(onlySummary()).toMatchObject({
+        outcome: 'delivered',
+        textSource: 'streamed',
+        aiStep: 'skipped',
+        skipInput: 'click'
+      })
+    })
+
     it('delivers to the agent with the streamed text, a live preview and no AI step', async () => {
       controller.setUiContext({
         boardIdle: true,

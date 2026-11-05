@@ -1,6 +1,30 @@
 import { describe, expect, it, vi } from 'vitest'
 import { DEFAULT_VOICE_SETTINGS, type VoiceSettings } from '@shared/types/voice'
-import { cleanupBudgetMs, enhanceTranscript, resolveCleanupModel } from './voice-cleanup'
+
+const providers = vi.hoisted(() => ({
+  generateText: vi.fn(async () => 'Cleaned.'),
+  spawnCLI: vi.fn(async () => 'Cleaned.'),
+  getCustomProviderById: vi.fn(() => ({ id: 'provider-1', command: 'glm-claude' }))
+}))
+vi.mock('../services/text-generation-router', () => ({ generateText: providers.generateText }))
+vi.mock('../services/title-generation-shared', () => ({ spawnCLI: providers.spawnCLI }))
+vi.mock('../services/custom-providers', () => ({
+  getCustomProviderById: providers.getCustomProviderById
+}))
+vi.mock('../services/env-vars', () => ({ getUserEnvironmentVariables: () => ({}) }))
+
+const logger = vi.hoisted(() => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }))
+vi.mock('../services/logger', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../services/logger')>()),
+  createLogger: () => logger
+}))
+
+import {
+  cleanupBudgetMs,
+  enhanceTranscript,
+  resolveCleanupModel,
+  runCleanupModel
+} from './voice-cleanup'
 
 const settings = (overrides: Partial<VoiceSettings> = {}): VoiceSettings => ({
   ...DEFAULT_VOICE_SETTINGS,
@@ -108,6 +132,132 @@ describe('enhanceTranscript', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('enhanceTranscript skipped by the caller (VOICE-08)', () => {
+  const DICTIONARY = { dictionary: [{ word: 'Mor', soundsLike: ['moor'], caseSensitive: false }] }
+
+  it('settles at once with the shown raw text when the signal aborts mid-request, and stops the request', async () => {
+    logger.warn.mockClear()
+    const abort = new AbortController()
+    let modelSignal: AbortSignal | undefined
+    const runModel = vi.fn((_p: string, _s: string, _st: VoiceSettings, signal?: AbortSignal) => {
+      modelSignal = signal
+      return new Promise<string | null>(() => {})
+    })
+    const pending = enhanceTranscript('hey moor fix the bug', settings(DICTIONARY), {
+      db: null,
+      signal: abort.signal,
+      runModel
+    })
+    await Promise.resolve()
+    abort.abort()
+
+    expect(await pending).toEqual({
+      text: 'hey Mor fix the bug',
+      cleaned: false,
+      fallbackReason: null,
+      ai: 'skipped'
+    })
+    // The model call got the same signal, so the provider can stop its process.
+    expect(modelSignal).toBe(abort.signal)
+    expect(logger.warn).not.toHaveBeenCalled()
+  })
+
+  it('reports a provider that rejects because of the abort as skipped, not failed', async () => {
+    const abort = new AbortController()
+    const outcome = await enhanceTranscript('fix the bug', settings(), {
+      db: null,
+      signal: abort.signal,
+      runModel: async () => {
+        abort.abort()
+        throw Object.assign(new Error('AI generation was cancelled'), { name: 'AbortError' })
+      }
+    })
+    expect(outcome).toMatchObject({ ai: 'skipped', fallbackReason: null, cleaned: false })
+  })
+
+  it('never calls the model when already skipped', async () => {
+    const abort = new AbortController()
+    abort.abort()
+    const runModel = vi.fn()
+    const outcome = await enhanceTranscript('fix the bug', settings(), {
+      db: null,
+      signal: abort.signal,
+      runModel
+    })
+    expect(outcome.ai).toBe('skipped')
+    expect(runModel).not.toHaveBeenCalled()
+  })
+
+  it('ignores a model answer that lands after the skip', async () => {
+    const abort = new AbortController()
+    const outcome = await enhanceTranscript('fix the bug', settings(), {
+      db: null,
+      signal: abort.signal,
+      runModel: async () => {
+        abort.abort()
+        return 'Fix the bug.'
+      }
+    })
+    expect(outcome).toMatchObject({ text: 'fix the bug', ai: 'skipped', cleaned: false })
+  })
+
+  it('still times out as before when nobody skips', async () => {
+    vi.useFakeTimers()
+    try {
+      const pending = enhanceTranscript(
+        'fix the bug',
+        settings({ cleanup: { ...DEFAULT_VOICE_SETTINGS.cleanup, timeoutSeconds: 3 } }),
+        { db: null, signal: new AbortController().signal, runModel: () => new Promise(() => {}) }
+      )
+      await vi.advanceTimersByTimeAsync(cleanupBudgetMs(3, 'fix the bug'.length) + 10)
+      const outcome = await pending
+      expect(outcome.ai).toBe('timed-out')
+      expect(outcome.fallbackReason).toMatch(/did not answer within/)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('runCleanupModel cancellation', () => {
+  it('hands the signal to the provider router (Agent SDK query / CLI process)', async () => {
+    const abort = new AbortController()
+    await runCleanupModel('p', 's', settings(), null, 5_000, abort.signal)
+    expect(providers.generateText).toHaveBeenCalledWith(
+      'p',
+      's',
+      'claude-code',
+      expect.objectContaining({ signal: abort.signal, timeoutMs: 5_000, maxRetries: 0 })
+    )
+  })
+
+  it('hands the signal to the custom provider command, so its process group is stopped', async () => {
+    const abort = new AbortController()
+    await runCleanupModel(
+      'p',
+      's',
+      settings({
+        cleanup: {
+          ...DEFAULT_VOICE_SETTINGS.cleanup,
+          model: {
+            agentSdk: 'claude-code-cli',
+            providerID: 'custom',
+            modelID: 'glm-4.6',
+            variant: 'low'
+          },
+          customProviderId: 'provider-1'
+        }
+      }),
+      null,
+      5_000,
+      abort.signal
+    )
+    const call = providers.spawnCLI.mock.calls.at(-1) as unknown as unknown[]
+    expect(call[3]).toBe(5_000)
+    expect(call[6]).toBe(abort.signal)
   })
 })
 

@@ -323,11 +323,26 @@ export interface VoiceHudState {
   readonly transcript?: string
 }
 
+/**
+ * What a dictation's AI cleanup step did. `disabled`: cleanup is off (or not
+ * used for this target). `not-applicable`: nothing to clean. `skipped`: the
+ * user skipped polishing and got the shown transcript, which is not a failure.
+ * `timed-out` / `failed`: the raw transcript was used instead.
+ */
+export type VoiceCleanupResult =
+  'disabled' | 'not-applicable' | 'cleaned' | 'skipped' | 'timed-out' | 'failed'
+
+/** How the user skipped AI polishing: the Skip button on the pill, Escape, or the dictation hotkey. */
+export type VoiceSkipInput = 'click' | 'escape' | 'hotkey'
+
 /** Result of a completed dictation, pushed to the renderer for toasts/history refresh. */
 export interface VoiceDictationResult {
   readonly entry: VoiceHistoryEntry
   readonly delivery: 'pasted' | 'copied'
+  /** Why the raw transcript replaced the AI's; null when cleaned, off, or skipped by the user. */
   readonly cleanupFallbackReason: string | null
+  /** What the AI step did; `skipped` tells a user skip apart from a timeout or failure. */
+  readonly cleanup: VoiceCleanupResult
 }
 
 // ---- test clips (dev/test only) ----------------------------------------------------------------

@@ -45,6 +45,7 @@ const voiceHud = {
   ready: (): void => ipcRenderer.send('voice:hud:ready'),
   clickStop: (): void => ipcRenderer.send('voice:hud:click-stop'),
   clickCancel: (): void => ipcRenderer.send('voice:hud:click-cancel'),
+  clickSkip: (): void => ipcRenderer.send('voice:hud:click-skip'),
   setInteractive: (interactive: boolean): void =>
     ipcRenderer.send('voice:hud:interactive', interactive),
   captureStarted: (): void => ipcRenderer.send('voice:hud:capture-started'),

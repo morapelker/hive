@@ -1,5 +1,4 @@
-import type { VoiceSpeechModelId } from '@shared/types/voice'
-import type { VoiceCleanupAiResult } from './voice-cleanup'
+import type { VoiceCleanupResult, VoiceSkipInput, VoiceSpeechModelId } from '@shared/types/voice'
 
 /** One stable message name per dictation, so `grep "Dictation summary"` finds them all. */
 export const DICTATION_SUMMARY_MESSAGE = 'Dictation summary'
@@ -31,8 +30,16 @@ export type DictationFallbackReason =
   | 'incomplete-audio'
   | 'empty-text'
 
-/** The AI step, as far as the dictation got. The skip ticket adds `skipped`. */
-export type DictationAiStep = VoiceCleanupAiResult
+/** The AI step, as far as the dictation got; `skipped` when the user skipped polishing (VOICE-08). */
+export type DictationAiStep = VoiceCleanupResult
+
+/** AI steps that asked a model, so their duration is worth reporting. */
+const TIMED_AI_STEPS: ReadonlySet<DictationAiStep> = new Set([
+  'cleaned',
+  'skipped',
+  'timed-out',
+  'failed'
+])
 
 export type DictationDelivery = 'pasted' | 'copied'
 
@@ -68,7 +75,12 @@ export type DictationSummary = {
    */
   decodeMs: number | null
   aiStep: DictationAiStep
+  /** AI step start → its result, or → the skip when the user skipped it. */
   aiMs: number | null
+  /** How polishing was skipped; null unless `aiStep` is `skipped`. */
+  skipInput: VoiceSkipInput | null
+  /** Skip pressed → text handed to its target. */
+  skipToDeliveredMs: number | null
   /** Stop press → text handed to its target. */
   stopToDeliveredMs: number | null
   /** Start press → this line. */
@@ -102,6 +114,8 @@ export class DictationTrace {
   private firstPreviewAt: number | null = null
   private aiStep: DictationAiStep = 'not-applicable'
   private aiMs: number | null = null
+  private skipAt: number | null = null
+  private skipInput: VoiceSkipInput | null = null
   private delivery: DictationDelivery | null = null
   private chars: number | null = null
   private finished = false
@@ -160,9 +174,16 @@ export class DictationTrace {
     this.aiStep = step
     // Only a step that actually asked a model has a duration worth reporting.
     this.aiMs =
-      this.aiStartedAt !== null && (step === 'cleaned' || step === 'timed-out' || step === 'failed')
+      this.aiStartedAt !== null && TIMED_AI_STEPS.has(step)
         ? this.elapsed(this.aiStartedAt, this.now())
         : null
+  }
+
+  /** The user skipped polishing: the AI step ends here, with the shown text. */
+  markAiSkipped(input: VoiceSkipInput): void {
+    this.skipAt = this.now()
+    this.skipInput = input
+    this.markAiFinished('skipped')
   }
 
   markDelivered(delivery: DictationDelivery, chars: number): void {
@@ -192,6 +213,9 @@ export class DictationTrace {
       decodeMs: this.decodeMs,
       aiStep: this.aiStep,
       aiMs: this.aiMs,
+      skipInput: this.aiStep === 'skipped' ? this.skipInput : null,
+      skipToDeliveredMs:
+        this.aiStep === 'skipped' ? this.since(this.skipAt, this.deliveredAt) : null,
       stopToDeliveredMs: this.since(this.stopAt, this.deliveredAt),
       totalMs: this.elapsed(this.startedAt, end),
       delivery: this.delivery,

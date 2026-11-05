@@ -46,10 +46,51 @@ describe('DictationTrace', () => {
       decodeMs: 72,
       aiStep: 'cleaned',
       aiMs: 3_900,
+      skipInput: null,
+      skipToDeliveredMs: null,
       stopToDeliveredMs: 3_995,
       totalMs: 7_115,
       delivery: 'pasted',
       chars: 42
+    })
+  })
+
+  it('reports a skipped AI step with its input, its duration up to the skip, and skip → delivered', () => {
+    const c = clock()
+    const trace = new DictationTrace('nemotron-speech-streaming-en-0.6b', c.now)
+    trace.markCaptureStarted()
+    c.advance(2_000)
+    trace.markStop()
+    c.advance(50)
+    trace.markTranscript('streamed', 41)
+    trace.markAiStarted()
+    c.advance(700.4)
+    trace.markAiSkipped('escape')
+    c.advance(12)
+    trace.markDelivered('pasted', 20)
+
+    expect(trace.finish('delivered')).toMatchObject({
+      aiStep: 'skipped',
+      aiMs: 700,
+      skipInput: 'escape',
+      skipToDeliveredMs: 12,
+      stopToDeliveredMs: 762
+    })
+  })
+
+  it('leaves the skip fields null when the AI step was not skipped', () => {
+    const c = clock()
+    const trace = new DictationTrace('parakeet-tdt-0.6b-v2', c.now)
+    trace.markStop()
+    trace.markAiStarted()
+    c.advance(5_000)
+    trace.markAiFinished('timed-out')
+    trace.markDelivered('pasted', 10)
+    expect(trace.finish('delivered')).toMatchObject({
+      aiStep: 'timed-out',
+      aiMs: 5_000,
+      skipInput: null,
+      skipToDeliveredMs: null
     })
   })
 

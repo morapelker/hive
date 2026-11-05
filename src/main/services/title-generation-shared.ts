@@ -174,6 +174,10 @@ export function extractTitleFromJSON(response: string): string | null {
 /**
  * Spawn a CLI command with stdin input and collect stdout.
  * Reuses the proven spawnWithStdin pattern from text-generation-router.ts.
+ *
+ * Aborting `signal` interrupts the run: the process group (a shell wrapper and
+ * the CLI it started) gets SIGTERM, then SIGKILL if still alive 2 s later, the
+ * same release as a timeout. The promise then rejects.
  */
 export function spawnCLI(
   command: string,
@@ -181,7 +185,8 @@ export function spawnCLI(
   input: string,
   timeoutMs: number = TITLE_TIMEOUT_MS,
   cwd?: string,
-  env?: NodeJS.ProcessEnv
+  env?: NodeJS.ProcessEnv,
+  signal?: AbortSignal
 ): Promise<string> {
   log.info('spawnCLI: starting', {
     command,
@@ -203,7 +208,8 @@ export function spawnCLI(
           env: env ?? process.env,
           cwd
         })
-      )
+      ),
+      signal ? { signal } : undefined
     )
     .then((result) => {
       log.info('spawnCLI: success', { command, stdoutLength: result.stdout.length })

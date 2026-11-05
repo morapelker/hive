@@ -1,6 +1,6 @@
 import { CUSTOM_MODEL_PROVIDER_ID } from '@shared/types/custom-provider'
 import type { SharedSelectedModel } from '@shared/model-resolution'
-import type { VoiceSettings } from '@shared/types/voice'
+import type { VoiceCleanupResult, VoiceSettings } from '@shared/types/voice'
 import {
   appendVocabulary,
   effectiveCleanupSystemPrompt,
@@ -42,14 +42,19 @@ export interface VoiceCleanupOutcome {
 
 /**
  * `disabled`: cleanup is off (or the caller turned it off). `not-applicable`:
- * nothing to clean. `timed-out` / `failed`: the raw transcript was used instead.
+ * nothing to clean. `skipped`: the caller aborted the step (the user skipped
+ * polishing). `timed-out` / `failed`: the raw transcript was used instead.
  */
-export type VoiceCleanupAiResult =
-  'disabled' | 'not-applicable' | 'cleaned' | 'timed-out' | 'failed'
+export type VoiceCleanupAiResult = VoiceCleanupResult
 
 /** Thrown by our own budget timer, so a slow provider is told apart from a broken one. */
 class CleanupTimeoutError extends Error {
   override readonly name = 'CleanupTimeoutError'
+}
+
+/** The caller aborted the step (the user skipped polishing). */
+class CleanupAbortedError extends Error {
+  override readonly name = 'AbortError'
 }
 
 function isTimeoutError(error: unknown): boolean {
@@ -61,11 +66,17 @@ function isTimeoutError(error: unknown): boolean {
 
 export interface VoiceCleanupDeps {
   readonly db: DatabaseService | null
+  /**
+   * Aborting it skips the AI step: the model request is cancelled (its CLI
+   * process stopped) and the raw transcript comes back at once, as `skipped`.
+   */
+  readonly signal?: AbortSignal
   /** Override for tests: the model call itself. */
   readonly runModel?: (
     prompt: string,
     systemPrompt: string,
-    settings: VoiceSettings
+    settings: VoiceSettings,
+    signal?: AbortSignal
   ) => Promise<string | null>
 }
 
@@ -73,7 +84,8 @@ export interface VoiceCleanupDeps {
  * Wispelker's TranscriptEnhancer: dictionary pre-pass on every path, optional
  * AI cleanup through one of the user's providers, sanitise the output, fall
  * back to the raw transcript when the output looks wrong, dictionary post-pass.
- * Never throws — text always lands.
+ * Never throws — text always lands. Aborting `deps.signal` skips the AI step
+ * (not a failure): the raw transcript, `ai: 'skipped'`, no fallback reason.
  */
 export async function enhanceTranscript(
   transcript: string,
@@ -98,16 +110,29 @@ export async function enhanceTranscript(
   )
   const prompt = wrapTranscript(input)
 
+  const signal = deps.signal
+  const skipped: VoiceCleanupOutcome = {
+    text: raw,
+    cleaned: false,
+    fallbackReason: null,
+    ai: 'skipped'
+  }
+  if (signal?.aborted) return skipped
+
   const budgetMs = cleanupBudgetMs(settings.cleanup.timeoutSeconds, input.length)
   let output: string | null
   try {
-    const run = deps.runModel ?? ((p, s, st) => runCleanupModel(p, s, st, deps.db, budgetMs))
+    const run =
+      deps.runModel ?? ((p, s, st, sig) => runCleanupModel(p, s, st, deps.db, budgetMs, sig))
     output = await withTimeout(
-      run(prompt, systemPrompt, settings),
+      run(prompt, systemPrompt, settings, signal),
       budgetMs,
-      `AI cleanup did not answer within ${Math.round(budgetMs / 1000)}s`
+      `AI cleanup did not answer within ${Math.round(budgetMs / 1000)}s`,
+      signal
     )
   } catch (error) {
+    // A skip is the user's choice, not a provider problem: no warning, no reason.
+    if (signal?.aborted) return skipped
     const reason = `provider error: ${error instanceof Error ? error.message : String(error)}`
     log.warn('AI cleanup fell back to raw transcript', { reason })
     return {
@@ -118,6 +143,7 @@ export async function enhanceTranscript(
     }
   }
 
+  if (signal?.aborted) return skipped
   const sanitized = sanitizeTranscriptOutput(output ?? '', raw)
   const fallback = cleanupFallbackReason(raw, sanitized)
   if (fallback) {
@@ -138,16 +164,32 @@ export function cleanupBudgetMs(timeoutSeconds: number, transcriptChars: number)
   return Math.min(MAX_BUDGET_MS, timeoutSeconds * 1000 + EXTRA_BUDGET_MS_PER_CHAR * transcriptChars)
 }
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+/** Settles with `promise`, or rejects when the budget runs out or `signal` aborts, whichever is first. */
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+  signal?: AbortSignal
+): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new CleanupTimeoutError(message)), timeoutMs)
+    const onAbort = (): void => {
+      clearTimeout(timer)
+      reject(new CleanupAbortedError('AI cleanup skipped'))
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      reject(new CleanupTimeoutError(message))
+    }, timeoutMs)
+    signal?.addEventListener('abort', onAbort, { once: true })
     promise.then(
       (value) => {
         clearTimeout(timer)
+        signal?.removeEventListener('abort', onAbort)
         resolve(value)
       },
       (error: unknown) => {
         clearTimeout(timer)
+        signal?.removeEventListener('abort', onAbort)
         reject(error instanceof Error ? error : new Error(String(error)))
       }
     )
@@ -188,13 +230,17 @@ export function resolveCleanupModel(
   return { provider, model, ...(effort ? { effort } : {}) }
 }
 
-/** The actual model call for the configured provider. */
+/**
+ * The actual model call for the configured provider. Aborting `signal` stops
+ * it: the Agent SDK query or CLI process is shut down, not just ignored.
+ */
 export async function runCleanupModel(
   prompt: string,
   systemPrompt: string,
   settings: VoiceSettings,
   db: DatabaseService | null,
-  timeoutMs: number = settings.cleanup.timeoutSeconds * 1000
+  timeoutMs: number = settings.cleanup.timeoutSeconds * 1000,
+  signal?: AbortSignal
 ): Promise<string | null> {
   const resolved = resolveCleanupModel(settings.cleanup.model, settings.cleanup.customProviderId)
 
@@ -218,7 +264,15 @@ export async function runCleanupModel(
     if (resolved.effort) args.push('--effort', resolved.effort)
     const spawn = buildCustomProviderShellSpawn(provider.command.trim(), args)
     const env = { ...process.env, ...getUserEnvironmentVariables(db) }
-    const stdout = await spawnCLI(spawn.command, spawn.args, prompt, timeoutMs, undefined, env)
+    const stdout = await spawnCLI(
+      spawn.command,
+      spawn.args,
+      prompt,
+      timeoutMs,
+      undefined,
+      env,
+      signal
+    )
     return stdout.trim() || null
   }
 
@@ -226,6 +280,7 @@ export async function runCleanupModel(
     ...(resolved.model ? { modelOverride: resolved.model } : {}),
     effort: resolved.effort ?? 'low',
     timeoutMs,
-    maxRetries: 0
+    maxRetries: 0,
+    ...(signal ? { signal } : {})
   })
 }

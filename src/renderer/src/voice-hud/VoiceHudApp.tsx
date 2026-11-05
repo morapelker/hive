@@ -295,6 +295,37 @@ export function VoiceHudApp(): React.JSX.Element | null {
     )
   }
 
+  if (phase.kind === 'enhancing') {
+    // Polishing (VOICE-08): the final text is shown above; Skip, Escape or the
+    // hotkey paste exactly that text now instead of waiting for the AI.
+    return layout(
+      <div
+        className="voice-pill"
+        title="Polishing… Esc to skip"
+        onMouseDown={preventFocus}
+        data-testid="voice-hud-processing"
+        {...hit}
+      >
+        <ProcessingWave />
+        <span className="voice-text" data-testid="voice-hud-polishing">
+          Polishing…
+        </span>
+        <span className="voice-text voice-hint">Esc to skip</span>
+        <button
+          type="button"
+          className="voice-skip"
+          tabIndex={-1}
+          title="Paste the text as shown"
+          onMouseDown={preventFocus}
+          onClick={() => bridge?.clickSkip()}
+          data-testid="voice-hud-skip"
+        >
+          Skip
+        </button>
+      </div>
+    )
+  }
+
   if (phase.kind === 'transcribing' || phase.kind === 'enhancing') {
     const showPercent = phase.showsProgress && phase.progress !== null
     return layout(

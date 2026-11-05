@@ -129,6 +129,19 @@ HIVE_VOICE_TEST_CLIPS=1 \
   around the main window's bottom edge (`window.screenX/screenY/outerWidth/outerHeight` from the
   main window). To exercise click-through with real OS clicks use `cliclick`, moving onto the pill
   first (`m:x,y w:300 c:x,y`): a warped click with no hover beforehand passes through to the app.
+- Skippable AI polishing (VOICE-08): with AI cleanup on and a paste target, the pill shows
+  `[data-testid=voice-hud-polishing]` ("Polishing…"), an "Esc to skip" hint and
+  `[data-testid=voice-hud-skip]` under the final transcript. Skip it with a real click on that
+  button (`cliclick m:x,y w:300 c:x,y`, with x/y from the HUD's `window.screenX/Y` + the
+  button's rect), Escape, or the hotkey. Send keys with System Events
+  (`osascript -e 'tell application "System Events" to key code 53'` for Escape, `key code 49
+  using option down` for ⌥Space). `cliclick kp:esc` does not reach the global shortcut. The
+  hotkey is only registered while the main window has OS focus, so activate Electron first. The
+  summary then has `aiStep: "skipped"`, `skipInput` (`click` / `escape` / `hotkey`) and
+  `skipToDeliveredMs`, plus an `AI polishing skipped` line. The default cleanup runs `claude ...
+  --input-format stream-json` as a child of the Electron main process. After a skip it exits
+  within ~3 s (the Agent SDK closes stdin, then SIGTERMs it after 2 s). To force a timeout, point
+  cleanup at a custom provider whose command just sleeps (3 s is the minimum timeout).
 - Every dictation ends with one `Dictation summary` log line: `streamed`, `textSource`
   (`streamed` / `fallback` / `whole-clip`), `fallbackReason`, `stopToTranscriptMs`,
   `previewUpdates`, `captureToPreviewMs`, … `grep "Dictation summary"` the day's log.

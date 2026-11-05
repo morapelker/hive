@@ -2,12 +2,14 @@ import { app, globalShortcut, shell, systemPreferences, type BrowserWindow } fro
 import {
   findVoiceSpeechModel,
   type VoiceAudioChunk,
+  type VoiceCleanupResult,
   type VoiceDictationResult,
   type VoiceDictationState,
   type VoiceHistoryEntry,
   type VoiceHudPhase,
   type VoiceMicPermission,
   type VoiceSettings,
+  type VoiceSkipInput,
   type VoiceSpeechModelId,
   type VoiceStatus
 } from '@shared/types/voice'
@@ -17,7 +19,7 @@ import type { DatabaseService } from '../db/database'
 import type { VoiceHistoryRow } from '../db/types'
 import { createLogger } from '../services/logger'
 import { isDigitalSilence, trimSilence } from './voice-audio'
-import { enhanceTranscript } from './voice-cleanup'
+import { enhanceTranscript, type VoiceCleanupOutcome } from './voice-cleanup'
 import {
   DICTATION_SUMMARY_MESSAGE,
   DictationTrace,
@@ -95,6 +97,19 @@ interface DictationTranscript {
   readonly fallbackReason: DictationFallbackReason | null
 }
 
+/**
+ * The AI polishing step of one dictation (VOICE-08). It can be skipped until it
+ * settles; whichever comes first, the AI's result or the skip, is the one the
+ * dictation delivers.
+ */
+interface PolishingStep {
+  readonly generation: number
+  /** Stops the AI request itself (and its CLI process), not just its result. */
+  readonly abort: AbortController
+  /** Settle with the shown transcript now; a no-op once settled. */
+  readonly skip: (input: VoiceSkipInput) => void
+}
+
 /** Why a streaming session's result could not be used, from how its finish failed. */
 function fallbackReasonFor(error: unknown): DictationFallbackReason {
   if (isDictationStreamBroken(error)) return 'stream-broken'
@@ -163,6 +178,8 @@ export class VoiceController {
   private hudPhase: VoiceHudPhase = { kind: 'hidden' }
   /** Caps the live transcript updates of the streamed recording in progress. */
   private preview: PreviewThrottle | null = null
+  /** The AI polishing step in flight, from its start until the dictation ends. */
+  private polishing: PolishingStep | null = null
   /** Pending app-start load of the streaming model. */
   private warmUpTimer: NodeJS.Timeout | null = null
   /** The selected speech model was on disk at the last check (to load it once it arrives). */
@@ -224,6 +241,7 @@ export class VoiceController {
     this.rejectAudioWaiter(new Error('shutting down'))
     this.closeStream()
     this.clearPreview()
+    this.abortPolishing()
     voiceEngine.dispose()
     voiceHud.destroy()
   }
@@ -381,11 +399,15 @@ export class VoiceController {
     this.registeredAccelerator = null
   }
 
-  /** Escape cancels — registered only while a dictation is in flight (Wispelker semantics). */
+  /**
+   * Escape — registered only while a dictation is in flight (Wispelker
+   * semantics). It discards the dictation, except during AI polishing, where it
+   * skips the AI and pastes the shown transcript.
+   */
   private registerEscape(): void {
     if (this.escapeRegistered) return
     try {
-      this.escapeRegistered = globalShortcut.register('Escape', () => this.cancel('escape'))
+      this.escapeRegistered = globalShortcut.register('Escape', () => this.onEscape())
     } catch {
       this.escapeRegistered = false
     }
@@ -399,6 +421,11 @@ export class VoiceController {
       // ignore
     }
     this.escapeRegistered = false
+  }
+
+  private onEscape(): void {
+    if (this.skipPolishing('escape')) return
+    this.cancel('escape')
   }
 
   // ---- state ------------------------------------------------------------------------------
@@ -537,7 +564,8 @@ export class VoiceController {
         void this.stopAndProcess()
         return
       case 'processing':
-        // Let it finish; Escape cancels.
+        // During AI polishing the hotkey skips it; otherwise let it finish (Escape cancels).
+        this.skipPolishing('hotkey')
         return
       case 'unavailable': {
         if (!this.settings.enabled) return
@@ -745,11 +773,23 @@ export class VoiceController {
         this.setHudPhase(this.hudPhase)
       }
       this.dictation?.markAiStarted()
-      const outcome = await enhanceTranscript(raw, this.settings, { db: this.db })
+      const outcome = this.settings.cleanup.enabled
+        ? await this.polish(raw, this.settings, generation)
+        : await enhanceTranscript(raw, this.settings, { db: this.db })
       if (generation !== this.generation) return
-      this.dictation?.markAiFinished(outcome.ai)
+      // A skip already ended the AI step at the moment it was pressed.
+      if (outcome.ai !== 'skipped') {
+        this.dictation?.markAiFinished(outcome.ai)
+      }
 
-      await this.deliver(outcome.text, raw, outcome.cleaned, outcome.fallbackReason, durationMs)
+      await this.deliver(
+        outcome.text,
+        raw,
+        outcome.cleaned,
+        outcome.fallbackReason,
+        durationMs,
+        outcome.ai
+      )
     } catch (error) {
       if (generation !== this.generation) return
       const message = error instanceof Error ? error.message : String(error)
@@ -760,12 +800,74 @@ export class VoiceController {
     }
   }
 
+  /**
+   * Run AI cleanup as a skippable step: the pill shows the final transcript and
+   * "Polishing…" until the AI answers, or until the user skips (Skip, Escape or
+   * the hotkey), which settles at once with exactly the shown text and aborts
+   * the AI request. Settles once, with whichever came first.
+   */
+  private polish(
+    raw: string,
+    settings: VoiceSettings,
+    generation: number
+  ): Promise<VoiceCleanupOutcome> {
+    const shown = this.hudTranscript
+    const abort = new AbortController()
+    return new Promise<VoiceCleanupOutcome>((resolve) => {
+      let settled = false
+      const settle = (outcome: VoiceCleanupOutcome): boolean => {
+        if (settled) return false
+        settled = true
+        resolve(outcome)
+        return true
+      }
+      this.polishing = {
+        generation,
+        abort,
+        skip: (input) => {
+          if (!settle({ text: shown, cleaned: false, fallbackReason: null, ai: 'skipped' })) return
+          this.dictation?.markAiSkipped(input)
+          log.info('AI polishing skipped', { input })
+          abort.abort()
+        }
+      }
+      enhanceTranscript(raw, settings, { db: this.db, signal: abort.signal }).then(
+        settle,
+        // enhanceTranscript never throws; should it ever, the shown text still lands.
+        (error: unknown) =>
+          settle({ text: shown, cleaned: false, fallbackReason: String(error), ai: 'failed' })
+      )
+    })
+  }
+
+  /**
+   * Skip the AI polishing step of the dictation in flight: paste the shown
+   * transcript now. True when the press belongs to the polishing step (also
+   * when the AI already answered and its text is landing), false when there is
+   * no polishing step to skip.
+   */
+  skipPolishing(input: VoiceSkipInput): boolean {
+    const step = this.polishing
+    if (!step || step.generation !== this.generation || this.state !== 'processing') return false
+    step.skip(input)
+    return true
+  }
+
+  /** The dictation ended: stop its AI request if it is still running. */
+  private abortPolishing(): void {
+    const step = this.polishing
+    if (!step) return
+    this.polishing = null
+    step.abort.abort()
+  }
+
   private async deliver(
     text: string,
     raw: string,
     cleaned: boolean,
     fallbackReason: string | null,
-    durationMs: number
+    durationMs: number,
+    cleanup: VoiceCleanupResult
   ): Promise<void> {
     if (!text.trim()) {
       this.endDictation('discarded', 'empty-text')
@@ -795,7 +897,7 @@ export class VoiceController {
     this.endDelivered(delivery, text)
 
     if (entry) {
-      this.broadcastResult({ entry, delivery, cleanupFallbackReason: fallbackReason })
+      this.broadcastResult({ entry, delivery, cleanupFallbackReason: fallbackReason, cleanup })
     }
 
     if (delivery === 'copied') {
@@ -840,6 +942,7 @@ export class VoiceController {
   }
 
   private finish(): void {
+    this.abortPolishing()
     this.closeStream()
     this.clearPreview()
     this.clearNoticeTimer()
@@ -859,6 +962,7 @@ export class VoiceController {
     this.clearMaxRecordingTimer()
     this.closeStream()
     this.clearPreview()
+    this.abortPolishing()
     this.notice = text
     this.unregisterEscape()
     if (this.state === 'recording' || this.state === 'processing') {

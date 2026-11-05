@@ -138,6 +138,11 @@ export function initVoiceDictation(options: {
     voiceController.cancel('hud-click')
   })
 
+  ipcMain.on('voice:hud:click-skip', (event) => {
+    if (!isHud(event)) return
+    voiceController.skipPolishing('click')
+  })
+
   // The cursor moved onto / off the visible pill or preview: only then does the
   // HUD window take clicks (its transparent parts let them through).
   ipcMain.on('voice:hud:interactive', (event, interactive: unknown) => {

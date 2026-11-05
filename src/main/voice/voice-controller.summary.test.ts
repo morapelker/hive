@@ -350,13 +350,14 @@ describe('VoiceController dictation summary log', () => {
     controller.onHudStopClick()
     controller.onAudio(AUDIO)
     await vi.waitFor(() => expect(cleanup.enhanceTranscript).toHaveBeenCalled())
-    pressEscape()
+    // Escape now skips polishing (VOICE-08); the main window's cancel still discards.
+    controller.cancel('user')
     release()
     await new Promise((resolve) => setTimeout(resolve, 10))
 
     expect(onlySummary()).toMatchObject({
       outcome: 'cancelled',
-      reason: 'escape',
+      reason: 'user',
       textSource: 'whole-clip',
       stopToTranscriptMs: expect.any(Number),
       stopToDeliveredMs: null,
