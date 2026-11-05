@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_VOICE_SETTINGS,
+  VOICE_SPEECH_MODELS,
   findVoiceSpeechModel,
   sanitizeVoiceSettings,
   voiceHistoryPreview
@@ -65,6 +66,68 @@ describe('sanitizeVoiceSettings', () => {
     })
     expect(result.speechModel).toBe(DEFAULT_VOICE_SETTINGS.speechModel)
     expect(result.cleanup.model).toBeNull()
+  })
+
+  it('keeps the Nemotron streaming model id', () => {
+    const result = sanitizeVoiceSettings({ speechModel: 'nemotron-speech-streaming-en-0.6b' })
+    expect(result.speechModel).toBe('nemotron-speech-streaming-en-0.6b')
+  })
+
+  it('does not make the streaming model the default yet', () => {
+    expect(DEFAULT_VOICE_SETTINGS.speechModel).toBe('parakeet-tdt-0.6b-v2')
+    expect(sanitizeVoiceSettings({}).speechModel).toBe('parakeet-tdt-0.6b-v2')
+    expect(sanitizeVoiceSettings({ speechModel: 'nemotron' }).speechModel).toBe(
+      'parakeet-tdt-0.6b-v2'
+    )
+  })
+})
+
+describe('speech model catalog', () => {
+  it('lists Parakeet v2, Parakeet v3 and the Nemotron streaming model, in that order', () => {
+    expect(VOICE_SPEECH_MODELS.map((m) => m.id)).toEqual([
+      'parakeet-tdt-0.6b-v2',
+      'parakeet-tdt-0.6b-v3',
+      'nemotron-speech-streaming-en-0.6b'
+    ])
+  })
+
+  it('keeps the Parakeet entries unchanged and offline', () => {
+    expect(findVoiceSpeechModel('parakeet-tdt-0.6b-v2')).toMatchObject({
+      archive: 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8',
+      downloadBytes: 482_468_385,
+      sha256: '157c157bc51155e03e37d2466522a3a737dd9c72bb25f36eb18912964161e1ad',
+      languages: 'English',
+      streaming: false
+    })
+    expect(findVoiceSpeechModel('parakeet-tdt-0.6b-v3')).toMatchObject({
+      archive: 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8',
+      downloadBytes: 487_170_055,
+      sha256: '5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf',
+      languages: 'Multilingual',
+      streaming: false
+    })
+  })
+
+  it('pins the Nemotron streaming archive and marks it as streaming', () => {
+    const model = findVoiceSpeechModel('nemotron-speech-streaming-en-0.6b')
+    expect(model).toMatchObject({
+      id: 'nemotron-speech-streaming-en-0.6b',
+      archive: 'sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25',
+      downloadBytes: 463_945_051,
+      sha256: '78e2b79fcf7271553a74402a76b771b09ea40117a39566a79f52235b23db6358',
+      languages: 'English',
+      streaming: true
+    })
+    expect(model.description).toMatch(/live preview/i)
+  })
+
+  it('has unique ids and archives and well-formed checksums', () => {
+    expect(new Set(VOICE_SPEECH_MODELS.map((m) => m.id)).size).toBe(VOICE_SPEECH_MODELS.length)
+    expect(new Set(VOICE_SPEECH_MODELS.map((m) => m.archive)).size).toBe(VOICE_SPEECH_MODELS.length)
+    for (const model of VOICE_SPEECH_MODELS) {
+      expect(model.sha256).toMatch(/^[0-9a-f]{64}$/)
+      expect(model.downloadBytes).toBeGreaterThan(100 * 1024 * 1024)
+    }
   })
 })
 

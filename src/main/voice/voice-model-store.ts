@@ -34,8 +34,8 @@ interface PartialMeta {
 }
 
 /**
- * Downloads and manages the local Parakeet speech models (~480 MB int8
- * archives from the sherpa-onnx GitHub release). A model is "ready" when its
+ * Downloads and manages the local speech models (~465–490 MB int8 archives
+ * from the sherpa-onnx GitHub release). A model is "ready" when its
  * four files are on disk. Downloads resume after an interruption (HTTP Range
  * with If-Range), are verified against a pinned SHA-256, and are extracted into
  * a temporary directory that is renamed into place only once complete.

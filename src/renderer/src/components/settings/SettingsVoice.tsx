@@ -639,8 +639,9 @@ export function SettingsVoice(): React.JSX.Element {
           </div>
 
           <p className="text-[11px] text-muted-foreground/70">
-            Speech recognition by sherpa-onnx (Apache-2.0) using NVIDIA Parakeet TDT (CC-BY-4.0).
-            Media pause via mediaremote-adapter (BSD-3-Clause).
+            Speech recognition by sherpa-onnx (Apache-2.0) using NVIDIA Parakeet TDT (CC-BY-4.0) and
+            NVIDIA Nemotron Speech Streaming (NVIDIA Open Model License). Media pause via
+            mediaremote-adapter (BSD-3-Clause).
           </p>
         </>
       )}

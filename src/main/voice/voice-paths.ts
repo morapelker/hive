@@ -21,7 +21,11 @@ export function getVoiceModelDir(model: VoiceSpeechModelInfo): string {
   return join(getVoiceModelsDir(), model.archive)
 }
 
-/** Files every Parakeet TDT int8 archive from sherpa-onnx ships. */
+/**
+ * Files every speech-model archive in the catalog ships: the Parakeet TDT
+ * (offline) and Nemotron Speech Streaming (online) int8 transducers from
+ * sherpa-onnx use the same names.
+ */
 export const VOICE_MODEL_FILES = {
   encoder: 'encoder.int8.onnx',
   decoder: 'decoder.int8.onnx',

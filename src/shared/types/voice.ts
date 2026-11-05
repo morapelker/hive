@@ -3,11 +3,12 @@ import type { SharedSelectedModel } from '../model-resolution'
 /**
  * Voice dictation ("Wispelker in the app"): press a hotkey, speak, get the
  * transcript pasted into whatever is focused. Transcription runs fully locally
- * (NVIDIA Parakeet TDT via sherpa-onnx); the optional cleanup pass uses one of
- * the user's own configured agent providers.
+ * (NVIDIA Parakeet TDT or Nemotron Speech Streaming via sherpa-onnx); the
+ * optional cleanup pass uses one of the user's own configured agent providers.
  */
 
-export type VoiceSpeechModelId = 'parakeet-tdt-0.6b-v2' | 'parakeet-tdt-0.6b-v3'
+export type VoiceSpeechModelId =
+  'parakeet-tdt-0.6b-v2' | 'parakeet-tdt-0.6b-v3' | 'nemotron-speech-streaming-en-0.6b'
 
 export interface VoiceSpeechModelInfo {
   readonly id: VoiceSpeechModelId
@@ -20,6 +21,12 @@ export interface VoiceSpeechModelInfo {
   readonly downloadBytes: number
   /** SHA-256 of the archive, verified after download. */
   readonly sha256: string
+  /**
+   * True for online (streaming) transducers that can transcribe while the user
+   * is still speaking, which is what powers the live preview. False for offline
+   * models that only transcribe a finished clip.
+   */
+  readonly streaming: boolean
 }
 
 export const VOICE_SPEECH_MODELS: readonly VoiceSpeechModelInfo[] = [
@@ -30,7 +37,8 @@ export const VOICE_SPEECH_MODELS: readonly VoiceSpeechModelInfo[] = [
     languages: 'English',
     archive: 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8',
     downloadBytes: 482_468_385,
-    sha256: '157c157bc51155e03e37d2466522a3a737dd9c72bb25f36eb18912964161e1ad'
+    sha256: '157c157bc51155e03e37d2466522a3a737dd9c72bb25f36eb18912964161e1ad',
+    streaming: false
   },
   {
     id: 'parakeet-tdt-0.6b-v3',
@@ -39,7 +47,18 @@ export const VOICE_SPEECH_MODELS: readonly VoiceSpeechModelInfo[] = [
     languages: 'Multilingual',
     archive: 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8',
     downloadBytes: 487_170_055,
-    sha256: '5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf'
+    sha256: '5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf',
+    streaming: false
+  },
+  {
+    id: 'nemotron-speech-streaming-en-0.6b',
+    name: 'Nemotron Speech Streaming 0.6B',
+    description: 'English only. Transcribes while you speak, so it supports a live preview.',
+    languages: 'English',
+    archive: 'sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25',
+    downloadBytes: 463_945_051,
+    sha256: '78e2b79fcf7271553a74402a76b771b09ea40117a39566a79f52235b23db6358',
+    streaming: true
   }
 ]
 
