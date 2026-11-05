@@ -127,6 +127,17 @@ export function VoiceHudApp(): React.JSX.Element | null {
       bridge.onCaptureStart((options) => {
         const recorder = getRecorder()
         setLevels(EMPTY_LEVELS)
+        // Streaming speech model: hand each chunk to main as it is recorded,
+        // numbered so main can tell a gap or a repeat. Otherwise only at stop.
+        const streamId = options?.streamId
+        if (typeof streamId === 'number') {
+          let seq = 0
+          recorder.onChunk = (samples, sampleRate) => {
+            bridge.streamAudio({ streamId, seq: seq++, samples, sampleRate })
+          }
+        } else {
+          recorder.onChunk = null
+        }
         recorder
           .start(options)
           .then(() => bridge.captureStarted())
@@ -138,22 +149,29 @@ export function VoiceHudApp(): React.JSX.Element | null {
       }),
       bridge.onCaptureStop(() => {
         const recorder = getRecorder()
+        const streaming = recorder.onChunk
         const startedAt = performance.now()
         recorder
           .stop()
-          .then((audio) =>
-            bridge.submitAudio({
+          .then((audio) => {
+            // The flushed last chunk went out before stop() resolved, so main
+            // has every streamed chunk before the clip below.
+            if (recorder.onChunk === streaming) recorder.onChunk = null
+            return bridge.submitAudio({
               samples: audio.samples,
               sampleRate: audio.sampleRate,
               durationMs: Math.round(performance.now() - startedAt)
             })
-          )
+          })
           .catch((error: unknown) => {
             bridge.captureError(error instanceof Error ? error.message : String(error))
           })
       }),
       bridge.onCaptureCancel(() => {
-        recorderRef.current?.cancel()
+        const recorder = recorderRef.current
+        if (!recorder) return
+        recorder.cancel()
+        recorder.onChunk = null
       })
     ]
 

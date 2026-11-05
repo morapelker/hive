@@ -81,6 +81,13 @@ export class VoiceRecorder {
 
   onLevel: ((level: number) => void) | null = null
 
+  /**
+   * Every captured chunk, in order, as it is recorded (including the partial
+   * one flushed at stop, before `stop()` resolves). Together the chunks are
+   * exactly the samples `stop()` returns, before any resampling.
+   */
+  onChunk: ((samples: Float32Array, sampleRate: number) => void) | null = null
+
   get isActive(): boolean {
     return this.active
   }
@@ -108,7 +115,14 @@ export class VoiceRecorder {
       ) => {
         const data = event.data
         if (!this.active && !data.final) return
-        if (data.pcm.length > 0) this.chunks.push(data.pcm)
+        if (data.pcm.length > 0) {
+          this.chunks.push(data.pcm)
+          try {
+            this.onChunk?.(data.pcm, context.sampleRate)
+          } catch {
+            // Streaming is best effort; the recording itself must carry on.
+          }
+        }
         if (!data.final) this.onLevel?.(data.level)
         if (data.final && this.flushWaiter) {
           const waiter = this.flushWaiter

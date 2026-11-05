@@ -81,10 +81,12 @@ declare global {
       sampleRate: number
       durationMs: number
     }) => Promise<void>
+    /** One captured chunk while recording (streaming speech models only). */
+    streamAudio: (chunk: import('../shared/types/voice').VoiceAudioChunk) => void
     getSounds: () => Promise<{ start: Uint8Array | null; stop: Uint8Array | null }>
     onState: (callback: (state: import('../shared/types/voice').VoiceHudState) => void) => () => void
     onSound: (callback: (name: 'start' | 'stop') => void) => () => void
-    /** Options are only present with test clips on (dev/test); otherwise the mic is used. */
+    /** `testClip` only with test clips on (dev/test); `streamId` only with a streaming model. */
     onCaptureStart: (
       callback: (options?: import('../shared/types/voice').VoiceCaptureStartOptions) => void
     ) => () => void

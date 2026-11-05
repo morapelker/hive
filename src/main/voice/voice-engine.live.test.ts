@@ -3,8 +3,9 @@
  * Nemotron streaming model and the committed fixture clips
  * (test/fixtures/voice/*.wav + .txt).
  *
- * Opt-in (about 10 minutes in real time; run it on its own, on a quiet machine):
+ * Opt-in (about 12 minutes in real time; run it on its own, on a quiet machine):
  *   VOICE_ENGINE_LIVE=1 pnpm exec vitest run src/main/voice/voice-engine.live.test.ts
+ * Just the VOICE-05 dictation stream part: add -t 'dictation audio stream'.
  *
  * Skips cleanly unless VOICE_ENGINE_LIVE=1 and the model is on disk.
  *   VOICE_ENGINE_LIVE_MODEL_DIR     Nemotron folder (default: <base>/voice/models/<archive>,
@@ -50,6 +51,7 @@ import { findVoiceSpeechModel } from '@shared/types/voice'
 import { normalizeForComparison } from '@shared/voice/transcript-sanitizer'
 import { connectToHost } from './__tests__/voice-engine-fakes'
 import type { SherpaModule } from './voice-engine-host'
+import { DictationAudioStream } from './voice-dictation-stream'
 import { VoiceEngine, type VoiceEngineModel, type VoiceStreamResult } from './voice-engine'
 import { getVoiceModelDir, voiceModelFilesPresent } from './voice-paths'
 import { decodeWav } from './voice-test-clips'
@@ -354,6 +356,110 @@ describeLive('voice engine streaming sessions (live Nemotron model)', () => {
       expectTranscript(text, fixture.expected)
     }
   }, 300_000)
+})
+
+/**
+ * VOICE-05: a dictation's audio as the controller feeds it: the HUD's numbered
+ * chunks while recording, then the whole clip at stop. Each clip is the
+ * fixture plus 0.8 s of the quiet room the HUD keeps recording until stop.
+ */
+describeLive('dictation audio stream: HUD chunks into a session (live Nemotron model)', () => {
+  let engine: VoiceEngine
+  /** The HUD keeps recording silence after the clip until the stop (auto-stop 800 ms). */
+  const STOP_AFTER_MS = 800
+  const CHUNK_MS = (CHUNK_SAMPLES / 16_000) * 1000
+
+  function asRecorded(fixture: Fixture): Float32Array {
+    const tail = Math.round((fixture.sampleRate * STOP_AFTER_MS) / 1000)
+    const clip = new Float32Array(fixture.samples.length + tail)
+    clip.set(fixture.samples)
+    return clip
+  }
+
+  /** Records `clip` in real time through a stream; `withhold` trailing chunks never arrive. */
+  async function dictate(
+    clip: Float32Array,
+    sampleRate: number,
+    { withhold = 0 }: { withhold?: number } = {}
+  ) {
+    const session = engine.startSession(NEMOTRON, { sampleRate })
+    const stream = new DictationAudioStream(1, session, sampleRate)
+    const started = performance.now()
+    const chunkMs = ((CHUNK_SAMPLES / sampleRate) * 1000) / SPEED
+    const count = Math.ceil(clip.length / CHUNK_SAMPLES)
+    for (let seq = 0; seq < count - withhold; seq++) {
+      await sleepUntil(started + (seq + 1) * chunkMs)
+      const from = seq * CHUNK_SAMPLES
+      stream.accept({
+        streamId: 1,
+        seq,
+        samples: clip.slice(from, from + CHUNK_SAMPLES),
+        sampleRate
+      })
+    }
+    return stream.finish(clip, sampleRate)
+  }
+
+  beforeAll(async () => {
+    const nodeRequire = createRequire(__filename)
+    const sherpa = nodeRequire('sherpa-onnx-node') as SherpaModule
+    forked.onFork = (child) => connectToHost(child, sherpa)
+    engine = new VoiceEngine()
+    await engine.ensureLoaded(NEMOTRON)
+  }, 120_000)
+
+  afterAll(() => {
+    engine?.dispose()
+  })
+
+  for (const name of [...SPEECH_FIXTURES, 'silence']) {
+    const fixture = loadFixture(name)
+    it(
+      `${name}: the session receives the whole clip and gives the full transcript`,
+      async () => {
+        const clip = asRecorded(fixture)
+        const result = await dictate(clip, fixture.sampleRate)
+        const clipMs = (clip.length / fixture.sampleRate) * 1000
+        expect(Math.abs(result.audioMs - clipMs)).toBeLessThanOrEqual(CHUNK_MS)
+        expect(result.topUpSamples).toBe(0)
+        expect(result.streamedSamples).toBe(clip.length)
+        if (!fixture.expected) {
+          expect(result.text).toBe('')
+          return
+        }
+        expectTranscript(result.text, fixture.expected)
+      },
+      timeoutFor(fixture)
+    )
+  }
+
+  it('tops up from the clip when the last chunks never arrived', async () => {
+    const fixture = loadFixture('sentence')
+    const clip = trimToEnd(fixture.samples, fixture.sampleRate)
+    const result = await dictate(clip, fixture.sampleRate, { withhold: 3 })
+    expect(result.topUpSamples).toBeGreaterThan(2 * CHUNK_SAMPLES)
+    expect(result.streamedSamples + result.topUpSamples).toBe(clip.length)
+    expect(
+      Math.abs(result.audioMs - (clip.length / fixture.sampleRate) * 1000)
+    ).toBeLessThanOrEqual(CHUNK_MS)
+    expectTranscript(result.text, fixture.expected)
+  }, 60_000)
+
+  it('cold start: audio recorded while the model loads is kept', async () => {
+    engine.unload('cold start test')
+    expect(engine.isLoaded).toBe(false)
+    const fixture = loadFixture('speech-at-start')
+    const clip = asRecorded(fixture)
+    const result = await dictate(clip, fixture.sampleRate)
+    expect(
+      Math.abs(result.audioMs - (clip.length / fixture.sampleRate) * 1000)
+    ).toBeLessThanOrEqual(CHUNK_MS)
+    expectTranscript(result.text, fixture.expected)
+  }, 120_000)
+
+  function timeoutFor(fixture: Fixture): number {
+    return (fixture.samples.length / fixture.sampleRate / SPEED + 30) * 1000
+  }
 })
 
 describeParakeet('voice engine whole-clip transcription (live Parakeet v2 model)', () => {

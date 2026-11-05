@@ -52,6 +52,13 @@ const voiceHud = {
     sampleRate: number
     durationMs: number
   }): Promise<void> => ipcRenderer.invoke('voice:hud:audio', payload),
+  // Same pipe as `submitAudio`, so every chunk reaches main before the clip does.
+  streamAudio: (chunk: {
+    streamId: number
+    seq: number
+    samples: Float32Array
+    sampleRate: number
+  }): void => ipcRenderer.send('voice:hud:audio-chunk', chunk),
   getSounds: (): Promise<unknown> => ipcRenderer.invoke('voice:hud:get-sounds'),
   onState: (callback: (state: unknown) => void): (() => void) =>
     onMainEvent('voice:hud:state', callback),

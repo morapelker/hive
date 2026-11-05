@@ -56,6 +56,24 @@ describe('VoiceHudWindow capture', () => {
     expect(send).toHaveBeenCalledWith('voice:hud:capture-start', { testClip: null })
   })
 
+  it('asks the HUD to stream chunks with the given id (streaming models), mic or test clip', () => {
+    hud.startCapture({ streamId: 12 })
+    expect(send).toHaveBeenLastCalledWith('voice:hud:capture-start', { streamId: 12 })
+
+    const clip = { name: 'sentence', samples: new Float32Array(4), sampleRate: 16000 }
+    testClips.captureSource.mockReturnValueOnce(clip)
+    hud.startCapture({ streamId: 13 })
+    expect(send).toHaveBeenLastCalledWith('voice:hud:capture-start', {
+      testClip: clip,
+      streamId: 13
+    })
+  })
+
+  it('sends no options for an offline model with the microphone, as before streaming', () => {
+    hud.startCapture({})
+    expect(send).toHaveBeenCalledWith('voice:hud:capture-start', undefined)
+  })
+
   it('ends test-clip playback bookkeeping on stop and cancel', () => {
     hud.stopCapture()
     hud.cancelCapture()

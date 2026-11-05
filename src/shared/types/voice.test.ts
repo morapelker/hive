@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_VOICE_SETTINGS,
   VOICE_SPEECH_MODELS,
+  VOICE_AUDIO_CHUNK_MAX_SAMPLES,
   findVoiceSpeechModel,
+  sanitizeVoiceAudioChunk,
   sanitizeVoiceSettings,
   voiceHistoryPreview
 } from './voice'
@@ -140,5 +142,33 @@ describe('voice helpers', () => {
   it('falls back to the first speech model for unknown ids', () => {
     expect(findVoiceSpeechModel('nope').id).toBe('parakeet-tdt-0.6b-v2')
     expect(findVoiceSpeechModel('parakeet-tdt-0.6b-v3').languages).toBe('Multilingual')
+  })
+})
+
+describe('sanitizeVoiceAudioChunk', () => {
+  const good = { streamId: 3, seq: 0, samples: new Float32Array(1536), sampleRate: 16000 }
+
+  it('keeps a well-formed chunk as is', () => {
+    expect(sanitizeVoiceAudioChunk(good)).toEqual(good)
+    expect(sanitizeVoiceAudioChunk(good)?.samples).toBe(good.samples)
+  })
+
+  it('rejects anything else', () => {
+    for (const raw of [
+      null,
+      'chunk',
+      { ...good, streamId: '3' },
+      { ...good, streamId: 1.5 },
+      { ...good, seq: -1 },
+      { ...good, seq: Number.NaN },
+      { ...good, samples: Array.from(good.samples) },
+      { ...good, samples: new Float64Array(4) },
+      { ...good, samples: new Float32Array(0) },
+      { ...good, samples: new Float32Array(VOICE_AUDIO_CHUNK_MAX_SAMPLES + 1) },
+      { ...good, sampleRate: 0 },
+      { ...good, sampleRate: Number.POSITIVE_INFINITY }
+    ]) {
+      expect(sanitizeVoiceAudioChunk(raw)).toBeNull()
+    }
   })
 })

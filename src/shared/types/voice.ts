@@ -358,6 +358,8 @@ export interface VoiceTestClipsStatus {
   readonly autoStopAfterMs: number | null
   /** A dictation is currently playing the clip. */
   readonly playing: boolean
+  /** The last dictation's streaming session (streaming speech models only). */
+  readonly lastStream: VoiceTestStreamReport | null
 }
 
 /** Sent with capture-start when test clips are on: the HUD plays this instead of opening the mic. */
@@ -368,9 +370,66 @@ export interface VoiceTestCaptureClip {
 }
 
 /**
- * Options for a HUD capture. Absent (the normal case) means the microphone.
- * `testClip: null` means test clips are on but none is selected: capture fails.
+ * Options for a HUD capture. Absent means the microphone, with the whole clip
+ * sent once at stop. `testClip: null` means test clips are on but none is
+ * selected: capture fails.
  */
 export interface VoiceCaptureStartOptions {
   readonly testClip?: VoiceTestCaptureClip | null
+  /**
+   * Streaming speech models only: also send every captured chunk to main while
+   * recording, tagged with this id. Absent with offline models.
+   */
+  readonly streamId?: number
+}
+
+/** One captured chunk (~96 ms) sent from the HUD to main while recording. */
+export interface VoiceAudioChunk {
+  /** The `streamId` of the capture it belongs to. */
+  readonly streamId: number
+  /** 0, 1, 2… per capture, in capture order. */
+  readonly seq: number
+  readonly samples: Float32Array
+  readonly sampleRate: number
+}
+
+/** Upper bound for one chunk from the HUD (the worklet sends 1 536 samples). */
+export const VOICE_AUDIO_CHUNK_MAX_SAMPLES = 48_000
+
+/** HUD input: a well-formed chunk, or null. */
+export function sanitizeVoiceAudioChunk(raw: unknown): VoiceAudioChunk | null {
+  if (!raw || typeof raw !== 'object') return null
+  const record = raw as Record<string, unknown>
+  const { streamId, seq, samples, sampleRate } = record
+  if (!Number.isSafeInteger(streamId) || !Number.isSafeInteger(seq) || (seq as number) < 0) {
+    return null
+  }
+  if (
+    !(samples instanceof Float32Array) ||
+    samples.length === 0 ||
+    samples.length > VOICE_AUDIO_CHUNK_MAX_SAMPLES
+  ) {
+    return null
+  }
+  if (typeof sampleRate !== 'number' || !Number.isFinite(sampleRate) || sampleRate <= 0) {
+    return null
+  }
+  return { streamId: streamId as number, seq: seq as number, samples, sampleRate }
+}
+
+/** Dev/test only: what the last dictation's streaming session received and returned. */
+export interface VoiceTestStreamReport {
+  /** Chunks the session got from the HUD while recording. */
+  readonly chunks: number
+  /** Audio that arrived as chunks. */
+  readonly streamedMs: number
+  /** Audio added at stop from the full clip because no chunk carried it. */
+  readonly topUpMs: number
+  /** Length of the clip the HUD handed over at stop. */
+  readonly clipMs: number
+  /** Audio the engine's session reports it received. */
+  readonly sessionAudioMs: number
+  readonly finishMs: number
+  /** The session's final transcript. */
+  readonly text: string
 }

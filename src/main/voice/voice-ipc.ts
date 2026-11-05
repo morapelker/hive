@@ -1,5 +1,6 @@
 import { ipcMain, type BrowserWindow, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
 import {
+  sanitizeVoiceAudioChunk,
   sanitizeVoiceSettings,
   VOICE_SPEECH_MODELS,
   type VoiceSpeechModelId,
@@ -145,6 +146,18 @@ export function initVoiceDictation(options: {
   ipcMain.on('voice:hud:capture-error', (event, message: unknown) => {
     if (!isHud(event)) return
     voiceController.onCaptureError(typeof message === 'string' ? message : 'capture failed')
+  })
+
+  // Streaming speech models: each captured chunk while recording. Sent on the
+  // same pipe as 'voice:hud:audio', so all of them arrive before the clip.
+  ipcMain.on('voice:hud:audio-chunk', (event, raw: unknown) => {
+    if (!isHud(event)) return
+    const chunk = sanitizeVoiceAudioChunk(raw)
+    if (!chunk) {
+      log.warn('HUD sent a malformed audio chunk')
+      return
+    }
+    voiceController.onAudioChunk(chunk)
   })
 
   ipcMain.handle('voice:hud:audio', (event, raw: unknown) => {

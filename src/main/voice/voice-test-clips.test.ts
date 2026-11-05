@@ -215,6 +215,30 @@ describe('VoiceTestClips', () => {
     expect(clips.captureSource()).toBeNull()
   })
 
+  it("reports the last dictation's streaming session until the next capture starts", async () => {
+    const report = {
+      chunks: 11,
+      streamedMs: 1056,
+      topUpMs: 0,
+      clipMs: 1056,
+      sessionAudioMs: 1056,
+      finishMs: 60,
+      text: 'Hello there'
+    }
+    const clips = make(dir)
+    await clips.select('hello')
+    expect(clips.status().lastStream).toBeNull()
+    clips.captureSource()
+    clips.reportStream(report)
+    expect(clips.status().lastStream).toEqual(report)
+    clips.captureSource()
+    expect(clips.status().lastStream).toBeNull()
+
+    const off = make(undefined)
+    off.reportStream(report)
+    expect(off.status().lastStream).toBeNull()
+  })
+
   it('refuses names that are paths or do not exist', async () => {
     const clips = make(dir)
     await expect(clips.select('../hello')).rejects.toThrow('invalid test clip name')

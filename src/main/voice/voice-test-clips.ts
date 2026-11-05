@@ -8,7 +8,8 @@ import {
   type VoiceTestCaptureClip,
   type VoiceTestClipInfo,
   type VoiceTestClipsStatus,
-  type VoiceTestSelectOptions
+  type VoiceTestSelectOptions,
+  type VoiceTestStreamReport
 } from '@shared/types/voice'
 import { createLogger } from '../services/logger'
 
@@ -138,6 +139,7 @@ export class VoiceTestClips {
   private autoStopAfterMs: number | null = null
   private stopTimer: ReturnType<typeof setTimeout> | null = null
   private playing = false
+  private lastStream: VoiceTestStreamReport | null = null
   private stopDictation: () => void = () => {}
 
   constructor(
@@ -228,8 +230,15 @@ export class VoiceTestClips {
         ? Math.round((this.selected.samples.length / this.selected.sampleRate) * 1000)
         : null,
       autoStopAfterMs: this.autoStopAfterMs,
-      playing: this.playing
+      playing: this.playing,
+      lastStream: this.lastStream
     }
+  }
+
+  /** The dictation's streaming session finished; kept for `status()` (verify workflow). */
+  reportStream(report: VoiceTestStreamReport): void {
+    if (!this.enabled) return
+    this.lastStream = report
   }
 
   /**
@@ -240,6 +249,7 @@ export class VoiceTestClips {
   captureSource(): VoiceTestCaptureClip | null | undefined {
     if (!this.enabled) return undefined
     this.clearStopTimer()
+    this.lastStream = null
     if (!this.selected) {
       log.warn('Dictation started with test clips on but no clip selected')
       this.playing = false

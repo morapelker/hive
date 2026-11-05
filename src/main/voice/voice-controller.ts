@@ -1,6 +1,7 @@
 import { app, globalShortcut, shell, systemPreferences, type BrowserWindow } from 'electron'
 import {
   findVoiceSpeechModel,
+  type VoiceAudioChunk,
   type VoiceDictationResult,
   type VoiceDictationState,
   type VoiceHistoryEntry,
@@ -22,7 +23,8 @@ import {
   type DictationDelivery,
   type DictationOutcome
 } from './voice-dictation-summary'
-import { voiceEngine, type VoiceEngineModel } from './voice-engine'
+import { DictationAudioStream, type DictationStreamResult } from './voice-dictation-stream'
+import { isVoiceStreamCancelled, voiceEngine, type VoiceEngineModel } from './voice-engine'
 import { voiceHud } from './voice-hud-window'
 import { voiceMedia } from './voice-media'
 import { voiceModelStore } from './voice-model-store'
@@ -48,6 +50,8 @@ const NOTICE_SECONDS = 2.5
 const SHORT_NOTICE_SECONDS = 1.2
 const HUD_READY_TIMEOUT_MS = 4_000
 const AUDIO_TIMEOUT_MS = 8_000
+/** The HUD records at 16 kHz; a streaming session takes its chunks at that rate. */
+const STREAM_SAMPLE_RATE = 16_000
 const MAC_MIC_SETTINGS_URL =
   'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'
 
@@ -101,6 +105,12 @@ export class VoiceController {
   private recordingStartedAt = 0
   /** Timings of the dictation in flight; logged once as a summary line when it ends. */
   private dictation: DictationTrace | null = null
+  /**
+   * Streaming speech models only: carries the recording's audio into an engine
+   * session while the user speaks. Open from capture start until the clip
+   * arrives at stop (or the dictation ends first).
+   */
+  private stream: DictationAudioStream | null = null
   private audioWaiter: {
     resolve: (payload: VoiceAudioPayload) => void
     reject: (error: Error) => void
@@ -151,6 +161,7 @@ export class VoiceController {
     for (const off of this.unsubscribe.splice(0)) off()
     this.clearNoticeTimer()
     this.rejectAudioWaiter(new Error('shutting down'))
+    this.closeStream()
     voiceEngine.dispose()
     voiceHud.destroy()
   }
@@ -437,6 +448,7 @@ export class VoiceController {
     if (this.state !== 'idle') return
     // A second press while the permission dialog was open: the first never recorded.
     this.endDictation('cancelled', 'superseded')
+    this.closeStream()
     // The start press: every timing in the summary line is measured from here.
     this.dictation = new DictationTrace(this.settings.speechModel)
 
@@ -481,7 +493,10 @@ export class VoiceController {
 
     this.setHudPhase({ kind: 'recording' })
     voiceHud.show()
-    voiceHud.startCapture()
+    // Opened before capture starts so no chunk arrives without a session to take
+    // it; on a cold start the session holds the audio until the model is loaded.
+    this.stream = this.openStream(generation)
+    voiceHud.startCapture(this.stream ? { streamId: this.stream.id } : {})
     this.registerEscape()
     this.clearMaxRecordingTimer()
     this.maxRecordingTimer = setTimeout(() => {
@@ -518,6 +533,7 @@ export class VoiceController {
     this.endDictation('failed', 'capture-error')
     this.generation++
     this.rejectAudioWaiter(new Error(message))
+    this.closeStream()
     void voiceMedia.recordingDidStop()
     this.lastError = message
     const denied = /permission|denied|notallowed/i.test(message)
@@ -552,11 +568,16 @@ export class VoiceController {
     try {
       const audio = await audioPromise
       if (generation !== this.generation) return
+      // Every streamed chunk arrived before the clip (same IPC pipe); from here
+      // the stream belongs to this stop, not to the controller.
+      const stream = this.stream
+      this.stream = null
 
       const seconds = audio.samples.length / Math.max(1, audio.sampleRate)
       this.dictation?.setAudio(audio.samples.length, audio.sampleRate)
       if (seconds <= MIN_CLIP_SECONDS) {
         log.info('Discarding clip: too short', { seconds })
+        stream?.cancel()
         this.endDictation('discarded', 'too-short')
         this.finish()
         return
@@ -564,10 +585,15 @@ export class VoiceController {
       const samples = trimSilence(audio.samples, audio.sampleRate)
       if (samples.length / audio.sampleRate <= MIN_CLIP_SECONDS || isDigitalSilence(samples)) {
         log.info('Discarding clip: nothing heard', { seconds })
+        stream?.cancel()
         this.endDictation('discarded', 'nothing-heard')
         this.showTransientNotice('Nothing heard', SHORT_NOTICE_SECONDS)
         return
       }
+      // The session's transcript is not used yet (VOICE-06 makes it the
+      // transcript, with the whole clip as the fallback); finishing it here
+      // ends the session and reports what it received.
+      if (stream) void this.finishStream(stream, audio)
 
       await voiceEngine.ensureLoaded(engineModel(this.settings.speechModel))
       if (generation !== this.generation) return
@@ -658,6 +684,7 @@ export class VoiceController {
     this.generation++
     this.clearMaxRecordingTimer()
     this.rejectAudioWaiter(new Error('cancelled'))
+    this.closeStream()
     if (wasRecording) {
       voiceHud.cancelCapture()
       void voiceMedia.recordingDidStop()
@@ -684,6 +711,7 @@ export class VoiceController {
   }
 
   private finish(): void {
+    this.closeStream()
     this.clearNoticeTimer()
     this.clearMaxRecordingTimer()
     this.notice = null
@@ -699,6 +727,7 @@ export class VoiceController {
     const serial = ++this.noticeSerial
     this.clearNoticeTimer()
     this.clearMaxRecordingTimer()
+    this.closeStream()
     this.notice = text
     this.unregisterEscape()
     if (this.state === 'recording' || this.state === 'processing') {
@@ -740,6 +769,64 @@ export class VoiceController {
   }
 
   // ---- audio hand-off from the HUD renderer -------------------------------------------------
+
+  /** A streaming session for this recording, or null with an offline speech model. */
+  private openStream(id: number): DictationAudioStream | null {
+    const modelId = this.settings.speechModel
+    if (!findVoiceSpeechModel(modelId).streaming) return null
+    const session = voiceEngine.startSession(engineModel(modelId), {
+      sampleRate: STREAM_SAMPLE_RATE,
+      onError: (error) => {
+        // The whole clip is still transcribed at stop, so the dictation goes on.
+        log.warn('Streaming session failed during dictation', { error: error.message })
+      }
+    })
+    return new DictationAudioStream(id, session, STREAM_SAMPLE_RATE)
+  }
+
+  /** A chunk the HUD captured while recording (streaming speech models only). */
+  onAudioChunk(chunk: VoiceAudioChunk): void {
+    this.stream?.accept(chunk)
+  }
+
+  /** Cancel the open stream, if any: its session must not outlive the dictation. */
+  private closeStream(): void {
+    const stream = this.stream
+    if (!stream) return
+    this.stream = null
+    stream.cancel()
+  }
+
+  /** Top up and finish the session; logs what it received. Never rejects. */
+  private finishStream(
+    stream: DictationAudioStream,
+    audio: VoiceAudioPayload
+  ): Promise<DictationStreamResult | null> {
+    return stream.finish(audio.samples, audio.sampleRate).then(
+      (result) => {
+        const ms = (samples: number): number => Math.round((samples / result.sampleRate) * 1000)
+        const report = {
+          chunks: result.chunks,
+          streamedMs: ms(result.streamedSamples),
+          topUpMs: ms(result.topUpSamples),
+          clipMs: ms(result.clipSamples),
+          sessionAudioMs: result.audioMs,
+          finishMs: result.finishMs
+        }
+        log.info('Streamed dictation audio', { ...report, chars: result.text.length })
+        voiceTestClips.reportStream({ ...report, text: result.text })
+        return result
+      },
+      (error: unknown) => {
+        if (!isVoiceStreamCancelled(error)) {
+          log.warn('Streaming session did not finish', {
+            error: error instanceof Error ? error.message : String(error)
+          })
+        }
+        return null
+      }
+    )
+  }
 
   private waitForAudio(): Promise<VoiceAudioPayload> {
     this.rejectAudioWaiter(new Error('superseded'))

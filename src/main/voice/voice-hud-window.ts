@@ -156,13 +156,20 @@ export class VoiceHudWindow {
     return this.window !== null && !this.window.isDestroyed() && this.window.isVisible()
   }
 
-  startCapture(): void {
+  /**
+   * `streamId` (streaming speech models only) makes the HUD send each chunk as
+   * it is recorded, tagged with that id, as well as the whole clip at stop.
+   */
+  startCapture({ streamId }: { streamId?: number } = {}): void {
     // Dev/test only: with TEDOOO_CODE_VOICE_TEST_CLIPS set, the armed clip
-    // replaces the microphone. Normally there are no options and the mic is used.
+    // replaces the microphone. Normally there is no test clip and the mic is used.
     const testClip = voiceTestClips.captureSource()
-    const options: VoiceCaptureStartOptions | undefined =
-      testClip === undefined ? undefined : { testClip }
-    this.send('voice:hud:capture-start', options)
+    const options: VoiceCaptureStartOptions = {
+      ...(testClip === undefined ? {} : { testClip }),
+      ...(streamId === undefined ? {} : { streamId })
+    }
+    // No options at all with an offline model and the mic: exactly as before streaming.
+    this.send('voice:hud:capture-start', Object.keys(options).length > 0 ? options : undefined)
   }
 
   stopCapture(): void {

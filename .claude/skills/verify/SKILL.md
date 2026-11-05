@@ -109,3 +109,7 @@ HIVE_VOICE_TEST_CLIPS=1 \
   `tab-select` it to screenshot the pill and its level bars.
 - Logs: `VoiceTestClips` lines (`Test clip selected`, `Test clip ended`) and the controller's
   `Transcribed` line.
+- With a streaming speech model (Nemotron) the HUD also streams each chunk to the engine while
+  recording. After the dictation, `status().lastStream` shows what that session got:
+  `{ chunks, streamedMs, topUpMs, clipMs, sessionAudioMs, finishMs, text }` (reset when the next
+  capture starts). The log has the same numbers, without the text, as `Streamed dictation audio`.

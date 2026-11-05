@@ -173,6 +173,51 @@ describe('VoiceRecorder', () => {
     expect(FakeConstantSource.last!.stopped).toBe(true)
   })
 
+  it('hands over every chunk as it is recorded, the flushed last one before stop resolves', async () => {
+    const recorder = new VoiceRecorder()
+    const chunks: Array<{ samples: number[]; sampleRate: number }> = []
+    recorder.onChunk = (samples, sampleRate) => {
+      chunks.push({ samples: Array.from(samples), sampleRate })
+    }
+    await recorder.start({ testClip: clip })
+    const worklet = FakeWorkletNode.last!
+    worklet.emit(new Float32Array([0.1, 0.2]), 0.7)
+    worklet.emit(new Float32Array([0.3]), 0.4)
+    expect(chunks).toHaveLength(2)
+
+    const audio = await recorder.stop()
+
+    expect(chunks.map((c) => c.sampleRate)).toEqual([16000, 16000, 16000])
+    // Together the chunks are exactly the clip handed over at stop.
+    expect(chunks.flatMap((c) => c.samples)).toEqual(Array.from(audio.samples))
+    expect(chunks[2].samples).toEqual([0.5])
+  })
+
+  it('keeps recording when the chunk listener throws', async () => {
+    const recorder = new VoiceRecorder()
+    const levels: number[] = []
+    recorder.onLevel = (level) => levels.push(level)
+    recorder.onChunk = () => {
+      throw new Error('bridge gone')
+    }
+    await recorder.start({ testClip: clip })
+    FakeWorkletNode.last!.emit(new Float32Array([0.1]), 0.6)
+    const audio = await recorder.stop()
+    expect(levels).toEqual([0.6])
+    expect(audio.samples).toHaveLength(2)
+  })
+
+  it('hands over nothing after a cancel', async () => {
+    const recorder = new VoiceRecorder()
+    const onChunk = vi.fn()
+    recorder.onChunk = onChunk
+    await recorder.start({ testClip: clip })
+    const worklet = FakeWorkletNode.last!
+    recorder.cancel()
+    worklet.emit(new Float32Array([0.1]), 0.5)
+    expect(onChunk).not.toHaveBeenCalled()
+  })
+
   it('reports the end of the clip while recording, but not after a cancel', async () => {
     const recorder = new VoiceRecorder()
     const ended = vi.fn()
