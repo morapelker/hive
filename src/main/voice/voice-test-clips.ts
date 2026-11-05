@@ -8,6 +8,7 @@ import {
   type VoiceTestCaptureClip,
   type VoiceTestClipInfo,
   type VoiceTestClipsStatus,
+  type VoiceTestPreviewReport,
   type VoiceTestSelectOptions,
   type VoiceTestStreamReport
 } from '@shared/types/voice'
@@ -24,6 +25,9 @@ const CLIP_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 /** Longest auto-stop delay accepted after a clip ends. */
 const MAX_AUTO_STOP_DELAY_MS = 60_000
 
+/** Preview updates kept per dictation for `status().preview.history`. */
+const MAX_PREVIEW_HISTORY = 200
+
 export interface DecodedWav {
   readonly samples: Float32Array
   readonly sampleRate: number
@@ -35,8 +39,7 @@ export interface DecodedWav {
  */
 export function decodeWav(bytes: Uint8Array): DecodedWav {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-  const tag = (offset: number): string =>
-    String.fromCharCode(...bytes.subarray(offset, offset + 4))
+  const tag = (offset: number): string => String.fromCharCode(...bytes.subarray(offset, offset + 4))
   if (bytes.byteLength < 12 || tag(0) !== 'RIFF' || tag(8) !== 'WAVE') {
     throw new Error('not a WAV file')
   }
@@ -106,7 +109,10 @@ function decodePcm(
  * Where test clips come from, or null when the switch is off (the default).
  * `1`/`true` means the committed fixtures; any other value is a directory of clips.
  */
-export function resolveVoiceTestClipsDir(value: string | undefined, appRoot: string): string | null {
+export function resolveVoiceTestClipsDir(
+  value: string | undefined,
+  appRoot: string
+): string | null {
   if (!isVoiceTestClipsSwitchOn(value)) return null
   const trimmed = value!.trim()
   if (/^(1|true|yes|on)$/i.test(trimmed)) return join(appRoot, FIXTURES_RELATIVE_DIR)
@@ -140,6 +146,8 @@ export class VoiceTestClips {
   private stopTimer: ReturnType<typeof setTimeout> | null = null
   private playing = false
   private lastStream: VoiceTestStreamReport | null = null
+  private preview: VoiceTestPreviewReport | null = null
+  private captureStartedAt = 0
   private stopDictation: () => void = () => {}
 
   constructor(
@@ -231,7 +239,8 @@ export class VoiceTestClips {
         : null,
       autoStopAfterMs: this.autoStopAfterMs,
       playing: this.playing,
-      lastStream: this.lastStream
+      lastStream: this.lastStream,
+      preview: this.preview
     }
   }
 
@@ -239,6 +248,25 @@ export class VoiceTestClips {
   reportStream(report: VoiceTestStreamReport): void {
     if (!this.enabled) return
     this.lastStream = report
+  }
+
+  /**
+   * The dictation passed a live transcript update on to the HUD; kept, timed
+   * from capture start, for `status()` (verify workflow).
+   */
+  reportPreview(text: string): void {
+    if (!this.enabled) return
+    const atMs = Math.max(0, Date.now() - this.captureStartedAt)
+    const previous = this.preview
+    const history = previous?.history ?? []
+    this.preview = {
+      updates: (previous?.updates ?? 0) + 1,
+      firstAtMs: previous?.firstAtMs ?? atMs,
+      lastAtMs: atMs,
+      text,
+      history:
+        history.length < MAX_PREVIEW_HISTORY ? [...history, { atMs, chars: text.length }] : history
+    }
   }
 
   /**
@@ -250,6 +278,8 @@ export class VoiceTestClips {
     if (!this.enabled) return undefined
     this.clearStopTimer()
     this.lastStream = null
+    this.preview = null
+    this.captureStartedAt = Date.now()
     if (!this.selected) {
       log.warn('Dictation started with test clips on but no clip selected')
       this.playing = false

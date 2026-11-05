@@ -223,7 +223,10 @@ describe('VoiceTestClips', () => {
       clipMs: 1056,
       sessionAudioMs: 1056,
       finishMs: 60,
-      text: 'Hello there'
+      text: 'Hello there',
+      textSource: 'streamed' as const,
+      fallbackReason: null,
+      error: null
     }
     const clips = make(dir)
     await clips.select('hello')
@@ -237,6 +240,44 @@ describe('VoiceTestClips', () => {
     const off = make(undefined)
     off.reportStream(report)
     expect(off.status().lastStream).toBeNull()
+  })
+
+  it('times the preview updates from capture start until the next capture starts', async () => {
+    let now = 50_000
+    vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      const clips = make(dir)
+      await clips.select('hello')
+      clips.reportPreview('ignored before any capture')
+      clips.captureSource()
+      expect(clips.status().preview).toBeNull()
+      now += 900
+      clips.reportPreview('Hello')
+      now += 560
+      clips.reportPreview('Hello there')
+      expect(clips.status().preview).toEqual({
+        updates: 2,
+        firstAtMs: 900,
+        lastAtMs: 1460,
+        text: 'Hello there',
+        history: [
+          { atMs: 900, chars: 5 },
+          { atMs: 1460, chars: 11 }
+        ]
+      })
+      // The history is capped; the counts and latest text are not.
+      for (let i = 0; i < 300; i++) clips.reportPreview(`Hello there ${i}`)
+      expect(clips.status().preview).toMatchObject({ updates: 302, text: 'Hello there 299' })
+      expect(clips.status().preview?.history).toHaveLength(200)
+      clips.captureSource()
+      expect(clips.status().preview).toBeNull()
+
+      const off = make(undefined)
+      off.reportPreview('Hello')
+      expect(off.status().preview).toBeNull()
+    } finally {
+      vi.restoreAllMocks()
+    }
   })
 
   it('refuses names that are paths or do not exist', async () => {

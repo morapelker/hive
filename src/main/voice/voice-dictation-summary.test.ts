@@ -35,9 +35,12 @@ describe('DictationTrace', () => {
       speechModel: 'parakeet-tdt-0.6b-v2',
       streamed: false,
       textSource: 'whole-clip',
+      fallbackReason: null,
       target: 'paste',
       audioMs: 3_000,
       startToCaptureMs: 120,
+      previewUpdates: null,
+      captureToPreviewMs: null,
       recordMs: 3_120,
       stopToTranscriptMs: 80,
       decodeMs: 72,
@@ -58,10 +61,14 @@ describe('DictationTrace', () => {
     expect(summary).toMatchObject({
       outcome: 'cancelled',
       reason: 'escape',
+      streamed: false,
       textSource: null,
+      fallbackReason: null,
       target: null,
       audioMs: null,
       startToCaptureMs: null,
+      previewUpdates: null,
+      captureToPreviewMs: null,
       recordMs: null,
       stopToTranscriptMs: null,
       decodeMs: null,
@@ -72,6 +79,60 @@ describe('DictationTrace', () => {
       chars: null,
       totalMs: 50
     })
+  })
+
+  it('reports a streamed dictation: its preview updates and the streamed text source', () => {
+    const c = clock()
+    const trace = new DictationTrace('nemotron-speech-streaming-en-0.6b', c.now)
+    trace.markStreamed()
+    c.advance(40)
+    trace.markCaptureStarted()
+    c.advance(900.6)
+    trace.markPreview()
+    c.advance(560)
+    trace.markPreview()
+    c.advance(1_500)
+    trace.markStop()
+    c.advance(61)
+    trace.markTranscript('streamed', 38.4)
+    c.advance(4)
+    trace.markDelivered('pasted', 15)
+
+    expect(trace.finish('delivered')).toMatchObject({
+      streamed: true,
+      textSource: 'streamed',
+      fallbackReason: null,
+      previewUpdates: 2,
+      captureToPreviewMs: 901,
+      stopToTranscriptMs: 61,
+      decodeMs: 38,
+      stopToDeliveredMs: 65
+    })
+  })
+
+  it('says why a streamed dictation fell back to the whole clip', () => {
+    const c = clock()
+    const trace = new DictationTrace('nemotron-speech-streaming-en-0.6b', c.now)
+    trace.markStreamed()
+    trace.markCaptureStarted()
+    trace.markStop()
+    c.advance(1_700)
+    trace.markTranscript('fallback', 420, 'engine-exited')
+    expect(trace.finish('delivered')).toMatchObject({
+      streamed: true,
+      textSource: 'fallback',
+      fallbackReason: 'engine-exited',
+      previewUpdates: 0,
+      captureToPreviewMs: null,
+      stopToTranscriptMs: 1_700,
+      decodeMs: 420
+    })
+  })
+
+  it('only keeps a fallback reason for fallback text', () => {
+    const trace = new DictationTrace('nemotron-speech-streaming-en-0.6b', clock().now)
+    trace.markTranscript('streamed', 30, 'empty-text')
+    expect(trace.finish('delivered')).toMatchObject({ fallbackReason: null })
   })
 
   it('has no AI duration when the AI step did not ask a model', () => {

@@ -35,6 +35,7 @@ import {
 import {
   VoiceEngine,
   VoiceStreamCancelledError,
+  isVoiceEngineExited,
   isVoiceStreamCancelled,
   type VoiceEngineModel,
   type VoiceStreamSession
@@ -146,6 +147,34 @@ describe('VoiceEngine model loading', () => {
     await answerLoad(1)
     await next
     expect(child(0).sentOfType('load')).toHaveLength(1)
+    expect(engine.loadedModel).toBe(NEMOTRON.dir)
+  })
+
+  it('starts a fresh load when asked right after an unload killed the one in flight', async () => {
+    const first = engine.ensureLoaded(NEMOTRON).catch((error: Error) => error)
+    await vi.waitFor(() => child(0).lastOfType('load'))
+    engine.unload('speech model changed')
+    // In the same tick, as the warm-up right after a model switch asks.
+    const second = engine.ensureLoaded(NEMOTRON)
+    expect(await first).toEqual(new Error('Speech engine was unloaded'))
+    await answerLoad(1)
+    await second
+    expect(child(0).killed).toBe(true)
+    expect(engine.loadedModel).toBe(NEMOTRON.dir)
+  })
+
+  it('lets onError reload when the worker dies while the session waits for its load', async () => {
+    const reloads: Array<Promise<void>> = []
+    const session = engine.startSession(NEMOTRON, {
+      onError: () => reloads.push(engine.ensureLoaded(NEMOTRON))
+    })
+    await vi.waitFor(() => child(0).lastOfType('load'))
+    child(0).crash(9)
+    await expect(session.finish()).rejects.toThrow('Speech engine exited (code 9)')
+    await vi.waitFor(() => expect(reloads).toHaveLength(1))
+    // A fresh worker loads the model, instead of the reload joining the dead load.
+    await answerLoad(1)
+    await reloads[0]
     expect(engine.loadedModel).toBe(NEMOTRON.dir)
   })
 
@@ -389,9 +418,14 @@ describe('VoiceEngine streaming sessions', () => {
     pushInChunks(session, fakeSpeech(WORDS))
     await vi.waitFor(() => expect(child(0).sentOfType('stream-audio').length).toBeGreaterThan(0))
     child(0).crash(139)
-    await expect(session.finish()).rejects.toThrow('Speech engine exited (code 139)')
+    const error = await session.finish().catch((e: unknown) => e)
+    expect((error as Error).message).toBe('Speech engine exited (code 139)')
+    // Typed, so a dictation can tell a crash from other session failures.
+    expect(isVoiceEngineExited(error)).toBe(true)
+    expect(isVoiceStreamCancelled(error)).toBe(false)
     expect(onError).toHaveBeenCalledTimes(1)
-    expect(onError).toHaveBeenCalledWith(new Error('Speech engine exited (code 139)'))
+    // The same failure that finish() rejected with.
+    expect(onError.mock.calls[0][0]).toBe(error)
     expect(engine.isLoaded).toBe(false)
   })
 

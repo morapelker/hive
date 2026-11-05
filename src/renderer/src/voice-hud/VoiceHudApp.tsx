@@ -82,6 +82,7 @@ export function VoiceHudApp(): React.JSX.Element | null {
   const recorderRef = useRef<VoiceRecorder | null>(null)
   const soundsRef = useRef<VoiceSoundPlayer | null>(null)
   const soundsEnabledRef = useRef(true)
+  const phaseKindRef = useRef<VoiceHudPhase['kind']>('hidden')
 
   const getRecorder = useCallback((): VoiceRecorder => {
     if (!recorderRef.current) {
@@ -112,13 +113,18 @@ export function VoiceHudApp(): React.JSX.Element | null {
     const unsubscribers = [
       bridge.onState((state: VoiceHudState) => {
         soundsEnabledRef.current = state.sounds
+        // The state is re-sent while recording (each live transcript update),
+        // so only a new recording resets the bars.
+        const startsRecording =
+          state.phase.kind === 'recording' && phaseKindRef.current !== 'recording'
+        phaseKindRef.current = state.phase.kind
         setPhase((previous) => {
           if (state.phase.kind === 'recording' && previous.kind !== 'recording') {
             setRecordingSince(Date.now())
           }
           return state.phase
         })
-        if (state.phase.kind === 'recording') setLevels(EMPTY_LEVELS)
+        if (startsRecording) setLevels(EMPTY_LEVELS)
       }),
       bridge.onSound((name) => {
         if (!soundsEnabledRef.current) return

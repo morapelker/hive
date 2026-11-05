@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 const logger = vi.hoisted(() => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }))
 vi.mock('../services/logger', () => ({ createLogger: () => logger }))
 
-import { DictationAudioStream } from './voice-dictation-stream'
+import { DictationAudioStream, isDictationStreamBroken } from './voice-dictation-stream'
 import type { VoiceStreamResult, VoiceStreamSession } from './voice-engine'
 
 /** Records what reaches the session, like the engine's session would receive it. */
@@ -76,10 +76,18 @@ describe('DictationAudioStream', () => {
     stream.accept(chunk(3, [0.4]))
     expect(session.pushed).toHaveLength(1)
     expect(session.cancel).toHaveBeenCalledTimes(1)
-    await expect(stream.finish(new Float32Array(4), 16_000)).rejects.toThrow(
-      'Audio chunk 1 never arrived (got 2)'
-    )
+    const error = await stream.finish(new Float32Array(4), 16_000).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).toBe('Audio chunk 1 never arrived (got 2)')
+    // Told apart from a session failure, so the dictation can say why it fell back.
+    expect(isDictationStreamBroken(error)).toBe(true)
     expect(session.finish).not.toHaveBeenCalled()
+    expect(stream.progress).toEqual({
+      chunks: 1,
+      streamedSamples: 1,
+      topUpSamples: 0,
+      sampleRate: 16_000
+    })
   })
 
   it('stops streaming when a chunk has a different sample rate', async () => {
@@ -88,7 +96,17 @@ describe('DictationAudioStream', () => {
     stream.accept(chunk(0, [0.1], 7, 48_000))
     expect(session.pushed).toHaveLength(0)
     expect(session.cancel).toHaveBeenCalledTimes(1)
-    await expect(stream.finish(new Float32Array(1), 16_000)).rejects.toThrow('48000 Hz')
+    const error = await stream.finish(new Float32Array(1), 16_000).catch((e: unknown) => e)
+    expect((error as Error).message).toContain('48000 Hz')
+    expect(isDictationStreamBroken(error)).toBe(true)
+  })
+
+  it('counts a clip at another sample rate as a broken stream', async () => {
+    const session = fakeSession()
+    const stream = new DictationAudioStream(7, session, 16_000)
+    const error = await stream.finish(new Float32Array(1), 44_100).catch((e: unknown) => e)
+    expect(isDictationStreamBroken(error)).toBe(true)
+    expect(session.cancel).toHaveBeenCalledTimes(1)
   })
 
   it('finishes with nothing to add when every sample arrived as a chunk', async () => {
@@ -156,6 +174,10 @@ describe('DictationAudioStream', () => {
     session.finish.mockRejectedValueOnce(new Error('Speech engine exited (code 9)'))
     const stream = new DictationAudioStream(7, session, 16_000)
     stream.accept(chunk(0, [0.1]))
-    await expect(stream.finish(new Float32Array([0.1]), 16_000)).rejects.toThrow('exited')
+    const error = await stream.finish(new Float32Array([0.1, 0.2]), 16_000).catch((e: unknown) => e)
+    expect((error as Error).message).toContain('exited')
+    expect(isDictationStreamBroken(error)).toBe(false)
+    // What reached the session is still known, for the report.
+    expect(stream.progress).toMatchObject({ chunks: 1, streamedSamples: 1, topUpSamples: 1 })
   })
 })

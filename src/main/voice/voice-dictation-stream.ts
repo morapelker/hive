@@ -4,6 +4,30 @@ import type { VoiceStreamResult, VoiceStreamSession } from './voice-engine'
 
 const log = createLogger({ component: 'VoiceDictationStream' })
 
+/**
+ * The HUD's audio could not be streamed as recorded (a chunk went missing, or
+ * audio came at another sample rate). The session was cancelled; the clip is
+ * still whole, so the dictation can fall back to it.
+ */
+export class DictationStreamBrokenError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'DictationStreamBrokenError'
+  }
+}
+
+export function isDictationStreamBroken(error: unknown): error is DictationStreamBrokenError {
+  return error instanceof DictationStreamBrokenError
+}
+
+/** What reached the session so far, whatever became of it. */
+export interface DictationStreamProgress {
+  readonly chunks: number
+  readonly streamedSamples: number
+  readonly topUpSamples: number
+  readonly sampleRate: number
+}
+
 /** What a dictation's stream received and how its session finished. */
 export interface DictationStreamResult extends VoiceStreamResult {
   /** Chunks accepted from the HUD while recording. */
@@ -32,6 +56,7 @@ export class DictationAudioStream {
   private nextSeq = 0
   private chunks = 0
   private streamedSamples = 0
+  private topUpSamples = 0
   private duplicates = 0
   private broken: Error | null = null
   /** `finish` or `cancel` was called: later chunks are ignored. */
@@ -55,12 +80,18 @@ export class DictationAudioStream {
       return
     }
     if (chunk.seq > this.nextSeq) {
-      this.break(new Error(`Audio chunk ${this.nextSeq} never arrived (got ${chunk.seq})`))
+      this.break(
+        new DictationStreamBrokenError(
+          `Audio chunk ${this.nextSeq} never arrived (got ${chunk.seq})`
+        )
+      )
       return
     }
     if (chunk.sampleRate !== this.sampleRate) {
       this.break(
-        new Error(`Audio arrived at ${chunk.sampleRate} Hz; the session expects ${this.sampleRate}`)
+        new DictationStreamBrokenError(
+          `Audio arrived at ${chunk.sampleRate} Hz; the session expects ${this.sampleRate}`
+        )
       )
       return
     }
@@ -70,10 +101,20 @@ export class DictationAudioStream {
     this.session.push(chunk.samples)
   }
 
+  /** Chunks and samples that reached the session so far (for reports after a failure). */
+  get progress(): DictationStreamProgress {
+    return {
+      chunks: this.chunks,
+      streamedSamples: this.streamedSamples,
+      topUpSamples: this.topUpSamples,
+      sampleRate: this.sampleRate
+    }
+  }
+
   /**
    * Recording stopped and `clip` is everything that was captured: push what the
    * chunks did not carry, then finish the session. Rejects if the stream broke
-   * or the session failed.
+   * ({@link DictationStreamBrokenError}) or the session failed (the session's error).
    */
   async finish(clip: Float32Array, clipSampleRate: number): Promise<DictationStreamResult> {
     if (this.closed) throw new Error('The dictation stream was already closed')
@@ -81,13 +122,14 @@ export class DictationAudioStream {
     if (this.broken) throw this.broken
     if (clipSampleRate !== this.sampleRate) {
       this.session.cancel()
-      throw new Error(`The clip is ${clipSampleRate} Hz; the session expects ${this.sampleRate}`)
+      throw new DictationStreamBrokenError(
+        `The clip is ${clipSampleRate} Hz; the session expects ${this.sampleRate}`
+      )
     }
-    let topUpSamples = 0
     if (clip.length > this.streamedSamples) {
       // A copy, not a view: a view would send the whole clip's buffer to the engine.
       const tail = clip.slice(this.streamedSamples)
-      topUpSamples = tail.length
+      this.topUpSamples = tail.length
       this.session.push(tail)
     } else if (clip.length < this.streamedSamples) {
       log.warn('More audio was streamed than the clip holds', {
@@ -100,7 +142,7 @@ export class DictationAudioStream {
       ...result,
       chunks: this.chunks,
       streamedSamples: this.streamedSamples,
-      topUpSamples,
+      topUpSamples: this.topUpSamples,
       clipSamples: clip.length,
       sampleRate: this.sampleRate
     }

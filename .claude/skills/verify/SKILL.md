@@ -110,6 +110,23 @@ HIVE_VOICE_TEST_CLIPS=1 \
 - Logs: `VoiceTestClips` lines (`Test clip selected`, `Test clip ended`) and the controller's
   `Transcribed` line.
 - With a streaming speech model (Nemotron) the HUD also streams each chunk to the engine while
-  recording. After the dictation, `status().lastStream` shows what that session got:
-  `{ chunks, streamedMs, topUpMs, clipMs, sessionAudioMs, finishMs, text }` (reset when the next
-  capture starts). The log has the same numbers, without the text, as `Streamed dictation audio`.
+  recording, and the session's final text is the transcript (no whole-clip decode). After the
+  dictation, `status().lastStream` shows what that session got and where the text came from:
+  `{ chunks, streamedMs, topUpMs, clipMs, sessionAudioMs, finishMs, text, textSource, fallbackReason,
+  error }` (`textSource` is `streamed`, or `fallback` when the whole clip was transcribed instead;
+  reset when the next capture starts). The log has the same numbers, without the text, as
+  `Streamed dictation audio`.
+- Live preview data (VOICE-06; the HUD renders it from VOICE-07): `status().preview` is
+  `{ updates, firstAtMs, lastAtMs, text, history: [{ atMs, chars }] }`, timed from capture start;
+  poll it during a dictation to watch it grow. The HUD target receives it as
+  `VoiceHudState.transcript`.
+- Every dictation ends with one `Dictation summary` log line: `streamed`, `textSource`
+  (`streamed` / `fallback` / `whole-clip`), `fallbackReason`, `stopToTranscriptMs`,
+  `previewUpdates`, `captureToPreviewMs`, … `grep "Dictation summary"` the day's log.
+- With voice on and Nemotron downloaded, the model loads ~2 s after launch and when voice is turned
+  on (`Loading the streaming speech model ahead of dictation`), so the first dictation previews
+  from the start.
+- To force the fallback, kill the engine mid-dictation: it is a `--utility-sub-type=node.mojom.NodeService`
+  child of *this build's* Electron process with sherpa-onnx loaded (`lsof -p <pid> | grep sherpa`);
+  `kill -9` that pid while the clip plays. Don't `pkill` — other worktrees' dev apps may be running.
+  The summary then shows `textSource: "fallback", fallbackReason: "engine-exited"`.

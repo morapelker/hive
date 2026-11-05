@@ -11,6 +11,7 @@ import {
   type VoiceSpeechModelId,
   type VoiceStatus
 } from '@shared/types/voice'
+import { DictionaryReplacer } from '@shared/voice/dictionary-replacer'
 import { parseHotkey, type HotkeySpec } from '@shared/voice/hotkey-spec'
 import type { DatabaseService } from '../db/database'
 import type { VoiceHistoryRow } from '../db/types'
@@ -21,14 +22,26 @@ import {
   DICTATION_SUMMARY_MESSAGE,
   DictationTrace,
   type DictationDelivery,
-  type DictationOutcome
+  type DictationFallbackReason,
+  type DictationOutcome,
+  type DictationTextSource
 } from './voice-dictation-summary'
-import { DictationAudioStream, type DictationStreamResult } from './voice-dictation-stream'
-import { isVoiceStreamCancelled, voiceEngine, type VoiceEngineModel } from './voice-engine'
+import {
+  DictationAudioStream,
+  isDictationStreamBroken,
+  type DictationStreamResult
+} from './voice-dictation-stream'
+import {
+  isVoiceEngineExited,
+  isVoiceStreamCancelled,
+  voiceEngine,
+  type VoiceEngineModel
+} from './voice-engine'
 import { voiceHud } from './voice-hud-window'
 import { voiceMedia } from './voice-media'
 import { voiceModelStore } from './voice-model-store'
 import { deliverVoiceText } from './voice-paste'
+import { PreviewThrottle } from './voice-preview-throttle'
 import { readVoiceSettings } from './voice-settings'
 import type { VoiceSoundName } from './voice-sounds'
 import { voiceTestClips } from './voice-test-clips'
@@ -52,6 +65,19 @@ const HUD_READY_TIMEOUT_MS = 4_000
 const AUDIO_TIMEOUT_MS = 8_000
 /** The HUD records at 16 kHz; a streaming session takes its chunks at that rate. */
 const STREAM_SAMPLE_RATE = 16_000
+/**
+ * Live transcript updates reach the HUD at most this often. The engine sends
+ * about two a second while the user speaks, but bursts while a backlog drains.
+ */
+const PREVIEW_INTERVAL_MS = 150
+/**
+ * A streamed transcript is only used if its session got the whole clip, give
+ * or take this much audio (the clip is the source of truth; VOICE-05 tops the
+ * session up from it at stop).
+ */
+const STREAM_AUDIO_TOLERANCE_MS = 250
+/** At app start the streaming model loads this long after voice is set up, clear of startup work. */
+const APP_START_WARM_UP_DELAY_MS = 2_000
 const MAC_MIC_SETTINGS_URL =
   'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'
 
@@ -59,6 +85,22 @@ export interface VoiceAudioPayload {
   readonly samples: Float32Array
   readonly sampleRate: number
   readonly durationMs: number
+}
+
+/** A dictation's transcript and the path that produced it. */
+interface DictationTranscript {
+  readonly text: string
+  readonly decodeMs: number | null
+  readonly source: DictationTextSource
+  readonly fallbackReason: DictationFallbackReason | null
+}
+
+/** Why a streaming session's result could not be used, from how its finish failed. */
+function fallbackReasonFor(error: unknown): DictationFallbackReason {
+  if (isDictationStreamBroken(error)) return 'stream-broken'
+  if (isVoiceEngineExited(error)) return 'engine-exited'
+  if (isVoiceStreamCancelled(error)) return 'stream-cancelled'
+  return 'session-error'
 }
 
 export function toVoiceHistoryEntry(row: VoiceHistoryRow): VoiceHistoryEntry {
@@ -111,6 +153,20 @@ export class VoiceController {
    * arrives at stop (or the dictation ends first).
    */
   private stream: DictationAudioStream | null = null
+  /**
+   * The transcript the HUD shows above the pill, dictionary applied: the text
+   * so far while a streamed recording runs, then the final transcript. Sent
+   * with every HUD state; cleared when the pill hides or shows a notice.
+   */
+  private hudTranscript = ''
+  /** The pill's current phase, re-sent with each live transcript update. */
+  private hudPhase: VoiceHudPhase = { kind: 'hidden' }
+  /** Caps the live transcript updates of the streamed recording in progress. */
+  private preview: PreviewThrottle | null = null
+  /** Pending app-start load of the streaming model. */
+  private warmUpTimer: NodeJS.Timeout | null = null
+  /** The selected speech model was on disk at the last check (to load it once it arrives). */
+  private speechModelReady = false
   private audioWaiter: {
     resolve: (payload: VoiceAudioPayload) => void
     reject: (error: Error) => void
@@ -137,6 +193,10 @@ export class VoiceController {
         if (modelId !== this.settings.speechModel) return
         this.recomputeState()
         this.broadcast()
+        const ready = this.modelReady()
+        const arrived = ready && !this.speechModelReady
+        this.speechModelReady = ready
+        if (arrived) this.warmUpStreamingModel('model downloaded')
       }),
       voiceEngine.onLoadedChange(() => this.broadcast())
     )
@@ -160,8 +220,10 @@ export class VoiceController {
     this.unregisterEscape()
     for (const off of this.unsubscribe.splice(0)) off()
     this.clearNoticeTimer()
+    this.clearWarmUpTimer()
     this.rejectAudioWaiter(new Error('shutting down'))
     this.closeStream()
+    this.clearPreview()
     voiceEngine.dispose()
     voiceHud.destroy()
   }
@@ -177,9 +239,10 @@ export class VoiceController {
     this.settings = next
 
     voiceEngine.setIdleUnloadMinutes(next.unloadModelAfterMinutes)
-    if (previous.speechModel !== next.speechModel && voiceEngine.isLoaded) {
-      voiceEngine.unload('speech model changed')
-    }
+    const modelChanged = previous.speechModel !== next.speechModel
+    // Also while the old model is still loading (a warm-up), so it never lands
+    // in memory after the switch. A no-op when the engine is not running.
+    if (modelChanged) voiceEngine.unload('speech model changed')
 
     this.parseHotkeySetting()
 
@@ -195,17 +258,62 @@ export class VoiceController {
         }
       }
       if (this.isAnyWindowFocused()) this.registerHotkey()
+      // Keep a streaming model warm so the first dictation previews from its
+      // first words: at app start (a moment later, clear of startup work),
+      // when voice is turned on, and when the user switches models.
+      if (options.initial) {
+        this.scheduleWarmUp(APP_START_WARM_UP_DELAY_MS)
+      } else if (!previous.enabled || modelChanged) {
+        this.warmUpStreamingModel(previous.enabled ? 'speech model changed' : 'voice enabled')
+      }
     } else {
       this.unregisterHotkey()
+      this.clearWarmUpTimer()
       if (this.state === 'recording' || this.state === 'processing') {
         this.cancel('voice-disabled')
       }
       voiceHud.hide()
-      if (voiceEngine.isLoaded) voiceEngine.unload('voice disabled')
+      // Also stops a warm-up still loading. A no-op when the engine is not running.
+      voiceEngine.unload('voice disabled')
     }
 
+    this.speechModelReady = this.modelReady()
     this.recomputeState()
     this.broadcast()
+  }
+
+  /**
+   * Load the selected streaming model ahead of the first press, so a dictation
+   * previews from its first words instead of after a cold load. Offline models
+   * still load at the press, as before. The idle-unload setting still applies:
+   * after an idle unload the model loads again at the next press.
+   */
+  private warmUpStreamingModel(reason: string): void {
+    this.clearWarmUpTimer()
+    if (!this.settings.enabled || this.headless) return
+    const modelId = this.settings.speechModel
+    if (!findVoiceSpeechModel(modelId).streaming || !voiceModelStore.isReady(modelId)) return
+    const model = engineModel(modelId)
+    if (voiceEngine.loadedModel === model.dir) return
+    log.info('Loading the streaming speech model ahead of dictation', { reason })
+    void voiceEngine.ensureLoaded(model).catch((error: unknown) => {
+      log.warn('streaming model warm-up failed', { reason, error: String(error) })
+    })
+  }
+
+  private scheduleWarmUp(delayMs: number): void {
+    this.clearWarmUpTimer()
+    this.warmUpTimer = setTimeout(() => {
+      this.warmUpTimer = null
+      this.warmUpStreamingModel('app start')
+    }, delayMs)
+  }
+
+  private clearWarmUpTimer(): void {
+    if (this.warmUpTimer) {
+      clearTimeout(this.warmUpTimer)
+      this.warmUpTimer = null
+    }
   }
 
   private parseHotkeySetting(): void {
@@ -360,7 +468,13 @@ export class VoiceController {
   }
 
   async deleteModel(modelId: VoiceSpeechModelId): Promise<void> {
-    if (voiceEngine.loadedModel === voiceModelStore.getModelDir(modelId)) {
+    // The selected model may still be loading (a warm-up), with nothing loaded
+    // yet: stop that too, so a deleted model never lands in memory.
+    if (
+      modelId === this.settings.speechModel ||
+      voiceEngine.loadedModel === voiceModelStore.getModelDir(modelId)
+    ) {
+      this.clearWarmUpTimer()
       voiceEngine.unload('model deleted')
     }
     await voiceModelStore.delete(modelId)
@@ -491,6 +605,7 @@ export class VoiceController {
       return
     }
 
+    this.clearPreview()
     this.setHudPhase({ kind: 'recording' })
     voiceHud.show()
     // Opened before capture starts so no chunk arrives without a session to take
@@ -562,6 +677,10 @@ export class VoiceController {
     void voiceMedia.recordingDidStop()
 
     this.state = 'processing'
+    // The live text so far stays on the pill until the final transcript is in;
+    // no update goes out after the stop press.
+    this.preview?.cancel()
+    this.preview = null
     this.setHudPhase({ kind: 'transcribing', progress: null, showsProgress: false })
     this.broadcast()
 
@@ -590,20 +709,23 @@ export class VoiceController {
         this.showTransientNotice('Nothing heard', SHORT_NOTICE_SECONDS)
         return
       }
-      // The session's transcript is not used yet (VOICE-06 makes it the
-      // transcript, with the whole clip as the fallback); finishing it here
-      // ends the session and reports what it received.
-      if (stream) void this.finishStream(stream, audio)
-
-      await voiceEngine.ensureLoaded(engineModel(this.settings.speechModel))
-      if (generation !== this.generation) return
-
-      const { text: raw, decodeMs } = await voiceEngine.transcribe(samples, audio.sampleRate)
-      if (generation !== this.generation) return
-      this.dictation?.markTranscript('whole-clip', decodeMs)
+      // A streaming model's session has heard everything already: finishing it
+      // gives the final text at once, whatever the length. The whole clip is
+      // only transcribed when the session can't be used.
+      const transcript = stream
+        ? await this.transcribeStreamed(stream, audio, samples, generation)
+        : await this.transcribeWholeClip(samples, audio.sampleRate, generation, 'whole-clip', null)
+      if (!transcript) return
+      const raw = transcript.text
+      this.dictation?.markTranscript(
+        transcript.source,
+        transcript.decodeMs,
+        transcript.fallbackReason
+      )
       log.info('Transcribed', {
         seconds: Math.round(seconds * 10) / 10,
-        decodeMs,
+        source: transcript.source,
+        decodeMs: transcript.decodeMs,
         chars: raw.length
       })
       if (!raw) {
@@ -612,6 +734,9 @@ export class VoiceController {
         return
       }
 
+      // From here the pill shows the final transcript: exactly what
+      // enhanceTranscript pastes when the AI step is off or falls back.
+      this.hudTranscript = new DictionaryReplacer(this.settings.dictionary).apply(raw.trim())
       if (this.settings.cleanup.enabled) {
         this.setHudPhase({ kind: 'enhancing', progress: null, showsProgress: false })
       }
@@ -712,11 +837,12 @@ export class VoiceController {
 
   private finish(): void {
     this.closeStream()
+    this.clearPreview()
     this.clearNoticeTimer()
     this.clearMaxRecordingTimer()
     this.notice = null
     this.unregisterEscape()
-    voiceHud.setState({ phase: { kind: 'hidden' }, sounds: this.settings.sounds })
+    this.setHudPhase({ kind: 'hidden' })
     this.state =
       this.settings.enabled && this.modelReady() && !this.headless ? 'idle' : 'unavailable'
     this.broadcast()
@@ -728,6 +854,7 @@ export class VoiceController {
     this.clearNoticeTimer()
     this.clearMaxRecordingTimer()
     this.closeStream()
+    this.clearPreview()
     this.notice = text
     this.unregisterEscape()
     if (this.state === 'recording' || this.state === 'processing') {
@@ -760,7 +887,20 @@ export class VoiceController {
   }
 
   private setHudPhase(phase: VoiceHudPhase): void {
-    voiceHud.setState({ phase, sounds: this.settings.sounds })
+    this.hudPhase = phase
+    const transcript = phase.kind === 'hidden' || phase.kind === 'notice' ? '' : this.hudTranscript
+    voiceHud.setState({
+      phase,
+      sounds: this.settings.sounds,
+      ...(transcript ? { transcript } : {})
+    })
+  }
+
+  /** Drop the live transcript and any update still scheduled for the HUD. */
+  private clearPreview(): void {
+    this.preview?.cancel()
+    this.preview = null
+    this.hudTranscript = ''
   }
 
   private playSound(name: VoiceSoundName): void {
@@ -770,18 +910,64 @@ export class VoiceController {
 
   // ---- audio hand-off from the HUD renderer -------------------------------------------------
 
-  /** A streaming session for this recording, or null with an offline speech model. */
+  /**
+   * A streaming session for this recording, or null with an offline speech
+   * model. Its transcript updates go to the HUD as the live preview: dictionary
+   * applied (what you see is what gets pasted) and rate-capped.
+   */
   private openStream(id: number): DictationAudioStream | null {
     const modelId = this.settings.speechModel
     if (!findVoiceSpeechModel(modelId).streaming) return null
+    const replacer = new DictionaryReplacer(this.settings.dictionary)
+    const preview = new PreviewThrottle(PREVIEW_INTERVAL_MS, (text) => this.showPreview(id, text))
+    this.preview = preview
     const session = voiceEngine.startSession(engineModel(modelId), {
       sampleRate: STREAM_SAMPLE_RATE,
-      onError: (error) => {
-        // The whole clip is still transcribed at stop, so the dictation goes on.
-        log.warn('Streaming session failed during dictation', { error: error.message })
-      }
+      onUpdate: (text) => {
+        // Live text only while this recording runs; after stop the final transcript takes over.
+        if (!this.isStreaming(id)) return
+        preview.push(replacer.apply(text.trim()))
+      },
+      onError: (error) => this.onStreamFailed(id, error)
     })
+    this.dictation?.markStreamed()
     return new DictationAudioStream(id, session, STREAM_SAMPLE_RATE)
+  }
+
+  /** The recording `id` is still being captured and streamed. */
+  private isStreaming(id: number): boolean {
+    return this.state === 'recording' && this.stream?.id === id
+  }
+
+  private showPreview(id: number, text: string): void {
+    if (!this.isStreaming(id)) return
+    this.hudTranscript = text
+    this.dictation?.markPreview()
+    voiceTestClips.reportPreview(text)
+    this.setHudPhase(this.hudPhase)
+  }
+
+  /**
+   * The session failed while the user was still speaking (or before the clip
+   * arrived). The recording goes on, and at stop the whole clip is transcribed
+   * instead, so start reloading the model now for that.
+   */
+  private onStreamFailed(id: number, error: Error): void {
+    // Once the clip arrived the stop path owns the stream and sees the failure itself.
+    if (this.stream?.id !== id) return
+    log.warn('Streaming session failed during dictation', { error: error.message })
+    if (this.state === 'recording') {
+      // A preview that stopped growing would mislead; the final text comes at stop.
+      this.clearPreview()
+      this.setHudPhase(this.hudPhase)
+    }
+    void voiceEngine
+      .ensureLoaded(engineModel(this.settings.speechModel))
+      .catch((reloadError: unknown) => {
+        log.warn('speech model reload after a failed session failed', {
+          error: String(reloadError)
+        })
+      })
   }
 
   /** A chunk the HUD captured while recording (streaming speech models only). */
@@ -797,35 +983,104 @@ export class VoiceController {
     stream.cancel()
   }
 
-  /** Top up and finish the session; logs what it received. Never rejects. */
-  private finishStream(
+  /**
+   * Finish the session and use its final text. Falls back to the whole clip
+   * (same model) when the session failed, the engine crashed, the audio broke
+   * off, the session did not get the whole clip, or it heard no words in a clip
+   * that passed the speech checks. Null when the dictation was superseded.
+   */
+  private async transcribeStreamed(
     stream: DictationAudioStream,
-    audio: VoiceAudioPayload
-  ): Promise<DictationStreamResult | null> {
-    return stream.finish(audio.samples, audio.sampleRate).then(
-      (result) => {
-        const ms = (samples: number): number => Math.round((samples / result.sampleRate) * 1000)
-        const report = {
-          chunks: result.chunks,
-          streamedMs: ms(result.streamedSamples),
-          topUpMs: ms(result.topUpSamples),
-          clipMs: ms(result.clipSamples),
-          sessionAudioMs: result.audioMs,
-          finishMs: result.finishMs
+    audio: VoiceAudioPayload,
+    samples: Float32Array,
+    generation: number
+  ): Promise<DictationTranscript | null> {
+    let result: DictationStreamResult | null = null
+    let failure: unknown = null
+    try {
+      result = await stream.finish(audio.samples, audio.sampleRate)
+    } catch (error) {
+      failure = error
+    }
+    if (generation !== this.generation) return null
+
+    let reason: DictationFallbackReason
+    if (result) {
+      const clipMs = (result.clipSamples / result.sampleRate) * 1000
+      if (Math.abs(result.audioMs - clipMs) > STREAM_AUDIO_TOLERANCE_MS) {
+        reason = 'incomplete-audio'
+      } else if (!result.text) {
+        reason = 'empty-text'
+      } else {
+        this.reportStream(stream, audio, result, null, null)
+        return {
+          text: result.text,
+          decodeMs: result.workerFinishMs,
+          source: 'streamed',
+          fallbackReason: null
         }
-        log.info('Streamed dictation audio', { ...report, chars: result.text.length })
-        voiceTestClips.reportStream({ ...report, text: result.text })
-        return result
-      },
-      (error: unknown) => {
-        if (!isVoiceStreamCancelled(error)) {
-          log.warn('Streaming session did not finish', {
-            error: error instanceof Error ? error.message : String(error)
-          })
-        }
-        return null
       }
-    )
+    } else {
+      reason = fallbackReasonFor(failure)
+    }
+
+    const error =
+      failure === null ? null : failure instanceof Error ? failure.message : String(failure)
+    log.warn('Transcribing the whole clip instead of the streamed text', {
+      reason,
+      ...(error ? { error } : {}),
+      ...(result
+        ? {
+            sessionAudioMs: result.audioMs,
+            clipMs: Math.round((result.clipSamples / result.sampleRate) * 1000)
+          }
+        : {})
+    })
+    this.reportStream(stream, audio, result, reason, error)
+    return this.transcribeWholeClip(samples, audio.sampleRate, generation, 'fallback', reason)
+  }
+
+  /** Transcribe the trimmed clip whole, loading the model first if it is not (or no longer) loaded. */
+  private async transcribeWholeClip(
+    samples: Float32Array,
+    sampleRate: number,
+    generation: number,
+    source: DictationTextSource,
+    fallbackReason: DictationFallbackReason | null
+  ): Promise<DictationTranscript | null> {
+    await voiceEngine.ensureLoaded(engineModel(this.settings.speechModel))
+    if (generation !== this.generation) return null
+    const { text, decodeMs } = await voiceEngine.transcribe(samples, sampleRate)
+    if (generation !== this.generation) return null
+    return { text, decodeMs, source, fallbackReason }
+  }
+
+  /** Log what the session received and how it ended; kept for the verify workflow too. */
+  private reportStream(
+    stream: DictationAudioStream,
+    audio: VoiceAudioPayload,
+    result: DictationStreamResult | null,
+    fallbackReason: DictationFallbackReason | null,
+    error: string | null
+  ): void {
+    const progress = result ?? stream.progress
+    const ms = (samples: number): number => Math.round((samples / progress.sampleRate) * 1000)
+    const report = {
+      chunks: progress.chunks,
+      streamedMs: ms(progress.streamedSamples),
+      topUpMs: ms(progress.topUpSamples),
+      clipMs: Math.round((audio.samples.length / Math.max(1, audio.sampleRate)) * 1000),
+      sessionAudioMs: result ? result.audioMs : null,
+      finishMs: result ? result.finishMs : null
+    }
+    if (result) log.info('Streamed dictation audio', { ...report, chars: result.text.length })
+    voiceTestClips.reportStream({
+      ...report,
+      text: result ? result.text : null,
+      textSource: fallbackReason ? 'fallback' : 'streamed',
+      fallbackReason,
+      error
+    })
   }
 
   private waitForAudio(): Promise<VoiceAudioPayload> {

@@ -312,6 +312,15 @@ export interface VoiceHudState {
   readonly phase: VoiceHudPhase
   /** Feedback sound to play in the HUD on platforms without system sounds. */
   readonly sounds: boolean
+  /**
+   * The dictation's transcript, with dictionary replacements applied, for the
+   * preview above the pill. While recording (streaming speech models only) it
+   * is the text so far and grows as the user speaks; after stop it is the last
+   * text so far until the final transcript replaces it, and the final
+   * transcript during the AI step. Absent until the first words, and never set
+   * on `hidden` or `notice`.
+   */
+  readonly transcript?: string
 }
 
 /** Result of a completed dictation, pushed to the renderer for toasts/history refresh. */
@@ -360,6 +369,11 @@ export interface VoiceTestClipsStatus {
   readonly playing: boolean
   /** The last dictation's streaming session (streaming speech models only). */
   readonly lastStream: VoiceTestStreamReport | null
+  /**
+   * The live transcript updates the current or last dictation passed on to the
+   * HUD (streaming speech models only); null until the first one.
+   */
+  readonly preview: VoiceTestPreviewReport | null
 }
 
 /** Sent with capture-start when test clips are on: the HUD plays this instead of opening the mic. */
@@ -427,9 +441,29 @@ export interface VoiceTestStreamReport {
   readonly topUpMs: number
   /** Length of the clip the HUD handed over at stop. */
   readonly clipMs: number
-  /** Audio the engine's session reports it received. */
-  readonly sessionAudioMs: number
-  readonly finishMs: number
-  /** The session's final transcript. */
+  /** Audio the engine's session reports it received; null if the session failed. */
+  readonly sessionAudioMs: number | null
+  /** null if the session failed. */
+  readonly finishMs: number | null
+  /** The session's final transcript (raw, before the dictionary); null if the session failed. */
+  readonly text: string | null
+  /** Where the dictation's transcript came from: the session, or the whole clip after all. */
+  readonly textSource: 'streamed' | 'fallback'
+  /** Why the whole clip was used (the summary log's reason code), or null. */
+  readonly fallbackReason: string | null
+  /** The session's error, when it failed. */
+  readonly error: string | null
+}
+
+/** Dev/test only: the live transcript updates a dictation passed on to the HUD. */
+export interface VoiceTestPreviewReport {
+  readonly updates: number
+  /** Capture start → first update, in ms. */
+  readonly firstAtMs: number
+  /** Capture start → latest update, in ms. */
+  readonly lastAtMs: number
+  /** The latest text sent (dictionary applied). */
   readonly text: string
+  /** Each update's time and length, oldest first (the first 200). */
+  readonly history: ReadonlyArray<{ readonly atMs: number; readonly chars: number }>
 }

@@ -111,6 +111,18 @@ export function isVoiceStreamCancelled(error: unknown): error is VoiceStreamCanc
   return error instanceof VoiceStreamCancelledError
 }
 
+/** The engine's worker process exited (crashed or was killed) while it had work. */
+export class VoiceEngineExitedError extends Error {
+  constructor(readonly code: number | null) {
+    super(`Speech engine exited (code ${code})`)
+    this.name = 'VoiceEngineExitedError'
+  }
+}
+
+export function isVoiceEngineExited(error: unknown): error is VoiceEngineExitedError {
+  return error instanceof VoiceEngineExitedError
+}
+
 function toError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error))
 }
@@ -363,10 +375,12 @@ export class VoiceEngine {
       await this.loading
       if (this.loadedModelDir === model.dir) return
     }
-    this.loading = this.load(model).finally(() => {
-      this.loading = null
+    const loading = this.load(model).finally(() => {
+      // A worker torn down mid-load already dropped it; never clear a newer load.
+      if (this.loading === loading) this.loading = null
     })
-    await this.loading
+    this.loading = loading
+    await loading
   }
 
   private async load(model: VoiceEngineModel): Promise<void> {
@@ -496,6 +510,10 @@ export class VoiceEngine {
     const child = this.child
     this.child = null
     this.loadedModelDir = null
+    // A load still running on this worker is dead: a caller that asks again
+    // right away (a warm-up after a model switch, a reload from onError) must
+    // start a fresh load, not join the one that is about to reject.
+    this.loading = null
     this.clearIdleTimer()
     this.rejectAll(error)
     if (this.session && this.session.model.dir !== keepSessionFor) this.session.fail(error)
@@ -551,8 +569,9 @@ export class VoiceEngine {
       log.warn('Voice engine worker exited', { code })
       this.child = null
       this.loadedModelDir = null
+      this.loading = null
       this.clearIdleTimer()
-      const error = new Error(`Speech engine exited (code ${code})`)
+      const error = new VoiceEngineExitedError(code)
       this.rejectAll(error)
       this.session?.fail(error)
       this.notify(false)

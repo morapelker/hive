@@ -6,8 +6,30 @@ export const DICTATION_SUMMARY_MESSAGE = 'Dictation summary'
 
 export type DictationOutcome = 'delivered' | 'discarded' | 'cancelled' | 'failed'
 
-/** Which path produced the text. The streaming tickets add `streamed` and `fallback`. */
-export type DictationTextSource = 'whole-clip'
+/**
+ * Which path produced the text: `streamed` is the streaming session's final
+ * text; `fallback` is the whole clip, transcribed because the session could not
+ * be used (VOICE-06); `whole-clip` is an offline speech model.
+ */
+export type DictationTextSource = 'streamed' | 'fallback' | 'whole-clip'
+
+/**
+ * Why a streamed dictation's text came from the whole clip instead:
+ * - `engine-exited`: the speech engine process crashed or was killed;
+ * - `session-error`: the session failed any other way (load error, unload,
+ *   no answer in time, an error in the worker);
+ * - `stream-broken`: the HUD's audio arrived with a gap or at another sample rate;
+ * - `stream-cancelled`: the session was cancelled while the dictation still needed it;
+ * - `incomplete-audio`: the session got a different amount of audio than the clip holds;
+ * - `empty-text`: the session heard no words, though the clip passed the speech checks.
+ */
+export type DictationFallbackReason =
+  | 'engine-exited'
+  | 'session-error'
+  | 'stream-broken'
+  | 'stream-cancelled'
+  | 'incomplete-audio'
+  | 'empty-text'
 
 /** The AI step, as far as the dictation got. The skip ticket adds `skipped`. */
 export type DictationAiStep = VoiceCleanupAiResult
@@ -23,17 +45,27 @@ export type DictationSummary = {
   /** Short code for why a dictation was discarded, cancelled or failed. */
   reason: string | null
   speechModel: VoiceSpeechModelId
+  /** A streaming session ran alongside the recording (streaming speech models). */
   streamed: boolean
   textSource: DictationTextSource | null
+  /** Set when `textSource` is `fallback`. */
+  fallbackReason: DictationFallbackReason | null
   /** Length of the clip the HUD delivered. */
   audioMs: number | null
   /** Start press → the HUD reports the microphone open. */
   startToCaptureMs: number | null
+  /** Live transcript updates passed on to the HUD while recording; null when not streamed. */
+  previewUpdates: number | null
+  /** Microphone open → the first live transcript update passed on to the HUD. */
+  captureToPreviewMs: number | null
   /** Start press → stop press. */
   recordMs: number | null
   /** Stop press → final transcript ready. */
   stopToTranscriptMs: number | null
-  /** Time the recogniser spent decoding (reported by the engine). */
+  /**
+   * Time the recogniser spent decoding (reported by the engine): the whole clip,
+   * or for a streamed transcript the final flush at stop.
+   */
   decodeMs: number | null
   aiStep: DictationAiStep
   aiMs: number | null
@@ -64,6 +96,10 @@ export class DictationTrace {
   private audioMs: number | null = null
   private decodeMs: number | null = null
   private textSource: DictationTextSource | null = null
+  private fallbackReason: DictationFallbackReason | null = null
+  private streamed = false
+  private previewUpdates = 0
+  private firstPreviewAt: number | null = null
   private aiStep: DictationAiStep = 'not-applicable'
   private aiMs: number | null = null
   private delivery: DictationDelivery | null = null
@@ -86,6 +122,17 @@ export class DictationTrace {
     this.captureAt ??= this.now()
   }
 
+  /** A streaming session was opened for this dictation. */
+  markStreamed(): void {
+    this.streamed = true
+  }
+
+  /** A live transcript update went to the HUD. */
+  markPreview(): void {
+    this.previewUpdates++
+    this.firstPreviewAt ??= this.now()
+  }
+
   markStop(): void {
     this.stopAt ??= this.now()
   }
@@ -94,9 +141,14 @@ export class DictationTrace {
     this.audioMs = Math.round((samples / Math.max(1, sampleRate)) * 1000)
   }
 
-  markTranscript(source: DictationTextSource, decodeMs: number | null): void {
+  markTranscript(
+    source: DictationTextSource,
+    decodeMs: number | null,
+    fallbackReason: DictationFallbackReason | null = null
+  ): void {
     this.transcriptAt = this.now()
     this.textSource = source
+    this.fallbackReason = source === 'fallback' ? fallbackReason : null
     this.decodeMs = decodeMs === null || !Number.isFinite(decodeMs) ? null : Math.round(decodeMs)
   }
 
@@ -128,10 +180,13 @@ export class DictationTrace {
       outcome,
       reason,
       speechModel: this.speechModel,
-      streamed: false,
+      streamed: this.streamed,
       textSource: this.textSource,
+      fallbackReason: this.fallbackReason,
       audioMs: this.audioMs,
       startToCaptureMs: this.since(this.startedAt, this.captureAt),
+      previewUpdates: this.streamed ? this.previewUpdates : null,
+      captureToPreviewMs: this.since(this.captureAt, this.firstPreviewAt),
       recordMs: this.since(this.startedAt, this.stopAt),
       stopToTranscriptMs: this.since(this.stopAt, this.transcriptAt),
       decodeMs: this.decodeMs,
