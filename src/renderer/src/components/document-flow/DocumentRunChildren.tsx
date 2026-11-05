@@ -9,7 +9,7 @@ import {
   runChildrenOf
 } from '@/lib/document-flow/run-children'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
-import { useKanbanStore } from '@/stores/useKanbanStore'
+import { ticketKey, useKanbanStore } from '@/stores/useKanbanStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
@@ -90,8 +90,16 @@ function useChildSessionState(sessionId: string | null): ChildSessionState {
       [sessionId]
     )
   )
+  // A Claude CLI API failure (rate limit, server error) is not a session status: it ends the
+  // turn as `completed` and is kept apart, as on a card, whose red perimeter reads it too.
+  const hasApiError = useWorktreeStatusStore(
+    useCallback(
+      (state) => !!sessionId && state.sessionApiErrors[sessionId] !== undefined,
+      [sessionId]
+    )
+  )
   if (hasQuestion || (status && NEEDS_YOU_STATUSES.has(status))) return 'needs_you'
-  if (errored) return 'error'
+  if (errored || hasApiError) return 'error'
   if (status && WORKING_STATUSES.has(status)) return 'working'
   return null
 }
@@ -151,6 +159,12 @@ function DocumentRunChildRow({ ticket }: DocumentRunChildRowProps): React.JSX.El
       type="button"
       onClick={open}
       data-testid={`kanban-docflow-run-child-${ticket.id}`}
+      // The row's own ticket identity, as a card carries it: in dependency mode the click
+      // bubbles to the board, which reads the closest of these — the row's ticket, not the
+      // run's whose card it sits in — and the dependency lines are drawn to the row.
+      data-ticket-id={ticket.id}
+      data-project-id={ticket.project_id}
+      data-ticket-key={ticketKey(ticket.project_id, ticket.id)}
       data-column={ticket.column}
       data-session-state={sessionState ?? undefined}
       className="flex w-full items-center gap-1.5 rounded-[5px] border border-border bg-card px-1.5 py-1 text-left text-[11px] leading-snug transition-colors hover:border-muted-foreground/35"
@@ -223,7 +237,9 @@ export function DocumentRunChildren({ runTicket }: DocumentRunChildrenProps): Re
     e.stopPropagation()
   }, [])
 
-  if (!enabled || searchActive || children.length === 0) return null
+  // An archived run folds nothing (nestedRunChildIds): its tickets keep their own cards, so a
+  // strip on its card in Done's archive would show each of them twice.
+  if (!enabled || searchActive || runTicket.archived_at || children.length === 0) return null
 
   const counts = childColumnCounts(children)
 

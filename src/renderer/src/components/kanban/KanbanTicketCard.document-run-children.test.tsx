@@ -235,6 +235,53 @@ describe('the folded tickets of a document run', () => {
     expect(openRun).not.toHaveBeenCalled()
   })
 
+  it('shows a row as errored when its session failed on the API, as its card would', () => {
+    useDocumentFlowStore.getState().toggleRunTicketsExpanded('ticket-run')
+    // A rate limit ends the turn as `completed`; the error is kept apart from the status
+    useWorktreeStatusStore.setState({
+      sessionStatuses: { 'session-15': { status: 'completed', timestamp: 1 } as never },
+      sessionApiErrors: { 'session-15': 'rate_limit' }
+    })
+    render(<KanbanTicketCard ticket={runTicket} />)
+
+    const errored = screen.getByTestId('kanban-docflow-run-child-child-working')
+    expect(errored).toHaveAttribute('data-session-state', 'error')
+    expect(errored).toHaveTextContent('Error')
+    expect(errored).not.toHaveTextContent('In progress')
+  })
+
+  it('carries each row’s own ticket identity, so dependency mode picks the row, not the run', () => {
+    useDocumentFlowStore.getState().toggleRunTicketsExpanded('ticket-run')
+    useKanbanStore.setState({
+      dependencyMode: { active: true, sourceTicketId: 'other', sourceProjectId: 'proj-1' } as never
+    })
+    const onBoardClick = vi.fn((e: React.MouseEvent) =>
+      (e.target as HTMLElement).closest('[data-ticket-id]')?.getAttribute('data-ticket-key')
+    )
+    render(
+      <div onClick={onBoardClick}>
+        <KanbanTicketCard ticket={runTicket} />
+      </div>
+    )
+
+    const row = screen.getByTestId('kanban-docflow-run-child-child-queued')
+    expect(row).toHaveAttribute('data-ticket-id', 'child-queued')
+    expect(row).toHaveAttribute('data-project-id', 'proj-1')
+    fireEvent.click(row)
+
+    // The click reaches the board, which resolves the row's ticket; nothing opens meanwhile
+    expect(onBoardClick).toHaveBeenCalledTimes(1)
+    expect(onBoardClick.mock.results[0].value).toBe('proj-1:child-queued')
+    expect(useKanbanStore.getState().selectedTicketRef).toBeNull()
+  })
+
+  it('shows no strip on an archived run: its tickets keep their own cards', () => {
+    const archivedRun = makeTicket({ column: 'done', archived_at: now })
+    seedBoard([archivedRun, ...children])
+    render(<KanbanTicketCard ticket={archivedRun} />)
+    expect(queryStrip()).toBeNull()
+  })
+
   it('shows no strip while a board search is on (the rows are cards again) or without rows', () => {
     useKanbanStore.setState({
       boardSearch: { open: true, query: 'task', searchDescriptions: false }
