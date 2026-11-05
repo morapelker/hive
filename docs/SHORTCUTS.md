@@ -85,7 +85,7 @@ Turn dictation on in Settings › Voice. The hotkey can be changed there.
 |----------|--------|-------------|
 | `Option+Space` | Start/Stop Dictation | Press to start recording, press again to stop (or click the pill) |
 | `Esc` (while recording) | Cancel Dictation | Discard the recording; nothing is pasted |
-| `Esc`, `Option+Space` or **Skip** (while polishing) | Skip AI Polishing | Paste the transcript shown above the pill right away, without waiting for the AI |
+| `Esc`, `Option+Space` or **Skip** (while polishing) | Skip AI Polishing | Paste the transcript shown above the pill right away, without waiting for the AI. The Skip button shows your dictation hotkey |
 
 With a live preview model (Nemotron Speech Streaming, the default for English), your words appear above the pill as you speak; nothing is typed until you stop. Parakeet models have no live preview.
 

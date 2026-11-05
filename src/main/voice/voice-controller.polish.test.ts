@@ -267,6 +267,10 @@ describe('VoiceController skippable AI polishing (VOICE-08)', () => {
   /** Record, stop, and wait until the pill shows "Polishing…" with the final text. */
   async function untilPolishing(): Promise<void> {
     await record()
+    await untilPolishingFromRecording()
+  }
+
+  async function untilPolishingFromRecording(): Promise<void> {
     controller.onHudStopClick()
     controller.onAudio(AUDIO)
     await vi.waitFor(() => expect(lastHudState().phase.kind).toBe('enhancing'))
@@ -492,6 +496,127 @@ describe('VoiceController skippable AI polishing (VOICE-08)', () => {
     expect(ai.signal()?.aborted).toBe(true)
     expect(paste.deliverVoiceText).not.toHaveBeenCalled()
     expect(onlySummary()).toMatchObject({ outcome: 'cancelled', reason: 'voice-disabled' })
+  })
+
+  describe('the hotkey on the pill and across a focus change', () => {
+    const CTRL_SPACE: VoiceSettings = { ...ENABLED, hotkey: 'ctrl+space' }
+    const ACCELERATOR = 'Control+Space'
+
+    function appEvent(name: string): () => void {
+      const calls = electron.app.on.mock.calls as unknown as Array<[string, () => void]>
+      return calls.findLast(([event]) => event === name)![1]
+    }
+    const blur = (): void => appEvent('browser-window-blur')()
+    const focus = (): void => appEvent('browser-window-focus')()
+
+    function hotkeyUnregistered(): boolean {
+      return (electron.globalShortcut.unregister.mock.calls as unknown as string[][]).some(
+        ([accelerator]) => accelerator === ACCELERATOR
+      )
+    }
+
+    /** The real shortcut callback, as the OS would fire it. */
+    function pressHotkey(): void {
+      const calls = electron.globalShortcut.register.mock.calls as unknown as Array<
+        [string, () => void]
+      >
+      now += 1_000
+      calls.findLast(([accelerator]) => accelerator === ACCELERATOR)![1]()
+    }
+
+    beforeEach(() => {
+      controller.applySettings(CTRL_SPACE)
+      electron.globalShortcut.unregister.mockClear()
+    })
+
+    function skipHotkeyOnPill(): string | undefined {
+      return (lastHudState() as { skipHotkey?: string }).skipHotkey
+    }
+
+    it('names the configured hotkey during polishing only', async () => {
+      pendingCleanup()
+      await record()
+      expect(skipHotkeyOnPill()).toBeUndefined()
+      await untilPolishingFromRecording()
+      expect(skipHotkeyOnPill()).toBe('⌃Space')
+
+      controller.skipPolishing('click')
+      await untilIdle()
+      const states = hud.setState.mock.calls.map((call) => call[0] as { phase: { kind: string } })
+      for (const state of states) {
+        expect('skipHotkey' in state).toBe(state.phase.kind === 'enhancing')
+      }
+    })
+
+    it('does not promise a hotkey that failed to register', async () => {
+      // Both attempts: on the new setting, and again as the window is focused.
+      electron.globalShortcut.register.mockReturnValueOnce(false).mockReturnValueOnce(false)
+      controller.applySettings({ ...ENABLED, hotkey: 'ctrl+shift+space' })
+      const ai = pendingCleanup()
+      await untilPolishing()
+      expect(skipHotkeyOnPill()).toBeUndefined()
+
+      ai.answer(CLEANED)
+      await untilIdle()
+    })
+
+    it('still skips when the user switched apps during polishing, then lets the hotkey go', async () => {
+      const ai = pendingCleanup()
+      await untilPolishing()
+
+      blur()
+      expect(hotkeyUnregistered()).toBe(false)
+
+      pressHotkey()
+      expect(ai.signal()?.aborted).toBe(true)
+      await untilIdle()
+
+      expect(pasted()).toEqual([SHOWN])
+      expect(onlySummary()).toMatchObject({ aiStep: 'skipped', skipInput: 'hotkey' })
+      // The combo goes back to the other apps once the dictation is over.
+      expect(hotkeyUnregistered()).toBe(true)
+    })
+
+    it('still stops a recording after a blur, so polishing can be skipped the same way', async () => {
+      const ai = pendingCleanup()
+      await record()
+      blur()
+      pressHotkey()
+      expect(controller.getStatus().state).toBe('processing')
+      controller.onAudio(AUDIO)
+      await vi.waitFor(() => expect(lastHudState().phase.kind).toBe('enhancing'))
+      expect(skipHotkeyOnPill()).toBe('⌃Space')
+
+      pressHotkey()
+      expect(ai.signal()?.aborted).toBe(true)
+      await untilIdle()
+      expect(hotkeyUnregistered()).toBe(true)
+    })
+
+    it('keeps the hotkey when focus came back before the dictation ended', async () => {
+      const ai = pendingCleanup()
+      await untilPolishing()
+      blur()
+      focus()
+      ai.answer(CLEANED)
+      await untilIdle()
+      expect(hotkeyUnregistered()).toBe(false)
+    })
+
+    it('lets the hotkey go when a blurred dictation ends in a notice', async () => {
+      engine.transcribe.mockResolvedValueOnce({ text: '', decodeMs: 3 })
+      await record()
+      blur()
+      controller.onHudStopClick()
+      controller.onAudio(AUDIO)
+      await vi.waitFor(() => expect(lastHudState().phase.kind).toBe('notice'))
+      expect(hotkeyUnregistered()).toBe(true)
+    })
+
+    it('still lets the hotkey go on a blur with no dictation in flight', () => {
+      blur()
+      expect(hotkeyUnregistered()).toBe(true)
+    })
   })
 
   describe('no polishing phase', () => {

@@ -184,6 +184,13 @@ body {
   outline: none;
 }
 
+/* The dictation hotkey, which skips too. */
+.voice-skip-hotkey {
+  margin-left: 6px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.6);
+}
+
 .voice-skip:hover {
   background: rgba(255, 255, 255, 0.26);
 }

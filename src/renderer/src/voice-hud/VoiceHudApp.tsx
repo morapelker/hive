@@ -146,6 +146,7 @@ function useClickThrough(visible: boolean): void {
 export function VoiceHudApp(): React.JSX.Element | null {
   const [phase, setPhase] = useState<VoiceHudPhase>({ kind: 'hidden' })
   const [transcript, setTranscript] = useState('')
+  const [skipHotkey, setSkipHotkey] = useState<string | null>(null)
   const [levels, setLevels] = useState<number[]>(EMPTY_LEVELS)
   const [recordingSince, setRecordingSince] = useState(0)
   const recorderRef = useRef<VoiceRecorder | null>(null)
@@ -195,6 +196,7 @@ export function VoiceHudApp(): React.JSX.Element | null {
         })
         if (startsRecording) setLevels(EMPTY_LEVELS)
         setTranscript(state.transcript ?? '')
+        setSkipHotkey(state.skipHotkey ?? null)
       }),
       bridge.onSound((name) => {
         if (!soundsEnabledRef.current) return
@@ -301,7 +303,7 @@ export function VoiceHudApp(): React.JSX.Element | null {
     return layout(
       <div
         className="voice-pill"
-        title="Polishing… Esc or the hotkey to skip"
+        title={skipHotkey ? `Polishing… Esc or ${skipHotkey} to skip` : 'Polishing… Esc to skip'}
         onMouseDown={preventFocus}
         data-testid="voice-hud-processing"
         {...hit}
@@ -321,6 +323,11 @@ export function VoiceHudApp(): React.JSX.Element | null {
           data-testid="voice-hud-skip"
         >
           Skip
+          {skipHotkey && (
+            <span className="voice-skip-hotkey" data-testid="voice-hud-skip-hotkey">
+              {skipHotkey}
+            </span>
+          )}
         </button>
       </div>
     )

@@ -150,6 +150,8 @@ export class VoiceController {
   private hotkeySpec: HotkeySpec | null = null
   private hotkeyProblem: string | null = null
   private registeredAccelerator: string | null = null
+  /** Our windows lost focus mid-dictation: the hotkey goes when the dictation ends. */
+  private releaseHotkeyAfterDictation = false
   private escapeRegistered = false
 
   private lastError: string | null = null
@@ -218,8 +220,17 @@ export class VoiceController {
       voiceEngine.onLoadedChange(() => this.broadcast())
     )
 
-    const onFocus = (): void => this.registerHotkey()
-    const onBlur = (): void => this.unregisterHotkey()
+    const onFocus = (): void => {
+      this.releaseHotkeyAfterDictation = false
+      this.registerHotkey()
+    }
+    const onBlur = (): void => {
+      if (this.state === 'recording' || this.state === 'processing') {
+        this.releaseHotkeyAfterDictation = true
+      } else {
+        this.unregisterHotkey()
+      }
+    }
     app.on('browser-window-focus', onFocus)
     app.on('browser-window-blur', onBlur)
     this.unsubscribe.push(() => {
@@ -365,6 +376,10 @@ export class VoiceController {
    * Registered only while one of our windows is focused so the combo is not
    * stolen from other dictation apps when the user is elsewhere. A Carbon hot
    * key still fires while the native Ghostty terminal has keyboard focus.
+   *
+   * Like Escape, it outlives a blur until the dictation in flight ends: the
+   * pill promises it stops the recording and skips AI polishing, and the user
+   * may well have moved to another app by then.
    */
   private registerHotkey(): void {
     if (!this.settings.enabled || !this.hotkeySpec || this.headless) return
@@ -393,6 +408,7 @@ export class VoiceController {
   }
 
   private unregisterHotkey(): void {
+    this.releaseHotkeyAfterDictation = false
     if (!this.registeredAccelerator) return
     try {
       globalShortcut.unregister(this.registeredAccelerator)
@@ -400,6 +416,11 @@ export class VoiceController {
       // ignore
     }
     this.registeredAccelerator = null
+  }
+
+  /** The dictation ended: drop the hotkey if our windows lost focus meanwhile. */
+  private releaseHotkeyIfBlurred(): void {
+    if (this.releaseHotkeyAfterDictation) this.unregisterHotkey()
   }
 
   /**
@@ -952,6 +973,7 @@ export class VoiceController {
     this.clearMaxRecordingTimer()
     this.notice = null
     this.unregisterEscape()
+    this.releaseHotkeyIfBlurred()
     this.setHudPhase({ kind: 'hidden' })
     this.state =
       this.settings.enabled && this.modelReady() && !this.headless ? 'idle' : 'unavailable'
@@ -968,6 +990,7 @@ export class VoiceController {
     this.abortPolishing()
     this.notice = text
     this.unregisterEscape()
+    this.releaseHotkeyIfBlurred()
     if (this.state === 'recording' || this.state === 'processing') {
       this.state = this.settings.enabled && this.modelReady() ? 'idle' : 'unavailable'
     }
@@ -1000,10 +1023,14 @@ export class VoiceController {
   private setHudPhase(phase: VoiceHudPhase): void {
     this.hudPhase = phase
     const transcript = phase.kind === 'hidden' || phase.kind === 'notice' ? '' : this.hudTranscript
+    // Only named on the pill when pressing it will actually skip.
+    const skipHotkey =
+      phase.kind === 'enhancing' && this.registeredAccelerator ? this.hotkeySpec?.display : null
     voiceHud.setState({
       phase,
       sounds: this.settings.sounds,
-      ...(transcript ? { transcript } : {})
+      ...(transcript ? { transcript } : {}),
+      ...(skipHotkey ? { skipHotkey } : {})
     })
   }
 

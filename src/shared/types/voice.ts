@@ -385,6 +385,11 @@ export interface VoiceHudState {
    * on `hidden` or `notice`.
    */
   readonly transcript?: string
+  /**
+   * The dictation hotkey as shown to the user (e.g. "⌃Space"), set during AI
+   * polishing while pressing it skips the step, for the pill to name it.
+   */
+  readonly skipHotkey?: string
 }
 
 /**
