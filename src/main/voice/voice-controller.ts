@@ -22,7 +22,7 @@ import {
   type DictationDelivery,
   type DictationOutcome
 } from './voice-dictation-summary'
-import { voiceEngine } from './voice-engine'
+import { voiceEngine, type VoiceEngineModel } from './voice-engine'
 import { voiceHud } from './voice-hud-window'
 import { voiceMedia } from './voice-media'
 import { voiceModelStore } from './voice-model-store'
@@ -32,6 +32,11 @@ import type { VoiceSoundName } from './voice-sounds'
 import { voiceTestClips } from './voice-test-clips'
 
 const log = createLogger({ component: 'VoiceDictation' })
+
+/** The engine loads a model as offline or streaming from the catalog; it needs the id and folder. */
+function engineModel(id: VoiceSpeechModelId): VoiceEngineModel {
+  return { id, dir: voiceModelStore.getModelDir(id) }
+}
 
 /** Clips at or below this length are accidental double-taps (Wispelker: 8 000 samples at 16 kHz). */
 const MIN_CLIP_SECONDS = 0.5
@@ -489,7 +494,7 @@ export class VoiceController {
 
     // Warm the recogniser while the user speaks so the stop feels instant.
     void voiceEngine
-      .ensureLoaded(voiceModelStore.getModelDir(this.settings.speechModel))
+      .ensureLoaded(engineModel(this.settings.speechModel))
       .catch((error: unknown) => {
         log.warn('speech model warm-up failed', { error: String(error) })
       })
@@ -564,7 +569,7 @@ export class VoiceController {
         return
       }
 
-      await voiceEngine.ensureLoaded(voiceModelStore.getModelDir(this.settings.speechModel))
+      await voiceEngine.ensureLoaded(engineModel(this.settings.speechModel))
       if (generation !== this.generation) return
 
       const { text: raw, decodeMs } = await voiceEngine.transcribe(samples, audio.sampleRate)
