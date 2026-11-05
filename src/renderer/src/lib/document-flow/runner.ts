@@ -26,6 +26,7 @@ import {
   buildFixTicket,
   buildLaunchPrompt,
   buildNudgePrompt,
+  buildTicketRunPrompt,
   summarizePendingWork,
   withRunRules,
   workspaceOfMembers,
@@ -36,8 +37,10 @@ import {
 } from '@shared/document-flow/prompts'
 import {
   DOCUMENT_RUN_ITEM_MERGE_STATUSES,
+  hasDocument,
   hasVerifyCommand,
   isConnectionRun,
+  isTicketRun,
   runVerifyCommands,
   type DocumentMergeCheckMember,
   type DocumentMergeCheckResult,
@@ -57,8 +60,15 @@ import {
   type SessionFinalMessage
 } from '@shared/types/document-flow'
 import { isActiveRunStatus, isEndedRunStatus } from '@shared/document-flow/run-ticket'
+import { runKindLabel } from '@shared/document-flow/ticket-runs'
 import type { TicketLaunchResult, TicketLaunchSpec } from '@/lib/ticket-launch'
-import type { RunnerPorts, RunnerTicket, RunnerTimer, RunnerWorktree } from './runner-ports'
+import type {
+  RunnerNotice,
+  RunnerPorts,
+  RunnerTicket,
+  RunnerTimer,
+  RunnerWorktree
+} from './runner-ports'
 import {
   isHeldByWatchesOnly,
   type ClaudeCliPendingWork
@@ -71,6 +81,16 @@ import { USER_ABORT_REASON, type SessionBlockReason, type SessionSignal } from '
 // API) and moves the item at most one step. Nothing here is authoritative — after a reload
 // or an app restart a fresh runner picks every item up from its row, so each step is written
 // to be safe to repeat. Memory holds only what prevents doing the same thing twice at once.
+//
+// A run made from board tickets (an "orchestrator", `isTicketRun`) goes through the very same
+// loop, with three differences that all come from it having no document: each ticket is
+// launched with the user's own ticket as its brief (`launchBrief`), a ticket the user launched
+// or finished on the board meanwhile is flagged rather than launched (`isBoardTicketFree`), and
+// there is no document edit lane — a merge closes the ticket's session the way a merge on the
+// board does, and the run finishes without waiting on any document. Its items can come and go
+// while it runs (the user adds and removes tickets, and changes what starts after what): every
+// tick reads them afresh, so a new pending item launches like any other, and a removed one is
+// simply no longer there.
 
 export const TICK_INTERVAL_MS = 10_000
 export const TICK_DEBOUNCE_MS = 100
@@ -110,7 +130,8 @@ const SESSION_TURN_POLL_MS = 5_000
 const SNAPSHOT_GRACE_MS = 3_000
 /** After a step failed to reach the server, the item is left alone until an interval tick. */
 const RETRY_COOLDOWN_MS = 5_000
-const FINALIZE_RETRY_MS = 60_000
+/** How long a run the server would not finalize waits before it is asked again. */
+export const FINALIZE_RETRY_MS = 60_000
 const VERIFY_OUTPUT_TAIL = 600
 
 const API_ERROR_PREFIX = 'API error ('
@@ -130,6 +151,42 @@ const DOCUMENT_UNCHANGED_DETAIL = 'The document was not changed.'
 const DOCUMENT_UP_TO_DATE_DETAIL = 'The document already said what was done.'
 /** `document_update_detail` prefix of a queued update while another run edits the same document. */
 const DOCUMENT_EDITED_ELSEWHERE_PREFIX = 'Waiting for another run made from this document: '
+/** `document_update_detail` of an update queued, somehow, in a run made from board tickets. */
+export const NO_DOCUMENT_DETAIL = 'This run has no document.'
+
+/**
+ * `status_detail` of a ticket of a run made from board tickets that has a live session the run
+ * did not start: the user launched it from the board while it waited its turn. Launching it
+ * again would leave that session and its worktree working the same ticket beside the run's own.
+ * A session that was closed no longer stands in the way (`isBoardTicketFree`).
+ */
+export const foreignSessionDetail = (key: string): string =>
+  `${key} has a session the run did not start (launched from the board). Close its session and Retry, or remove the ticket from the orchestrator.`
+
+/** The columns a ticket has left the launch behind in, by the name the board shows. */
+const PAST_LAUNCH_COLUMNS: Partial<Record<RunnerTicket['column'], string>> = {
+  review: 'Review',
+  done: 'Done',
+  merged: 'Merged'
+}
+
+/**
+ * `status_detail` of a ticket of a run made from board tickets that the user finished or put away
+ * on the board while it waited its turn; null for a ticket that can still be launched. The
+ * launch would pull it back to In Progress and have an agent redo it.
+ */
+export function setAsideTicketDetail(
+  key: string,
+  ticket: Pick<RunnerTicket, 'column' | 'archived_at'>
+): string | null {
+  if (ticket.archived_at) {
+    return `${key} was archived on the board. Unarchive it and Retry, or remove the ticket from the orchestrator.`
+  }
+  const column = PAST_LAUNCH_COLUMNS[ticket.column]
+  return column
+    ? `${key} was moved to ${column} on the board. Move it back and Retry, or remove the ticket from the orchestrator.`
+    : null
+}
 
 const BLOCK_LABELS: Record<SessionBlockReason, string> = {
   question: 'a question',
@@ -667,11 +724,18 @@ export class DocumentFlowRunner {
     // only settled once the lane has drained.
     this.startDocumentLane(state, run, items, now)
 
-    if (
-      isRunSettled(items) &&
-      !this.hasStepInFlight(runId) &&
-      !this.isDocumentBeingEdited(run.id, run.source_path.trim(), now)
-    ) {
+    const settled = isRunSettled(items)
+    // A run made from board tickets that the server would not finalize was given a ticket
+    // meanwhile (or had one put back in play): the retry delay was for asking again about the
+    // same settled run, not for the one this becomes once that ticket is through.
+    if (!settled && isTicketRun(run)) state.finalizeRetryAt = 0
+    if (!settled || this.hasStepInFlight(runId)) return
+    if (!hasDocument(run)) {
+      // No document: nothing edits one, and the server writes no status summary into a file,
+      // so the run waits on no other run — neither on another made from tickets (whose
+      // `source_path` is as empty as its own) nor on one made from a document.
+      this.finalize(state, runId, null)
+    } else if (!this.isDocumentBeingEdited(run.id, run.source_path.trim(), now)) {
       this.finalize(state, runId, run.source_path.trim())
     }
   }
@@ -926,9 +990,18 @@ export class DocumentFlowRunner {
       .catch(noop)
   }
 
+  /**
+   * Tell the user. The system notification of a run made from board tickets is titled as such
+   * ("Orchestrator"); a document run's notices go out as they always have.
+   */
+  private notify(runId: string, notice: RunnerNotice): void {
+    const run = this.ports.getRun(runId)?.run
+    this.ports.notify(isTicketRun(run) ? { ...notice, title: runKindLabel(run) } : notice)
+  }
+
   private async flag(op: ItemOp, detail: string, extra: DocumentRunItemPatch = {}): Promise<void> {
     await this.patch(op, { ...extra, status: 'needs_attention', status_detail: detail })
-    this.ports.notify({
+    this.notify(op.runId, {
       level: 'warning',
       message: `${op.item.key} needs attention: ${firstLine(detail)}`
     })
@@ -962,7 +1035,10 @@ export class DocumentFlowRunner {
     } else {
       return
     }
-    this.ports.notify({ level: 'info', message: `${op.item.key} is waiting for you: ${detail}` })
+    this.notify(op.runId, {
+      level: 'info',
+      message: `${op.item.key} is waiting for you: ${detail}`
+    })
     this.event(op, 'needs_input', detail)
   }
 
@@ -1434,7 +1510,10 @@ export class DocumentFlowRunner {
         const question = verdict.question?.trim() || reason
         if (unattended) return this.nudge(op, sessionId, { ...verdict, reason, question }, checked)
         await this.patch(op, { ...checked, status: 'needs_input', status_detail: question })
-        this.ports.notify({ level: 'info', message: `${item.key} is waiting for you: ${question}` })
+        this.notify(op.runId, {
+          level: 'info',
+          message: `${item.key} is waiting for you: ${question}`
+        })
         this.event(op, 'needs_input', question)
         return
       }
@@ -1599,7 +1678,10 @@ export class DocumentFlowRunner {
     if (signal.kind === 'blocked') {
       const detail = waitingDetail(signal)
       await this.patch(op, { ...extra, status: 'needs_input', status_detail: detail })
-      this.ports.notify({ level: 'info', message: `${op.item.key} is waiting for you: ${detail}` })
+      this.notify(op.runId, {
+        level: 'info',
+        message: `${op.item.key} is waiting for you: ${detail}`
+      })
       this.event(op, 'needs_input', detail)
       return true
     }
@@ -1707,6 +1789,9 @@ export class DocumentFlowRunner {
   }
 
   private async launchItem(op: ItemOp): Promise<void> {
+    if (isTicketRun(this.ports.getRun(op.runId)?.run) && !(await this.isBoardTicketFree(op))) {
+      return
+    }
     // The item waited in the launch chain: launch only if it is still its turn.
     const detail = this.ports.getRun(op.runId)
     const item = detail?.items.find((candidate) => candidate.id === op.item.id)
@@ -1756,7 +1841,11 @@ export class DocumentFlowRunner {
       modelConfig,
       goalMode: false,
       goalSuccessCriteria: null,
-      ticketUpdateExtras: this.ticketExtras(run.project_id)
+      ticketUpdateExtras: this.ticketExtras(run.project_id),
+      // The run's own launch of its ticket: the pipeline refuses every other launch of a ticket
+      // that waits for its run (`orchestratorLaunchRefusal`), and a store re-read older than the
+      // `launching` write above would show this one waiting still.
+      orchestrated: true
     })
 
     if (!result.success || !result.sessionId) {
@@ -1783,6 +1872,54 @@ export class DocumentFlowRunner {
   }
 
   /**
+   * A ticket of a run made from board tickets is the user's own, and stays on their board while
+   * it waits its turn: they may have finished or archived it meanwhile, or launched it from there
+   * (by hand, or the board's own queue). A launch now would pull the finished ticket back to In
+   * Progress, or cut a second worktree and leave that session working the same ticket beside the
+   * run's, so the item is flagged instead, before anything is written. A session that is over
+   * works on nothing, so it does not stand in the way, but its link goes first: a `launching` row
+   * is what a reloaded runner adopts the ticket's session from (`recoverLaunch`), and it must
+   * never adopt one the run did not start. False when the launch must not go ahead — flagged, or
+   * no longer this item's turn; the launch itself re-reads the run afterwards, as a ticket
+   * missing from the board is still its to flag.
+   */
+  private async isBoardTicketFree(op: ItemOp): Promise<boolean> {
+    const detail = this.ports.getRun(op.runId)
+    const item = detail?.items.find((candidate) => candidate.id === op.item.id)
+    if (!detail || !item) return false
+    if (!launchableItems(detail.items, detail.run.config.maxParallel).includes(item)) return false
+    op.item = item
+    const run = this.requireActive(op)
+    const ticket = await this.findTicket(run.project_id, item.ticket_id)
+    if (!ticket) return true
+    // Only a ticket the run has not launched: where one it launched stands is its session's
+    // doing (a turn end takes it to Review). Retry never brings such an item here, as with a
+    // session it goes back to `checking` (`retryItem`). A failed launch recorded no session and
+    // put the ticket back in To Do, so what it stands in now is the user's move.
+    const setAside = item.session_id ? null : setAsideTicketDetail(item.key, ticket)
+    if (setAside) {
+      // Paused or taken over while the board was read: the next turn looks again.
+      this.requireActive(op)
+      await this.flag(op, setAside)
+      return false
+    }
+    const sessionId = ticket.current_session_id
+    if (!sessionId || sessionId === item.session_id) return true
+    const closed = await this.ports.isSessionClosed(sessionId)
+    this.requireActive(op)
+    // A closed row is not enough: a ticket's modal can resume a closed session, and its row stays
+    // closed while the agent works again beside what the run would launch.
+    const { kind } = this.ports.getSessionSignal(sessionId)
+    if (closed && kind !== 'working' && kind !== 'blocked') {
+      // A failed write stops the launch here: the step fails, with no `launching` row written.
+      await this.ports.unlinkTicketSession(run.project_id, ticket.id)
+      return true
+    }
+    await this.flag(op, foreignSessionDetail(item.key))
+    return false
+  }
+
+  /**
    * The brief a ticket session is launched with. The ticket's description is the brief, sent
    * as it reads on the board (the user may have edited it), with no ticket wrapper, no
    * attachments and never the ticket's note or labels: the agent reads the task in the
@@ -1790,6 +1927,13 @@ export class DocumentFlowRunner {
    * of the run are settled now, whatever the description says: it was written when the run
    * started, under the settings and verification choice of that moment. `workspace` names
    * the members of a connection run.
+   *
+   * A run made from board tickets has no document to read the task in: the ticket is the task,
+   * so it goes out the way the board launches a ticket — its title, its description verbatim
+   * and its attachments (never its note or labels) — read from the board now, so an edit made
+   * while it waited reaches the agent. The rules of the run follow in a block of their own, as
+   * they are now; nothing in the user's words is rewritten, and there is no standard brief to
+   * fall back on.
    */
   private launchBrief(
     op: ItemOp,
@@ -1806,6 +1950,14 @@ export class DocumentFlowRunner {
       sdk: modelConfig.sdk,
       verification,
       ...(workspace ? { workspace } : {})
+    }
+    if (isTicketRun(run)) {
+      const brief = {
+        title: ticket.title,
+        description: ticket.description,
+        attachments: ticket.attachments
+      }
+      return { prompt: buildTicketRunPrompt(brief, rules) }
     }
     const prompt = withRunRules(
       ticket.description?.trim() ||
@@ -1877,7 +2029,9 @@ export class DocumentFlowRunner {
       modelConfig,
       goalMode: false,
       goalSuccessCriteria: null,
-      ticketUpdateExtras: this.ticketExtras(run.project_id)
+      ticketUpdateExtras: this.ticketExtras(run.project_id),
+      // The run's own launch, as in launchItem.
+      orchestrated: true
     })
 
     if (!result.success || !result.sessionId) {
@@ -2125,12 +2279,13 @@ export class DocumentFlowRunner {
       return this.flag(op, `Its branch has nothing to merge. ${verdict.reason}`)
     }
     if (!verdict || this.interactive(op)) return this.flag(op, NO_CHANGES_DETAIL)
-    // Already implemented: the document still learns that the task is done.
+    // Already implemented: the document still learns that the task is done (a run made from
+    // board tickets has none to tell).
     await this.patch(op, {
       status: 'skipped',
       status_detail: UNCHANGED_DETAIL,
       finished_at: toIso(this.ports.now()),
-      ...this.queueDocumentUpdate(op.item)
+      ...this.queueDocumentUpdate(op)
     })
     this.event(op, 'skipped', `${op.item.key}: ${UNCHANGED_DETAIL}`)
   }
@@ -2404,7 +2559,8 @@ export class DocumentFlowRunner {
   }
 
   private async markMerged(op: ItemOp): Promise<void> {
-    const projectId = this.currentItem(op)?.run.project_id
+    const run = this.currentItem(op)?.run
+    const projectId = run?.project_id
     // Merged on the user's word or for want of anyone to ask, not on the agent's: its last
     // verdict is the caveat the dashboard and the report show next to the ticket.
     const verdict = op.item.verdict
@@ -2414,17 +2570,21 @@ export class DocumentFlowRunner {
         verdict && verdict.status !== 'done' ? `${MERGED_AS_IS_PREFIX}${verdict.reason}` : null,
       finished_at: toIso(this.ports.now()),
       // In the same write: no tick can find the item merged with the update not yet queued.
-      ...this.queueDocumentUpdate(op.item)
+      ...this.queueDocumentUpdate(op)
     })
     if (projectId && item.ticket_id) {
       // A plain move to merged would fire the board's completion effects (dependent
-      // auto-launch); the run schedules its own dependents. And it would close the ticket's
-      // session, which the run still has to ask to update the document: the session is kept,
-      // and closed by `releaseSession` once that update is over.
+      // auto-launch), and this merge only reached the integration branch. The run schedules its
+      // own dependents. A queued ticket outside a run made from board tickets cuts from base and
+      // would start without this work: it fires when the run's own ticket lands on base
+      // (`moveTicket` in the kanban store). And the move would close the ticket's session, which
+      // the run still has to ask to update the document: the session is kept, and closed by
+      // `releaseSession` once that update is over. A run made from board tickets has no document
+      // to update: the move closes the session, as any merge does.
       await this.ports
         .moveTicket(projectId, item.ticket_id, 'merged', {
           skipCompletionEffects: true,
-          keepSession: true
+          keepSession: !isTicketRun(run)
         })
         .catch((error) => this.ports.warn(`could not move ${item.key} to merged`, error))
     }
@@ -2441,8 +2601,14 @@ export class DocumentFlowRunner {
   // other step. Whether the document was updated is told by the file's hash, not by the
   // classifier: the verdict the report reads must stay what it was.
 
-  /** The patch that puts a ticket that just merged in the document edit lane. */
-  private queueDocumentUpdate(item: DocumentRunItem): DocumentRunItemPatch {
+  /**
+   * The patch that puts a ticket that just merged in the document edit lane. Nothing, in a run
+   * made from board tickets: it has no document, so its items never join the lane (their
+   * `document_update_*` stay null, and neither the board nor `releaseSession` waits on them).
+   */
+  private queueDocumentUpdate(op: ItemOp): DocumentRunItemPatch {
+    if (isTicketRun(this.currentItem(op)?.run)) return {}
+    const item = op.item
     const now = toIso(this.ports.now())
     if (!item.session_id) {
       return {
@@ -2472,6 +2638,7 @@ export class DocumentFlowRunner {
     items: readonly DocumentRunItem[],
     now: number
   ): void {
+    if (!hasDocument(run)) return this.closeDocumentlessUpdates(run.id, items, now)
     if (state.documenting || documentUpdateLaneOwner(items)) return
     const candidates = documentUpdateCandidates(items)
     if (candidates.length === 0) return
@@ -2493,6 +2660,23 @@ export class DocumentFlowRunner {
       state.documenting = false
       this.documentsStarting.delete(source)
     })
+  }
+
+  /**
+   * A run made from board tickets has no document lane, and never queues an update itself
+   * (`queueDocumentUpdate`). One queued all the same — a Retry of the update from a dashboard
+   * that offered it — would hold the run open for good (`isRunSettled` waits for the lane to
+   * drain), so it is closed as skipped, without a prompt.
+   */
+  private closeDocumentlessUpdates(
+    runId: string,
+    items: readonly DocumentRunItem[],
+    now: number
+  ): void {
+    for (const item of documentUpdateCandidates(items)) {
+      if (!this.canStep(item, now)) continue
+      this.spawn(runId, item, (op) => this.finishDocumentUpdate(op, 'skipped', NO_DOCUMENT_DETAIL))
+    }
   }
 
   /** One turn of the lane: the candidates in order, until one takes its turn. */
@@ -2541,7 +2725,8 @@ export class DocumentFlowRunner {
     for (const detail of this.ports.getRuns()) {
       if (detail.run.id === runId) continue
       if (detail.run.status !== 'running' && detail.run.status !== 'paused') continue
-      if (detail.run.source_path.trim() !== source) continue
+      // A run made from board tickets edits no document, whatever its (empty) source says.
+      if (!hasDocument(detail.run) || detail.run.source_path.trim() !== source) continue
       const owner = documentUpdateLaneOwner(detail.items)
       if (owner) return owner
     }
@@ -2768,7 +2953,7 @@ export class DocumentFlowRunner {
   private async documentWaitsForUser(op: ItemOp, detail: string): Promise<void> {
     if (op.item.document_update_detail === detail) return
     await this.patch(op, { document_update_detail: detail })
-    this.ports.notify({
+    this.notify(op.runId, {
       level: 'info',
       message: `${op.item.key} is waiting for you while it updates the document: ${detail}`
     })
@@ -2960,7 +3145,7 @@ export class DocumentFlowRunner {
     // Ended here: its session finished its turn, or never got the prompt.
     this.documentEditors.delete(op.item.id)
     if (status === 'failed') {
-      this.ports.notify({
+      this.notify(op.runId, {
         level: 'warning',
         message: `${op.item.key} could not update the document: ${firstLine(detail ?? '')}`
       })
@@ -3016,31 +3201,33 @@ export class DocumentFlowRunner {
    * previous runner's to act on (it closed the session then; the user may have reopened it).
    */
   private updateEndedSinceStart(item: DocumentRunItem): boolean {
-    return (
-      isDocumentUpdateOver(item) && toMs(item.document_update_finished_at) >= this.startedAt
-    )
+    return isDocumentUpdateOver(item) && toMs(item.document_update_finished_at) >= this.startedAt
   }
 
   // ── Finishing ────────────────────────────────────────────────────────────
 
   /**
    * Finish the run on the server, which writes its status summary into `source`: no document
-   * update of any run starts on that file meanwhile.
+   * update of any run starts on that file meanwhile. A run made from board tickets has no
+   * `source` (null): it holds no document back, and waits for nothing but its own finalize.
    */
-  private finalize(state: RunState, runId: string, source: string): void {
+  private finalize(state: RunState, runId: string, source: string | null): void {
     if (state.finalizing || this.ports.now() < state.finalizeRetryAt) return
-    if (this.documentsStarting.has(source)) return
+    if (source !== null && this.documentsStarting.has(source)) return
     state.finalizing = true
-    this.documentsStarting.add(source)
+    if (source !== null) this.documentsStarting.add(source)
     void this.ports.api
       .finalize(runId)
       .then((detail) => {
         this.ports.applyDetail(detail)
         if (detail.run.status === 'running') {
-          // Not finalized after all; asking again on every tick would spin.
+          // Not finalized after all (a run made from board tickets that was given a ticket
+          // meanwhile, say: the next ticks launch it); asking again on every tick would spin.
           state.finalizeRetryAt = this.ports.now() + FINALIZE_RETRY_MS
           return
         }
+        // "Document run finished: …", or "Orchestrator finished: …" for one made from tickets.
+        const kind = runKindLabel(detail.run)
         const selected = detail.items.filter((item) => item.selected)
         const merged = selected.filter((item) => item.status === 'merged').length
         const skipped = selected.filter((item) => item.status === 'skipped').length
@@ -3053,19 +3240,19 @@ export class DocumentFlowRunner {
             ? `; ${failedUpdates} could not update the document (see the run's dashboard)`
             : ''
         if (detail.run.status === 'completed' && failedUpdates === 0) {
-          this.ports.notify({
+          this.notify(runId, {
             level: 'success',
-            message: `Document run finished: ${merged} merged${skipped > 0 ? `, ${skipped} skipped` : ''}`
+            message: `${kind} finished: ${merged} merged${skipped > 0 ? `, ${skipped} skipped` : ''}`
           })
         } else if (detail.run.status === 'completed') {
-          this.ports.notify({
+          this.notify(runId, {
             level: 'warning',
-            message: `Document run finished: ${merged} merged${skipped > 0 ? `, ${skipped} skipped` : ''}${notUpdated}`
+            message: `${kind} finished: ${merged} merged${skipped > 0 ? `, ${skipped} skipped` : ''}${notUpdated}`
           })
         } else {
-          this.ports.notify({
+          this.notify(runId, {
             level: 'warning',
-            message: `Document run finished with issues: ${merged} of ${selected.length} merged${notUpdated}`
+            message: `${kind} finished with issues: ${merged} of ${selected.length} merged${notUpdated}`
           })
         }
       })
@@ -3075,7 +3262,7 @@ export class DocumentFlowRunner {
       })
       .finally(() => {
         state.finalizing = false
-        this.documentsStarting.delete(source)
+        if (source !== null) this.documentsStarting.delete(source)
       })
   }
 }

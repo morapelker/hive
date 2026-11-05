@@ -21,7 +21,8 @@ import {
   Terminal,
   Ticket,
   Trash2,
-  Unlink
+  Unlink,
+  Workflow
 } from 'lucide-react'
 import { cn, parseColorQuad } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -654,6 +655,17 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
           Implement Document…
         </MenuItem>
       )}
+      {project.kind !== 'connection' && (
+        <MenuItem
+          data-testid="docflow-orchestrate-pinned-worktree-menu-item"
+          onClick={() =>
+            useDocumentFlowStore.getState().openWizard(project.id, null, { source: 'tickets' })
+          }
+        >
+          <Workflow className="h-4 w-4 mr-2" />
+          Orchestrate tickets…
+        </MenuItem>
+      )}
       {renderShellCommandMenuItems({
         commands: getRunnableShellCommands(project),
         onRun: handleRunShellCommand,
@@ -1139,8 +1151,9 @@ function PinnedConnectionItem({
     setManageConnectionId(connectionId)
   }, [connectionId])
 
-  // "Implement Document…" on the connection's project; an ad-hoc connection is saved as
-  // a project first (same >=2-member bar as "Save as Project")
+  // "Implement Document…" (and "Orchestrate tickets…" next to it) on the connection's
+  // project; an ad-hoc connection is saved as a project first (same >=2-member bar as "Save
+  // as Project")
   const implementDocument = useImplementDocumentEntry(connection)
 
   if (!connection) return null
@@ -1201,6 +1214,16 @@ function PinnedConnectionItem({
         >
           <FileText className="h-4 w-4 mr-2" />
           Implement Document…
+        </MenuItem>
+      )}
+      {implementDocument.available && (
+        <MenuItem
+          data-testid="docflow-orchestrate-pinned-connection-menu-item"
+          onClick={() => void implementDocument.orchestrate()}
+          disabled={implementDocument.busy}
+        >
+          <Workflow className="h-4 w-4 mr-2" />
+          Orchestrate tickets…
         </MenuItem>
       )}
       <MenuSeparator />

@@ -77,7 +77,11 @@ const API_METHODS = [
   'delete',
   'logEvent',
   'suggestVerifyCommand',
-  'addMember'
+  'addMember',
+  'createTicketRun',
+  'addTickets',
+  'removeItem',
+  'setItemDependencies'
 ]
 
 function makeService(overrides: Partial<DocumentFlowRpcService> = {}): DocumentFlowRpcService {
@@ -122,6 +126,10 @@ function makeService(overrides: Partial<DocumentFlowRpcService> = {}): DocumentF
     delete: () => Effect.succeed(true),
     logEvent: () => Effect.succeed(undefined),
     suggestVerifyCommand: () => Effect.succeed(null),
+    createTicketRun: () => Effect.succeed(detail),
+    addTickets: () => Effect.succeed(detail),
+    removeItem: () => Effect.succeed(detail),
+    setItemDependencies: () => Effect.succeed(detail),
     ...overrides
   }
 }
@@ -353,6 +361,114 @@ describe('documentFlow RPC handlers', () => {
       projectId: 'mobile',
       worktreeId: 'wt'
     })
+  })
+
+  it('hands the params of runs made from board tickets to the service as given', async () => {
+    const createTicketRun = vi.fn(() => Effect.succeed(detail))
+    const addTickets = vi.fn(() => Effect.succeed(detail))
+    const removeItem = vi.fn(() => Effect.succeed(detail))
+    const setItemDependencies = vi.fn(() => Effect.succeed(detail))
+    const service = makeService({ createTicketRun, addTickets, removeItem, setItemDependencies })
+
+    const createParams = {
+      projectId: 'project-1',
+      ticketIds: ['ticket-1', 'ticket-2'],
+      title: 'Checkout polish',
+      generation: { provider: 'claude-code', model: 'haiku', effort: 'low' }
+    }
+    await expect(call(service, 'createTicketRun', createParams)).resolves.toEqual(detail)
+    expect(createTicketRun).toHaveBeenCalledWith(createParams)
+    await call(service, 'createTicketRun', { projectId: 'p', ticketIds: ['t'], title: null })
+    expect(createTicketRun).toHaveBeenLastCalledWith({
+      projectId: 'p',
+      ticketIds: ['t'],
+      title: null
+    })
+
+    await call(service, 'addTickets', { runId: 'run-1', ticketIds: ['ticket-3'] })
+    expect(addTickets).toHaveBeenCalledWith({ runId: 'run-1', ticketIds: ['ticket-3'] })
+
+    await call(service, 'removeItem', { runId: 'run-1', itemId: 'item-1' })
+    expect(removeItem).toHaveBeenCalledWith({ runId: 'run-1', itemId: 'item-1' })
+
+    await call(service, 'setItemDependencies', {
+      runId: 'run-1',
+      itemId: 'item-2',
+      dependsOn: ['TD-1']
+    })
+    await call(service, 'setItemDependencies', { runId: 'run-1', itemId: 'item-2', dependsOn: [] })
+    expect(setItemDependencies.mock.calls).toEqual([
+      [{ runId: 'run-1', itemId: 'item-2', dependsOn: ['TD-1'] }],
+      [{ runId: 'run-1', itemId: 'item-2', dependsOn: [] }]
+    ])
+  })
+
+  it('refuses ticket-run params that are empty, too many, mis-shaped or carry extra fields', async () => {
+    const createTicketRun = vi.fn(() => Effect.succeed(detail))
+    const addTickets = vi.fn(() => Effect.succeed(detail))
+    const removeItem = vi.fn(() => Effect.succeed(detail))
+    const setItemDependencies = vi.fn(() => Effect.succeed(detail))
+    const service = makeService({ createTicketRun, addTickets, removeItem, setItemDependencies })
+    const tooMany = Array.from({ length: 201 }, (_, index) => `ticket-${index}`)
+
+    await rejectsValidation(service, 'createTicketRun', { projectId: 'p' })
+    await rejectsValidation(service, 'createTicketRun', { projectId: 'p', ticketIds: [] })
+    await rejectsValidation(service, 'createTicketRun', { projectId: 'p', ticketIds: [''] })
+    await rejectsValidation(service, 'createTicketRun', { projectId: 'p', ticketIds: [7] })
+    await rejectsValidation(service, 'createTicketRun', { projectId: 'p', ticketIds: tooMany })
+    await rejectsValidation(service, 'createTicketRun', { projectId: '', ticketIds: ['t'] })
+    await rejectsValidation(service, 'createTicketRun', {
+      projectId: 'p',
+      ticketIds: ['t'],
+      title: 'x'.repeat(201)
+    })
+    // A run made from tickets has no document.
+    await rejectsValidation(service, 'createTicketRun', {
+      projectId: 'p',
+      ticketIds: ['t'],
+      documentPath: '/x'
+    })
+    await rejectsValidation(service, 'createTicketRun', {
+      projectId: 'p',
+      ticketIds: ['t'],
+      generation: { provider: 'nope' }
+    })
+
+    await rejectsValidation(service, 'addTickets', { runId: 'run-1', ticketIds: [] })
+    await rejectsValidation(service, 'addTickets', { runId: 'run-1' })
+    await rejectsValidation(service, 'addTickets', { runId: 'run-1', ticketIds: tooMany })
+    await rejectsValidation(service, 'addTickets', {
+      runId: 'run-1',
+      ticketIds: ['t'],
+      position: 0
+    })
+
+    await rejectsValidation(service, 'removeItem', { runId: 'run-1' })
+    await rejectsValidation(service, 'removeItem', { runId: 'run-1', itemId: '' })
+    await rejectsValidation(service, 'removeItem', { runId: 'run-1', itemId: 'i', force: true })
+
+    await rejectsValidation(service, 'setItemDependencies', { runId: 'run-1', itemId: 'i' })
+    await rejectsValidation(service, 'setItemDependencies', {
+      runId: 'run-1',
+      itemId: 'i',
+      dependsOn: ['']
+    })
+    await rejectsValidation(service, 'setItemDependencies', {
+      runId: 'run-1',
+      itemId: 'i',
+      dependsOn: 'TD-1'
+    })
+    await rejectsValidation(service, 'setItemDependencies', {
+      runId: 'run-1',
+      itemId: 'i',
+      dependsOn: [],
+      board: true
+    })
+
+    expect(createTicketRun).not.toHaveBeenCalled()
+    expect(addTickets).not.toHaveBeenCalled()
+    expect(removeItem).not.toHaveBeenCalled()
+    expect(setItemDependencies).not.toHaveBeenCalled()
   })
 
   it('passes the migration session params through positionally', async () => {

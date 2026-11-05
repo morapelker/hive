@@ -423,7 +423,8 @@ describe('DocumentFlowRunner: verifying a merge', () => {
         attachments: [],
         column: 'in_progress',
         current_session_id: 's-fix',
-        worktree_id: INTEGRATION_WORKTREE
+        worktree_id: INTEGRATION_WORKTREE,
+        archived_at: null
       })
       start(world)
 
@@ -453,7 +454,8 @@ describe('DocumentFlowRunner: verifying a merge', () => {
         attachments: [],
         column: 'in_progress',
         current_session_id: 's-fix-never-prompted',
-        worktree_id: INTEGRATION_WORKTREE
+        worktree_id: INTEGRATION_WORKTREE,
+        archived_at: null
       })
       world.unstartedSessions.add('s-fix-never-prompted')
       start(world)

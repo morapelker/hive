@@ -17,12 +17,14 @@ import {
   registerKanbanRenameSync,
   registerKanbanModelSync,
   isTicketHeldByDocumentUpdate,
+  isTicketHeldByRun,
   isTicketInDocumentUpdateLane,
   leaveDataProjectThen,
   type KanbanSessionEvent
 } from './store-coordination'
 import { CUSTOM_MODEL_PROVIDER_ID } from '@shared/types/custom-provider'
 import { documentRunIdOf, isDocumentRunTicket } from '@shared/document-flow/run-ticket'
+import { isTicketRun } from '@shared/types/document-flow'
 import { shellCommandIdOfTicket } from '@shared/lib/shell-commands'
 import {
   applySavedTicketLabelChange,
@@ -33,6 +35,7 @@ import { isClaudeCliCompletionDetected } from '@shared/types/claude-cli-stop-com
 import { isPlanLike } from '../lib/constants'
 import { useConnectionStore } from './useConnectionStore'
 import { usePinnedStore } from './usePinnedStore'
+import type { FollowUpTriggerColumn } from './useSettingsStore'
 import { useWorktreeStatusStore } from './useWorktreeStatusStore'
 import { kanbanApi as kanban } from '@/api/kanban-api'
 import { dbApi } from '@/api/db-api'
@@ -593,7 +596,9 @@ function toastConflictedDoneMove(count: number, unit: 'project' | 'branch' = 'pr
  * Document-run batch: move the tickets that a finished queue entry carries to the target
  * column. Each goes to the top of the column with the run's own completion effects off
  * (dependent auto-launch, follow-ups): the run scheduled its own dependents, and a batch
- * must not launch anything. Missing, archived and already-moved tickets are left alone.
+ * must not launch anything (what waits outside a run made from board tickets fires with the
+ * move of the run's own ticket, last: `ticketsLandingWith`). Missing, archived and
+ * already-moved tickets are left alone.
  */
 async function moveRunEntryTickets(
   pending: PendingDoneMove,
@@ -646,6 +651,73 @@ async function settleDoneMove(
   await useKanbanStore
     .getState()
     .moveTicket(pending.ticketId, pending.projectId, pending.targetColumn, pending.sortOrder)
+}
+
+/**
+ * The tickets whose work reaches the base branch with this move of `ticket`. A run made from
+ * board tickets merges its tickets into its integration branch only, and moved them to Merged
+ * with the completion effects off (`markMerged`): a ticket queued outside the run cuts from
+ * base, and would have started without their work. Its own ticket moving to Done or Merged is
+ * that branch landing on base, so this is when such a queued ticket fires. Every selected item
+ * counts, whatever its status, as the blockers' columns decide what fires: one the run skipped
+ * rides to Done with it, the same way with the effects off. Nothing for a document run: the
+ * tickets it made are its own to schedule. Every run is in the store from the app's start on, so
+ * a run missing from it no longer exists.
+ */
+async function ticketsLandingWith(
+  ticket: KanbanTicket | undefined,
+  column: KanbanTicketColumn
+): Promise<string[]> {
+  const runId = documentRunIdOf(ticket)
+  if (!runId || (column !== 'done' && column !== 'merged')) return []
+  const { useDocumentFlowStore } = await import('./useDocumentFlowStore')
+  const detail = useDocumentFlowStore.getState().runsById[runId]
+  if (!detail || !isTicketRun(detail.run)) return []
+  return detail.items.flatMap((item) => (item.selected && item.ticket_id ? [item.ticket_id] : []))
+}
+
+/**
+ * Auto-launch the queued tickets waiting on any of `blockerIds` whose blockers are now all
+ * satisfied. One pass over the dependents, so a ticket waiting on several of them launches once.
+ */
+async function launchReadyDependents(
+  projectId: string,
+  blockerIds: readonly string[],
+  triggerColumn: FollowUpTriggerColumn
+): Promise<void> {
+  const { isBlockerSatisfied } = await import('../lib/blocker-utils')
+  const { dependencyMap, tickets: allTickets } = useKanbanStore.getState()
+  const movedKeys = blockerIds.map((blockerId) => ticketKey(projectId, blockerId))
+  // Find tickets that list one of these as a blocker
+  for (const [depKey, blockers] of dependencyMap) {
+    if (!movedKeys.some((movedKey) => blockers.has(movedKey))) continue
+    // Check if ALL blockers of this dependent are now satisfied
+    let allSatisfied = true
+    for (const blockerKey of blockers) {
+      const blockerRef = parseTicketKey(blockerKey)
+      const blockerTicket = findTicketByRef(allTickets, blockerRef)
+      if (
+        blockerTicket &&
+        !isBlockerSatisfied(blockerTicket.column, blockerTicket.mode, triggerColumn)
+      ) {
+        allSatisfied = false
+        break
+      }
+    }
+    if (allSatisfied) {
+      const depTicket = findTicketByRef(allTickets, parseTicketKey(depKey))
+      if (depTicket?.pending_launch_config) {
+        // Auto-launch will be handled by the auto-launch module (Task 5)
+        import('../lib/auto-launch')
+          .then(({ autoLaunchTicket }) => {
+            autoLaunchTicket(depTicket).catch((err) => {
+              console.error('Auto-launch failed for ticket:', depTicket.id, err)
+            })
+          })
+          .catch(() => {})
+      }
+    }
+  }
 }
 
 // ── State interface ────────────────────────────────────────────────────
@@ -1890,7 +1962,6 @@ export const useKanbanStore = create<KanbanState>()(
 
           // When a ticket moves to done (or review, if that's the trigger), check if any dependents can be auto-launched
           const { useSettingsStore } = await import('./useSettingsStore')
-          const { isBlockerSatisfied } = await import('../lib/blocker-utils')
           const triggerColumn = useSettingsStore.getState().followUpTriggerColumn
           if (
             !opts?.skipCompletionEffects &&
@@ -1898,35 +1969,8 @@ export const useKanbanStore = create<KanbanState>()(
               column === 'merged' ||
               (triggerColumn === 'review' && column === 'review' && movedTicket?.mode === 'build'))
           ) {
-            const { dependencyMap, tickets: allTickets } = get()
-            const movedKey = ticketKey(projectId, ticketId)
-            // Find tickets that list this ticket as a blocker
-            for (const [depKey, blockers] of dependencyMap) {
-              if (!blockers.has(movedKey)) continue
-              // Check if ALL blockers of this dependent are now satisfied
-              let allSatisfied = true
-              for (const blockerKey of blockers) {
-                const blockerRef = parseTicketKey(blockerKey)
-                const blockerTicket = findTicketByRef(allTickets, blockerRef)
-                if (blockerTicket && !isBlockerSatisfied(blockerTicket.column, blockerTicket.mode, triggerColumn)) {
-                  allSatisfied = false
-                  break
-                }
-              }
-              if (allSatisfied) {
-                const depTicket = findTicketByRef(allTickets, parseTicketKey(depKey))
-                if (depTicket?.pending_launch_config) {
-                  // Auto-launch will be handled by the auto-launch module (Task 5)
-                  import('../lib/auto-launch')
-                    .then(({ autoLaunchTicket }) => {
-                      autoLaunchTicket(depTicket).catch((err) => {
-                        console.error('Auto-launch failed for ticket:', depTicket.id, err)
-                      })
-                    })
-                    .catch(() => {})
-                }
-              }
-            }
+            const landing = await ticketsLandingWith(movedTicket, column)
+            await launchReadyDependents(projectId, [ticketId, ...landing], triggerColumn)
           }
         } catch (err) {
           // Revert on failure
@@ -3023,14 +3067,16 @@ registerKanbanNewSession((sessionId, worktreeId, projectId, sessionMode) => {
   // Find the first ticket pre-assigned to this worktree with no active session. The ticket of
   // a document run sits session-less on its integration worktree for good: the fix sessions
   // launched there belong to their own tickets. A shell command's ticket only ever takes
-  // the session of its own run.
+  // the session of its own run. A ticket a run is holding is the run's to start: it could not
+  // launch or adopt a session the user opened in that worktree for something else.
   const orphan = tickets.find(
     (t) =>
       t.worktree_id === worktreeId &&
       !t.current_session_id &&
       !t.archived_at &&
       !isDocumentRunTicket(t) &&
-      !shellCommandIdOfTicket(t)
+      !shellCommandIdOfTicket(t) &&
+      !isTicketHeldByRun(t.id)
   )
   if (!orphan) return
 

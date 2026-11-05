@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useLayoutEffect } from 'react'
 import { motion } from 'motion/react'
-import { AlertTriangle, ArrowDownWideNarrow, ChevronRight, ChevronDown, FileText, LayoutGrid, Plus, Zap, Archive } from 'lucide-react'
+import { AlertTriangle, ArrowDownWideNarrow, ChevronRight, ChevronDown, FileText, LayoutGrid, Plus, Zap, Archive, Workflow } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { openTiledInProgressSessions } from '@/lib/tiled-sessions'
 import { toast } from '@/lib/toast'
@@ -61,6 +61,7 @@ import type {
 import { documentRunIdOf, isDocumentRunTicket } from '@shared/document-flow/run-ticket'
 import { queueDocumentRunDone } from '@/lib/document-flow/run-done-queue'
 import { pullBaseBranches } from '@/lib/base-branch-pull'
+import { orchestratorLaunchRefusal } from '@/lib/document-flow/ticket-run-membership'
 import type { DocumentRun } from '@shared/types/document-flow'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { dbApi } from '@/api/db-api'
@@ -227,6 +228,9 @@ export function KanbanColumn({
   const isMergedColumn = column === 'merged'
   const isTodoColumn = column === 'todo'
   const isInProgressColumn = column === 'in_progress'
+  // The board of one project (a git or a connection project), not a pinned or connection
+  // board that gathers several: the To Do menu offers "New orchestrator from tickets…" there
+  const isSingleProjectBoard = !!projectId && !connectionId && !isPinnedMode
   // A document run's ticket has no session to tile
   const hasTileableTickets = tickets.some((t) => !isDocumentRunTicket(t))
   // Done and Merged are always date-sorted; other columns opt in via the
@@ -582,7 +586,10 @@ export function KanbanColumn({
           findTicket(ticketId, ticketProjectId)?.column !== documentRunTicket?.column
         if (documentRunId) {
           let run:
-            | Pick<DocumentRun, 'status' | 'migration_session_id' | 'integration_connection_id'>
+            | Pick<
+                DocumentRun,
+                'status' | 'migration_session_id' | 'integration_connection_id' | 'source_kind'
+              >
             | undefined = useDocumentFlowStore.getState().runsById[documentRunId]?.run
           if (!run) {
             try {
@@ -595,10 +602,13 @@ export function KanbanColumn({
               return
             }
           }
+          // The run's kind names it in the copy ("this orchestrator"); a document run's, or
+          // one whose record is gone, reads as it always did
           const refusal = documentRunTicketDropRefusal(
             run?.status ?? null,
             column,
-            Boolean(run?.migration_session_id)
+            Boolean(run?.migration_session_id),
+            run
           )
           if (refusal) {
             toast.warning(refusal)
@@ -676,6 +686,17 @@ export function KanbanColumn({
               return
             }
             // Instance gone, or nothing left to merge in any member — plain move below
+          }
+        }
+
+        // A ticket its orchestrator will launch is launched by the run alone: no picker, no
+        // "Save & Queue" (the queued launch would start it a second time once its blockers are
+        // done), and no plain move in simple mode either
+        if (isInProgressColumn) {
+          const orchestrated = orchestratorLaunchRefusal(ticketId)
+          if (orchestrated) {
+            toast.error(orchestrated)
+            return
           }
         }
 
@@ -1259,6 +1280,32 @@ export function KanbanColumn({
           </div>
         </ContextMenuTrigger>
 
+        {isTodoColumn && !searchActive && (
+          <ContextMenuContent>
+            <ContextMenuItem
+              data-testid="ctx-new-ticket"
+              onClick={() => setIsCreateModalOpen(true)}
+              className="gap-2"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              New ticket
+            </ContextMenuItem>
+            {/* An orchestrator is one project's: only on a single project's board (a pinned
+                or connection board mixes projects, and dependencies stay within one) */}
+            {isSingleProjectBoard && (
+              <ContextMenuItem
+                data-testid="ctx-new-orchestrator"
+                onClick={() =>
+                  useDocumentFlowStore.getState().openWizard(projectId, null, { source: 'tickets' })
+                }
+                className="gap-2"
+              >
+                <Workflow className="h-3.5 w-3.5" />
+                New orchestrator from tickets…
+              </ContextMenuItem>
+            )}
+          </ContextMenuContent>
+        )}
         {isDoneColumn && (
           <ContextMenuContent>
             <ContextMenuItem

@@ -12,6 +12,7 @@ import {
 import { ticketPillBaseClass, ticketPillClass } from '@/components/kanban/pill'
 import { cn } from '@/lib/utils'
 import { IndeterminateProgressBar } from '@/components/sessions/IndeterminateProgressBar'
+import { TicketRunIcon } from './RunKindIcon'
 import {
   documentNameFromPath,
   isUnlaunchedCardPhase,
@@ -71,7 +72,8 @@ interface DocumentRunTicketBodyProps {
 }
 
 /**
- * The body of a run's ticket card, under the ticket's own title: the "Document run" marker,
+ * The body of a run's ticket card, under the ticket's own title: the "Document run" marker (an
+ * "Orchestrator" one for a run made from board tickets, which has no document footer either),
  * one progress bar (moving while the run is on, like any ticket at work, and again in its own
  * color while a session executes the run's migrations, or in pink while the only session at work
  * is a merged ticket's updating the document), the sessions at work or waiting for an answer
@@ -84,6 +86,10 @@ export function DocumentRunTicketBody({
   error = false
 }: DocumentRunTicketBodyProps): React.JSX.Element {
   const { state, missing } = view
+  // Known once the run is loaded; until then the card reads as it always did.
+  const ticketRun = state?.sourceKind === 'tickets'
+  // A run made from board tickets has no document to name, whatever the ticket row says.
+  const documentName = ticketRun ? null : documentPath
   return (
     <div
       className="mt-1.5"
@@ -94,9 +100,17 @@ export function DocumentRunTicketBody({
       data-run-missing={missing ? '' : undefined}
     >
       <div className="flex items-center gap-1.5">
-        <span className={ticketPillClass} data-testid={`kanban-docflow-run-marker-${runId}`}>
-          <FileText className="h-2.5 w-2.5" />
-          Document run
+        <span
+          className={ticketPillClass}
+          data-testid={`kanban-docflow-run-marker-${runId}`}
+          data-run-kind={ticketRun ? 'tickets' : undefined}
+        >
+          {ticketRun ? (
+            <TicketRunIcon className="h-2.5 w-2.5" />
+          ) : (
+            <FileText className="h-2.5 w-2.5" />
+          )}
+          {ticketRun ? 'Orchestrator' : 'Document run'}
         </span>
         {/* Every parallel slot is held: the tag, in the gold of the frame, is the only place
             the card mentions the cap. Only a run at work can be at it, so it never meets the
@@ -195,7 +209,7 @@ export function DocumentRunTicketBody({
           </div>
         </>
       )}
-      {(error || documentPath) && (
+      {(error || documentName) && (
         <div
           className="mt-[7px] flex items-center gap-1"
           data-testid={`kanban-docflow-run-footer-${runId}`}
@@ -213,10 +227,10 @@ export function DocumentRunTicketBody({
           ) : (
             <span
               className={cn(ticketPillClass, 'min-w-0 max-w-full px-1.5 text-[9px]')}
-              title={documentPath ?? undefined}
+              title={documentName ?? undefined}
             >
               <FileText className="h-2.5 w-2.5 shrink-0" />
-              <span className="truncate">{documentNameFromPath(documentPath ?? '')}</span>
+              <span className="truncate">{documentNameFromPath(documentName ?? '')}</span>
             </span>
           )}
         </div>

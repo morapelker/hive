@@ -257,6 +257,19 @@ describe('document flow schema', () => {
     )
   })
 
+  it('ships the source kind of a run as the v69 migration, a column added by the repair step', () => {
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(69)
+    const migration = MIGRATIONS.find((m) => m.version === 69)
+    expect(migration?.name).toBe('add_document_run_source_kind')
+    // Comment only: safeAddColumn() adds the column, so a replay cannot fail on a duplicate.
+    expect(migration?.up.replace(/--.*$/gm, '').trim()).toBe('')
+    expect(migration?.down.replace(/--.*$/gm, '').trim()).toBe('')
+    expect(migration?.up).toContain('document_runs.source_kind')
+    expect(DOCUMENT_FLOW_TABLES_SQL).toMatch(
+      /title\s+TEXT NOT NULL,\s+source_kind\s+TEXT NOT NULL DEFAULT 'document',\s+source_path\s+TEXT NOT NULL,/
+    )
+  })
+
   it('keeps the migration versions strictly increasing', () => {
     for (let i = 1; i < MIGRATIONS.length; i++) {
       expect(MIGRATIONS[i].version).toBeGreaterThan(MIGRATIONS[i - 1].version)
@@ -485,9 +498,55 @@ describeIf('document flow tables', () => {
       document_update_report: report
     })
   })
+
+  it('adds the source kind to a runs table created by an earlier build', () => {
+    const path = makeDbPath()
+    const db = openDb(path)
+    const run = makeRun(db, makeProject(db), { id: 'run-old' })
+    db.getRawDb().exec('ALTER TABLE document_runs DROP COLUMN source_kind')
+    db.setSetting('schema_version', '68')
+    db.close()
+
+    const upgraded = openDb(path)
+    expect(upgraded.getSetting('schema_version')).toBe(String(CURRENT_SCHEMA_VERSION))
+    // The run of the earlier build is a document run, as every run was then.
+    expect(upgraded.getDocumentRun(run.id)).toEqual(run)
+    expect(upgraded.getDocumentRun(run.id)?.source_kind).toBe('document')
+    expect(count(upgraded, 'document_runs', "source_kind = 'document'")).toBe(1)
+  })
 })
 
 describeIf('document runs', () => {
+  it('stores where its tickets come from: a document by default, or board tickets', () => {
+    const db = openDb()
+    const projectId = makeProject(db)
+
+    const document = makeRun(db, projectId)
+    const tickets = makeRun(db, projectId, {
+      title: 'Checkout polish',
+      source_kind: 'tickets',
+      source_path: '',
+      status: 'preview'
+    })
+
+    expect(document).toMatchObject({ source_kind: 'document', source_path: '/docs/checkout.html' })
+    expect(tickets).toMatchObject({ source_kind: 'tickets', source_path: '', status: 'preview' })
+    expect(db.getDocumentRun(tickets.id)).toEqual(tickets)
+    expect(
+      db
+        .listDocumentRuns(projectId)
+        .map((run) => run.source_kind)
+        .sort()
+    ).toEqual(['document', 'tickets'])
+    // A patch keeps it: a run never changes kind.
+    expect(db.updateDocumentRun(tickets.id, { status: 'running' })?.source_kind).toBe('tickets')
+    // An unknown value, written by a later build, reads as a document run.
+    db.getRawDb()
+      .prepare("UPDATE document_runs SET source_kind = 'later' WHERE id = ?")
+      .run(document.id)
+    expect(db.getDocumentRun(document.id)?.source_kind).toBe('document')
+  })
+
   it('creates a run and round-trips its config, extraction and report', () => {
     const db = openDb()
     const projectId = makeProject(db)
@@ -510,6 +569,7 @@ describeIf('document runs', () => {
       id: 'run-1',
       project_id: projectId,
       title: 'Checkout spec',
+      source_kind: 'document',
       source_path: '/docs/checkout.html',
       run_dir: '/runs/checkout',
       document_path: null,
@@ -1218,6 +1278,81 @@ describeIf('document run items', () => {
       title: 'Renamed',
       verification: []
     })
+  })
+
+  it('appends items after the last one, pending and linked to their board tickets', () => {
+    const db = openDb()
+    const run = makeRun(db, makeProject(db), { source_kind: 'tickets', source_path: '' })
+
+    const first = db.insertDocumentRunItems(run.id, [
+      { ...draft('TD-1'), ticket_id: 'ticket-1' },
+      { ...draft('TD-2', { depends_on: ['TD-1'], launch_config: LAUNCH }), ticket_id: 'ticket-2' }
+    ])
+    const second = db.insertDocumentRunItems(run.id, [{ ...draft('TD-3'), ticket_id: 'ticket-3' }])
+
+    expect(
+      first.map(({ key, position, status, ticket_id }) => [key, position, status, ticket_id])
+    ).toEqual([
+      ['TD-1', 0, 'pending', 'ticket-1'],
+      ['TD-2', 1, 'pending', 'ticket-2']
+    ])
+    expect(first[1]).toMatchObject({ depends_on: ['TD-1'], launch_config: LAUNCH })
+    expect(second).toEqual([
+      expect.objectContaining({ key: 'TD-3', position: 2, ticket_id: 'ticket-3' })
+    ])
+    expect(db.getDocumentRunItems(run.id).map((item) => item.key)).toEqual(['TD-1', 'TD-2', 'TD-3'])
+    // Without a ticket the item is unlinked; an empty list adds nothing.
+    expect(db.insertDocumentRunItems(run.id, [draft('T4')])[0]).toMatchObject({
+      position: 3,
+      ticket_id: null
+    })
+    expect(db.insertDocumentRunItems(run.id, [])).toEqual([])
+    expect(count(db, 'document_run_items')).toBe(4)
+  })
+
+  it('starts at position 0 on a run without items, and continues after a gap', () => {
+    const db = openDb()
+    const run = makeRun(db, makeProject(db), { source_kind: 'tickets', source_path: '' })
+
+    const [a, b] = db.insertDocumentRunItems(run.id, [draft('A'), draft('B')])
+    expect(a.position).toBe(0)
+    expect(db.deleteDocumentRunItem(a.id)).toBe(true)
+    expect(db.insertDocumentRunItems(run.id, [draft('C')])[0].position).toBe(b.position + 1)
+  })
+
+  it('deletes one item and keeps the rest of its run', () => {
+    const db = openDb()
+    const run = makeRun(db, makeProject(db))
+    const [a, b] = db.replaceDocumentRunItems(run.id, [draft('A1'), draft('A2')])
+
+    expect(db.deleteDocumentRunItem(a.id)).toBe(true)
+    expect(db.deleteDocumentRunItem(a.id)).toBe(false)
+    expect(db.deleteDocumentRunItem('no-such-item')).toBe(false)
+    expect(db.getDocumentRunItem(a.id)).toBeNull()
+    expect(db.getDocumentRunItems(run.id)).toEqual([b])
+  })
+
+  it('finds every item linked to a board ticket, of any run, oldest first', () => {
+    const db = openDb()
+    const projectId = makeProject(db)
+    const older = makeRun(db, projectId, { source_kind: 'tickets', source_path: '' })
+    const newer = makeRun(db, projectId, { source_kind: 'tickets', source_path: '' })
+    at('2026-03-01T10:00:00.000Z')
+    const [first] = db.insertDocumentRunItems(older.id, [
+      { ...draft('TD-1'), ticket_id: 'ticket-1' }
+    ])
+    at('2026-03-01T11:00:00.000Z')
+    const [second] = db.insertDocumentRunItems(newer.id, [
+      { ...draft('TD-1'), ticket_id: 'ticket-1' },
+      { ...draft('TD-2'), ticket_id: 'ticket-2' }
+    ])
+
+    expect(db.findDocumentRunItemsByTicketId('ticket-1').map((item) => item.id)).toEqual([
+      first.id,
+      second.id
+    ])
+    expect(db.findDocumentRunItemsByTicketId('ticket-1')[1].run_id).toBe(newer.id)
+    expect(db.findDocumentRunItemsByTicketId('no-such-ticket')).toEqual([])
   })
 
   it('replaces every item of that run and of no other', () => {

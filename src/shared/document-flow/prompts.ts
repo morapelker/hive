@@ -4,6 +4,7 @@ import {
   DOCUMENT_VERIFICATION_METHODS,
   type DocumentRunMember,
   type DocumentRunPromptStyle,
+  type DocumentRunSourceKind,
   type DocumentRunVerdict,
   type DocumentVerificationMethod
 } from '../types/document-flow'
@@ -275,6 +276,74 @@ export function withRunRules(
   return [text, ...missing].filter(Boolean).join('\n\n')
 }
 
+// ── Runs made from board tickets ───────────────────────────────────────────
+
+/** A board ticket as its brief needs it: never its note or labels (display-only, personal). */
+export interface TicketBriefInput {
+  title: string
+  description: string | null
+  attachments?: readonly unknown[] | null
+}
+
+/**
+ * The brief of a ticket the user wrote, exactly as the board launches it in build mode
+ * (WorktreePickerModal `buildPrompt` / connection-project-launch `buildTicketPrompt`): the
+ * title, the description verbatim, and the attachments. A run made from board tickets sends
+ * this, followed by the rules of the run, so the user's own words are the task.
+ */
+export function buildTicketBrief(ticket: TicketBriefInput): string {
+  const description = ticket.description ?? ''
+  const attachments = (ticket.attachments ?? []).filter(
+    (attachment): attachment is { type: string; url: string; label: string } =>
+      typeof attachment === 'object' &&
+      attachment !== null &&
+      typeof (attachment as { url?: unknown }).url === 'string'
+  )
+  let attachmentsXml = ''
+  if (attachments.length > 0) {
+    const lines = attachments.map((attachment) =>
+      attachment.type === 'image' || attachment.type === 'file'
+        ? `<file path="${attachment.url}">${attachment.label ?? ''}</file>`
+        : `<link type="${attachment.type}" url="${attachment.url}">${attachment.label ?? ''}</link>`
+    )
+    attachmentsXml = `\n<attachments>\n${lines.join('\n')}\n</attachments>`
+  }
+  return `Please implement the following ticket.\n\n<ticket title="${ticket.title}">${description}${attachmentsXml}</ticket>`
+}
+
+/**
+ * The rules of the run alone, in the order `withRunRules` puts them after a brief: the
+ * verification paragraphs (when methods are chosen), the connection workspace paragraph (a
+ * connection run), the asking paragraph, then the wait, commit and follow-up rules. These are
+ * what the orchestration relies on (commits on the ticket branch, no push, follow-ups trusted),
+ * so a run made from board tickets appends them, in a block of their own, to the user's brief.
+ */
+export function runRulesParagraphs(
+  input: Pick<LaunchPromptInput, 'interactive' | 'sdk' | 'verification' | 'workspace'>
+): string {
+  return [
+    ...verificationParagraphs(input.verification),
+    ...(input.workspace && input.workspace.length > 0
+      ? [connectionWorkspaceParagraph(input.workspace)]
+      : []),
+    launchAskParagraph(input.interactive, input.sdk),
+    LAUNCH_WAIT_PARAGRAPH,
+    LAUNCH_RULES_PARAGRAPH,
+    LAUNCH_FOLLOW_UPS_PARAGRAPH
+  ].join('\n\n')
+}
+
+/**
+ * The launch prompt of a ticket of a run made from board tickets: the user's brief untouched,
+ * then the rules of the run as they are now (see `runRulesParagraphs`).
+ */
+export function buildTicketRunPrompt(
+  ticket: TicketBriefInput,
+  rules: Pick<LaunchPromptInput, 'interactive' | 'sdk' | 'verification' | 'workspace'>
+): string {
+  return `${buildTicketBrief(ticket)}\n\n${runRulesParagraphs(rules)}`
+}
+
 export interface MigrationPromptInput {
   documentTitle: string
   integrationBranch: string
@@ -284,6 +353,8 @@ export interface MigrationPromptInput {
   sdk: string
   /** Connection projects: the session runs in the integration connection directory. */
   workspace?: readonly ConnectionWorkspaceMember[] | null
+  /** What the run was made from: a run made from board tickets is an "orchestrator". */
+  sourceKind?: DocumentRunSourceKind
 }
 
 /**
@@ -295,10 +366,11 @@ export function buildMigrationPrompt(input: MigrationPromptInput): string {
   const title = input.documentTitle.replace(/\s+/g, ' ').trim()
   const migrations = input.migrations.map((entry) => entry.replace(/\s+/g, ' ').trim())
   const workspace = input.workspace && input.workspace.length > 0 ? input.workspace : null
+  const runName = `${input.sourceKind === 'tickets' ? 'orchestrator' : 'document run'}${title ? ` "${title}"` : ''}`
   return [
     workspace
-      ? `execute the migrations of the integration branches (${input.integrationBranch}) against production. this is a connection directory: each member repository is a subdirectory of it (${listMembers(workspace)}), and each one has the branch checked out; a migration path starts with the member's directory. the branches hold the merged work of the document run${title ? ` "${title}"` : ''}; these are the migrations they added or changed:`
-      : `execute the migrations of this branch (${input.integrationBranch}) against production. the branch holds the merged work of the document run${title ? ` "${title}"` : ''}; these are the migrations it added or changed:`,
+      ? `execute the migrations of the integration branches (${input.integrationBranch}) against production. this is a connection directory: each member repository is a subdirectory of it (${listMembers(workspace)}), and each one has the branch checked out; a migration path starts with the member's directory. the branches hold the merged work of the ${runName}; these are the migrations they added or changed:`
+      : `execute the migrations of this branch (${input.integrationBranch}) against production. the branch holds the merged work of the ${runName}; these are the migrations it added or changed:`,
     migrations
       .filter(Boolean)
       .map((entry) => `- ${entry}`)

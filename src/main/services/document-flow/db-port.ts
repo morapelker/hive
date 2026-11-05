@@ -1,6 +1,7 @@
 import type {
   DocumentRun,
   DocumentRunConfig,
+  DocumentRunSourceKind,
   DocumentRunEvent,
   DocumentRunExtractionMeta,
   DocumentRunItem,
@@ -18,13 +19,16 @@ import type {
 // document_runs.ticket_id v53,
 // document_runs.migration_session_id / migration_started_at / migration_owner_pid v54,
 // document_runs.integration_connection_id / integration_connection_path / members and
-// document_run_items.connection_id / members v56), and the service's tests substitute an in-memory fake.
+// document_run_items.connection_id / members v56, document_runs.source_kind v61), and the
+// service's tests substitute an in-memory fake.
 
 export interface DocumentRunCreate {
   /** Caller-supplied so the run directory can be named after it before the row exists. */
   id: string
   project_id: string
   title: string
+  /** Defaults to `document`. A `tickets` run has no document: `source_path` is ''. */
+  source_kind?: DocumentRunSourceKind
   source_path: string
   run_dir: string
   document_path?: string | null
@@ -59,6 +63,12 @@ export interface DocumentRunRowPatch {
 
 /** Stored as-is; `position` follows the array order and `status` starts as `pending`. */
 export type DocumentRunItemCreate = DocumentRunItemDraft
+
+/**
+ * An item appended to a run (`insertDocumentRunItems`): a draft, optionally linked to the board
+ * ticket it was made from (a run made from board tickets links every item from the start).
+ */
+export type DocumentRunItemInsert = DocumentRunItemDraft & { ticket_id?: string | null }
 
 /** Every mutable column of an item: the renderer-facing patch plus the merge bookkeeping. */
 export interface DocumentRunItemRowPatch extends DocumentRunItemPatch {
@@ -104,6 +114,15 @@ export interface DocumentFlowDb {
 
   /** Replace every item of the run (one transaction). `position` follows the array order. */
   replaceDocumentRunItems(runId: string, items: DocumentRunItemCreate[]): DocumentRunItem[]
+  /**
+   * Append items after the run's last one (`position` continues in array order), `pending`,
+   * in one transaction; `ticket_id` links each to its board ticket. Returns the new rows.
+   */
+  insertDocumentRunItems(runId: string, items: DocumentRunItemInsert[]): DocumentRunItem[]
+  /** Deletes one item; false when there was none. */
+  deleteDocumentRunItem(id: string): boolean
+  /** Every item, of any run, linked to the board ticket; oldest first. */
+  findDocumentRunItemsByTicketId(ticketId: string): DocumentRunItem[]
   /** Ordered by `position`. */
   getDocumentRunItems(runId: string): DocumentRunItem[]
   getDocumentRunItem(id: string): DocumentRunItem | null

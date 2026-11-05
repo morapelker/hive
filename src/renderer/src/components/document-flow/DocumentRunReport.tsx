@@ -6,6 +6,7 @@ import type {
   DocumentRunReport,
   DocumentRunReportMember
 } from '@shared/types/document-flow'
+import { TonePill } from './DocumentFlowBadges'
 import {
   DOCUMENT_RUN_ITEM_STATUS_LABELS,
   formatEventTime,
@@ -19,14 +20,29 @@ const SECTION_LABEL_CLASS = 'text-xs font-medium uppercase tracking-wider text-m
 export function RunReportSection({
   report,
   landed = false,
-  migrationsAction
+  migrationsAction,
+  addedKeys
 }: {
   report: DocumentRunReport
   /** The run's ticket already sits in Done or Merged, so the merge is not left to do. */
   landed?: boolean
   /** Shown next to the migrations list: the button that executes them, or stops that. */
   migrationsAction?: React.ReactNode
+  /**
+   * An orchestrator made from board tickets: the keys of the tickets that joined it after it
+   * launched, marked as such in the merged and not-merged lists (scope added after launch).
+   */
+  addedKeys?: ReadonlySet<string>
 }): React.JSX.Element {
+  const addedPill = (key: string): React.ReactNode =>
+    addedKeys?.has(key) ? (
+      <>
+        {' '}
+        <TonePill tone="info" testId={`docflow-report-added-${key}`}>
+          added mid-run
+        </TonePill>
+      </>
+    ) : null
   const { stats, verify } = report
   // A connection run reports per member; the totals below are summed over them.
   const members = report.members && report.members.length > 0 ? report.members : null
@@ -128,6 +144,7 @@ export function RunReportSection({
               <li key={entry.key} className="text-[12px] leading-snug">
                 <span className="font-mono text-[11px] text-muted-foreground">{entry.key}</span>{' '}
                 <span className="text-foreground">{entry.title}</span>
+                {addedPill(entry.key)}
                 {entry.mergeSha && (
                   <span className="font-mono text-[11px] text-muted-foreground">
                     {' '}
@@ -152,7 +169,8 @@ export function RunReportSection({
             {report.unmerged.map((entry) => (
               <li key={entry.key} className="text-[12px] leading-snug">
                 <span className="font-mono text-[11px] text-muted-foreground">{entry.key}</span>{' '}
-                <span className="text-foreground">{entry.title}</span>{' '}
+                <span className="text-foreground">{entry.title}</span>
+                {addedPill(entry.key)}{' '}
                 <span className="text-muted-foreground">
                   · {DOCUMENT_RUN_ITEM_STATUS_LABELS[entry.status]}
                 </span>

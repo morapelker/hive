@@ -20,7 +20,8 @@ import {
   Unlink,
   FileText,
   Zap,
-  RadioTower
+  RadioTower,
+  Workflow
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -961,6 +962,19 @@ export const WorktreeItem = memo(function WorktreeItem({
                             Implement Document…
                           </DropdownMenuItem>
                         )}
+                        {project?.kind !== 'connection' && (
+                          <DropdownMenuItem
+                            data-testid="docflow-orchestrate-worktree-menu-item"
+                            onClick={() =>
+                              useDocumentFlowStore
+                                .getState()
+                                .openWizard(worktree.project_id, null, { source: 'tickets' })
+                            }
+                          >
+                            <Workflow className="h-4 w-4 mr-2" />
+                            Orchestrate tickets…
+                          </DropdownMenuItem>
+                        )}
                         {renderShellCommandMenuItems({
                           commands: shellCommands,
                           onRun: handleRunShellCommand,
@@ -1113,6 +1127,19 @@ export const WorktreeItem = memo(function WorktreeItem({
           >
             <FileText className="h-4 w-4 mr-2" />
             Implement Document…
+          </ContextMenuItem>
+        )}
+        {project?.kind !== 'connection' && (
+          <ContextMenuItem
+            data-testid="docflow-orchestrate-worktree-menu-item"
+            onClick={() =>
+              useDocumentFlowStore
+                .getState()
+                .openWizard(worktree.project_id, null, { source: 'tickets' })
+            }
+          >
+            <Workflow className="h-4 w-4 mr-2" />
+            Orchestrate tickets…
           </ContextMenuItem>
         )}
         {/* Custom Commands */}

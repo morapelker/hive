@@ -1,6 +1,6 @@
 /**
  * The board's Import dropdown (right end of the session tab strip) offers "Implement
- * document…" for the project of the selected worktree.
+ * document…" for the project of the selected worktree, and "Orchestrate tickets…" next to it.
  */
 import { act, cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -67,6 +67,7 @@ describe('board Import dropdown', () => {
       'Import from Jira',
       'Import from Hive JSON',
       'Implement document…',
+      'Orchestrate tickets…',
       'Export Board'
     ])
 
@@ -76,6 +77,23 @@ describe('board Import dropdown', () => {
       open: true,
       projectId: 'alpha',
       runId: null
+    })
+  })
+
+  it('opens the wizard on the board tickets of that project', async () => {
+    const user = userEvent.setup()
+    await act(async () => {
+      render(<SessionTabs />)
+    })
+
+    await user.click(screen.getByTestId('kanban-import-btn'))
+    await user.click(await screen.findByTestId('docflow-orchestrate-import-menu-item'))
+
+    expect(useDocumentFlowStore.getState().wizard).toEqual({
+      open: true,
+      projectId: 'alpha',
+      runId: null,
+      source: 'tickets'
     })
   })
 })

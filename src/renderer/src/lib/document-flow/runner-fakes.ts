@@ -89,6 +89,7 @@ export function makeRun(overrides: Partial<DocumentRun> = {}): DocumentRun {
     id: RUN_ID,
     project_id: PROJECT_ID,
     title: 'Checkout redesign',
+    source_kind: 'document',
     source_path: '/docs/checkout.html',
     run_dir: '/tmp/document-runs/run-1',
     document_path: '/tmp/document-runs/run-1/document.md',
@@ -204,6 +205,8 @@ export interface WorldOptions {
   items?: Partial<DocumentRunItem>[]
   /** A run on a connection project over MEMBERS, with its integration instance in place. */
   connection?: boolean
+  /** A run made from board tickets (an orchestrator): no document, no source path. */
+  tickets?: boolean
 }
 
 export type RunnerWorld = ReturnType<typeof createWorld>
@@ -215,6 +218,14 @@ export interface FakeDocument {
   writable: boolean
   insideRepo: boolean
   version: number
+}
+
+/** The run columns of a run made from board tickets: its tickets are the source, not a document. */
+export const TICKETS_RUN: Partial<DocumentRun> = {
+  title: 'Checkout tickets',
+  source_kind: 'tickets',
+  source_path: '',
+  document_path: null
 }
 
 /** The run columns of a launched connection run: no integration worktree, an instance and members. */
@@ -240,6 +251,7 @@ export function createWorld(options: WorldOptions = {}) {
       {
         run: makeRun({
           ...(options.connection ? CONNECTION_RUN : {}),
+          ...(options.tickets ? TICKETS_RUN : {}),
           ...options.run,
           config: { ...DEFAULT_DOCUMENT_RUN_CONFIG, ...options.run?.config, ...options.config }
         }),
@@ -315,7 +327,8 @@ export function createWorld(options: WorldOptions = {}) {
         attachments: [],
         column: 'todo',
         current_session_id: null,
-        worktree_id: null
+        worktree_id: null,
+        archived_at: null
       })
     }
   }
@@ -390,6 +403,40 @@ export function createWorld(options: WorldOptions = {}) {
     addTickets(owned)
     notifyListeners()
     return added
+  }
+
+  /**
+   * An item the server appended to a run under way (tickets added to an orchestrator): next
+   * position, pending, selected, with its board ticket. Notifies like the store's refresh.
+   */
+  const addItem = (
+    entry: Partial<DocumentRunItem> & { key: string },
+    runId: string = RUN_ID
+  ): DocumentRunItem => {
+    const current = detail(runId)
+    const position = Math.max(-1, ...current.items.map((candidate) => candidate.position)) + 1
+    const added = makeItem({
+      ...(runId === RUN_ID
+        ? {}
+        : { id: `${runId}-item-${entry.key}`, ticket_id: `${runId}-ticket-${entry.key}` }),
+      position,
+      ...entry,
+      run_id: runId
+    })
+    runs.set(runId, { ...current, items: [...current.items, added] })
+    addTickets([added])
+    notifyListeners()
+    return added
+  }
+
+  /** The server deleted an item (a ticket taken out of an orchestrator): gone from the store. */
+  const removeItem = (key: string, runId: string = RUN_ID): void => {
+    const current = detail(runId)
+    runs.set(runId, {
+      ...current,
+      items: current.items.filter((candidate) => candidate.key !== key)
+    })
+    notifyListeners()
   }
 
   /** Put the run's source document on the fake disk, so the document update can edit it. */
@@ -551,10 +598,10 @@ export function createWorld(options: WorldOptions = {}) {
         makeVerdict()
     ),
     prepareMerge: vi.fn(async (_runId: string, _itemId: string) => cleanMerge),
-    merge: vi.fn(async (_runId: string, itemId: string) => {
-      const merged = detail().items.find((candidate) => candidate.id === itemId)
+    merge: vi.fn(async (runId: string, itemId: string) => {
+      const merged = detail(runId).items.find((candidate) => candidate.id === itemId)
       if (merged)
-        setItem(merged.key, { pre_merge_sha: 'pre-sha', merge_sha: `merge-${merged.key}` })
+        setItem(merged.key, { pre_merge_sha: 'pre-sha', merge_sha: `merge-${merged.key}` }, runId)
       return { success: true, mergeSha: `merge-${itemId}` } as {
         success: boolean
         mergeSha?: string
@@ -567,9 +614,9 @@ export function createWorld(options: WorldOptions = {}) {
       success: true,
       committed: true
     })),
-    rollbackMerge: vi.fn(async (_runId: string, itemId: string) => {
-      const rolledBack = detail().items.find((candidate) => candidate.id === itemId)
-      if (rolledBack) setItem(rolledBack.key, { pre_merge_sha: null, merge_sha: null })
+    rollbackMerge: vi.fn(async (runId: string, itemId: string) => {
+      const rolledBack = detail(runId).items.find((candidate) => candidate.id === itemId)
+      if (rolledBack) setItem(rolledBack.key, { pre_merge_sha: null, merge_sha: null }, runId)
       return { success: true } as { success: boolean; error?: string }
     }),
     // The source document is not on disk unless a test puts it there (`putDocument`): the
@@ -631,8 +678,8 @@ export function createWorld(options: WorldOptions = {}) {
       // Like the server: the verdict is on the item's row by the time the call returns.
       classify: async (params: { runId: string; itemId: string; finalMessage?: string | null }) => {
         const verdict = await api.classify(params)
-        const current = detail()
-        runs.set(RUN_ID, {
+        const current = detail(params.runId)
+        runs.set(params.runId, {
           ...current,
           items: current.items.map((candidate) =>
             candidate.id === params.itemId ? { ...candidate, verdict } : candidate
@@ -676,7 +723,8 @@ export function createWorld(options: WorldOptions = {}) {
           attachments: [],
           column: 'todo',
           current_session_id: null,
-          worktree_id: null
+          worktree_id: null,
+          archived_at: null
         }
         tickets.set(ticket.id, ticket)
         return ticket
@@ -732,6 +780,10 @@ export function createWorld(options: WorldOptions = {}) {
         })
       }
     }),
+    unlinkTicketSession: vi.fn(async (_projectId: string, ticketId: string) => {
+      const ticket = tickets.get(ticketId)
+      if (ticket) tickets.set(ticketId, { ...ticket, current_session_id: null })
+    }),
     sendFollowup: vi.fn(async (target: { sessionId: string; ticketId: string; prompt: string }) => {
       followups.push(target)
       // Like the real send: the session shows as working from the moment it is prompted.
@@ -781,6 +833,8 @@ export function createWorld(options: WorldOptions = {}) {
     setItem,
     setRun,
     addRun,
+    addItem,
+    removeItem,
     documents,
     putDocument,
     editDocument,

@@ -7,7 +7,8 @@ import { clampMaxParallel } from '@/stores/useDocumentFlowStore'
 import {
   DOCUMENT_RUN_MAX_PARALLEL_LIMIT,
   type DocumentRunConfig,
-  type DocumentRunPromptStyle
+  type DocumentRunPromptStyle,
+  type DocumentRunSourceKind
 } from '@shared/types/document-flow'
 import { LaunchConfigPicker } from './LaunchConfigPicker'
 import { defaultBaseBranchLabel, memberBaseBranch } from './document-flow-ui'
@@ -37,6 +38,12 @@ interface DocumentRunSettingsPanelProps {
   members?: readonly SettingsMember[] | null
   config: DocumentRunConfig
   onChange: (patch: Partial<DocumentRunConfig>, options?: { debounce?: boolean }) => void
+  /**
+   * Where the run's tickets come from. A run made from board tickets has no prompt style: each
+   * ticket's own title and description are its brief, so the Full / Small choice (how much of
+   * the spec an agent researches) is not offered.
+   */
+  sourceKind?: DocumentRunSourceKind
 }
 
 /** A stored branch stays selectable while the list loads (or if it has since been deleted). */
@@ -78,7 +85,8 @@ export function DocumentRunSettingsPanel({
   branches,
   members = null,
   config,
-  onChange
+  onChange,
+  sourceKind = 'document'
 }: DocumentRunSettingsPanelProps): React.JSX.Element {
   const memberBranchErrors = (members ?? []).flatMap((member) =>
     member.branches.error ? [`${member.name}: ${member.branches.error}`] : []
@@ -251,36 +259,38 @@ export function DocumentRunSettingsPanel({
         </div>
       )}
 
-      <div className="space-y-1.5">
-        <p className={LABEL_CLASS}>Prompt</p>
-        <div className="flex gap-2" role="radiogroup" data-testid="docflow-prompt-style">
-          {PROMPT_STYLE_OPTIONS.map((option) => {
-            const selected = config.promptStyle === option.value
-            return (
-              <button
-                key={option.value}
-                type="button"
-                role="radio"
-                aria-checked={selected}
-                data-testid={`docflow-prompt-style-${option.value}`}
-                onClick={() => onChange({ promptStyle: option.value })}
-                className={cn(
-                  'rounded-md border px-3 py-1 text-[12px] transition-colors',
-                  selected
-                    ? 'border-primary bg-primary text-primary-foreground'
-                    : 'border-border bg-muted/50 text-muted-foreground hover:bg-accent/50'
-                )}
-              >
-                {option.label}
-              </button>
-            )
-          })}
+      {sourceKind !== 'tickets' && (
+        <div className="space-y-1.5">
+          <p className={LABEL_CLASS}>Prompt</p>
+          <div className="flex gap-2" role="radiogroup" data-testid="docflow-prompt-style">
+            {PROMPT_STYLE_OPTIONS.map((option) => {
+              const selected = config.promptStyle === option.value
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  data-testid={`docflow-prompt-style-${option.value}`}
+                  onClick={() => onChange({ promptStyle: option.value })}
+                  className={cn(
+                    'rounded-md border px-3 py-1 text-[12px] transition-colors',
+                    selected
+                      ? 'border-primary bg-primary text-primary-foreground'
+                      : 'border-border bg-muted/50 text-muted-foreground hover:bg-accent/50'
+                  )}
+                >
+                  {option.label}
+                </button>
+              )
+            })}
+          </div>
+          <p className={HELP_CLASS}>
+            Full: agents research the spec with subagents before they implement. Small: no
+            subagents, for documents of small tasks.
+          </p>
         </div>
-        <p className={HELP_CLASS}>
-          Full: agents research the spec with subagents before they implement. Small: no subagents,
-          for documents of small tasks.
-        </p>
-      </div>
+      )}
 
       <div className="space-y-1.5">
         <div className="flex items-center justify-between gap-3">

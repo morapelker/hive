@@ -11,8 +11,9 @@ import {
 import { cn } from '@/lib/utils'
 import { resolveDocumentFlowGeneration, useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { useProjectStore } from '@/stores/useProjectStore'
-import type { DocumentRun } from '@shared/types/document-flow'
+import { isTicketRun, type DocumentRun } from '@shared/types/document-flow'
 import { documentNameFromPath, formatGeneration, wizardStep } from './document-flow-ui'
+import type { WizardSource } from './ticket-run-ui'
 import { WizardPickStep } from './WizardPickStep'
 import { WizardPreviewStep } from './WizardPreviewStep'
 
@@ -23,6 +24,10 @@ const errorMessage = (cause: unknown): string =>
  * The global "Implement document" dialog: pick a spec document, wait for its tickets to be
  * extracted, review and edit them, launch the run. Which step shows is read off the run the
  * wizard points at, so closing and reopening (or a restart) lands where the run is.
+ *
+ * The same dialog is "Orchestrate tickets" when the run is made from board tickets instead:
+ * the pick step's switch (or "Orchestrate tickets…", which opens on it) picks tickets already
+ * on the board, and the run is created straight into its preview — no extraction step.
  */
 export function ImplementDocumentWizard(): React.JSX.Element {
   const wizard = useDocumentFlowStore((s) => s.wizard)
@@ -38,6 +43,17 @@ export function ImplementDocumentWizard(): React.JSX.Element {
 
   const { open, projectId, runId } = wizard
   const step = wizardStep(runId, detail?.run.status)
+  // The pick step's source. Each opening starts where it was asked to ("Orchestrate tickets…"
+  // opens on the board's tickets, everything else on a document), whatever was chosen before.
+  const requestedSource: WizardSource = wizard.source ?? 'document'
+  const [source, setSource] = useState<WizardSource>(requestedSource)
+  const openedWith = `${open}:${requestedSource}`
+  const [seenOpening, setSeenOpening] = useState(openedWith)
+  if (seenOpening !== openedWith) {
+    setSeenOpening(openedWith)
+    setSource(requestedSource)
+  }
+  const ticketsMode = detail ? isTicketRun(detail.run) : source === 'tickets'
   // Esc, the X and the overlay are ignored while a launch is in flight: on success the dialog
   // closes itself, on failure it is the only place the reason is shown in full.
   const [launching, setLaunching] = useState(false)
@@ -73,8 +89,12 @@ export function ImplementDocumentWizard(): React.JSX.Element {
         )}
       >
         <DialogHeader className="shrink-0 border-b border-border px-5 pb-3 pt-4">
-          <DialogTitle className="text-[15px]">Implement document</DialogTitle>
-          <DialogDescription className="text-[12px]">{describeWizard(project)}</DialogDescription>
+          <DialogTitle className="text-[15px]" data-testid="docflow-wizard-title">
+            {ticketsMode ? 'Orchestrate tickets' : 'Implement document'}
+          </DialogTitle>
+          <DialogDescription className="text-[12px]">
+            {ticketsMode ? describeTicketsWizard(project) : describeWizard(project)}
+          </DialogDescription>
         </DialogHeader>
 
         {!project || !projectId ? (
@@ -82,7 +102,7 @@ export function ImplementDocumentWizard(): React.JSX.Element {
             This project is no longer open. Select a project and try again.
           </StepMessage>
         ) : step === 'pick' ? (
-          <WizardPickStep projectId={projectId} />
+          <WizardPickStep projectId={projectId} source={source} onSourceChange={setSource} />
         ) : step === 'loading' || !detail ? (
           <div className="flex items-center justify-center gap-2 px-5 py-10 text-[13px] text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -118,6 +138,16 @@ function describeWizard(
   return project.kind === 'connection'
     ? `Turn a spec document into tickets for ${project.name} and run them into one integration branch per member repository.`
     : `Turn a spec document into tickets for ${project.name} and run them into one integration branch.`
+}
+
+/** The same, for an orchestrator made from tickets already on the project's board. */
+function describeTicketsWizard(
+  project: { name: string; kind?: 'git' | 'connection' } | undefined
+): string {
+  if (!project) return 'Run tickets from the board into one integration branch.'
+  return project.kind === 'connection'
+    ? `Run tickets from the ${project.name} board into one integration branch per member repository.`
+    : `Run tickets from the ${project.name} board into one integration branch.`
 }
 
 function StepMessage({

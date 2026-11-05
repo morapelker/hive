@@ -21,6 +21,8 @@ import {
   type DocumentFlowGenerate,
   type DocumentFlowProject,
   type DocumentFlowServiceDeps,
+  type DocumentFlowTicket,
+  type DocumentFlowTicketDependency,
   type DocumentFlowTicketPatch,
   type DocumentFlowWorktree
 } from './document-flow-service'
@@ -55,6 +57,72 @@ export function createFakeDocumentFlowDb(): FakeDocumentFlowDb {
       .filter((item) => item.run_id === runId)
       .sort((a, b) => a.position - b.position)
 
+  const newItem = (
+    runId: string,
+    draft: DocumentRunItemDraft,
+    position: number,
+    ticketId: string | null
+  ): DocumentRunItem => {
+    const now = nowIso()
+    const item: DocumentRunItem = {
+      id: randomUUID(),
+      run_id: runId,
+      key: draft.key,
+      position,
+      title: draft.title,
+      summary: draft.summary,
+      description: draft.description,
+      kind: draft.kind,
+      depends_on: [...draft.depends_on],
+      has_migration: draft.has_migration,
+      size: draft.size,
+      conflict_risk: draft.conflict_risk,
+      doc_status: draft.doc_status,
+      selected: draft.selected,
+      figures: copy(draft.figures),
+      open_questions: [...draft.open_questions],
+      verification_suggested: [...draft.verification_suggested],
+      verification: [...draft.verification],
+      verification_reason: draft.verification_reason,
+      launch_config: draft.launch_config ? copy(draft.launch_config) : null,
+      status: 'pending',
+      status_detail: null,
+      ticket_id: ticketId,
+      worktree_id: null,
+      connection_id: null,
+      members: null,
+      session_id: null,
+      fix_ticket_id: null,
+      fix_session_id: null,
+      branch_name: null,
+      verdict: null,
+      nudge_count: 0,
+      conflict_attempts: 0,
+      conflict_head: null,
+      fix_attempts: 0,
+      continue_attempts: 0,
+      pre_merge_sha: null,
+      merge_sha: null,
+      last_prompt_at: null,
+      last_checked_at: null,
+      retry_at: null,
+      wait_until: null,
+      wait_timeouts: 0,
+      document_update_status: null,
+      document_update_detail: null,
+      document_update_queued_at: null,
+      document_update_attempts: 0,
+      document_update_hash: null,
+      document_update_report: null,
+      document_update_finished_at: null,
+      created_at: now,
+      updated_at: now,
+      started_at: null,
+      finished_at: null
+    }
+    return item
+  }
+
   return {
     runs,
     items,
@@ -67,6 +135,7 @@ export function createFakeDocumentFlowDb(): FakeDocumentFlowDb {
         id: data.id,
         project_id: data.project_id,
         title: data.title,
+        source_kind: data.source_kind ?? 'document',
         source_path: data.source_path,
         run_dir: data.run_dir,
         document_path: data.document_path ?? null,
@@ -132,67 +201,33 @@ export function createFakeDocumentFlowDb(): FakeDocumentFlowDb {
     replaceDocumentRunItems(runId, drafts) {
       if (drafts.length > 0 && !runs.has(runId)) throw new Error('FOREIGN KEY constraint failed')
       for (const item of itemsOf(runId)) items.delete(item.id)
-      const now = nowIso()
       drafts.forEach((draft, position) => {
-        const item: DocumentRunItem = {
-          id: randomUUID(),
-          run_id: runId,
-          key: draft.key,
-          position,
-          title: draft.title,
-          summary: draft.summary,
-          description: draft.description,
-          kind: draft.kind,
-          depends_on: [...draft.depends_on],
-          has_migration: draft.has_migration,
-          size: draft.size,
-          conflict_risk: draft.conflict_risk,
-          doc_status: draft.doc_status,
-          selected: draft.selected,
-          figures: copy(draft.figures),
-          open_questions: [...draft.open_questions],
-          verification_suggested: [...draft.verification_suggested],
-          verification: [...draft.verification],
-          verification_reason: draft.verification_reason,
-          launch_config: draft.launch_config ? copy(draft.launch_config) : null,
-          status: 'pending',
-          status_detail: null,
-          ticket_id: null,
-          worktree_id: null,
-          connection_id: null,
-          members: null,
-          session_id: null,
-          fix_ticket_id: null,
-          fix_session_id: null,
-          branch_name: null,
-          verdict: null,
-          nudge_count: 0,
-          conflict_attempts: 0,
-          conflict_head: null,
-          fix_attempts: 0,
-          continue_attempts: 0,
-          pre_merge_sha: null,
-          merge_sha: null,
-          last_prompt_at: null,
-          last_checked_at: null,
-          retry_at: null,
-          wait_until: null,
-          wait_timeouts: 0,
-          document_update_status: null,
-          document_update_detail: null,
-          document_update_queued_at: null,
-          document_update_attempts: 0,
-          document_update_hash: null,
-          document_update_report: null,
-          document_update_finished_at: null,
-          created_at: now,
-          updated_at: now,
-          started_at: null,
-          finished_at: null
-        }
+        const item = newItem(runId, draft, position, null)
         items.set(item.id, item)
       })
       return itemsOf(runId).map(copy)
+    },
+
+    insertDocumentRunItems(runId, drafts) {
+      if (drafts.length > 0 && !runs.has(runId)) throw new Error('FOREIGN KEY constraint failed')
+      const existing = itemsOf(runId)
+      const start = existing.length > 0 ? Math.max(...existing.map((item) => item.position)) + 1 : 0
+      return drafts.map((draft, index) => {
+        const item = newItem(runId, draft, start + index, draft.ticket_id ?? null)
+        items.set(item.id, item)
+        return copy(item)
+      })
+    },
+
+    deleteDocumentRunItem(id) {
+      return items.delete(id)
+    },
+
+    findDocumentRunItemsByTicketId(ticketId) {
+      return [...items.values()]
+        .filter((item) => item.ticket_id === ticketId)
+        .sort((a, b) => a.created_at.localeCompare(b.created_at))
+        .map(copy)
     },
 
     getDocumentRunItems(runId) {
@@ -380,6 +415,28 @@ export interface TestWorktree extends DocumentFlowWorktree {
   project_id?: string
 }
 
+/**
+ * A ticket on the fake board: where it sits and, for the tickets a run made from board tickets
+ * adopts, what the real `KanbanTicket` would say about it. `getTicket` answers every field,
+ * unset ones as the board would (null, '').
+ */
+export interface FakeBoardTicket {
+  id: string
+  projectId: string
+  column: KanbanTicketColumn
+  title?: string
+  description?: string | null
+  archived_at?: string | null
+  current_session_id?: string | null
+  worktree_id?: string | null
+  external_provider?: string | null
+  external_id?: string | null
+  ticket_prefix?: string | null
+  ticket_number?: number | null
+  pending_launch_config?: string | null
+  parent_ticket_id?: string | null
+}
+
 /** A connection instance the fake `createConnection` made. */
 export interface FakeConnection extends DocumentFlowConnection {
   name: string
@@ -417,9 +474,23 @@ export interface ServiceHarness {
   addProject: (project: { id: string; name: string }, repo: TestRepo) => DocumentFlowProject
   connectionRenames: { connectionId: string; name: string }[]
   ticketBatches: { projectId: string; drafts: KanbanTicketBatchCreateItem[] }[]
+  /** Every `addTicketDependency` call, in order, whether the board took it or not. */
   ticketLinks: { projectId: string; dependent: string; blocker: string }[]
+  /**
+   * The board's dependency edges (what `getTicketDependencies` answers): those `addTicketDependency`
+   * took, those a ticket batch made from `depends_on`, and any a test puts here itself.
+   */
+  boardDependencies: (DocumentFlowTicketDependency & { projectId: string })[]
+  /** Every `removeTicketDependency` call, in order. */
+  ticketUnlinks: { projectId: string; dependent: string; blocker: string }[]
   /** The board: every created ticket that was not deleted, with the column it sits in. */
-  boardTickets: Map<string, { id: string; projectId: string; column: KanbanTicketColumn }>
+  boardTickets: Map<string, FakeBoardTicket>
+  /**
+   * A ticket the user made on the board (for runs made from board tickets): in To Do on the
+   * test project, keyed `TD-<n>` in creation order unless `ticket_prefix` / `ticket_number` say
+   * otherwise. Returns its id.
+   */
+  addBoardTicket: (ticket?: Partial<FakeBoardTicket>) => string
   ticketMoves: { projectId: string; ticketId: string; column: KanbanTicketColumn }[]
   /** Every model badge or parent link the service wrote on a board ticket, in order. */
   ticketUpdates: { projectId: string; ticketId: string; patch: DocumentFlowTicketPatch }[]
@@ -433,6 +504,8 @@ export interface ServiceHarness {
   detachCount: () => number
   /** Replace a collaborator for the rest of the test; the harness's own fake is used otherwise. */
   overrides: Partial<OverridableDeps> & UnsetDeps
+  /** The harness's own fakes, for an override that does something and then what the fake does. */
+  fakes: OverridableDeps
   cleanup: () => void
 }
 
@@ -451,10 +524,13 @@ type OverridableDeps = Required<
     | 'renameConnection'
     | 'createTickets'
     | 'addTicketDependency'
+    | 'removeTicketDependency'
+    | 'getTicketDependencies'
     | 'getTicket'
     | 'moveTicket'
     | 'updateTicket'
     | 'deleteTicket'
+    | 'unarchiveTicket'
     | 'setWorktreeBaseBranch'
     | 'resolveFinalMessage'
     | 'runVerify'
@@ -463,8 +539,31 @@ type OverridableDeps = Required<
   >
 >
 
+/** A fake board ticket as `getTicket` answers it: every field, unset ones as the board has them. */
+function toFlowTicket(ticket: FakeBoardTicket): DocumentFlowTicket {
+  return {
+    id: ticket.id,
+    column: ticket.column,
+    project_id: ticket.projectId,
+    title: ticket.title ?? '',
+    description: ticket.description ?? null,
+    archived_at: ticket.archived_at ?? null,
+    current_session_id: ticket.current_session_id ?? null,
+    worktree_id: ticket.worktree_id ?? null,
+    external_provider: ticket.external_provider ?? null,
+    external_id: ticket.external_id ?? null,
+    ticket_prefix: ticket.ticket_prefix ?? null,
+    ticket_number: ticket.ticket_number ?? null,
+    pending_launch_config: ticket.pending_launch_config ?? null,
+    parent_ticket_id: ticket.parent_ticket_id ?? null
+  }
+}
+
 /** Collaborators the service is not given at all, unless a test supplies one. */
-type UnsetDeps = Pick<DocumentFlowServiceDeps, 'getAppPid' | 'isProcessAlive'>
+type UnsetDeps = Pick<
+  DocumentFlowServiceDeps,
+  'getAppPid' | 'isProcessAlive' | 'boardHasUnreadableCards' | 'isSessionActive'
+>
 
 /**
  * A service wired to fakes. With `repo`, the project is that repository and integration
@@ -492,6 +591,8 @@ export function createServiceHarness(
   const connectionRenames: ServiceHarness['connectionRenames'] = []
   const ticketBatches: ServiceHarness['ticketBatches'] = []
   const ticketLinks: ServiceHarness['ticketLinks'] = []
+  const boardDependencies: ServiceHarness['boardDependencies'] = []
+  const ticketUnlinks: ServiceHarness['ticketUnlinks'] = []
   const boardTickets: ServiceHarness['boardTickets'] = new Map()
   const ticketMoves: ServiceHarness['ticketMoves'] = []
   const ticketUpdates: ServiceHarness['ticketUpdates'] = []
@@ -502,6 +603,42 @@ export function createServiceHarness(
   let detached = 0
   let ticketCount = 0
   let connectionCount = 0
+  let boardTicketCount = 0
+
+  const addBoardTicket = (ticket: Partial<FakeBoardTicket> = {}): string => {
+    const number = ++boardTicketCount
+    const id = ticket.id ?? `board-${number}`
+    boardTickets.set(id, {
+      projectId: TEST_PROJECT_ID,
+      column: 'todo',
+      title: `Board ticket ${number}`,
+      description: `Do the thing of ticket ${number}.`,
+      ticket_prefix: 'TD',
+      ticket_number: number,
+      ...ticket,
+      id
+    })
+    return id
+  }
+  /** Whether `from` waits on `to` through the board's edges (the board's cycle rule). */
+  const waitsOn = (from: string, to: string): boolean => {
+    const seen = new Set([from])
+    const queue = [from]
+    while (queue.length > 0) {
+      const node = queue.shift() as string
+      for (const edge of boardDependencies) {
+        if (edge.dependent_id !== node || seen.has(edge.blocker_id)) continue
+        if (edge.blocker_id === to) return true
+        seen.add(edge.blocker_id)
+        queue.push(edge.blocker_id)
+      }
+    }
+    return false
+  }
+  const dropEdges = (keep: (edge: (typeof boardDependencies)[number]) => boolean): void => {
+    const kept = boardDependencies.filter(keep)
+    boardDependencies.splice(0, boardDependencies.length, ...kept)
+  }
 
   projects.set(TEST_PROJECT_ID, {
     id: TEST_PROJECT_ID,
@@ -612,7 +749,11 @@ export function createServiceHarness(
       if (!project) return { success: false, error: 'Project not found' }
       const base = project.name.toLowerCase().replace(/[^a-z0-9-]/g, '-')
       let symlinkName = base
-      for (let n = 2; connection.members.some((member) => member.symlink_name === symlinkName); n++) {
+      for (
+        let n = 2;
+        connection.members.some((member) => member.symlink_name === symlinkName);
+        n++
+      ) {
         symlinkName = `${base}-${n}`
       }
       symlinkSync(worktree.path, join(connection.path, symlinkName))
@@ -642,26 +783,67 @@ export function createServiceHarness(
     },
     createTickets: async (projectId, drafts) => {
       ticketBatches.push({ projectId, drafts })
-      return {
-        tickets: drafts.map((draft) => {
-          const ticket = {
-            id: `ticket-${++ticketCount}`,
+      const created = drafts.map((draft) => {
+        const ticket: FakeBoardTicket = {
+          id: `ticket-${++ticketCount}`,
+          projectId,
+          column: draft.column ?? 'todo',
+          title: draft.title,
+          description: draft.description ?? null,
+          worktree_id: draft.worktree_id ?? null,
+          external_provider: draft.external_provider ?? null,
+          external_id: draft.external_id ?? null,
+          parent_ticket_id: draft.parent_ticket_id ?? null
+        }
+        boardTickets.set(ticket.id, ticket)
+        return ticket
+      })
+      // A batch links its own drafts, as both board backends do.
+      const idOfDraft = new Map(drafts.map((draft, index) => [draft.draft_key, created[index].id]))
+      drafts.forEach((draft, index) => {
+        for (const key of draft.depends_on ?? []) {
+          const blocker = idOfDraft.get(key)
+          if (!blocker || blocker === created[index].id) continue
+          boardDependencies.push({
             projectId,
-            column: draft.column ?? 'todo'
-          }
-          boardTickets.set(ticket.id, ticket)
-          return { id: ticket.id }
-        })
-      }
+            dependent_id: created[index].id,
+            blocker_id: blocker
+          })
+        }
+      })
+      return { tickets: created.map((ticket) => ({ id: ticket.id })) }
     },
+    // The board's own answers: a self-dependency or a loop is refused, an edge it has is fine.
     addTicketDependency: async (projectId, dependent, blocker) => {
       ticketLinks.push({ projectId, dependent, blocker })
+      if (dependent === blocker)
+        return { success: false, error: 'A ticket cannot depend on itself' }
+      const has = boardDependencies.some(
+        (edge) => edge.dependent_id === dependent && edge.blocker_id === blocker
+      )
+      if (has) return { success: true }
+      if (waitsOn(blocker, dependent)) {
+        return {
+          success: false,
+          error: 'Adding this dependency would create a circular dependency'
+        }
+      }
+      boardDependencies.push({ projectId, dependent_id: dependent, blocker_id: blocker })
+      return { success: true }
     },
+    removeTicketDependency: async (projectId, dependent, blocker) => {
+      ticketUnlinks.push({ projectId, dependent, blocker })
+      const before = boardDependencies.length
+      dropEdges((edge) => !(edge.dependent_id === dependent && edge.blocker_id === blocker))
+      return boardDependencies.length < before
+    },
+    getTicketDependencies: async (projectId) =>
+      boardDependencies
+        .filter((edge) => edge.projectId === projectId)
+        .map((edge) => ({ dependent_id: edge.dependent_id, blocker_id: edge.blocker_id })),
     getTicket: async (projectId, ticketId) => {
       const ticket = boardTickets.get(ticketId)
-      return ticket && ticket.projectId === projectId
-        ? { id: ticket.id, column: ticket.column }
-        : null
+      return ticket && ticket.projectId === projectId ? toFlowTicket(ticket) : null
     },
     moveTicket: async (projectId, ticketId, column) => {
       ticketMoves.push({ projectId, ticketId, column })
@@ -670,10 +852,20 @@ export function createServiceHarness(
     },
     updateTicket: async (projectId, ticketId, patch) => {
       ticketUpdates.push({ projectId, ticketId, patch })
+      const ticket = boardTickets.get(ticketId)
+      if (ticket && ticket.projectId === projectId) {
+        Object.assign(ticket, Object.fromEntries(definedEntries(patch)))
+      }
     },
     deleteTicket: async (_projectId, ticketId) => {
       deletedTickets.push(ticketId)
+      // Its edges go with it, as on the board.
+      dropEdges((edge) => edge.dependent_id !== ticketId && edge.blocker_id !== ticketId)
       return boardTickets.delete(ticketId)
+    },
+    unarchiveTicket: async (_projectId, ticketId) => {
+      const ticket = boardTickets.get(ticketId)
+      if (ticket) ticket.archived_at = null
     },
     setWorktreeBaseBranch: (worktreeId, baseBranch) => {
       baseBranchWrites.push({ worktreeId, baseBranch })
@@ -699,6 +891,12 @@ export function createServiceHarness(
     get isProcessAlive() {
       return overrides.isProcessAlive
     },
+    get boardHasUnreadableCards() {
+      return overrides.boardHasUnreadableCards
+    },
+    get isSessionActive() {
+      return overrides.isSessionActive
+    },
     createWorktreeFromBranch: (...args) =>
       (overrides.createWorktreeFromBranch ?? fakes.createWorktreeFromBranch)(...args),
     createConnection: (...args) => (overrides.createConnection ?? fakes.createConnection)(...args),
@@ -711,10 +909,15 @@ export function createServiceHarness(
     createTickets: (...args) => (overrides.createTickets ?? fakes.createTickets)(...args),
     addTicketDependency: (...args) =>
       (overrides.addTicketDependency ?? fakes.addTicketDependency)(...args),
+    removeTicketDependency: (...args) =>
+      (overrides.removeTicketDependency ?? fakes.removeTicketDependency)(...args),
+    getTicketDependencies: (...args) =>
+      (overrides.getTicketDependencies ?? fakes.getTicketDependencies)(...args),
     getTicket: (...args) => (overrides.getTicket ?? fakes.getTicket)(...args),
     moveTicket: (...args) => (overrides.moveTicket ?? fakes.moveTicket)(...args),
     updateTicket: (...args) => (overrides.updateTicket ?? fakes.updateTicket)(...args),
     deleteTicket: (...args) => (overrides.deleteTicket ?? fakes.deleteTicket)(...args),
+    unarchiveTicket: (...args) => (overrides.unarchiveTicket ?? fakes.unarchiveTicket)(...args),
     setWorktreeBaseBranch: (...args) =>
       (overrides.setWorktreeBaseBranch ?? fakes.setWorktreeBaseBranch)(...args),
     resolveFinalMessage: (...args) =>
@@ -751,7 +954,10 @@ export function createServiceHarness(
     connectionRenames,
     ticketBatches,
     ticketLinks,
+    boardDependencies,
+    ticketUnlinks,
     boardTickets,
+    addBoardTicket,
     ticketMoves,
     ticketUpdates,
     deletedTickets,
@@ -760,6 +966,7 @@ export function createServiceHarness(
     runsRoot,
     detachCount: () => detached,
     overrides,
+    fakes,
     cleanup: () => rmSync(scratch, { recursive: true, force: true })
   }
 }
@@ -770,18 +977,23 @@ let seededRuns = 0
 export function seedRun(
   harness: Pick<ServiceHarness, 'db' | 'runsRoot'>,
   options: {
-    run?: DocumentRunRowPatch & { project_id?: string; source_path?: string }
+    run?: DocumentRunRowPatch & {
+      project_id?: string
+      source_path?: string
+      source_kind?: DocumentRun['source_kind']
+    }
     items?: (Partial<DocumentRunItemDraft> & DocumentRunItemRowPatch)[]
   } = {}
 ): { run: DocumentRun; items: DocumentRunItem[] } {
   const { db } = harness
   const id = `run-${++seededRuns}`
-  const { project_id, source_path, ...runPatch } = options.run ?? {}
+  const { project_id, source_path, source_kind, ...runPatch } = options.run ?? {}
   db.createDocumentRun({
     id,
     project_id: project_id ?? TEST_PROJECT_ID,
     title: 'Factory spec',
-    source_path: source_path ?? '/specs/factory.html',
+    source_kind: source_kind ?? 'document',
+    source_path: source_path ?? (source_kind === 'tickets' ? '' : '/specs/factory.html'),
     run_dir: join(harness.runsRoot, id),
     status: 'preview',
     config: { ...DEFAULT_DOCUMENT_RUN_CONFIG }

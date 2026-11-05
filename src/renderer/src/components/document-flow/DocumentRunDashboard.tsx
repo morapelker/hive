@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   CircleSlash,
   Copy,
@@ -39,6 +39,7 @@ import {
   DialogTitle
 } from '@/components/ui/dialog'
 import { copyTextToClipboard } from '@/lib/clipboard'
+import { integrationCheckoutGone } from '@/lib/document-flow/ticket-run-membership'
 import {
   applyQuestionMode,
   questionModeTargets,
@@ -56,19 +57,24 @@ import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { summarizeItems } from '@shared/document-flow/planning'
+import { addingTicketsResumesRun, canAddTicketsToRun } from '@shared/document-flow/ticket-runs'
 import {
+  hasDocument,
   isConnectionRun,
+  isTicketRun,
   type DocumentRun,
   type DocumentRunDetail,
   type DocumentSourceFile
 } from '@shared/types/document-flow'
 import { AddRunMemberDialog } from './AddRunMemberDialog'
+import { AddRunTicketsDialog } from './AddRunTicketsDialog'
 import { DocumentRunPRRow } from './DocumentRunPRActions'
 import { TonePill } from './DocumentFlowBadges'
 import { NeedsYouSection, RunItemsTable, useRunItemActions } from './DocumentRunItems'
 import { RunActivityLog, RunReportSection } from './DocumentRunReport'
 import { RunParallelControl } from './RunParallelControl'
 import { RunProgressBar } from './RunProgressBar'
+import { TicketRunIcon } from './RunKindIcon'
 import { openConnection, openSession, openWorktree } from './document-flow-navigation'
 import { useMigrationSessionWaiting } from './useDocumentRunTicket'
 import { useDocumentRunPRs } from './useDocumentRunPRs'
@@ -77,14 +83,18 @@ import {
   describeRunMembers,
   documentNameFromPath,
   isActiveRunStatus,
+  isAddedAfterLaunch,
   isLaunchedRunStatus,
   isRunDeletable,
   isRunMigrating,
   itemSessionTarget,
   MIGRATIONS_WAITING_LABEL,
   RUNNING_MIGRATIONS_LABEL,
+  pluralize,
   progressSegments,
+  runDisplayTitle,
   runDocumentEditState,
+  runKindNoun,
   runStatusDisplay,
   shortSha,
   type StatusDisplay
@@ -151,6 +161,23 @@ function describeMigrationsLaunch(run: DocumentRun): string {
   return `It runs ${where}. While it is at it the run's ticket is back In Progress, and Stop aborts the session.`
 }
 
+/**
+ * The tooltip of an orchestrator's "Add tickets": what adding does now, or why it cannot. A
+ * finished run resumes on its integration branch for the new tickets.
+ */
+function describeAddTickets(
+  run: Pick<DocumentRun, 'source_kind' | 'status' | 'migration_session_id'>
+): string {
+  if (run.migration_session_id) {
+    return 'A session is executing the migrations of this run; add tickets once it is done.'
+  }
+  if (!canAddTicketsToRun(run)) return 'This run takes no more tickets.'
+  if (addingTicketsResumesRun(run)) {
+    return 'Adopt more board tickets: the run resumes on its integration branch to launch and merge them.'
+  }
+  return 'Adopt more board tickets: they launch when their dependencies and a free slot allow.'
+}
+
 /** Said when "Open instance" finds the run's integration instance gone or archived. */
 function instanceArchivedMessage(run: Pick<DocumentRun, 'integration_branch'>): string {
   return `The instance of ${run.integration_branch ?? 'the integration branches'} was archived.`
@@ -198,15 +225,18 @@ export const DOCUMENT_DELETED_REASON = 'The document was deleted from disk.'
 
 /**
  * Whether the run's source document is still on disk, asked of the server when the dashboard
- * opens. Null while the answer is pending; a failed check counts as missing.
+ * opens. Null while the answer is pending; a failed check counts as missing. Never asked for a
+ * run made from board tickets (`enabled` false): it has no document, and stays null.
  */
 function useSourceFile(
-  run: DocumentRun
+  run: DocumentRun,
+  enabled: boolean
 ): [DocumentSourceFile | null, (file: DocumentSourceFile) => void] {
   const [source, setSource] = useState<DocumentSourceFile | null>(null)
   useEffect(() => {
     let cancelled = false
     setSource(null)
+    if (!enabled) return
     documentFlowApi
       .sourceFile(run.id)
       .then((file) => {
@@ -218,7 +248,7 @@ function useSourceFile(
     return () => {
       cancelled = true
     }
-  }, [run.id, run.source_path])
+  }, [run.id, run.source_path, enabled])
   return [source, setSource]
 }
 
@@ -302,7 +332,10 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
   const [confirm, setConfirm] = useState<ConfirmKind | null>(null)
   const [busy, setBusy] = useState<BusyKind | null>(null)
   const [addingMember, setAddingMember] = useState(false)
-  const [source, setSource] = useSourceFile(run)
+  const [addingTickets, setAddingTickets] = useState(false)
+  // A run made from board tickets has no document: no source line, no check, no edit lane.
+  const ticketRun = isTicketRun(run)
+  const [source, setSource] = useSourceFile(run, hasDocument(run))
   const documentMissing = source !== null && !source.exists
   // Archived with the merge of the run's ticket: no checkout is left to run a session in
   const worktreeIds = useWorktreeStore((s) => s.worktreesByProject.get(run.project_id))
@@ -328,6 +361,20 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
   const active = isActiveRunStatus(run.status)
   const documentEdit = runDocumentEditState(run, items)
   const itemActions = useRunItemActions(run)
+  // An orchestrator's tickets that joined after launch: the report names them as such
+  const addedKeys = useMemo(
+    () =>
+      ticketRun
+        ? new Set(items.filter((item) => isAddedAfterLaunch(run, item)).map((item) => item.key))
+        : undefined,
+    [ticketRun, run, items]
+  )
+  // An orchestrator takes more tickets from here, except once it is over for good: cancelled,
+  // or finished with its integration checkout archived (nothing left to resume on)
+  const offersAddTickets =
+    ticketRun &&
+    run.status !== 'cancelled' &&
+    !(addingTicketsResumesRun(run) && integrationCheckoutGone(run, worktreeIds, connectionIds))
 
   const perform = (kind: BusyKind, action: Promise<void>, failure: string): void => {
     setBusy(kind)
@@ -382,52 +429,82 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
       <DialogHeader className="shrink-0 space-y-2 border-b border-border px-5 pb-3 pr-12 pt-4">
         <div className="flex items-center gap-2">
           <DialogTitle className="truncate text-[15px]" title={run.title}>
-            {run.title || documentNameFromPath(run.source_path)}
+            {runDisplayTitle(run)}
           </DialogTitle>
           <TonePill tone={status.tone} className="shrink-0" testId="docflow-dashboard-status">
             {status.label}
           </TonePill>
         </div>
         <DialogDescription className="sr-only">
-          Progress of the document run {run.title}
+          Progress of the {runKindNoun(run)} {run.title}
         </DialogDescription>
 
-        <div
-          className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] text-muted-foreground"
-          data-testid="docflow-source-line"
-        >
-          <FileText className="h-3 w-3 shrink-0" />
-          <span
-            className="max-w-[320px] truncate font-mono text-foreground"
-            title={run.source_path}
-            data-testid="docflow-source-path"
+        {/* An orchestrator: the board tickets it is made from, and the way to add more */}
+        {ticketRun && (
+          <div
+            className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] text-muted-foreground"
+            data-testid="docflow-tickets-source-line"
           >
-            {documentNameFromPath(run.source_path)}
-          </span>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-6 text-xs"
-            data-testid="docflow-open-document-btn"
-            disabled={source === null || documentMissing}
-            title={documentMissing ? DOCUMENT_DELETED_REASON : run.source_path}
-            onClick={() => void openDocument()}
-          >
-            <ExternalLink className="h-3 w-3" />
-            Open document
-          </Button>
-          {/* Said in words: a disabled button shows no tooltip */}
-          {documentMissing && (
-            <span
-              className="inline-flex items-center gap-1 text-[11px]"
-              data-testid="docflow-document-missing"
-            >
-              <CircleSlash className="h-3 w-3" />
-              {DOCUMENT_DELETED_REASON}
+            <TicketRunIcon className="h-3 w-3 shrink-0" />
+            <span className="text-foreground" data-testid="docflow-tickets-source-count">
+              Made from {pluralize(items.filter((item) => item.selected).length, 'board ticket')}
             </span>
-          )}
-        </div>
+            {offersAddTickets && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-6 text-xs"
+                data-testid="docflow-dashboard-add-tickets"
+                disabled={busy !== null || !canAddTicketsToRun(run)}
+                title={describeAddTickets(run)}
+                onClick={() => setAddingTickets(true)}
+              >
+                <Plus className="h-3 w-3" />
+                {addingTicketsResumesRun(run) ? 'Add tickets & resume' : 'Add tickets'}
+              </Button>
+            )}
+          </div>
+        )}
+
+        {!ticketRun && (
+          <div
+            className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] text-muted-foreground"
+            data-testid="docflow-source-line"
+          >
+            <FileText className="h-3 w-3 shrink-0" />
+            <span
+              className="max-w-[320px] truncate font-mono text-foreground"
+              title={run.source_path}
+              data-testid="docflow-source-path"
+            >
+              {documentNameFromPath(run.source_path)}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-6 text-xs"
+              data-testid="docflow-open-document-btn"
+              disabled={source === null || documentMissing}
+              title={documentMissing ? DOCUMENT_DELETED_REASON : run.source_path}
+              onClick={() => void openDocument()}
+            >
+              <ExternalLink className="h-3 w-3" />
+              Open document
+            </Button>
+            {/* Said in words: a disabled button shows no tooltip */}
+            {documentMissing && (
+              <span
+                className="inline-flex items-center gap-1 text-[11px]"
+                data-testid="docflow-document-missing"
+              >
+                <CircleSlash className="h-3 w-3" />
+                {DOCUMENT_DELETED_REASON}
+              </span>
+            )}
+          </div>
+        )}
 
         {/* The document edit lane: merged tickets update the source document one at a time */}
         {documentEdit && (
@@ -753,6 +830,7 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
           <RunReportSection
             report={run.report}
             landed={landed}
+            addedKeys={addedKeys}
             migrationsAction={
               migrating ? (
                 <>
@@ -856,6 +934,9 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
       {isConnectionRun(run) && (
         <AddRunMemberDialog run={run} open={addingMember} onOpenChange={setAddingMember} />
       )}
+      {offersAddTickets && (
+        <AddRunTicketsDialog run={run} open={addingTickets} onOpenChange={setAddingTickets} />
+      )}
 
       <AlertDialog
         open={confirm !== null}
@@ -870,7 +951,7 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
                 <AlertDialogTitle>{CONFIRM_COPY[confirm].title}</AlertDialogTitle>
                 <AlertDialogDescription>
                   {confirm === 'delete'
-                    ? `${CONFIRM_COPY.delete.description} ${describeRunDeletion(items)}`
+                    ? `${CONFIRM_COPY.delete.description} ${describeRunDeletion(items, run)}`
                     : confirm === 'questionsOff' || confirm === 'questionsOn'
                       ? `${CONFIRM_COPY[confirm].description} ${describeQuestionModeReach(questionModeTargets(items).length)}`
                       : confirm === 'migrations'

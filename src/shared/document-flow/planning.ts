@@ -347,7 +347,10 @@ export function sanitizeDependencies(
   return { dependsOn, warnings }
 }
 
-/** The keys of one dependency cycle (each depends on the next, the last on the first), or null. */
+/**
+ * The keys of one dependency cycle (each depends on the next, the last on the first), or null.
+ * Exported as `findDependencyCycle` for validating a dependency graph the user edits.
+ */
 function findCycle(
   items: readonly { key: string }[],
   dependsOn: Readonly<Record<string, readonly string[]>>
@@ -431,8 +434,23 @@ export function ticketBranchHint(key: string, title: string): string {
   return slugify(`${key} ${title}`, 32) || 'task'
 }
 
-/** Worktree / branch name hint for a run's integration branch. */
-export function integrationBranchHint(documentTitle: string): string {
+/**
+ * Worktree / branch name hint for a run's integration branch: `doc-…` for a run made from a
+ * document, `orch-…` for one made from board tickets.
+ */
+export function integrationBranchHint(
+  documentTitle: string,
+  sourceKind: 'document' | 'tickets' = 'document'
+): string {
+  const prefix = sourceKind === 'tickets' ? 'orch' : 'doc'
   const slug = slugify(documentTitle, 36)
-  return slug ? `doc-${slug}` : 'doc-run'
+  return slug ? `${prefix}-${slug}` : `${prefix}-run`
+}
+
+/** The keys of one cycle in `dependsOn` (each depends on the next), or null when it has none. */
+export function findDependencyCycle(
+  items: readonly { key: string }[],
+  dependsOn: Readonly<Record<string, readonly string[]>>
+): string[] | null {
+  return findCycle(items, dependsOn)
 }

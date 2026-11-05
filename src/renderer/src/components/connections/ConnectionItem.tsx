@@ -15,7 +15,8 @@ import {
   PinOff,
   Settings2,
   Terminal,
-  Trash2
+  Trash2,
+  Workflow
 } from 'lucide-react'
 import { cn, parseColorQuad } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -180,7 +181,8 @@ export function ConnectionItem({
   }, [isSavingAsProject, saveConnectionAsProject, connection.id])
 
   // "Implement Document…": a document run on this connection's project (an ad-hoc
-  // connection is promoted with "Save as Project" first, so it needs >=2 members too)
+  // connection is promoted with "Save as Project" first, so it needs >=2 members too).
+  // "Orchestrate tickets…" next to it: an orchestrator from the project's board tickets.
   const implementDocument = useImplementDocumentEntry(connection)
 
   // "Duplicate": a new connection from the same projects, on new worktrees
@@ -527,6 +529,16 @@ export function ConnectionItem({
           Implement Document…
         </ContextMenuItem>
       )}
+      {implementDocument.available && (
+        <ContextMenuItem
+          data-testid="docflow-orchestrate-connection-menu-item"
+          onClick={() => void implementDocument.orchestrate()}
+          disabled={implementDocument.busy}
+        >
+          <Workflow className="h-4 w-4 mr-2" />
+          Orchestrate tickets…
+        </ContextMenuItem>
+      )}
       <ContextMenuSeparator />
       <ContextMenuItem onClick={handleOpenInTerminal}>
         <Terminal className="h-4 w-4 mr-2" />
@@ -751,6 +763,16 @@ export function ConnectionItem({
                       >
                         <FileText className="h-4 w-4 mr-2" />
                         Implement Document…
+                      </DropdownMenuItem>
+                    )}
+                    {implementDocument.available && (
+                      <DropdownMenuItem
+                        data-testid="docflow-orchestrate-connection-menu-item"
+                        onClick={() => void implementDocument.orchestrate()}
+                        disabled={implementDocument.busy}
+                      >
+                        <Workflow className="h-4 w-4 mr-2" />
+                        Orchestrate tickets…
                       </DropdownMenuItem>
                     )}
                     <DropdownMenuSeparator />

@@ -1,6 +1,7 @@
 import { useProjectStore } from '@/stores/useProjectStore'
 import { toast } from '@/lib/toast'
 import { launchTicketWithModel, type LaunchModelConfig } from '@/lib/ticket-launch'
+import { orchestratorLaunchRefusal } from '@/lib/document-flow/ticket-run-membership'
 import { runMultiModelLaunch } from '@/lib/multi-model-launch'
 import type { HandoffAgentSdk } from '@shared/types/agent-sdk'
 import { visibleTicketTitle } from '@/lib/ticket-key-display'
@@ -66,6 +67,13 @@ export function resolveModelEntries(config: PendingLaunchConfig): LaunchModelCon
 
 export async function autoLaunchTicket(ticket: AutoLaunchTicket): Promise<void> {
   if (!ticket.pending_launch_config) return
+  // A ticket an orchestrator will launch is the run's to start: a stale queued launch must
+  // not start it (nor spawn its multi-model copies) behind the run's back.
+  const refusal = orchestratorLaunchRefusal(ticket.id)
+  if (refusal) {
+    console.warn('Skipping queued launch of an orchestrated ticket:', ticket.id, refusal)
+    return
+  }
 
   let config: PendingLaunchConfig
   try {

@@ -15,6 +15,7 @@ import {
   type DocumentMergeResult,
   type DocumentMigrationOutcome,
   type DocumentRun,
+  type DocumentRunAddTicketsParams,
   type DocumentRunConfig,
   type DocumentRunDetail,
   type DocumentRunGeneration,
@@ -23,11 +24,14 @@ import {
   type DocumentRunItemPatch,
   type DocumentRunLaunchConfig,
   type DocumentRunPatch,
+  type DocumentRunRemoveItemParams,
+  type DocumentRunSetDependenciesParams,
   type DocumentRunVerdict,
   type DocumentRunnerClaim,
   type DocumentSimpleResult,
   type DocumentSourceFile,
   type DocumentSourceState,
+  type DocumentTicketRunCreateParams,
   type DocumentUpdateReport,
   type DocumentVerifyResult,
   type SessionFinalMessage
@@ -82,6 +86,14 @@ type Rpc<A> = Effect.Effect<A, unknown, never>
 export interface DocumentFlowRpcService {
   readonly createRun: (params: DocumentFlowCreateRunParams) => Rpc<DocumentRunDetail>
   readonly retryExtraction: (params: DocumentFlowRetryExtractionParams) => Rpc<DocumentRunDetail>
+  /** An orchestrator made from board tickets, straight into the preview. */
+  readonly createTicketRun: (params: DocumentTicketRunCreateParams) => Rpc<DocumentRunDetail>
+  /** More board tickets for a run made from them (a finished one resumes). */
+  readonly addTickets: (params: DocumentRunAddTicketsParams) => Rpc<DocumentRunDetail>
+  /** A ticket that has not launched leaves a run made from board tickets. */
+  readonly removeItem: (params: DocumentRunRemoveItemParams) => Rpc<DocumentRunDetail>
+  /** What an item of a run made from board tickets starts after, written as board dependencies. */
+  readonly setItemDependencies: (params: DocumentRunSetDependenciesParams) => Rpc<DocumentRunDetail>
   readonly get: (runId: string) => Rpc<DocumentRunDetail | null>
   readonly sourceFile: (runId: string) => Rpc<DocumentSourceFile>
   readonly inspectSource: (runId: string, backupKey?: string | null) => Rpc<DocumentSourceState>
@@ -276,6 +288,34 @@ const createRunParamsSchema = z
     notes: z.string().max(DOCUMENT_RUN_NOTES_LIMIT).nullable().optional()
   })
   .strict() satisfies z.ZodType<DocumentFlowCreateRunParams>
+/**
+ * Runs made from board tickets. The cap is the service's own (`TICKET_RUN_TICKETS_LIMIT`, not
+ * imported: this module only loads the service when a call needs it).
+ */
+const TICKET_IDS_LIMIT = 200
+const ticketIdsSchema = z.array(idSchema).min(1).max(TICKET_IDS_LIMIT)
+const createTicketRunParamsSchema = z
+  .object({
+    projectId: idSchema,
+    ticketIds: ticketIdsSchema,
+    title: z.string().max(200).nullable().optional(),
+    generation: generationSchema.nullable().optional()
+  })
+  .strict() satisfies z.ZodType<DocumentTicketRunCreateParams>
+const addTicketsParamsSchema = z
+  .object({ runId: idSchema, ticketIds: ticketIdsSchema })
+  .strict() satisfies z.ZodType<DocumentRunAddTicketsParams>
+const removeItemParamsSchema = z
+  .object({ runId: idSchema, itemId: idSchema })
+  .strict() satisfies z.ZodType<DocumentRunRemoveItemParams>
+const setItemDependenciesParamsSchema = z
+  .object({
+    runId: idSchema,
+    itemId: idSchema,
+    // Item keys; an empty list = starts after nothing.
+    dependsOn: z.array(z.string().min(1).max(200)).max(TICKET_IDS_LIMIT)
+  })
+  .strict() satisfies z.ZodType<DocumentRunSetDependenciesParams>
 const retryExtractionParamsSchema = z
   .object({ runId: idSchema, generation: generationSchema.nullable().optional() })
   .strict() satisfies z.ZodType<DocumentFlowRetryExtractionParams>
@@ -331,6 +371,10 @@ export const makeLiveDocumentFlowRpcService = (eventBus?: EventBus): DocumentFlo
   return {
     createRun: (params) => call((service) => service.createRun(params)),
     retryExtraction: (params) => call((service) => service.retryExtraction(params)),
+    createTicketRun: (params) => call((service) => service.createTicketRun(params)),
+    addTickets: (params) => call((service) => service.addTickets(params)),
+    removeItem: (params) => call((service) => service.removeItem(params)),
+    setItemDependencies: (params) => call((service) => service.setItemDependencies(params)),
     get: (runId) => call((service) => service.get(runId)),
     sourceFile: (runId) => call((service) => service.sourceFile(runId)),
     inspectSource: (runId, backupKey) => call((service) => service.inspectSource(runId, backupKey)),
@@ -384,6 +428,22 @@ export const makeDocumentFlowRpcHandlers = (
     [
       'documentFlow.retryExtraction',
       handle(retryExtractionParamsSchema, (params) => service.retryExtraction(params))
+    ],
+    [
+      'documentFlow.createTicketRun',
+      handle(createTicketRunParamsSchema, (params) => service.createTicketRun(params))
+    ],
+    [
+      'documentFlow.addTickets',
+      handle(addTicketsParamsSchema, (params) => service.addTickets(params))
+    ],
+    [
+      'documentFlow.removeItem',
+      handle(removeItemParamsSchema, (params) => service.removeItem(params))
+    ],
+    [
+      'documentFlow.setItemDependencies',
+      handle(setItemDependenciesParamsSchema, (params) => service.setItemDependencies(params))
     ],
     ['documentFlow.get', handle(runIdParamsSchema, ({ runId }) => service.get(runId))],
     [

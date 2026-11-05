@@ -15,12 +15,18 @@
 // own instance (one worktree per member). A ticket is then one entry standing for its whole
 // instance — merged in one all-or-nothing call, archived all or none — and the integration
 // instance is one entry per member, each merged into that member's base.
+//
+// A run that ended lets its tickets go, so a ticket it names can be someone else's by now: held
+// by another run, or (the tickets of an orchestrator were on the board before it) worked by hand.
+// Moving it to Done would close that session, so such a ticket stays where it is, and is named.
 import { dbApi } from '@/api/db-api'
 import { documentFlowApi } from '@/api/document-flow-api'
 import { gitApi } from '@/api/git-api'
 import { pullBaseBranches, type BaseBranchPullTarget } from '@/lib/base-branch-pull'
 import { assessConnectionMembers } from '@/lib/connection-merge'
 import { getSessionSignal } from '@/lib/document-flow/session-signal'
+import { runItemOfTicket, runTitle } from '@/lib/document-flow/ticket-run-membership'
+import { runOwnsItsTickets } from '@shared/document-flow/ticket-runs'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import {
   useKanbanStore,
@@ -31,6 +37,7 @@ import {
 import { toast } from '@/lib/toast'
 import {
   isConnectionRun,
+  isTicketRun,
   type DocumentRun,
   type DocumentRunDetail,
   type DocumentRunItem,
@@ -106,7 +113,7 @@ function makeBasePuller(): (target: BaseBranchPullTarget) => Promise<void> {
   }
 }
 
-/** What the builders share: the board rows, and the lists they fill. */
+/** What the builders share: the run, the board rows, and the lists they fill. */
 class RunQueueDraft {
   readonly byId: Map<string, KanbanTicket>
   readonly mergeEntries: PendingDoneMoveWorktree[] = []
@@ -116,21 +123,57 @@ class RunQueueDraft {
   readonly linkedTicketIds = new Set<string>()
 
   constructor(
+    readonly run: Pick<DocumentRun, 'id' | 'source_kind'>,
     readonly runTicketId: string,
     readonly tickets: readonly KanbanTicket[]
   ) {
     this.byId = new Map(tickets.map((t) => [t.id, t]))
   }
 
+  /**
+   * The newest run that took the ticket, when that is not this one: the ticket went on there, so
+   * it is not this run's to move, even once that run has ended (a cancelled run keeps its
+   * sessions, and a finished one's branch may not be on the base branch yet).
+   */
+  otherOwner(ticketId: string): DocumentRun | null {
+    const owner = runItemOfTicket(ticketId, undefined, { anyStatus: true })?.run
+    return owner && owner.id !== this.run.id ? owner : null
+  }
+
   moveable(ticketId: string | null): ticketId is string {
     const ticket = ticketId ? this.byId.get(ticketId) : undefined
-    return !!ticket && !ticket.archived_at && ticket.id !== this.runTicketId
+    return (
+      !!ticket &&
+      !ticket.archived_at &&
+      ticket.id !== this.runTicketId &&
+      !this.otherOwner(ticket.id)
+    )
+  }
+
+  /**
+   * Why the item's ticket is not this run's to take any more, or null: another run holds it, or
+   * an orchestrator's ticket went on in a session the run never recorded. A document run made
+   * its task tickets itself, and a session on one of them rides along as it always did.
+   */
+  ticketTakenElsewhere(item: DocumentRunItem): string | null {
+    const owner = item.ticket_id ? this.otherOwner(item.ticket_id) : null
+    if (owner) {
+      const title = runTitle(owner)
+      return runOwnsItsTickets(owner.status) ? `now part of “${title}”` : `it went on in “${title}”`
+    }
+    if (!isTicketRun(this.run) || !this.moveable(item.ticket_id)) return null
+    // Closing a session keeps the link, so the session may be over: it says nothing of that.
+    const sessionId = this.byId.get(item.ticket_id)?.current_session_id
+    return sessionId && sessionId !== item.session_id && sessionId !== item.fix_session_id
+      ? 'it went on outside this run'
+      : null
   }
 
   /**
    * The parts of an item that need no branch: its tickets are noted, a fix ticket rides along
-   * (it ran in the integration checkout), and a live session keeps the item. True when the
-   * item is settled here.
+   * (it ran in the integration checkout), and a live session keeps the item, as does a ticket
+   * that is someone else's by now, whose branch is left with it. True when the item is settled
+   * here.
    */
   settleItemWithoutBranch(item: DocumentRunItem, label: string, hasOwnBranch: boolean): boolean {
     if (item.ticket_id) this.linkedTicketIds.add(item.ticket_id)
@@ -147,10 +190,23 @@ class RunQueueDraft {
       this.kept.push({ label, reason: 'its session is still working — stop it first' })
       return true
     }
+    const takenElsewhere = this.ticketTakenElsewhere(item)
+    if (takenElsewhere) {
+      this.kept.push({ label, reason: takenElsewhere })
+      return true
+    }
     if (!hasOwnBranch) {
       if (this.moveable(item.ticket_id)) {
         if (this.byId.get(item.ticket_id)?.column === 'todo') {
           this.kept.push({ label, reason: 'never started' })
+        } else if (
+          // An orchestrator adopted this ticket: moved along by hand, it is not the run's work
+          isTicketRun(this.run) &&
+          !hasLanded(item) &&
+          !item.session_id &&
+          !item.started_at
+        ) {
+          this.kept.push({ label, reason: 'the run never launched it' })
         } else {
           this.alsoMoveTicketIds.push(item.ticket_id)
         }
@@ -182,7 +238,9 @@ class RunQueueDraft {
         ticket.parent_ticket_id !== this.runTicketId ||
         ticket.id === this.runTicketId ||
         this.linkedTicketIds.has(ticket.id) ||
-        ticket.archived_at
+        ticket.archived_at ||
+        // Re-parenting a ticket another run took is best effort: the old link can outlive it
+        this.otherOwner(ticket.id)
       ) {
         continue
       }
@@ -229,7 +287,7 @@ export async function buildRunDoneQueue(
   const integrationActive =
     !!integration && integration.status === 'active' && !!integrationBranch
 
-  const draft = new RunQueueDraft(runTicketId, tickets)
+  const draft = new RunQueueDraft(run, runTicketId, tickets)
   const seenWorktrees = new Set<string>(integrationId ? [integrationId] : [])
   let defaultBranch: string | null | undefined
 
@@ -377,7 +435,7 @@ async function buildConnectionRunDoneQueue(
   runTicketId: string,
   tickets: readonly KanbanTicket[]
 ): Promise<RunDoneQueue> {
-  const draft = new RunQueueDraft(runTicketId, tickets)
+  const draft = new RunQueueDraft(run, runTicketId, tickets)
   const memberByProject = new Map(run.members.map((m) => [m.project_id, m]))
   const pullBase = makeBasePuller()
 

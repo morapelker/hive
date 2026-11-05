@@ -1,13 +1,18 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { documentFlowApi } from '@/api/document-flow-api'
+import { orchestratorLaunchRefusal } from '@/lib/document-flow/ticket-run-membership'
 import { resolvePRContentGeneration } from '@/lib/pr-content-provider'
 import { resolveDefaultLaunchModel } from '@/lib/launch-model'
 import { resolvePreferredAgentSdk, useSettingsStore } from '@/stores/useSettingsStore'
 import { isDocumentUpdatePending, isTerminalItemStatus } from '@shared/document-flow/planning'
 import { isActiveRunStatus, isUnlaunchedRunStatus } from '@shared/document-flow/run-ticket'
 import type { DocumentFlowUpdatedEvent } from '@shared/document-flow-events'
-import { registerDocumentUpdateLane, type DocumentUpdateLane } from './store-coordination'
+import {
+  registerDocumentUpdateLane,
+  registerTicketRunHold,
+  type DocumentUpdateLane
+} from './store-coordination'
 import {
   DEFAULT_DOCUMENT_RUN_CONFIG,
   DOCUMENT_RUN_MAX_PARALLEL_LIMIT,
@@ -36,6 +41,20 @@ export interface DocumentFlowWizardState {
   projectId: string | null
   /** Set once the document has a run (extracting, failed or in preview). */
   runId: string | null
+  /**
+   * The source the pick step starts on: `tickets` when opened from "Orchestrate tickets…"
+   * (absent = a document, the wizard's original path). Only set when it is `tickets`.
+   */
+  source?: 'tickets'
+  /** Tickets the ticket picker starts with checked (a card's "New orchestrator from this ticket"). */
+  preselectedTicketIds?: string[]
+}
+
+export interface OpenWizardOptions {
+  /** Start the pick step on board tickets instead of a document. */
+  source?: 'document' | 'tickets'
+  /** With `source: 'tickets'`: tickets checked in the picker from the start. */
+  preselectedTicketIds?: string[]
 }
 
 interface DocumentFlowState {
@@ -66,7 +85,7 @@ interface DocumentFlowState {
   handleUpdated: (event: DocumentFlowUpdatedEvent) => void
 
   // ── Wizard / dashboard ──
-  openWizard: (projectId: string, runId?: string | null) => void
+  openWizard: (projectId: string, runId?: string | null, options?: OpenWizardOptions) => void
   closeWizard: () => void
   openDashboard: (runId: string) => void
   closeDashboard: () => void
@@ -80,6 +99,25 @@ interface DocumentFlowState {
   // ── Actions (RPC wrappers that apply the result; they reject on failure) ──
   createRun: (projectId: string, documentPath: string, notes?: string) => Promise<DocumentRunDetail>
   retryExtraction: (runId: string) => Promise<DocumentRunDetail>
+  /**
+   * Create an orchestrator from board tickets (straight into preview) and show it in the
+   * wizard. `title` empty = derived from the tickets.
+   */
+  createTicketRun: (
+    projectId: string,
+    ticketIds: string[],
+    title?: string | null
+  ) => Promise<DocumentRunDetail>
+  /** Adopt more board tickets into a run made from tickets (a finished one resumes). */
+  addRunTickets: (runId: string, ticketIds: string[]) => Promise<DocumentRunDetail>
+  /** Take a ticket that has not launched out of a run made from tickets. */
+  removeRunItem: (runId: string, itemId: string) => Promise<DocumentRunDetail>
+  /** Set what an item of a run made from tickets starts after (keys of other items). */
+  setItemDependencies: (
+    runId: string,
+    itemId: string,
+    dependsOn: string[]
+  ) => Promise<DocumentRunDetail>
   updateRun: (runId: string, patch: DocumentRunPatch) => Promise<DocumentRun>
   updateItem: (
     runId: string,
@@ -304,7 +342,19 @@ export const useDocumentFlowStore = create<DocumentFlowState>()(
         )
       },
 
-      openWizard: (projectId, runId = null) => set({ wizard: { open: true, projectId, runId } }),
+      openWizard: (projectId, runId = null, options) =>
+        set({
+          wizard: {
+            open: true,
+            projectId,
+            runId,
+            // Only for the tickets source, so the document path's wizard state is unchanged.
+            ...(options?.source === 'tickets' ? { source: 'tickets' as const } : {}),
+            ...(options?.source === 'tickets' && options.preselectedTicketIds?.length
+              ? { preselectedTicketIds: [...options.preselectedTicketIds] }
+              : {})
+          }
+        }),
       closeWizard: () => set((state) => ({ wizard: { ...state.wizard, open: false } })),
       openDashboard: (runId) => {
         set({ dashboardRunId: runId })
@@ -330,6 +380,37 @@ export const useDocumentFlowStore = create<DocumentFlowState>()(
         })
         get().applyDetail(detail)
         set((state) => ({ wizard: { ...state.wizard, projectId, runId: detail.run.id } }))
+        return detail
+      },
+
+      createTicketRun: async (projectId, ticketIds, title) => {
+        const trimmedTitle = title?.trim()
+        const detail = await documentFlowApi.createTicketRun({
+          projectId,
+          ticketIds,
+          generation: resolveDocumentFlowGeneration(),
+          ...(trimmedTitle ? { title: trimmedTitle } : {})
+        })
+        get().applyDetail(detail)
+        set((state) => ({ wizard: { ...state.wizard, projectId, runId: detail.run.id } }))
+        return detail
+      },
+
+      addRunTickets: async (runId, ticketIds) => {
+        const detail = await documentFlowApi.addTickets({ runId, ticketIds })
+        get().applyDetail(detail)
+        return detail
+      },
+
+      removeRunItem: async (runId, itemId) => {
+        const detail = await documentFlowApi.removeItem({ runId, itemId })
+        get().applyDetail(detail)
+        return detail
+      },
+
+      setItemDependencies: async (runId, itemId, dependsOn) => {
+        const detail = await documentFlowApi.setItemDependencies({ runId, itemId, dependsOn })
+        get().applyDetail(detail)
         return detail
       },
 
@@ -361,7 +442,10 @@ export const useDocumentFlowStore = create<DocumentFlowState>()(
         get().setPrefs({
           maxParallel: clampMaxParallel(config.maxParallel),
           interactive: config.interactive,
-          promptStyle: config.promptStyle,
+          // A run made from tickets has no prompt style (the tickets are the briefs): the
+          // document runs' remembered choice stays.
+          promptStyle:
+            detail.run.source_kind === 'tickets' ? get().prefs.promptStyle : config.promptStyle,
           defaultLaunch: config.defaultLaunch,
           verifyCommandByProject: {
             ...get().prefs.verifyCommandByProject,
@@ -542,6 +626,9 @@ export function isTicketInDocumentUpdate(
 registerDocumentUpdateLane((ticketId) =>
   documentUpdateLaneOf(useDocumentFlowStore.getState().runsById, ticketId)
 )
+
+// The kanban store leaves a ticket a run is holding out of what a new session attaches to.
+registerTicketRunHold((ticketId) => orchestratorLaunchRefusal(ticketId) !== null)
 
 /** Runs of a project, newest first. */
 export function selectRunsForProject(

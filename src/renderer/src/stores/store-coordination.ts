@@ -244,3 +244,24 @@ export function isTicketHeldByDocumentUpdate(ticketId: string): boolean {
 export function isTicketInDocumentUpdateLane(ticketId: string): boolean {
   return (_documentUpdateLane?.(ticketId) ?? null) !== null
 }
+
+// ── Kanban ↔ Document flow: tickets a run is holding ──
+// A ticket a run will launch, or is launching this moment, is the run's to start. The kanban
+// store asks the document flow store, which registers the lookup, for the same reason as above:
+// a new session in the worktree such a ticket was pre-assigned to must not attach to it, or the
+// run would later flag the ticket as launched from the board though the user launched nothing.
+type TicketRunHoldFn = (ticketId: string) => boolean
+
+let _ticketRunHold: TicketRunHoldFn | null = null
+
+export function registerTicketRunHold(fn: TicketRunHoldFn): void {
+  _ticketRunHold = fn
+}
+
+/**
+ * A run is holding the ticket for its own launch. False until the document flow store registers
+ * its lookup: with that store not loaded there are no runs either.
+ */
+export function isTicketHeldByRun(ticketId: string): boolean {
+  return _ticketRunHold?.(ticketId) ?? false
+}

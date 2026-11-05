@@ -1,5 +1,13 @@
 import { useCallback, useState } from 'react'
-import { ChevronDown, ChevronRight, Eye, EyeOff, Image as ImageIcon } from 'lucide-react'
+import {
+  ChevronDown,
+  ChevronRight,
+  Eye,
+  EyeOff,
+  Image as ImageIcon,
+  Loader2,
+  X
+} from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { ticketPillClass } from '@/components/kanban/pill'
@@ -10,10 +18,14 @@ import { Textarea } from '@/components/ui/textarea'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
-import type {
-  DocumentRunItem,
-  DocumentRunItemPatch,
-  DocumentTicketConflictRisk
+import { awaitsLaunch } from '@shared/document-flow/planning'
+import {
+  isTicketRun,
+  type DocumentRun,
+  type DocumentRunConfig,
+  type DocumentRunItem,
+  type DocumentRunItemPatch,
+  type DocumentTicketConflictRisk
 } from '@shared/types/document-flow'
 import {
   LaunchConfigBadge,
@@ -22,13 +34,11 @@ import {
   VerificationChips
 } from './DocumentFlowBadges'
 import { LaunchConfigPopover } from './LaunchConfigPopover'
-import {
-  dependencyReaches,
-  dependencyState,
-  sameLaunchConfig,
-  type QuickLaunchChoice
-} from './document-flow-launch'
+import { dependencyState, sameLaunchConfig, type QuickLaunchChoice } from './document-flow-launch'
 import { pluralize, toggleVerificationMethod, type DocumentFlowTone } from './document-flow-ui'
+import { RunItemDependencyEditor } from './RunItemDependencyEditor'
+import { TicketBriefEditor } from './TicketBriefEditor'
+import { TicketRunBriefPreview } from './TicketRunBriefPreview'
 import { useDebouncedText } from './useDebouncedText'
 
 const LABEL_CLASS = 'text-xs font-medium uppercase tracking-wider text-muted-foreground'
@@ -39,12 +49,15 @@ const CONFLICT_RISK_TONES: Record<DocumentTicketConflictRisk, DocumentFlowTone> 
   high: 'danger'
 }
 
+const errorMessage = (cause: unknown): string =>
+  cause instanceof Error ? cause.message : String(cause)
+
 function reportSaveFailure(error: unknown): void {
-  toast.error(`Could not save your edit: ${error instanceof Error ? error.message : String(error)}`)
+  toast.error(`Could not save your edit: ${errorMessage(error)}`)
 }
 
 interface DocumentRunItemEditorProps {
-  runId: string
+  run: DocumentRun
   item: DocumentRunItem
   /** Every ticket of the run, in document order. */
   items: readonly DocumentRunItem[]
@@ -59,23 +72,37 @@ interface DocumentRunItemEditorProps {
    * is on its way to the server. The picker saves every step, so the model is not final yet.
    */
   onModelPickingChange: (itemId: string, picking: boolean) => void
+  /**
+   * The run settings as edited in the preview (the draft): what a ticket of a run made from
+   * board tickets shows under "What the agent receives". The run's stored config otherwise.
+   */
+  config?: DocumentRunConfig
 }
 
 /**
  * One extracted ticket in the preview list: a summary row that expands into its editor. The
  * model and effort are changed straight from the row, without expanding it: through the
  * picker, or with one tap on a model another ticket already uses.
+ *
+ * In a run made from board tickets the row is the board ticket: its key and title, no
+ * extraction details (kind, document status, figures, open questions), and a Remove button
+ * that hands the ticket back to the board. Expanded, it edits the ticket itself (title and
+ * description, written to the board), what it starts after (the board's dependencies) and
+ * shows the prompt its agent receives. Selection, verification and model work as for any run.
  */
 export function DocumentRunItemEditor({
-  runId,
+  run,
   item,
   items,
   quickChoices,
   verificationDisabled,
   expanded,
   onToggleExpanded,
-  onModelPickingChange
+  onModelPickingChange,
+  config
 }: DocumentRunItemEditorProps): React.JSX.Element {
+  const runId = run.id
+  const ticketRun = isTicketRun(run)
   const updateItem = useDocumentFlowStore((s) => s.updateItem)
   const save = useCallback(
     (patch: DocumentRunItemPatch) => updateItem(runId, item.id, patch),
@@ -118,7 +145,7 @@ export function DocumentRunItemEditor({
                 {item.title || 'Untitled ticket'}
               </span>
             </span>
-            <ItemPills item={item} items={items} />
+            <ItemPills item={item} items={items} ticketRun={ticketRun} />
           </span>
         </button>
         {/* In a narrow window the chips move under the picker, then shorten, before the title is squeezed away. */}
@@ -177,6 +204,7 @@ export function DocumentRunItemEditor({
             </div>
           )}
         </div>
+        {ticketRun && awaitsLaunch(item) && <RemoveItemButton run={run} item={item} />}
         <button
           type="button"
           tabIndex={-1}
@@ -191,18 +219,73 @@ export function DocumentRunItemEditor({
           )}
         </button>
       </div>
-      {expanded && <ItemEditorBody item={item} items={items} save={save} />}
+      {expanded &&
+        (ticketRun ? (
+          <TicketItemEditorBody run={run} item={item} items={items} config={config} />
+        ) : (
+          <ItemEditorBody run={run} item={item} items={items} save={save} />
+        ))}
     </div>
+  )
+}
+
+/**
+ * Take a ticket that has not launched out of a run made from board tickets: the item goes, the
+ * ticket stays on the board, free again (and can be added back). No confirmation: nothing is
+ * lost, and the server refuses it once the ticket launched.
+ */
+function RemoveItemButton({
+  run,
+  item
+}: {
+  run: Pick<DocumentRun, 'id'>
+  item: DocumentRunItem
+}): React.JSX.Element {
+  const removeRunItem = useDocumentFlowStore((s) => s.removeRunItem)
+  const [removing, setRemoving] = useState(false)
+  const remove = (): void => {
+    setRemoving(true)
+    removeRunItem(run.id, item.id)
+      .catch((cause: unknown) => {
+        toast.error(`Could not remove ${item.key}: ${errorMessage(cause)}`)
+      })
+      .finally(() => setRemoving(false))
+  }
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon-xs"
+      title="Remove from the run (the ticket stays on the board)"
+      aria-label={`Remove ${item.key} from the run`}
+      data-testid={`docflow-item-remove-${item.key}`}
+      className="mt-0.5 shrink-0 text-muted-foreground"
+      disabled={removing}
+      onClick={remove}
+    >
+      {removing ? <Loader2 className="animate-spin" /> : <X />}
+    </Button>
   )
 }
 
 function ItemPills({
   item,
-  items
+  items,
+  ticketRun
 }: {
   item: DocumentRunItem
   items: readonly DocumentRunItem[]
-}): React.JSX.Element {
+  /** A run made from board tickets: no extraction details, only what it starts after. */
+  ticketRun: boolean
+}): React.JSX.Element | null {
+  if (ticketRun) {
+    if (item.depends_on.length === 0) return null
+    return (
+      <span className="mt-1 flex flex-wrap items-center gap-1">
+        <DependencyPills item={item} items={items} />
+      </span>
+    )
+  }
   return (
     <span className="mt-1 flex flex-wrap items-center gap-1">
       <span className={ticketPillClass}>{item.kind}</span>
@@ -223,6 +306,30 @@ function ItemPills({
           partly done in the document
         </TonePill>
       )}
+      <DependencyPills item={item} items={items} />
+      {item.open_questions.length > 0 && (
+        <TonePill tone="warning">{pluralize(item.open_questions.length, 'open question')}</TonePill>
+      )}
+      {item.figures.length > 0 && (
+        <span className={ticketPillClass}>
+          <ImageIcon className="h-2.5 w-2.5" />
+          {pluralize(item.figures.length, 'figure')}
+        </span>
+      )}
+    </span>
+  )
+}
+
+/** One "after KEY" pill per dependency, toned by whether the run will wait for it. */
+function DependencyPills({
+  item,
+  items
+}: {
+  item: DocumentRunItem
+  items: readonly DocumentRunItem[]
+}): React.JSX.Element {
+  return (
+    <>
       {item.depends_on.map((key) => {
         const state = dependencyState(key, items)
         return (
@@ -244,26 +351,55 @@ function ItemPills({
           </TonePill>
         )
       })}
-      {item.open_questions.length > 0 && (
-        <TonePill tone="warning">{pluralize(item.open_questions.length, 'open question')}</TonePill>
-      )}
-      {item.figures.length > 0 && (
-        <span className={ticketPillClass}>
-          <ImageIcon className="h-2.5 w-2.5" />
-          {pluralize(item.figures.length, 'figure')}
-        </span>
-      )}
-    </span>
+    </>
+  )
+}
+
+/**
+ * The expanded editor of a ticket in a run made from board tickets: the ticket itself (written
+ * to the board), what it starts after (the board's dependencies) and the prompt its agent
+ * receives. Editable while the ticket has not launched; the preview is always before that.
+ */
+function TicketItemEditorBody({
+  run,
+  item,
+  items,
+  config
+}: {
+  run: DocumentRun
+  item: DocumentRunItem
+  items: readonly DocumentRunItem[]
+  config?: DocumentRunConfig
+}): React.JSX.Element {
+  const locked = !awaitsLaunch(item)
+  return (
+    <div
+      className="space-y-3 border-t border-border/60 bg-muted/20 px-4 py-3 pl-11"
+      data-testid={`docflow-item-editor-${item.key}`}
+    >
+      <TicketBriefEditor run={run} item={item} disabled={locked} />
+      <RunItemDependencyEditor
+        run={run}
+        item={item}
+        items={items}
+        disabled={locked}
+        disabledReason={
+          locked ? `${item.key} has launched: what it starts after is settled.` : null
+        }
+      />
+      <TicketRunBriefPreview run={run} item={item} config={config} />
+    </div>
   )
 }
 
 interface ItemEditorBodyProps {
+  run: DocumentRun
   item: DocumentRunItem
   items: readonly DocumentRunItem[]
   save: (patch: DocumentRunItemPatch) => Promise<DocumentRunItem>
 }
 
-function ItemEditorBody({ item, items, save }: ItemEditorBodyProps): React.JSX.Element {
+function ItemEditorBody({ run, item, items, save }: ItemEditorBodyProps): React.JSX.Element {
   const [showPreview, setShowPreview] = useState(false)
   // A cleared title is the user mid-retype, not a request the server would refuse; the field
   // falls back to the stored title when it is left.
@@ -274,20 +410,6 @@ function ItemEditorBody({ item, items, save }: ItemEditorBodyProps): React.JSX.E
   const saveDescription = useCallback((value: string) => save({ description: value }), [save])
   const title = useDebouncedText(item.title, saveTitle)
   const description = useDebouncedText(item.description, saveDescription)
-  const others = items.filter((candidate) => candidate.id !== item.id)
-  const knownKeys = new Set(others.map((candidate) => candidate.key))
-  const danglingKeys = item.depends_on.filter((key) => !knownKeys.has(key))
-
-  const toggleDependency = (key: string): void => {
-    const wanted = new Set(item.depends_on)
-    if (!wanted.delete(key)) wanted.add(key)
-    // Keep the list in document order, with keys that match no ticket at the end.
-    const next = [
-      ...others.map((other) => other.key).filter((candidate) => wanted.has(candidate)),
-      ...danglingKeys.filter((candidate) => wanted.has(candidate))
-    ]
-    save({ depends_on: next }).catch(reportSaveFailure)
-  }
 
   return (
     <div
@@ -377,50 +499,7 @@ function ItemEditorBody({ item, items, save }: ItemEditorBodyProps): React.JSX.E
         </div>
       )}
 
-      {(others.length > 0 || danglingKeys.length > 0) && (
-        <div className="space-y-1.5">
-          <p className={LABEL_CLASS}>Starts after</p>
-          <div className="flex flex-wrap gap-1">
-            {others.map((other) => {
-              const active = item.depends_on.includes(other.key)
-              // Adding it would make the two wait for each other forever.
-              const circular = !active && dependencyReaches(other.key, item.key, items)
-              return (
-                <button
-                  key={other.id}
-                  type="button"
-                  aria-pressed={active}
-                  disabled={circular}
-                  title={circular ? `${other.key} already starts after ${item.key}` : other.title}
-                  data-testid={`docflow-item-dep-toggle-${item.key}-${other.key}`}
-                  className={cn(
-                    'rounded-full border px-2 py-0.5 font-mono text-[10px] transition-colors disabled:cursor-not-allowed disabled:opacity-40',
-                    active
-                      ? 'border-primary bg-primary text-primary-foreground'
-                      : 'border-border text-muted-foreground hover:bg-accent/50'
-                  )}
-                  onClick={() => toggleDependency(other.key)}
-                >
-                  {other.key}
-                </button>
-              )
-            })}
-            {danglingKeys.map((key) => (
-              <button
-                key={key}
-                type="button"
-                aria-pressed
-                title={`There is no ticket ${key} in this run. Click to remove.`}
-                data-testid={`docflow-item-dep-toggle-${item.key}-${key}`}
-                className="rounded-full border border-red-500/40 bg-red-500/10 px-2 py-0.5 font-mono text-[10px] text-red-500"
-                onClick={() => toggleDependency(key)}
-              >
-                {key}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+      <RunItemDependencyEditor run={run} item={item} items={items} />
     </div>
   )
 }

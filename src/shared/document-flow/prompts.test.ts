@@ -16,6 +16,9 @@ import {
   buildLaunchPrompt,
   buildMigrationPrompt,
   buildNudgePrompt,
+  buildTicketBrief,
+  buildTicketRunPrompt,
+  runRulesParagraphs,
   summarizePendingWork,
   buildQuestionModeNotice,
   isQuestionModeNotice,
@@ -927,7 +930,9 @@ describe('document update follow-ups', () => {
     )
     expect(clean).not.toContain('you edited a copy in your worktree')
     // Whether or not the worktree is known to be dirty, a copy edited there is to be undone.
-    expect(clean).toContain('If you changed a copy of it in your worktree instead, undo that change')
+    expect(clean).toContain(
+      'If you changed a copy of it in your worktree instead, undo that change'
+    )
     const dirty = buildDocumentUpdateNudgePrompt('/docs/a.md', true)
     expect(dirty).toContain('you edited a copy in your worktree, not the document')
     for (const prompt of [clean, dirty]) {
@@ -952,5 +957,71 @@ describe('document update follow-ups', () => {
     expect(buildDocumentUpdateContinuePrompt('interrupted', false)).toContain(
       'Do not ask me anything'
     )
+  })
+})
+
+describe('runs made from board tickets', () => {
+  const ticket = {
+    title: 'Add the checkout button',
+    description: 'Put it under the cart.\n\nKeep "Pay" <bold>.',
+    attachments: [
+      { type: 'image', url: '/tmp/cart.png', label: 'Cart' },
+      { type: 'jira', url: 'https://jira.example/TD-4', label: 'TD-4' },
+      { type: 'file', url: '/tmp/spec.pdf' },
+      'not an attachment',
+      null
+    ]
+  }
+
+  it('briefs the agent with the ticket as the board launches it: title, words verbatim, attachments', () => {
+    expect(buildTicketBrief(ticket)).toBe(
+      [
+        'Please implement the following ticket.',
+        '',
+        '<ticket title="Add the checkout button">Put it under the cart.',
+        '',
+        'Keep "Pay" <bold>.',
+        '<attachments>',
+        '<file path="/tmp/cart.png">Cart</file>',
+        '<link type="jira" url="https://jira.example/TD-4">TD-4</link>',
+        '<file path="/tmp/spec.pdf"></file>',
+        '</attachments></ticket>'
+      ].join('\n')
+    )
+    expect(buildTicketBrief({ title: 'Empty', description: null })).toBe(
+      'Please implement the following ticket.\n\n<ticket title="Empty"></ticket>'
+    )
+  })
+
+  it.each([
+    { interactive: true, sdk: 'claude-code' as const },
+    { interactive: false, sdk: 'codex-cli' as const, verification: ['tests' as const] },
+    {
+      interactive: true,
+      sdk: 'opencode' as const,
+      verification: ['playwright' as const, 'tcu' as const],
+      workspace: [
+        { symlinkName: 'web', projectName: 'Web' },
+        { symlinkName: 'api', projectName: 'API' }
+      ]
+    }
+  ])('appends the rules of the run as withRunRules would: %o', (rules) => {
+    expect(runRulesParagraphs(rules)).toBe(withRunRules('', rules))
+    expect(buildTicketRunPrompt(ticket, rules)).toBe(
+      `${buildTicketBrief(ticket)}\n\n${runRulesParagraphs(rules)}`
+    )
+  })
+
+  it('ends on the wait, commit and follow-up rules the orchestration relies on', () => {
+    const prompt = buildTicketRunPrompt(ticket, { interactive: false, sdk: 'claude-code' })
+
+    expect(prompt.split('\n\n').slice(-4)).toEqual([
+      DO_NOT_ASK_LINE,
+      WAIT_LINE,
+      GUARD_LINE,
+      FOLLOW_UPS_LINE
+    ])
+    // A brief that carries its rules already is left as it is by withRunRules.
+    expect(withRunRules(prompt, { interactive: false, sdk: 'claude-code' })).toBe(prompt)
   })
 })

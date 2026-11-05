@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 60
+export const CURRENT_SCHEMA_VERSION = 61
 
 /**
  * "Implement document" flow (v55). `document_runs` is one spec document turned into tickets
@@ -22,7 +22,9 @@ export const CURRENT_SCHEMA_VERSION = 60
  * project); its items have `connection_id` and `members` (JSON, one worktree per member with
  * that member's merge bookkeeping) instead of `worktree_id`. The `document_update_*` item
  * columns (v65) track the post-merge step in which a merged ticket's session updates the run's
- * source document; `document_update_report` is JSON.
+ * source document; `document_update_report` is JSON. `document_runs.source_kind` (v69) says
+ * where a run's tickets come from: `document` (extracted from `source_path`), or `tickets`
+ * (adopted from the board, `source_path` = '', items linked to their tickets from the start).
  * CREATE TABLE IF NOT EXISTS, replayed by ensureDocumentFlowTables() in database.ts.
  */
 export const DOCUMENT_FLOW_TABLES_SQL = `
@@ -30,6 +32,7 @@ export const DOCUMENT_FLOW_TABLES_SQL = `
     id                        TEXT PRIMARY KEY,
     project_id                TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     title                     TEXT NOT NULL,
+    source_kind               TEXT NOT NULL DEFAULT 'document',
     source_path               TEXT NOT NULL,
     run_dir                   TEXT NOT NULL,
     document_path             TEXT DEFAULT NULL,
@@ -1149,5 +1152,13 @@ DROP TABLE IF EXISTS diff_comments;`
     // CREATE TABLE IF NOT EXISTS, replayed by ensureDataProjectTables() in database.ts.
     up: DATA_PROJECT_TABLES_SQL,
     down: DATA_PROJECT_TABLES_DROP_SQL
+  },
+  {
+    version: 61,
+    name: 'add_document_run_source_kind',
+    // Orchestrators made from board tickets: document_runs.source_kind ('document' | 'tickets').
+    up: `-- NOTE: ALTER TABLE for document_runs.source_kind is handled idempotently by
+         -- safeAddColumn() in database.ts to avoid "duplicate column" errors.`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]

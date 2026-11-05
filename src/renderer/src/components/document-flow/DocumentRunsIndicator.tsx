@@ -5,7 +5,9 @@ import { cn } from '@/lib/utils'
 import { selectActiveRuns, useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { useLayoutStore } from '@/stores/useLayoutStore'
 import { summarizeItems } from '@shared/document-flow/planning'
-import { documentNameFromPath, formatRunProgress, needsUser, pluralize } from './document-flow-ui'
+import { runKindLabel } from '@shared/document-flow/ticket-runs'
+import { RunKindIcon, TicketRunIcon } from './RunKindIcon'
+import { describeRunCount, formatRunProgress, needsUser, runDisplayTitle } from './document-flow-ui'
 
 // Clears the Board Assistant launcher, which sits in the same corner of the board.
 const INDICATOR_BOTTOM_PX = 56
@@ -13,7 +15,9 @@ const INDICATOR_BOTTOM_PX = 56
 /**
  * A small card in the bottom-right corner of the main pane listing the launched runs that are
  * not finished, so a run stays one click away while the user works elsewhere. Renders nothing
- * when no run is active.
+ * when no run is active. Runs made from a document and orchestrators made from board tickets
+ * share it: the header names their kind ("2 document runs", "1 orchestrator", or "3 runs" for
+ * a mix), and in a mix every row wears its own kind's icon.
  */
 export function DocumentRunsIndicator(): React.JSX.Element | null {
   const runsById = useDocumentFlowStore((s) => s.runsById)
@@ -37,6 +41,7 @@ export function DocumentRunsIndicator(): React.JSX.Element | null {
     needsUser: detail.items.some(needsUser)
   }))
   const anyNeedsUser = rows.some((row) => row.needsUser)
+  const count = describeRunCount(runs.map((detail) => detail.run))
 
   return (
     <div
@@ -59,8 +64,12 @@ export function DocumentRunsIndicator(): React.JSX.Element | null {
         className="flex w-full items-center gap-1.5 px-3 py-1.5 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
         onClick={() => setCollapsed((previous) => !previous)}
       >
-        <FileText className="h-3 w-3" />
-        <span className="flex-1 text-left">{pluralize(runs.length, 'document run')}</span>
+        {count.kind === 'document' ? (
+          <FileText className="h-3 w-3" />
+        ) : (
+          <TicketRunIcon className="h-3 w-3" />
+        )}
+        <span className="flex-1 text-left">{count.label}</span>
         {collapsed && anyNeedsUser && (
           <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-label="Needs you" />
         )}
@@ -77,8 +86,15 @@ export function DocumentRunsIndicator(): React.JSX.Element | null {
               onClick={() => openDashboard(detail.run.id)}
             >
               <span className="flex items-center gap-1.5">
+                {count.kind === 'mixed' && (
+                  <RunKindIcon
+                    run={detail.run}
+                    className="h-3 w-3 shrink-0 text-muted-foreground"
+                    aria-label={runKindLabel(detail.run)}
+                  />
+                )}
                 <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-foreground">
-                  {detail.run.title || documentNameFromPath(detail.run.source_path)}
+                  {runDisplayTitle(detail.run)}
                 </span>
                 {detail.run.status === 'paused' && (
                   <span

@@ -15,6 +15,7 @@ export function makeRun(overrides: Partial<DocumentRun> = {}): DocumentRun {
     id: 'run-1',
     project_id: 'project-1',
     title: 'Checkout redesign',
+    source_kind: 'document',
     source_path: '/docs/checkout-redesign.html',
     run_dir: '/tmp/document-runs/run-1',
     document_path: '/tmp/document-runs/run-1/document.md',

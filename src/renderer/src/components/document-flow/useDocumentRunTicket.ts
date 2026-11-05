@@ -28,8 +28,9 @@ export function useMigrationSessionWaiting(sessionId: string | null): boolean {
 }
 
 /**
- * What the ticket of a document run shows, from the run it stands for. Runs past the listed
- * page (and runs of a board opened before the list arrived) are fetched once.
+ * What the ticket of a document run shows, from the run it stands for (an orchestrator made
+ * from board tickets too: `state.sourceKind` tells the card which marker to wear). Runs past
+ * the listed page (and runs of a board opened before the list arrived) are fetched once.
  */
 export function useDocumentRunTicket(
   runId: string | null,

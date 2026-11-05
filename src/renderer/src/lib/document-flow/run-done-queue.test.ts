@@ -6,6 +6,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeDetail } from '@/components/document-flow/test-fixtures'
+import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import type {
   DocumentRun,
@@ -685,6 +686,273 @@ describe('buildRunDoneQueue', () => {
       'run-integration:The run',
       'run-child-archive:A1 · Alpha'
     ])
+  })
+})
+
+describe("buildRunDoneQueue — a ticket that is another run's by now", () => {
+  /** A live orchestrator took `ticketId` over, launched it, and is working on it. */
+  const heldBy = (ticketId: string, status: DocumentRun['status'] = 'running'): void => {
+    useDocumentFlowStore.setState({
+      runsById: {
+        'run-next': makeDetail(
+          {
+            id: 'run-next',
+            project_id: 'proj',
+            title: 'Next wave',
+            source_kind: 'tickets',
+            source_path: '',
+            status
+          },
+          [{ key: 'TD-5', ticket_id: ticketId, status: 'running', session_id: 's-next' }]
+        )
+      }
+    })
+  }
+
+  beforeEach(() => {
+    useDocumentFlowStore.setState({ runsById: {} })
+  })
+
+  it('keeps a ticket the run never launched, instead of moving it to Done under the other run', async () => {
+    heldBy('t-b')
+
+    const queue = await buildRunDoneQueue(
+      detail(
+        [{ key: 'A2', title: 'Beta', status: 'cancelled', ticket_id: 't-b', worktree_id: null }],
+        {
+          status: 'cancelled'
+        }
+      ),
+      'run-ticket',
+      tickets()
+    )
+
+    expect(queue.alsoMoveTicketIds).not.toContain('t-b')
+    expect(queue.kept).toContainEqual({ label: 'A2 · Beta', reason: 'now part of “Next wave”' })
+  })
+
+  it.each(['cancelled', 'completed'] as const)(
+    'keeps it once the other run has %s too, whatever kind this run is',
+    async (status) => {
+      // A cancelled run keeps its sessions, and a finished one's branch may not be on base yet.
+      heldBy('t-b', status)
+
+      const queue = await buildRunDoneQueue(
+        detail(
+          [{ key: 'A2', title: 'Beta', status: 'cancelled', ticket_id: 't-b', worktree_id: null }],
+          { status: 'completed' }
+        ),
+        'run-ticket',
+        tickets()
+      )
+
+      expect(queue.alsoMoveTicketIds).not.toContain('t-b')
+      expect(queue.kept).toContainEqual({ label: 'A2 · Beta', reason: 'it went on in “Next wave”' })
+    }
+  )
+
+  it("leaves a branch of the old run alone too: its ticket is the other run's", async () => {
+    heldBy('t-b')
+
+    const queue = await buildRunDoneQueue(detail(), 'run-ticket', tickets())
+
+    expect(queue.entries.map((entry) => entry.worktreeId)).not.toContain('wt-b')
+    expect(queue.entries.map((entry) => entry.ticketId)).not.toContain('t-b')
+    expect(queue.kept).toContainEqual({ label: 'A2 · Beta', reason: 'now part of “Next wave”' })
+    // The other ticket of the run goes as usual
+    expect(queue.entries.map((entry) => entry.worktreeId)).toContain('wt-a')
+  })
+
+  it('does the same on a connection project', async () => {
+    connectionMerge.assessConnectionMembers.mockResolvedValue({
+      targets: [],
+      skipped: [],
+      found: true
+    })
+    dbApiMocks.worktree.get.mockImplementation(
+      async (id: string) => connectionWorktrees[id] ?? null
+    )
+    heldBy('t-b')
+
+    const queue = await buildRunDoneQueue(connectionDetail(), 'run-ticket', tickets())
+
+    expect(queue.entries.map((entry) => entry.ticketId)).not.toContain('t-b')
+    expect(queue.alsoMoveTicketIds).not.toContain('t-b')
+    expect(queue.kept).toContainEqual({ label: 'A2 · Beta', reason: 'now part of “Next wave”' })
+  })
+
+  it('moves neither a fix ticket nor a leftover child the other run holds', async () => {
+    heldBy('t-fix')
+    const fix = await buildRunDoneQueue(
+      detail([
+        {
+          key: 'A2',
+          title: 'Beta',
+          status: 'merged',
+          ticket_id: 't-b',
+          worktree_id: null,
+          fix_ticket_id: 't-fix'
+        }
+      ]),
+      'run-ticket',
+      tickets()
+    )
+    expect(fix.alsoMoveTicketIds).toEqual(['t-b', 't-a'])
+
+    // t-a is a child no item names: nothing of this run, so nothing to name as kept either
+    heldBy('t-a')
+    const orphan = await buildRunDoneQueue(detail([]), 'run-ticket', tickets())
+    expect(orphan.alsoMoveTicketIds).toEqual(['t-b', 't-fix'])
+    expect(orphan.kept.map((kept) => kept.label)).toEqual(['Ticket t-old'])
+  })
+
+  it('takes the ticket when this run is the newest to have it: an older run has no say', async () => {
+    // The orchestrator took it from a run that ended, and is the one being finished now.
+    const current = detail(
+      [{ key: 'A2', title: 'Beta', status: 'cancelled', ticket_id: 't-b', worktree_id: null }],
+      { status: 'cancelled', created_at: '2026-01-01T00:00:00.000Z' }
+    )
+    useDocumentFlowStore.setState({
+      runsById: {
+        'run-1': current,
+        'run-old': makeDetail(
+          { id: 'run-old', project_id: 'proj', created_at: '2020-01-01T00:00:00.000Z' },
+          [{ key: 'A2', ticket_id: 't-b', status: 'cancelled' }]
+        )
+      }
+    })
+
+    const queue = await buildRunDoneQueue(current, 'run-ticket', tickets())
+
+    expect(queue.alsoMoveTicketIds).toContain('t-b')
+  })
+
+  it('still moves what this run itself holds', async () => {
+    useDocumentFlowStore.setState({
+      runsById: {
+        'run-1': detail(
+          [{ key: 'A2', title: 'Beta', status: 'merged', ticket_id: 't-b', worktree_id: null }],
+          {
+            status: 'running'
+          }
+        )
+      }
+    })
+
+    const queue = await buildRunDoneQueue(
+      detail([{ key: 'A2', title: 'Beta', status: 'merged', ticket_id: 't-b', worktree_id: null }]),
+      'run-ticket',
+      tickets()
+    )
+
+    expect(queue.alsoMoveTicketIds).toContain('t-b')
+  })
+})
+
+describe('buildRunDoneQueue — the tickets an orchestrator takes along', () => {
+  const orchestrator = (items: Partial<DocumentRunItem>[]): DocumentRunDetail =>
+    detail(items, { source_kind: 'tickets', source_path: '', status: 'cancelled' })
+  /** The board with `t-b` as this test wants it. */
+  const boardWithBeta = (overrides: Partial<KanbanTicket>): KanbanTicket[] =>
+    tickets().map((row) => (row.id === 't-b' ? { ...row, ...overrides } : row))
+  const unlaunched: Partial<DocumentRunItem> = {
+    key: 'TD-2',
+    title: 'Beta',
+    status: 'cancelled',
+    ticket_id: 't-b',
+    worktree_id: null
+  }
+
+  beforeEach(() => {
+    useDocumentFlowStore.setState({ runsById: {} })
+  })
+
+  it('keeps a ticket it never launched that was moved along by hand', async () => {
+    const queue = await buildRunDoneQueue(orchestrator([unlaunched]), 'run-ticket', tickets())
+
+    expect(queue.alsoMoveTicketIds).not.toContain('t-b')
+    expect(queue.kept).toContainEqual({ label: 'TD-2 · Beta', reason: 'the run never launched it' })
+  })
+
+  it('keeps a ticket someone launched by hand once the run let it go', async () => {
+    const queue = await buildRunDoneQueue(
+      orchestrator([unlaunched]),
+      'run-ticket',
+      boardWithBeta({ column: 'in_progress', current_session_id: 's-by-hand' })
+    )
+
+    expect(queue.alsoMoveTicketIds).not.toContain('t-b')
+    expect(queue.kept).toContainEqual({
+      label: 'TD-2 · Beta',
+      reason: 'it went on outside this run'
+    })
+  })
+
+  it('leaves the branch of a ticket that has gone on in a session of its own', async () => {
+    const queue = await buildRunDoneQueue(
+      orchestrator([
+        {
+          key: 'TD-2',
+          title: 'Beta',
+          status: 'needs_attention',
+          ticket_id: 't-b',
+          worktree_id: 'wt-b',
+          session_id: 's-b'
+        }
+      ]),
+      'run-ticket',
+      boardWithBeta({ column: 'in_progress', current_session_id: 's-by-hand' })
+    )
+
+    expect(queue.entries.map((entry) => entry.worktreeId)).not.toContain('wt-b')
+    expect(queue.kept).toContainEqual({
+      label: 'TD-2 · Beta',
+      reason: 'it went on outside this run'
+    })
+  })
+
+  it.each([
+    ['launched, on its own session', { session_id: 's-b' }, 's-b'],
+    [
+      'launched, on the session of its fix',
+      { session_id: 's-b', fix_session_id: 's-fix' },
+      's-fix'
+    ],
+    ['landed, with no session recorded', { status: 'merged' as const }, null],
+    ['merged by sha, with no session recorded', { merge_sha: 'sha-b' }, null],
+    ['launched, its launch having failed', { started_at: '2026-05-04T10:00:00.000Z' }, null]
+  ])('takes a ticket that it %s', async (_label, item, sessionId) => {
+    const queue = await buildRunDoneQueue(
+      orchestrator([{ ...unlaunched, ...item }]),
+      'run-ticket',
+      boardWithBeta({ current_session_id: sessionId })
+    )
+
+    expect(queue.alsoMoveTicketIds).toContain('t-b')
+  })
+
+  it('still says a ticket left in To Do never started', async () => {
+    const queue = await buildRunDoneQueue(
+      orchestrator([unlaunched]),
+      'run-ticket',
+      boardWithBeta({ column: 'todo' })
+    )
+
+    expect(queue.kept).toContainEqual({ label: 'TD-2 · Beta', reason: 'never started' })
+  })
+
+  it.each([
+    ['moved along by hand', {}],
+    ['on a session the item does not name', { current_session_id: 's-by-hand' }]
+  ])('leaves a document run as it always was: a ticket %s rides along', async (_label, board) => {
+    const queue = await buildRunDoneQueue(
+      detail([unlaunched], { status: 'cancelled' }),
+      'run-ticket',
+      boardWithBeta(board)
+    )
+
+    expect(queue.alsoMoveTicketIds).toContain('t-b')
+    expect(queue.kept).not.toContainEqual(expect.objectContaining({ label: 'TD-2 · Beta' }))
   })
 })
 

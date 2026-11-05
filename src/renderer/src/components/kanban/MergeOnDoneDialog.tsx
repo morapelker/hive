@@ -27,6 +27,8 @@ import { dbApi } from '@/api/db-api'
 import { gitApi } from '@/api/git-api'
 import { cn } from '@/lib/utils'
 import { findCarriedRunTickets } from '@/lib/document-flow/carried-tickets'
+import { runItemOfTicket } from '@/lib/document-flow/ticket-run-membership'
+import { runKindNoun } from '@/components/document-flow/document-flow-ui'
 import { ChangedFilesPanel, type ChangedFilesPanelHandle } from './merge-dialog/ChangedFilesPanel'
 import { ChangedFilesSummary, SummaryChip } from './merge-dialog/ChangedFilesSummary'
 import { useChangedFiles } from './merge-dialog/useChangedFiles'
@@ -1033,6 +1035,13 @@ export function MergeOnDoneDialog() {
     return remaining.every((w) => w.alreadyMerged) ? remaining : []
   }, [pendingDoneMove])
 
+  // What the run is called in a sentence. Its kind never changes, so no subscription to the run.
+  const runNoun = runKindNoun(
+    pendingDoneMove?.run
+      ? useDocumentFlowStore.getState().runsById[pendingDoneMove.run.runId]?.run
+      : runItemOfTicket(pendingDoneMove?.ticketId ?? '', undefined, { anyStatus: true })?.run
+  )
+
   // Document-run batch: the branches left out, for the archive step's "Kept" line
   const keptEntries = useMemo(
     () => [...(pendingDoneMove?.run?.kept ?? []), ...(pendingDoneMove?.keptWorktrees ?? [])],
@@ -1449,7 +1458,7 @@ export function MergeOnDoneDialog() {
               >
                 <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
                 <span>
-                  This branch was cut from its document run, so the merge also brings{' '}
+                  This branch was cut from its {runNoun}, so the merge also brings{' '}
                   {resolved.carriedRunTickets.join(', ')} into {resolved.baseBranch}, ahead of
                   the run&rsquo;s own ticket.
                 </span>
@@ -1559,7 +1568,7 @@ export function MergeOnDoneDialog() {
                       {archiveAllScope.instances - 1 === 1
                         ? 'other instance'
                         : `other ${archiveAllScope.instances - 1} instances`}{' '}
-                      of this document run {archiveAllScope.instances - 1 === 1 ? 'is' : 'are'}{' '}
+                      of this {runNoun} {archiveAllScope.instances - 1 === 1 ? 'is' : 'are'}{' '}
                       merged too ({archiveAllScope.worktrees} worktree
                       {archiveAllScope.worktrees !== 1 ? 's' : ''} across{' '}
                       {archiveAllScope.repositories} repositor
@@ -1579,7 +1588,7 @@ export function MergeOnDoneDialog() {
                     {archiveAllCandidates.length === 1
                       ? 'other'
                       : `other ${archiveAllCandidates.length}`}{' '}
-                    branch{archiveAllCandidates.length !== 1 ? 'es' : ''} of this document run{' '}
+                    branch{archiveAllCandidates.length !== 1 ? 'es' : ''} of this {runNoun}{' '}
                     {archiveAllCandidates.length === 1 ? 'is' : 'are'} merged too. Archive all
                     archives {archiveAllCandidates.length === 1 ? 'both' : 'all of them'} and
                     moves their tickets to {targetLabel}.

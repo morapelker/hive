@@ -16,7 +16,11 @@ import type {
   DocumentRunItem,
   DocumentRunItemPatch,
   DocumentRunPatch,
+  DocumentRunAddTicketsParams,
+  DocumentRunRemoveItemParams,
+  DocumentRunSetDependenciesParams,
   DocumentRunVerdict,
+  DocumentTicketRunCreateParams,
   DocumentRunnerClaim,
   DocumentSimpleResult,
   DocumentSourceFile,
@@ -46,6 +50,37 @@ export const documentFlowApi = {
     generation?: DocumentRunGeneration | null
     notes?: string
   }): Promise<DocumentRunDetail> => request('createRun', params),
+
+  /**
+   * An orchestrator made from board tickets the user already created: the run is created
+   * straight in `preview` with one item per ticket (in the given order), linked to the ticket,
+   * its dependencies read from the board, and its own ticket in To Do. Refuses tickets that
+   * cannot be adopted (see `ticketRunRefusal`).
+   */
+  createTicketRun: (params: DocumentTicketRunCreateParams): Promise<DocumentRunDetail> =>
+    request('createTicketRun', params),
+
+  /**
+   * Adopt more board tickets into a run made from tickets: before launch, while it runs (they
+   * launch when their dependencies and a slot allow), or once it finished (it resumes).
+   */
+  addTickets: (params: DocumentRunAddTicketsParams): Promise<DocumentRunDetail> =>
+    request('addTickets', params),
+
+  /**
+   * Take a ticket out of a run made from tickets, while it has not launched: the item goes, the
+   * ticket stays on the board, free again.
+   */
+  removeItem: (params: DocumentRunRemoveItemParams): Promise<DocumentRunDetail> =>
+    request('removeItem', params),
+
+  /**
+   * Set what an item of a run made from tickets starts after (keys of other items): written as
+   * the board's dependencies between their tickets, which the run follows. Refused once the
+   * item launched, and for a change that would make a cycle.
+   */
+  setItemDependencies: (params: DocumentRunSetDependenciesParams): Promise<DocumentRunDetail> =>
+    request('setItemDependencies', params),
 
   /** Re-run extraction for a run in `extract_failed` or `preview` (replaces its items). */
   retryExtraction: (params: {

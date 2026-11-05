@@ -394,13 +394,45 @@ export function hasIntegration(
   return run.integration_worktree_id !== null || run.integration_connection_id !== null
 }
 
+// ── Sources ────────────────────────────────────────────────────────────────
+//
+// A run is made from one of two sources. A `document` run is the flow described at the top of
+// this file: a spec is extracted into tickets the run creates on the board. A `tickets` run (an
+// "orchestrator" made from board tickets) adopts tickets the user already created: each item
+// points at its ticket from the start (`ticket_id`), the ticket's own title, description and
+// attachments are the agent's brief, and the board's `ticket_dependencies` between the run's
+// tickets are the dependency graph (`depends_on` is kept in sync with them by the service).
+// Such a run has no document: `source_path` is '', nothing is extracted, and there is no
+// document edit lane. Tickets can be added, removed, and re-linked before and while it runs.
+// Everything else — integration branch, worktree per ticket, serial merge, conflict resolution,
+// verify, fix sessions, report, PRs, pause / cancel — is the same engine.
+
+export const DOCUMENT_RUN_SOURCE_KINDS = ['document', 'tickets'] as const
+
+export type DocumentRunSourceKind = (typeof DOCUMENT_RUN_SOURCE_KINDS)[number]
+
+/** A run made from board tickets (no document). */
+export function isTicketRun(run: Pick<DocumentRun, 'source_kind'> | null | undefined): boolean {
+  return run?.source_kind === 'tickets'
+}
+
+/** A run made from a document: it has a source file, extraction, and the document edit lane. */
+export function hasDocument(run: Pick<DocumentRun, 'source_kind'> | null | undefined): boolean {
+  return !!run && run.source_kind !== 'tickets'
+}
+
 // ── Rows ───────────────────────────────────────────────────────────────────
 
 export interface DocumentRun {
   id: string
   project_id: string
   title: string
-  /** The document the user picked. */
+  /**
+   * Where the run's tickets come from (see "Sources" above). Rows written before the column
+   * existed read as `document`.
+   */
+  source_kind: DocumentRunSourceKind
+  /** The document the user picked; '' for a run made from board tickets. */
   source_path: string
   /** App-owned directory holding the pre-processed text and extracted figures. */
   run_dir: string
@@ -667,6 +699,36 @@ export interface DocumentSourceState {
   assetsDir: string
   /** Path of the backup made for `backupKey` (`<run_dir>/doc-backups/<KEY>-<timestamp>.<ext>`), else null. */
   backupPath: string | null
+}
+
+// ── Runs made from board tickets: RPC payloads ─────────────────────────────
+
+export interface DocumentTicketRunCreateParams {
+  projectId: string
+  /** Board tickets of `projectId`, in the order the items get (their position). At least one. */
+  ticketIds: string[]
+  /** The run's title; null/empty = derived from the tickets ("First ticket + 2 more"). */
+  title?: string | null
+  /** Classification model for the run (as for a document run); null = provider default. */
+  generation?: DocumentRunGeneration | null
+}
+
+export interface DocumentRunAddTicketsParams {
+  runId: string
+  /** Board tickets of the run's project; tickets already in the run are ignored. */
+  ticketIds: string[]
+}
+
+export interface DocumentRunRemoveItemParams {
+  runId: string
+  itemId: string
+}
+
+export interface DocumentRunSetDependenciesParams {
+  runId: string
+  itemId: string
+  /** Keys of the run's other items this item starts after (replaces the current list). */
+  dependsOn: string[]
 }
 
 /** Fields of a run the renderer may change. `status` only toggles `running` ⇄ `paused`. */

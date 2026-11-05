@@ -213,6 +213,43 @@ describe('PinnedList implement document', () => {
     })
   })
 
+  it('offers "Orchestrate tickets…" next to it on a pinned worktree', async () => {
+    await renderList()
+
+    fireEvent.contextMenu(screen.getByTestId('pinned-worktree-wt-feature'))
+    const names = menuItemNames()
+    expect(names[names.indexOf('Implement Document…') + 1]).toBe('Orchestrate tickets…')
+    fireEvent.click(screen.getByTestId('docflow-orchestrate-pinned-worktree-menu-item'))
+
+    expect(useDocumentFlowStore.getState().wizard).toEqual({
+      open: true,
+      projectId: 'proj-git',
+      runId: null,
+      source: 'tickets'
+    })
+  })
+
+  it('offers "Orchestrate tickets…" on a pinned ad-hoc connection, saved as a project first', async () => {
+    const saveConnectionAsProject = vi.fn(async () => 'proj-new')
+    useConnectionStore.setState({ saveConnectionAsProject })
+    await renderList()
+
+    fireEvent.contextMenu(screen.getByTestId('pinned-connection-conn-adhoc'))
+    const names = menuItemNames()
+    expect(names[names.indexOf('Implement Document…') + 1]).toBe('Orchestrate tickets…')
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('docflow-orchestrate-pinned-connection-menu-item'))
+    })
+
+    expect(saveConnectionAsProject).toHaveBeenCalledWith('conn-adhoc')
+    expect(useDocumentFlowStore.getState().wizard).toEqual({
+      open: true,
+      projectId: 'proj-new',
+      runId: null,
+      source: 'tickets'
+    })
+  })
+
   it('has no such item on a pinned ad-hoc connection within a single project', async () => {
     const single = {
       ...adHocConnection,
@@ -226,5 +263,6 @@ describe('PinnedList implement document', () => {
     const names = menuItemNames()
     expect(names.length).toBeGreaterThan(0)
     expect(names).not.toContain('Implement Document…')
+    expect(names).not.toContain('Orchestrate tickets…')
   })
 })

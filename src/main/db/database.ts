@@ -30,6 +30,7 @@ import type {
   DocumentRunCreate,
   DocumentRunEventCreate,
   DocumentRunItemCreate,
+  DocumentRunItemInsert,
   DocumentRunItemRowPatch,
   DocumentRunnerClaimResult,
   DocumentRunRowPatch,
@@ -834,23 +835,22 @@ export class DatabaseService implements DocumentFlowDb, DataProjectsRepository {
     dependentId: string,
     blockerId: string
   ): boolean {
-    const visited = new Set<string>()
+    // `dependentId` would wait for `blockerId`: that closes a loop when the blocker already
+    // waits, directly or through others, for the dependent. Walk what the blocker waits for.
+    if (dependentId === blockerId) return true
+    const visited = new Set<string>([blockerId])
     const queue: string[] = [blockerId]
-    visited.add(blockerId)
+    const blockersOf = db.prepare(
+      'SELECT blocker_id FROM ticket_dependencies WHERE dependent_id = ?'
+    )
 
     while (queue.length > 0) {
       const node = queue.shift()!
-      const dependents = db
-        .prepare('SELECT dependent_id FROM ticket_dependencies WHERE blocker_id = ?')
-        .all(node) as { dependent_id: string }[]
-
-      for (const row of dependents) {
-        if (row.dependent_id === dependentId) {
-          return true
-        }
-        if (!visited.has(row.dependent_id)) {
-          visited.add(row.dependent_id)
-          queue.push(row.dependent_id)
+      for (const row of blockersOf.all(node) as { blocker_id: string }[]) {
+        if (row.blocker_id === dependentId) return true
+        if (!visited.has(row.blocker_id)) {
+          visited.add(row.blocker_id)
+          queue.push(row.blocker_id)
         }
       }
     }
@@ -956,6 +956,7 @@ export class DatabaseService implements DocumentFlowDb, DataProjectsRepository {
     this.safeAddColumn('document_run_items', 'document_update_hash', 'TEXT DEFAULT NULL')
     this.safeAddColumn('document_run_items', 'document_update_report', 'TEXT DEFAULT NULL')
     this.safeAddColumn('document_run_items', 'document_update_finished_at', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('document_runs', 'source_kind', "TEXT NOT NULL DEFAULT 'document'")
   }
 
   /**
@@ -1449,7 +1450,9 @@ export class DatabaseService implements DocumentFlowDb, DataProjectsRepository {
       id: row.id as string,
       project_id: row.project_id as string,
       title: row.title as string,
-      source_path: row.source_path as string,
+      // A row from before the column (or written by an older build) is a document run.
+      source_kind: row.source_kind === 'tickets' ? 'tickets' : 'document',
+      source_path: (row.source_path as string | null) ?? '',
       run_dir: row.run_dir as string,
       document_path: (row.document_path as string | null) ?? null,
       status: row.status as DocumentRun['status'],
@@ -1615,16 +1618,17 @@ export class DatabaseService implements DocumentFlowDb, DataProjectsRepository {
     const now = new Date().toISOString()
     db.prepare(
       `INSERT INTO document_runs (
-         id, project_id, title, source_path, run_dir, document_path, status, config,
+         id, project_id, title, source_kind, source_path, run_dir, document_path, status, config,
          created_at, updated_at
        ) VALUES (
-         @id, @project_id, @title, @source_path, @run_dir, @document_path, @status, @config,
-         @now, @now
+         @id, @project_id, @title, @source_kind, @source_path, @run_dir, @document_path, @status,
+         @config, @now, @now
        )`
     ).run({
       id: data.id,
       project_id: data.project_id,
       title: data.title,
+      source_kind: data.source_kind ?? 'document',
       source_path: data.source_path,
       run_dir: data.run_dir,
       document_path: data.document_path ?? null,
@@ -1722,6 +1726,80 @@ export class DatabaseService implements DocumentFlowDb, DataProjectsRepository {
       })
       return this.getDocumentRunItems(runId)
     })()
+  }
+
+  /**
+   * Append items to the run in one transaction, after its last one (`position` continues from
+   * the highest, in array order); `status` starts as `pending`. `ticket_id` links an item to a
+   * board ticket that already exists (a run made from board tickets). Returns the new rows.
+   */
+  insertDocumentRunItems(runId: string, items: DocumentRunItemInsert[]): DocumentRunItem[] {
+    const db = this.getDb()
+    return db.transaction((): DocumentRunItem[] => {
+      const last = db
+        .prepare('SELECT MAX(position) AS max FROM document_run_items WHERE run_id = ?')
+        .get(runId) as { max: number | null } | undefined
+      const start = typeof last?.max === 'number' ? last.max + 1 : 0
+      const insert = db.prepare(
+        `INSERT INTO document_run_items (
+           id, run_id, item_key, position, title, summary, description, kind, depends_on,
+           has_migration, size, conflict_risk, doc_status, selected, figures, open_questions,
+           verification_suggested, verification, verification_reason,
+           launch_config, ticket_id, status, created_at, updated_at
+         ) VALUES (
+           @id, @run_id, @item_key, @position, @title, @summary, @description, @kind, @depends_on,
+           @has_migration, @size, @conflict_risk, @doc_status, @selected, @figures, @open_questions,
+           @verification_suggested, @verification, @verification_reason,
+           @launch_config, @ticket_id, 'pending', @now, @now
+         )`
+      )
+      const now = new Date().toISOString()
+      const ids: string[] = []
+      items.forEach((item, index) => {
+        const id = randomUUID()
+        ids.push(id)
+        insert.run({
+          id,
+          run_id: runId,
+          item_key: item.key,
+          position: start + index,
+          title: item.title,
+          summary: item.summary,
+          description: item.description,
+          kind: item.kind,
+          depends_on: JSON.stringify(item.depends_on),
+          has_migration: item.has_migration ? 1 : 0,
+          size: item.size ?? null,
+          conflict_risk: item.conflict_risk ?? null,
+          doc_status: item.doc_status,
+          selected: item.selected ? 1 : 0,
+          figures: JSON.stringify(item.figures),
+          open_questions: JSON.stringify(item.open_questions),
+          verification_suggested: JSON.stringify(item.verification_suggested),
+          verification: JSON.stringify(item.verification),
+          verification_reason: item.verification_reason,
+          launch_config: item.launch_config ? JSON.stringify(item.launch_config) : null,
+          ticket_id: item.ticket_id ?? null,
+          now
+        })
+      })
+      return ids
+        .map((id) => this.getDocumentRunItem(id))
+        .filter((item): item is DocumentRunItem => item !== null)
+    })()
+  }
+
+  /** Deletes one item (its run keeps the rest). False when there was no such item. */
+  deleteDocumentRunItem(id: string): boolean {
+    return this.getDb().prepare('DELETE FROM document_run_items WHERE id = ?').run(id).changes > 0
+  }
+
+  /** Every item, of any run, linked to the board ticket; oldest first. */
+  findDocumentRunItemsByTicketId(ticketId: string): DocumentRunItem[] {
+    const rows = this.getDb()
+      .prepare('SELECT * FROM document_run_items WHERE ticket_id = ? ORDER BY created_at, rowid')
+      .all(ticketId) as Record<string, unknown>[]
+    return rows.map((row) => this.mapDocumentRunItemRow(row))
   }
 
   /** Ordered by `position`. */
@@ -5559,19 +5637,19 @@ export class DatabaseService implements DocumentFlowDb, DataProjectsRepository {
         return { success: false, error: 'Tickets must be in the same project' }
       }
 
-      if (this.wouldCreateTicketDependencyCycle(db, dependentId, blockerId)) {
-        return {
-          success: false,
-          error: 'Adding this dependency would create a circular dependency'
-        }
-      }
-
       // Fix 2: Check for existing dependency
       const existing = db
         .prepare('SELECT 1 FROM ticket_dependencies WHERE dependent_id = ? AND blocker_id = ?')
         .get(dependentId, blockerId)
       if (existing) {
         return { success: true } // Idempotent - already exists
+      }
+
+      if (this.wouldCreateTicketDependencyCycle(db, dependentId, blockerId)) {
+        return {
+          success: false,
+          error: 'Adding this dependency would create a circular dependency'
+        }
       }
 
       // Safe to insert

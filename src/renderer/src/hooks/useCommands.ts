@@ -326,6 +326,23 @@ export function useCommands() {
         isEnabled: () => documentFlowProjectId !== null
       },
       {
+        id: 'action:orchestrate-tickets',
+        label: 'Orchestrate tickets…',
+        description:
+          'Run tickets you already created, with their dependencies, into one integration branch',
+        category: 'action',
+        icon: 'KanbanIcon',
+        keywords: ['orchestrator', 'orchestrate', 'tickets', 'merge', 'integration', 'board'],
+        action: () => {
+          if (!documentFlowProjectId) return
+          useDocumentFlowStore
+            .getState()
+            .openWizard(documentFlowProjectId, null, { source: 'tickets' })
+          closeCommandPalette()
+        },
+        isEnabled: () => documentFlowProjectId !== null
+      },
+      {
         id: 'action:document-runs',
         label: 'Document runs',
         description: 'Show the document runs of the current project',

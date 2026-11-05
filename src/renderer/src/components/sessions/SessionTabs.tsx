@@ -32,7 +32,8 @@ import {
   GitPullRequest,
   RadioTower,
   Star,
-  LayoutGrid
+  LayoutGrid,
+  Workflow
 } from 'lucide-react'
 import { KanbanIcon } from '@/components/kanban/KanbanIcon'
 import { useSessionStore, BOARD_TAB_ID } from '@/stores/useSessionStore'
@@ -1820,6 +1821,20 @@ export function SessionTabs(): React.JSX.Element | null {
             >
               <FileText className="h-4 w-4 mr-2" />
               Implement document…
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              data-testid="docflow-orchestrate-import-menu-item"
+              disabled={!project}
+              onClick={() => {
+                if (project) {
+                  useDocumentFlowStore
+                    .getState()
+                    .openWizard(project.id, null, { source: 'tickets' })
+                }
+              }}
+            >
+              <Workflow className="h-4 w-4 mr-2" />
+              Orchestrate tickets…
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem

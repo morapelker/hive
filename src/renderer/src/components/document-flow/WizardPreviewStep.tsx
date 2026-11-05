@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
-import { ChevronDown, ChevronRight, Loader2, RefreshCw, Rocket } from 'lucide-react'
+import { ChevronDown, ChevronRight, Loader2, Plus, RefreshCw, Rocket } from 'lucide-react'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -22,12 +22,15 @@ import { getMemberProjects, isConnectionProject } from '@/lib/connection-project
 import { toast } from '@/lib/toast'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import type { HandoffAgentSdk } from '@shared/types/agent-sdk'
-import type {
-  DocumentRunConfig,
-  DocumentRunDetail,
-  DocumentRunItem,
-  DocumentRunLaunchConfig
+import {
+  isTicketRun,
+  type DocumentRun,
+  type DocumentRunConfig,
+  type DocumentRunDetail,
+  type DocumentRunItem,
+  type DocumentRunLaunchConfig
 } from '@shared/types/document-flow'
+import { AddRunTicketsDialog } from './AddRunTicketsDialog'
 import { DocumentRunItemEditor } from './DocumentRunItemEditor'
 import { DocumentRunSettingsPanel, type SettingsMember } from './DocumentRunSettingsPanel'
 import {
@@ -44,8 +47,9 @@ import {
   pluralize,
   type RunMemberProject
 } from './document-flow-ui'
+import { ticketRunMeta } from './ticket-run-ui'
 import { NO_BASE_BRANCH_OPTIONS, useBaseBranchOptionsByPath } from './useBaseBranchOptions'
-import { PendingWritesProvider, usePendingWrites } from './useDebouncedText'
+import { PendingWritesProvider, useDebouncedText, usePendingWrites } from './useDebouncedText'
 import { useRunConfigDraft } from './useRunConfigDraft'
 
 const errorMessage = (cause: unknown): string =>
@@ -66,13 +70,21 @@ interface WizardPreviewStepProps {
   onLaunchingChange: (launching: boolean) => void
 }
 
-/** The extracted tickets and the run settings, editable until the run is launched. */
+/**
+ * The extracted tickets and the run settings, editable until the run is launched.
+ *
+ * A run made from board tickets (an orchestrator) previews the same way, minus everything
+ * that comes from a document: its header is the run's name (editable) and an "Add tickets"
+ * button instead of the extraction's title, notes, warnings and questions and Re-extract; its
+ * rows are the board tickets themselves; there is no prompt style to choose.
+ */
 export function WizardPreviewStep({
   detail,
   project,
   onLaunchingChange
 }: WizardPreviewStepProps): React.JSX.Element {
   const { run, items } = detail
+  const ticketRun = isTicketRun(run)
   const updateItem = useDocumentFlowStore((s) => s.updateItem)
   const updateRun = useDocumentFlowStore((s) => s.updateRun)
   const startRun = useDocumentFlowStore((s) => s.startRun)
@@ -97,6 +109,7 @@ export function WizardPreviewStep({
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null)
   const [questionsOpen, setQuestionsOpen] = useState(false)
   const [confirm, setConfirm] = useState<'launch' | 'reextract' | null>(null)
+  const [addingTickets, setAddingTickets] = useState(false)
   const [launching, setLaunching] = useState(false)
   const [launchError, setLaunchError] = useState<string | null>(null)
   const [pickingItemIds, setPickingItemIds] = useState<readonly string[]>([])
@@ -183,83 +196,90 @@ export function WizardPreviewStep({
     <PendingWritesProvider value={pendingWrites}>
       <div className="flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col overflow-y-auto">
-          <div className="space-y-2 border-b border-border px-4 py-3">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p
-                  className="truncate text-[14px] font-semibold text-foreground"
-                  title={documentTitle}
-                >
-                  {documentTitle}
-                </p>
-                <p className="text-[12px] text-muted-foreground" data-testid="docflow-preview-meta">
-                  {pluralize(items.length, 'ticket')} · {validation.selectedCount} selected
-                  {extraction?.numbering && ` · numbered ${extraction.numbering}`}
-                  {extraction?.generatedBy && ` · extracted by ${extraction.generatedBy}`}
-                </p>
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                data-testid="docflow-reextract-btn"
-                onClick={() => setConfirm('reextract')}
-              >
-                <RefreshCw className="h-3.5 w-3.5" />
-                Re-extract
-              </Button>
-            </div>
-
-            {run.config.notes && (
-              <p
-                className="whitespace-pre-wrap break-words rounded-md border border-border px-3 py-2 text-[12px] leading-snug text-muted-foreground"
-                data-testid="docflow-preview-notes"
-              >
-                <span className="text-foreground">Extracted with your notes: </span>
-                {run.config.notes}
-              </p>
-            )}
-
-            {extraction && extraction.warnings.length > 0 && (
-              <ul
-                className="list-disc space-y-0.5 rounded-md border border-amber-500/30 bg-amber-500/10 py-2 pl-7 pr-3 text-[12px] leading-snug text-amber-600 dark:text-amber-400"
-                data-testid="docflow-extraction-warnings"
-              >
-                {extraction.warnings.map((warning, index) => (
-                  <li key={index}>{warning}</li>
-                ))}
-              </ul>
-            )}
-
-            {extraction && extraction.openQuestions.length > 0 && (
-              <div>
-                <button
-                  type="button"
-                  aria-expanded={questionsOpen}
-                  data-testid="docflow-open-questions-toggle"
-                  className="flex items-center gap-1 text-[12px] text-muted-foreground transition-colors hover:text-foreground"
-                  onClick={() => setQuestionsOpen((open) => !open)}
-                >
-                  {questionsOpen ? (
-                    <ChevronDown className="h-3.5 w-3.5" />
-                  ) : (
-                    <ChevronRight className="h-3.5 w-3.5" />
-                  )}
-                  Questions the document leaves open ({extraction.openQuestions.length})
-                </button>
-                {questionsOpen && (
-                  <ul
-                    className="mt-1 list-disc space-y-0.5 pl-7 text-[12px] leading-snug text-muted-foreground"
-                    data-testid="docflow-open-questions"
+          {ticketRun ? (
+            <TicketRunHeader run={run} items={items} onAddTickets={() => setAddingTickets(true)} />
+          ) : (
+            <div className="space-y-2 border-b border-border px-4 py-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p
+                    className="truncate text-[14px] font-semibold text-foreground"
+                    title={documentTitle}
                   >
-                    {extraction.openQuestions.map((question, index) => (
-                      <li key={index}>{question}</li>
-                    ))}
-                  </ul>
-                )}
+                    {documentTitle}
+                  </p>
+                  <p
+                    className="text-[12px] text-muted-foreground"
+                    data-testid="docflow-preview-meta"
+                  >
+                    {pluralize(items.length, 'ticket')} · {validation.selectedCount} selected
+                    {extraction?.numbering && ` · numbered ${extraction.numbering}`}
+                    {extraction?.generatedBy && ` · extracted by ${extraction.generatedBy}`}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  data-testid="docflow-reextract-btn"
+                  onClick={() => setConfirm('reextract')}
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  Re-extract
+                </Button>
               </div>
-            )}
-          </div>
+
+              {run.config.notes && (
+                <p
+                  className="whitespace-pre-wrap break-words rounded-md border border-border px-3 py-2 text-[12px] leading-snug text-muted-foreground"
+                  data-testid="docflow-preview-notes"
+                >
+                  <span className="text-foreground">Extracted with your notes: </span>
+                  {run.config.notes}
+                </p>
+              )}
+
+              {extraction && extraction.warnings.length > 0 && (
+                <ul
+                  className="list-disc space-y-0.5 rounded-md border border-amber-500/30 bg-amber-500/10 py-2 pl-7 pr-3 text-[12px] leading-snug text-amber-600 dark:text-amber-400"
+                  data-testid="docflow-extraction-warnings"
+                >
+                  {extraction.warnings.map((warning, index) => (
+                    <li key={index}>{warning}</li>
+                  ))}
+                </ul>
+              )}
+
+              {extraction && extraction.openQuestions.length > 0 && (
+                <div>
+                  <button
+                    type="button"
+                    aria-expanded={questionsOpen}
+                    data-testid="docflow-open-questions-toggle"
+                    className="flex items-center gap-1 text-[12px] text-muted-foreground transition-colors hover:text-foreground"
+                    onClick={() => setQuestionsOpen((open) => !open)}
+                  >
+                    {questionsOpen ? (
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    ) : (
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    )}
+                    Questions the document leaves open ({extraction.openQuestions.length})
+                  </button>
+                  {questionsOpen && (
+                    <ul
+                      className="mt-1 list-disc space-y-0.5 pl-7 text-[12px] leading-snug text-muted-foreground"
+                      data-testid="docflow-open-questions"
+                    >
+                      {extraction.openQuestions.map((question, index) => (
+                        <li key={index}>{question}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-border bg-background px-4 py-1.5">
             <span
@@ -317,15 +337,16 @@ export function WizardPreviewStep({
               className="px-4 py-6 text-[13px] text-muted-foreground"
               data-testid="docflow-no-items"
             >
-              No tickets were found in this document. Re-extract it, or cancel and choose another
-              document.
+              {ticketRun
+                ? 'This orchestrator has no tickets. Add tickets from the board to launch it.'
+                : 'No tickets were found in this document. Re-extract it, or cancel and choose another document.'}
             </p>
           )}
           <div className="divide-y divide-border" data-testid="docflow-item-list">
             {items.map((item) => (
               <DocumentRunItemEditor
                 key={item.id}
-                runId={run.id}
+                run={run}
                 item={item}
                 items={items}
                 quickChoices={quickChoices}
@@ -335,6 +356,7 @@ export function WizardPreviewStep({
                   setExpandedItemId((current) => (current === item.id ? null : item.id))
                 }
                 onModelPickingChange={setItemPicking}
+                config={draft.config}
               />
             ))}
           </div>
@@ -347,6 +369,7 @@ export function WizardPreviewStep({
             members={settingsMembers}
             config={draft.config}
             onChange={draft.change}
+            sourceKind={run.source_kind}
           />
         </aside>
       </div>
@@ -426,8 +449,73 @@ export function WizardPreviewStep({
         config={draft.config}
         currentBranch={branches.current}
         members={settingsMembers}
+        ticketRun={ticketRun}
       />
+
+      {ticketRun && (
+        <AddRunTicketsDialog run={run} open={addingTickets} onOpenChange={setAddingTickets} />
+      )}
     </PendingWritesProvider>
+  )
+}
+
+/**
+ * The head of an orchestrator's preview: its name, edited in place (it names the run's ticket
+ * and its integration branch), the counts, and "Add tickets" for more board tickets. Rendered
+ * under the preview's pending writes, so a name still being typed is written before launch.
+ */
+function TicketRunHeader({
+  run,
+  items,
+  onAddTickets
+}: {
+  run: DocumentRun
+  items: readonly DocumentRunItem[]
+  onAddTickets: () => void
+}): React.JSX.Element {
+  const updateRun = useDocumentFlowStore((s) => s.updateRun)
+  // A cleared name is the user mid-retype (the server refuses an empty title); the field falls
+  // back to the stored name when it is left.
+  const saveTitle = useCallback(
+    (value: string) => (value.trim() ? updateRun(run.id, { title: value }) : Promise.resolve()),
+    [updateRun, run.id]
+  )
+  const title = useDebouncedText(run.title, saveTitle)
+  return (
+    <div className="space-y-1.5 border-b border-border px-4 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <input
+            aria-label="Orchestrator name"
+            data-testid="docflow-run-title-input"
+            placeholder="Name this orchestrator"
+            spellCheck={false}
+            className="-mx-1 w-full truncate rounded-[4px] bg-transparent px-1 text-[14px] font-semibold text-foreground outline-none transition-colors placeholder:font-normal placeholder:text-muted-foreground hover:bg-accent/40 focus-visible:bg-accent/40 focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            value={title.value}
+            onChange={(event) => title.setValue(event.target.value)}
+            onFocus={title.onFocus}
+            onBlur={title.onBlur}
+          />
+          <p className="text-[12px] text-muted-foreground" data-testid="docflow-preview-meta">
+            {ticketRunMeta(items)}
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          data-testid="docflow-add-tickets-btn"
+          onClick={onAddTickets}
+        >
+          <Plus className="h-3.5 w-3.5" />
+          Add tickets
+        </Button>
+      </div>
+      <p className="text-[12px] leading-snug text-muted-foreground">
+        Each ticket is sent to its agent as you wrote it on the board. What a ticket starts after is
+        the board&apos;s dependencies: change them here or on the board.
+      </p>
+    </div>
   )
 }
 
@@ -445,6 +533,8 @@ interface LaunchConfirmDialogProps {
   currentBranch: string | null
   /** Connection project: the members, each with its own base branch and verify command. */
   members: readonly SettingsMember[] | null
+  /** A run made from board tickets: no prompt style (each ticket is its own brief). */
+  ticketRun?: boolean
 }
 
 /** What the confirmation says about where the run branches from, for either kind of project. */
@@ -492,7 +582,8 @@ function LaunchConfirmDialog({
   items,
   config,
   currentBranch,
-  members
+  members,
+  ticketRun = false
 }: LaunchConfirmDialogProps): React.JSX.Element {
   const base = describeLaunchBase(config, currentBranch, members)
   const rows: [string, React.ReactNode][] = [
@@ -507,10 +598,16 @@ function LaunchConfirmDialog({
         ? `${describeLaunchConfig(config.defaultLaunch)} (${pluralize(ownModelCount, 'ticket')} with their own)`
         : describeLaunchConfig(config.defaultLaunch)
     ],
-    [
-      'Prompt',
-      config.promptStyle === 'small' ? 'small (no subagents)' : 'full (research with subagents)'
-    ],
+    ...(ticketRun
+      ? []
+      : [
+          [
+            'Prompt',
+            config.promptStyle === 'small'
+              ? 'small (no subagents)'
+              : 'full (research with subagents)'
+          ] as [string, React.ReactNode]
+        ]),
     ['Questions', config.interactive ? 'agents may ask you' : 'agents decide on their own']
   ]
 

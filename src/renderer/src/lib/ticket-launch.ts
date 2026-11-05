@@ -25,7 +25,9 @@ import {
   baseMode
 } from '@/lib/constants'
 import { canonicalizeTicketTitle } from '@shared/types/branch-utils'
-import { isDocumentRunTicket } from '@shared/document-flow/run-ticket'
+import { documentRunIdOf, isDocumentRunTicket } from '@shared/document-flow/run-ticket'
+import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
+import { orchestratorLaunchRefusal } from '@/lib/document-flow/ticket-run-membership'
 import { shellCommandIdOfTicket } from '@shared/lib/shell-commands'
 import { useShellCommandRunStore } from '@/stores/useShellCommandRunStore'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
@@ -91,6 +93,12 @@ export interface TicketLaunchSpec {
   goalSuccessCriteria: string | null
   /** Extra fields merged into the success updateTicket call (e.g. { pending_launch_config: null }). */
   ticketUpdateExtras?: Partial<KanbanTicketUpdate>
+  /**
+   * The run the ticket is part of launches it (lib/document-flow/runner-ports): the one launch
+   * allowed for a ticket that waits for its run (`orchestratorLaunchRefusal`). Every other
+   * caller leaves it unset, and such a ticket is refused, so it never gets a second session.
+   */
+  orchestrated?: boolean
 }
 
 export interface TicketLaunchResult {
@@ -244,7 +252,20 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
     .tickets.get(spec.projectId)
     ?.find((t) => t.id === spec.ticketId)
   if (isDocumentRunTicket(launchedTicket)) {
-    return { success: false, error: 'The ticket of a document run cannot be launched.' }
+    // Named after what the run is: an orchestrator made from board tickets, else (also while
+    // the run is not loaded) a document run, as it always read
+    const runId = documentRunIdOf(launchedTicket)
+    const run = runId ? useDocumentFlowStore.getState().runsById[runId]?.run : null
+    return {
+      success: false,
+      error: `The ticket of ${run?.source_kind === 'tickets' ? 'an orchestrator' : 'a document run'} cannot be launched.`
+    }
+  }
+  // A ticket its run will launch is launched by the run alone: auto-launch of a queued ticket,
+  // the picker, a quick launch or the Tedooo agent would give it a session the run never made
+  if (!spec.orchestrated) {
+    const refusal = orchestratorLaunchRefusal(spec.ticketId)
+    if (refusal) return { success: false, error: refusal }
   }
   // A shell command's ticket runs its command (lib/shell-command-ticket): its text is
   // never an agent prompt, whoever asks for the launch. Tickets from before the marker

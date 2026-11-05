@@ -2,6 +2,7 @@ import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { isAgentCli, isShellCommandSession } from '@shared/types/agent-sdk'
 import { shellCommandIdOfTicket } from '@shared/lib/shell-commands'
 import { startShellCommandTicket } from '@/lib/shell-command-ticket'
+import { orchestratorLaunchRefusal } from '@/lib/document-flow/ticket-run-membership'
 import { useShallow } from 'zustand/react/shallow'
 import {
   Eye,
@@ -1413,6 +1414,14 @@ function EditModeContent({
   const submit = useCallback(
     async (action: 'save' | 'send') => {
       if (!title.trim() || isSaving) return
+      // A ticket its run will launch is launched by the run alone (blocked or not: the run
+      // waits for its dependencies itself); refused before saving, as a blocked one is, so the
+      // edit stays in the form (Save keeps it)
+      const orchestrated = action === 'send' ? orchestratorLaunchRefusal(ticket.id) : null
+      if (orchestrated) {
+        toast.error(orchestrated)
+        return
+      }
       if (action === 'send' && isBlockedForSend) {
         toast.warning('Ticket is blocked — resolve its dependencies first')
         return

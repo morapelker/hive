@@ -1397,6 +1397,23 @@ describe('MergeOnDoneDialog — document-run batch (shift-drop of the run ticket
     expect(moveTicketMock).not.toHaveBeenCalled()
   })
 
+  it('calls an orchestrator by its name in the Archive all hint', async () => {
+    useDocumentFlowStore.setState({
+      runsById: {
+        'run-1': makeDetail({ id: 'run-1', source_kind: 'tickets', source_path: '' }, [])
+      }
+    })
+    seedPending(integration, [archiveAlpha, archiveBeta])
+
+    render(<MergeOnDoneDialog />)
+
+    await screen.findByRole('button', { name: 'Archive all (3)' })
+    expect(screen.getByTestId('archive-all-hint').textContent).toContain(
+      'other 2 branches of this orchestrator'
+    )
+    useDocumentFlowStore.setState({ runsById: {} })
+  })
+
   it('counts every branch in Archive all and moves their tickets, the run’s last', async () => {
     seedPending(integration, [archiveAlpha, archiveBeta])
 

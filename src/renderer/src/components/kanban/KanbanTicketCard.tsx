@@ -141,6 +141,17 @@ import { useTimerTickStore } from '@/stores/useTimerTickStore'
 import { canToggleAutoApprovePlan } from '@/lib/plan-auto-approve'
 import { isAgentCli } from '@shared/types/agent-sdk'
 import { documentRunIdOf } from '@shared/document-flow/run-ticket'
+import {
+  addingTicketsResumesRun,
+  canAddTicketsToRun,
+  runKindLabel
+} from '@shared/document-flow/ticket-runs'
+import {
+  integrationCheckoutGone,
+  orchestratorLaunchRefusal
+} from '@/lib/document-flow/ticket-run-membership'
+import { TicketOrchestratorSubmenu } from './TicketOrchestratorMenu'
+import { useRunCheckouts } from './useRunCheckouts'
 import { copyTicketLabelsForNewTicket, ticketLabelsOf } from '@shared/lib/ticket-labels'
 import { DocumentRunTicketBody } from '@/components/document-flow/DocumentRunTicketBody'
 import { DocumentRunPRLinks } from '@/components/document-flow/DocumentRunPRActions'
@@ -273,7 +284,28 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   const runSourcePath = useDocumentFlowStore((s) =>
     documentRunId ? (s.runsById[documentRunId]?.run.source_path ?? null) : null
   )
-  const documentPath = documentRunId ? ticket.external_url || runSourcePath : null
+  // What the run is: an orchestrator made from board tickets, or a document run (also while its
+  // record is not known: a record that is gone). The copy of its ticket says which; an
+  // orchestrator has no document to open.
+  const runSourceKind = useDocumentFlowStore((s) =>
+    documentRunId ? (s.runsById[documentRunId]?.run.source_kind ?? null) : null
+  )
+  const isTicketRunTicket = runSourceKind === 'tickets'
+  const runKind = runKindLabel(runSourceKind ? { source_kind: runSourceKind } : null)
+  const runKindLower = runKind.toLowerCase()
+  // An orchestrator takes more tickets from its ticket's menu ("Add tickets…"), unless it
+  // finished with no checkout left to resume on: its dashboard offers none then
+  const runCheckouts = useRunCheckouts(isTicketRunTicket ? ticket.project_id : null)
+  const canAddRunTickets = useDocumentFlowStore((s) => {
+    const run = documentRunId ? s.runsById[documentRunId]?.run : null
+    if (!run || !canAddTicketsToRun(run)) return false
+    return !(
+      addingTicketsResumesRun(run) &&
+      integrationCheckoutGone(run, runCheckouts.worktrees, runCheckouts.connectionIds)
+    )
+  })
+  const documentPath =
+    documentRunId && !isTicketRunTicket ? ticket.external_url || runSourcePath : null
   const documentRunPhase = documentRunView?.state?.phase ?? null
   // The dragon frame is gold only while the run's ticket is at work; silver otherwise
   const isEliteActive =
@@ -1179,7 +1211,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       // preview to launch it before launch, the dashboard after
       if (documentRunId) {
         if (documentRunView?.missing) {
-          toast.info('The record of this document run was deleted. Only its ticket is left.')
+          toast.info(`The record of this ${runKindLower} was deleted. Only its ticket is left.`)
           return
         }
         useDocumentFlowStore.getState().openRun(ticket.project_id, documentRunId)
@@ -1191,7 +1223,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         ticketId: ticket.id
       })
     },
-    [ticket.id, ticket.worktree_id, ticket.project_id, ticket.current_session_id, isPinnedMode, connectionId, connectionSession, recordBoardTelegramTarget, blockingDiagnostic, documentRunId, documentRunView?.missing]
+    [ticket.id, ticket.worktree_id, ticket.project_id, ticket.current_session_id, isPinnedMode, connectionId, connectionSession, recordBoardTelegramTarget, blockingDiagnostic, documentRunId, documentRunView?.missing, runKindLower]
   )
 
   // ── Right-button drag into In Progress — start immediately with the
@@ -1201,6 +1233,13 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       if (column !== 'in_progress' || ticket.column === 'in_progress') return
       // The run's ticket has no session of its own to launch
       if (isDocumentRunTicket) return
+      // A ticket its run will launch is launched by the run alone (blocked or not: the run
+      // waits for its dependencies itself)
+      const orchestrated = orchestratorLaunchRefusal(ticket.id)
+      if (orchestrated) {
+        toast.error(orchestrated)
+        return
+      }
       if (isBlocked) {
         toast.warning('Ticket is blocked — resolve its dependencies first')
         return
@@ -1282,7 +1321,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   const handleDelete = useCallback(async () => {
     try {
       await useKanbanStore.getState().deleteTicket(ticket.id, ticket.project_id)
-      toast.success(isDocumentRunTicket ? 'Document run deleted' : 'Ticket deleted')
+      toast.success(isDocumentRunTicket ? `${runKind} deleted` : 'Ticket deleted')
     } catch (err) {
       // The server refuses to delete the ticket of a run that is still running, and says so
       toast.error(
@@ -1292,21 +1331,21 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       )
     }
     setShowDeleteConfirm(false)
-  }, [ticket.id, ticket.project_id, isDocumentRunTicket])
+  }, [ticket.id, ticket.project_id, isDocumentRunTicket, runKind])
 
   // Deleting the ticket of a run that is still on is refused before asking to confirm
   const requestDelete = useCallback(() => {
     const run = documentRunId ? useDocumentFlowStore.getState().runsById[documentRunId]?.run : null
     if (run && isActiveRunStatus(run.status)) {
-      toast.warning('Cancel the document run before deleting its ticket.')
+      toast.warning(`Cancel the ${runKindLower} before deleting its ticket.`)
       return
     }
     if (run?.migration_session_id) {
-      toast.warning('Stop the migrations of the document run before deleting its ticket.')
+      toast.warning(`Stop the migrations of the ${runKindLower} before deleting its ticket.`)
       return
     }
     setShowDeleteConfirm(true)
-  }, [documentRunId])
+  }, [documentRunId, runKindLower])
 
   const handleStopRemoteSession = useCallback(async () => {
     const sessionId = ticket.current_session_id
@@ -1565,6 +1604,17 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       toast.error('Failed to unassign worktree')
     }
   }, [ticket.id, ticket.project_id])
+
+  // The pre-assign picker links the ticket to the session a worktree already has, and a later
+  // session there picks it up: one its orchestrator will launch stays the run's to start
+  const openPreAssignPicker = useCallback(() => {
+    const orchestrated = orchestratorLaunchRefusal(ticket.id)
+    if (orchestrated) {
+      toast.error(orchestrated)
+      return
+    }
+    setShowPreAssignPicker(true)
+  }, [ticket.id])
 
   const handleToggleBasePin = useCallback(async () => {
     const found = await setProjectBasePinned(ticket.project_id, !isBasePinned)
@@ -1868,7 +1918,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             )}
             {/* Document run: its tickets, folded into this card as rows (a setting; the board
                 hides their own cards then). A peer's run has no local rows to fold. */}
-            {documentRunId && !remoteOrigin && <DocumentRunChildren runTicket={ticket} />}
+            {documentRunId && <DocumentRunChildren runTicket={ticket} />}
 
             {/* Description match snippet (board search) */}
             {descriptionSnippet && (
@@ -2510,7 +2560,21 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
               className="gap-2"
             >
               <FileText className="h-3.5 w-3.5" />
-              Open document run
+              Open {runKindLower}
+            </ContextMenuItem>
+          )}
+          {/* An orchestrator takes more tickets before launch, while it runs and once it
+              finished: its preview or dashboard has the picker */}
+          {documentRunId && isTicketRunTicket && canAddRunTickets && (
+            <ContextMenuItem
+              data-testid="ctx-run-add-tickets"
+              onClick={() =>
+                useDocumentFlowStore.getState().openRun(ticket.project_id, documentRunId)
+              }
+              className="gap-2"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add tickets…
             </ContextMenuItem>
           )}
           {documentRunId && documentPath && (
@@ -2551,7 +2615,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
           {isSimpleTicket && isTodo && !ticket.worktree_id && !isConnectionProjectTicket && !isShellCommandTicket && (
             <ContextMenuItem
               data-testid="ctx-assign-worktree"
-              onClick={() => setShowPreAssignPicker(true)}
+              onClick={openPreAssignPicker}
               className="gap-2"
             >
               <GitBranch className="h-3.5 w-3.5" />
@@ -2564,7 +2628,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             <>
               <ContextMenuItem
                 data-testid="ctx-change-worktree"
-                onClick={() => setShowPreAssignPicker(true)}
+                onClick={openPreAssignPicker}
                 className="gap-2"
               >
                 <GitBranch className="h-3.5 w-3.5" />
@@ -2585,7 +2649,16 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
           {isSimpleTicket && !isTodo && !isConnectionProjectTicket && !isDocumentRunTicket && !isShellCommandTicket && (
             <ContextMenuItem
               data-testid="ctx-assign-worktree"
-              onClick={() => setShowWorktreePicker(true)}
+              onClick={() => {
+                // This picker launches the ticket: one its run will launch (moved out of To Do
+                // by hand) is launched by the run alone, as on a drop on In Progress
+                const orchestrated = orchestratorLaunchRefusal(ticket.id)
+                if (orchestrated) {
+                  toast.error(orchestrated)
+                  return
+                }
+                setShowWorktreePicker(true)
+              }}
               className="gap-2"
             >
               <GitBranch className="h-3.5 w-3.5" />
@@ -2774,6 +2847,13 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
               </ContextMenuSubContent>
             </ContextMenuSub>
 
+            {/* Orchestrators made from board tickets: start one from this ticket, add it to
+                one, open the run it is part of. Not for a shell command (no agent), an
+                archived ticket, or one of another Mac's board */}
+            {!isShellCommandTicket && !isArchived && !ticket.archived_at && (
+              <TicketOrchestratorSubmenu ticket={ticket} />
+            )}
+
             <ContextMenuItem
               data-testid="ctx-rename-ticket"
               onClick={() =>
@@ -2891,7 +2971,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
           <AlertDialogContent data-testid="ctx-delete-confirm-dialog">
             <AlertDialogHeader>
               <AlertDialogTitle>
-                {isDocumentRunTicket ? 'Delete document run' : 'Delete ticket'}
+                {isDocumentRunTicket ? `Delete ${runKindLower}` : 'Delete ticket'}
               </AlertDialogTitle>
               <AlertDialogDescription>
                 {isDocumentRunTicket ? (

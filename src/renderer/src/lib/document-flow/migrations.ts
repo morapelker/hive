@@ -3,6 +3,7 @@ import { isEndedRunStatus } from '@shared/document-flow/run-ticket'
 import { isAgentCli } from '@shared/types/agent-sdk'
 import {
   isConnectionRun,
+  isTicketRun,
   type DocumentMigrationOutcome,
   type DocumentRun
 } from '@shared/types/document-flow'
@@ -205,6 +206,7 @@ export async function startRunMigrations(runId: string): Promise<void> {
       integrationBranch: branch,
       migrations: run.report?.migrations ?? [],
       sdk: modelConfig.sdk,
+      sourceKind: run.source_kind,
       // A connection run's session runs in the integration connection directory, where the
       // migration paths start with the member's directory.
       ...(connectionRun ? { workspace: workspaceOfMembers(run.members) } : {})
@@ -415,7 +417,7 @@ async function reportOver(
     const detail = await documentFlowApi.endMigrations(run.id, sessionId, outcome)
     useDocumentFlowStore.getState().applyDetail(detail)
     launched.delete(sessionId)
-    const name = run.title || 'the document run'
+    const name = run.title || (isTicketRun(run) ? 'the orchestrator' : 'the document run')
     if (died) {
       toast.warning(
         `The migration session of ${name} ended before it was done. Open it to see how far it got.`

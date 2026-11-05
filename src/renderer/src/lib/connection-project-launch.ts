@@ -35,6 +35,7 @@ import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { startHivePromptTelemetry } from '@/lib/hive-enterprise-telemetry'
 import { createPlanFile, exceedsGoalPromptLimit, planFilePrompt } from '@/lib/goal-plan-file'
 import { resolveBadgeModel, resolveCustomProviderBadge } from '@/lib/ticket-launch'
+import { orchestratorLaunchRefusal } from '@/lib/document-flow/ticket-run-membership'
 import { insertConnectionLocally } from '@/lib/connection-create'
 import { autoPinForBoardPrompt } from '@/lib/auto-pin'
 import {
@@ -679,6 +680,10 @@ export async function launchTicketOnConnectionProject(args: {
   target: ConnectionProjectLaunchTarget
   options: ConnectionProjectLaunchOptions
 }): Promise<ConnectionProjectLaunchResult> {
+  // A ticket its run will launch is launched by the run alone (the run's own launches take
+  // `launchTicketWithModel`, never this entry), before any instance is made for it
+  const refusal = orchestratorLaunchRefusal(args.ticket.id)
+  if (refusal) return { success: false, error: refusal }
   const memberProjects = getMemberProjects(args.savedProject)
   const nameHint = canonicalizeTicketTitle(args.ticket.title) || undefined
   const resolved = await resolveConnectionForLaunch({

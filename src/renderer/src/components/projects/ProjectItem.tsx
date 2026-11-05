@@ -15,7 +15,8 @@ import {
   GitBranch,
   FolderHeart,
   Sparkles,
-  FileText
+  FileText,
+  Workflow
 } from 'lucide-react'
 import type { ProjectShellCommand } from '@shared/lib/shell-commands'
 import { toast } from '@/lib/toast'
@@ -697,6 +698,18 @@ export const ProjectItem = memo(function ProjectItem({
               >
                 <FileText className="h-4 w-4 mr-2" />
                 Implement Document…
+              </ContextMenuItem>
+              {/* The same run from the project's own board tickets (an orchestrator) */}
+              <ContextMenuItem
+                data-testid="docflow-orchestrate-project-menu-item"
+                onClick={() =>
+                  useDocumentFlowStore
+                    .getState()
+                    .openWizard(project.id, null, { source: 'tickets' })
+                }
+              >
+                <Workflow className="h-4 w-4 mr-2" />
+                Orchestrate tickets…
               </ContextMenuItem>
               {/* Connection projects: edit the member projects. Only future instances pick
                   the new set up; running instances keep their worktrees. */}

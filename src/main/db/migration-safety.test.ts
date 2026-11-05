@@ -1001,4 +1001,68 @@ describeIf('database migration safety', () => {
       db.close()
     })
   })
+
+  describe('document run source kind (v69)', () => {
+    it('adds document_runs.source_kind on a fresh database', () => {
+      const db = new DatabaseService(makeDbPath())
+      db.init()
+
+      expect(db.getSchemaVersion()).toBe(CURRENT_SCHEMA_VERSION)
+      expect(columnNames(db, 'document_runs')).toEqual(expect.arrayContaining(['source_kind']))
+
+      db.close()
+    })
+
+    it('upgrades a v68-shaped database keeping its runs, which read as document runs', () => {
+      const dbPath = makeDbPath()
+      const seeded = new DatabaseService(dbPath)
+      seeded.init()
+      const projectId = seeded.createProject({ name: 'repo', path: '/tmp/source-kind-repo' }).id
+      seeded.createDocumentRun({
+        id: 'run-1',
+        project_id: projectId,
+        title: 'Checkout spec',
+        source_path: '/docs/checkout.html',
+        run_dir: '/runs/checkout',
+        status: 'preview',
+        config: DEFAULT_DOCUMENT_RUN_CONFIG
+      })
+      // v68 shape: document_runs without the source kind.
+      seeded.getRawDb().exec('ALTER TABLE document_runs DROP COLUMN source_kind')
+      seeded.setSetting('schema_version', '68')
+      seeded.close()
+
+      const db = new DatabaseService(dbPath)
+      db.init()
+
+      expect(db.getSchemaVersion()).toBe(CURRENT_SCHEMA_VERSION)
+      expect(columnNames(db, 'document_runs')).toEqual(expect.arrayContaining(['source_kind']))
+      expect(db.getDocumentRun('run-1')).toMatchObject({
+        source_kind: 'document',
+        source_path: '/docs/checkout.html',
+        status: 'preview'
+      })
+
+      // Re-running init() on the upgraded database is a no-op.
+      db.close()
+      const db2 = new DatabaseService(dbPath)
+      expect(() => db2.init()).not.toThrow()
+      expect(db2.getDocumentRun('run-1')?.source_kind).toBe('document')
+      db2.close()
+    })
+
+    it('repairs the column even if schema_version was already advanced', () => {
+      const dbPath = makeDbPath()
+      const seeded = new DatabaseService(dbPath)
+      seeded.init()
+      seeded.getRawDb().exec('ALTER TABLE document_runs DROP COLUMN source_kind')
+      seeded.close()
+
+      const db = new DatabaseService(dbPath)
+      db.init()
+
+      expect(columnNames(db, 'document_runs')).toEqual(expect.arrayContaining(['source_kind']))
+      db.close()
+    })
+  })
 })

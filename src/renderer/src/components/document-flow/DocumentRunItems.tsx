@@ -1,26 +1,39 @@
 import { useCallback, useMemo, useState } from 'react'
 import {
   Check,
+  CircleMinus,
   FilePenLine,
   FileX,
   GitBranch,
   MessageCircleQuestion,
+  Pencil,
   Radar,
   RotateCcw,
   SkipForward,
   SquareArrowOutUpRight
 } from 'lucide-react'
 import { AgentStateDot } from '@/components/sidebar/AgentStateDot'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
-import type {
-  DocumentRun,
-  DocumentRunItem,
-  DocumentRunLaunchConfig,
-  DocumentVerificationMethod
+import {
+  isTicketRun,
+  type DocumentRun,
+  type DocumentRunItem,
+  type DocumentRunLaunchConfig,
+  type DocumentVerificationMethod
 } from '@shared/types/document-flow'
 import {
   LaunchConfigBadge,
@@ -29,6 +42,8 @@ import {
   VerificationChips
 } from './DocumentFlowBadges'
 import { LaunchConfigPopover } from './LaunchConfigPopover'
+import { RunItemDependencyEditor } from './RunItemDependencyEditor'
+import { TicketBriefEditor } from './TicketBriefEditor'
 import { openSession } from './document-flow-navigation'
 import {
   effectiveLaunchConfig,
@@ -38,10 +53,13 @@ import {
 } from './document-flow-launch'
 import {
   canEditLaunchConfig,
+  canEditTicketRunItem,
   canEditVerification,
   canRetryDocumentUpdate,
   canSkipDocumentUpdate,
   describeItemBranches,
+  describeTicketRunItemRemoval,
+  isAddedAfterLaunch,
   isActiveRunStatus,
   isPausedItem,
   isRequeueableItem,
@@ -99,9 +117,21 @@ export interface RunItemActions {
     targets: readonly DocumentRunItem[],
     launchConfig: DocumentRunLaunchConfig | null
   ) => Promise<void>
+  /**
+   * A run made from board tickets: take a ticket that has not launched out of the run (it stays
+   * on the board), reporting a failure. Null for a document run.
+   */
+  removeItem: ((item: DocumentRunItem) => Promise<void>) | null
+  /**
+   * A run made from board tickets: whether what a ticket that has not launched starts after,
+   * and its brief, can be changed from this dashboard (the editors write through the store and
+   * the board). False for a document run.
+   */
+  canEditTicketRunItems: boolean
 }
 
 export function useRunItemActions(run: DocumentRun): RunItemActions {
+  const removeRunItem = useDocumentFlowStore((s) => s.removeRunItem)
   const retryItem = useDocumentFlowStore((s) => s.retryItem)
   const markItemDone = useDocumentFlowStore((s) => s.markItemDone)
   const skipItem = useDocumentFlowStore((s) => s.skipItem)
@@ -119,6 +149,7 @@ export function useRunItemActions(run: DocumentRun): RunItemActions {
           `Could not ${action} ${item.key}: ${cause instanceof Error ? cause.message : String(cause)}`
         )
       }
+    const ticketRun = isTicketRun(run)
     return {
       enabled: isActiveRunStatus(run.status),
       openLabel: 'Open session',
@@ -172,10 +203,23 @@ export function useRunItemActions(run: DocumentRun): RunItemActions {
             )
           )
         )
-      }
+      },
+      removeItem: ticketRun
+        ? (item) =>
+            removeRunItem(run.id, item.id).then(
+              () => undefined,
+              (cause: unknown) => {
+                toast.error(
+                  `Could not take ${item.key} out of the run: ${cause instanceof Error ? cause.message : String(cause)}`
+                )
+              }
+            )
+        : null,
+      canEditTicketRunItems: ticketRun
     }
   }, [
     run,
+    removeRunItem,
     retryItem,
     markItemDone,
     skipItem,
@@ -300,13 +344,44 @@ const ROW_GRID_CLASS =
 
 const MODEL_TITLE = 'Change model and effort (until the ticket launches)'
 
-/** Every ticket of the run in document order; the ones left out of the run come last. */
+const EDIT_TICKET_TITLE = 'Edit the ticket and what it starts after (until it launches)'
+const REMOVE_TITLE = 'Take the ticket out of the run (it stays on the board)'
+
+/**
+ * Every ticket of the run in document order; the ones left out of the run come last.
+ *
+ * A run made from board tickets (an orchestrator) can still change shape while it runs, ticket
+ * by ticket: a ticket that has not launched gets an Edit toggle, which opens a panel under its
+ * row with what it starts after (written as the board's dependencies) and its brief (the board
+ * ticket's title and description, which is what its agent gets at launch), and a Remove that
+ * takes it out of the run after a confirmation. Once a ticket launched, both go: its brief was
+ * sent and what it waited for is history. A ticket that joined after launch says so. None of
+ * this is offered for a run made from a document, whose rows read as they always did.
+ */
 export function RunItemsTable({ run, items }: RunItemsProps): React.JSX.Element {
   const actions = useRunItemActions(run)
   const ordered = [
     ...items.filter((item) => item.selected),
     ...items.filter((item) => !item.selected)
   ]
+  const ticketRun = isTicketRun(run)
+  // The ticket whose editing panel is open (one at a time), and the one asked to be removed
+  const [editingItemId, setEditingItemId] = useState<string | null>(null)
+  const [removingItemId, setRemovingItemId] = useState<string | null>(null)
+  const { removeItem } = actions
+  // Both follow the run as it is now: a ticket that launched (or left the run) meanwhile closes
+  // its panel and its confirmation for good, rather than reopening them should it ever wait
+  // again, or asking to remove a ticket the server would refuse.
+  const stillOpen = (itemId: string | null): DocumentRunItem | null =>
+    (itemId && items.find((item) => item.id === itemId && canEditTicketRunItem(run, item))) || null
+  const removing = stillOpen(removingItemId)
+  if (removingItemId !== null && removing === null) setRemovingItemId(null)
+  if (editingItemId !== null && stillOpen(editingItemId) === null) setEditingItemId(null)
+  const confirmRemove = (item: DocumentRunItem): void => {
+    setRemovingItemId(null)
+    if (editingItemId === item.id) setEditingItemId(null)
+    void removeItem?.(item)
+  }
 
   // The model of a ticket that has not launched is still open, like its verification. A model
   // any ticket settled on becomes a one-tap choice on every such row, and stays one for this
@@ -362,6 +437,12 @@ export function RunItemsTable({ run, items }: RunItemsProps): React.JSX.Element 
             const detail = itemDetailDisplay(item, items)
             const canRequeue = actions.enabled && isRequeueableItem(item)
             const sessionWorking = canRequeue && actions.isSessionWorking(item)
+            // A run made from board tickets: still open while the ticket has not launched
+            const changeable = ticketRun && canEditTicketRunItem(run, item)
+            const editable = changeable && actions.canEditTicketRunItems
+            const removable = changeable && removeItem !== null
+            const editing = editable && editingItemId === item.id
+            const addedMidRun = ticketRun && isAddedAfterLaunch(run, item)
             return (
               <div
                 key={item.id}
@@ -372,9 +453,26 @@ export function RunItemsTable({ run, items }: RunItemsProps): React.JSX.Element 
                 <span className="truncate font-mono text-[11px] text-muted-foreground">
                   {item.key}
                 </span>
-                <span className="truncate text-foreground" title={item.title}>
-                  {item.title}
-                </span>
+                {addedMidRun ? (
+                  // Stacked: on one line the pill takes the column and leaves no room for the title.
+                  <span className="flex min-w-0 flex-col items-start gap-0.5">
+                    <span className="max-w-full truncate text-foreground" title={item.title}>
+                      {item.title}
+                    </span>
+                    <TonePill
+                      tone="info"
+                      className="shrink-0"
+                      title="Added to the run after it launched"
+                      testId={`docflow-row-added-${item.key}`}
+                    >
+                      added mid-run
+                    </TonePill>
+                  </span>
+                ) : (
+                  <span className="truncate text-foreground" title={item.title}>
+                    {item.title}
+                  </span>
+                )}
                 <span className="min-w-0">
                   <TonePill
                     tone={status.tone}
@@ -434,7 +532,11 @@ export function RunItemsTable({ run, items }: RunItemsProps): React.JSX.Element 
                     </>
                   )}
                 </span>
-                <span className="flex items-center justify-end gap-0.5">
+                {/* A run made from board tickets may need more buttons than the track holds
+                    (a failed launch: Retry, Mark done, Skip, Edit, Remove): they wrap */}
+                <span
+                  className={cn('flex items-center justify-end gap-0.5', ticketRun && 'flex-wrap')}
+                >
                   {itemSessionTarget(run, item) && (
                     <RowAction
                       label="Open session"
@@ -503,13 +605,104 @@ export function RunItemsTable({ run, items }: RunItemsProps): React.JSX.Element 
                       <FileX />
                     </RowAction>
                   )}
+                  {editable && (
+                    <RowAction
+                      label="Edit ticket"
+                      title={EDIT_TICKET_TITLE}
+                      pressed={editing}
+                      testId={`docflow-item-edit-${item.key}`}
+                      onClick={() => setEditingItemId(editing ? null : item.id)}
+                    >
+                      <Pencil />
+                    </RowAction>
+                  )}
+                  {removable && (
+                    <RowAction
+                      label="Remove from run"
+                      title={REMOVE_TITLE}
+                      testId={`docflow-item-remove-${item.key}`}
+                      onClick={() => setRemovingItemId(item.id)}
+                    >
+                      <CircleMinus />
+                    </RowAction>
+                  )}
                 </span>
+                {/* Under the row, across every column */}
+                {editing && <TicketRunItemPanel run={run} item={item} items={items} />}
               </div>
             )
           })}
         </div>
       </div>
+
+      {ticketRun && (
+        <AlertDialog
+          open={removing !== null}
+          onOpenChange={(next) => {
+            if (!next) setRemovingItemId(null)
+          }}
+        >
+          <AlertDialogContent data-docflow-dialog="" data-testid="docflow-item-remove-dialog">
+            {removing && (
+              <>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Remove {removing.key} from the run?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    {describeTicketRunItemRemoval(removing, items)}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel data-testid="docflow-item-remove-cancel">
+                    Keep it
+                  </AlertDialogCancel>
+                  <AlertDialogAction
+                    variant="destructive"
+                    data-testid="docflow-item-remove-confirm"
+                    onClick={() => confirmRemove(removing)}
+                  >
+                    Remove from run
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </>
+            )}
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
     </section>
+  )
+}
+
+/**
+ * The editing panel of a ticket of a run made from board tickets that has not launched, under
+ * its row: what it starts after (the board's dependencies between the run's tickets, which the
+ * run follows; a cycle is refused) and its brief (the board ticket's title and description).
+ * While the run is going, a ticket whose dependencies are all met starts as soon as a slot is
+ * free, so the panel says so and points at Pause for a batch of changes.
+ */
+function TicketRunItemPanel({
+  run,
+  item,
+  items
+}: {
+  run: DocumentRun
+  item: DocumentRunItem
+  items: readonly DocumentRunItem[]
+}): React.JSX.Element {
+  return (
+    <div
+      className="col-span-full -mx-3 -mb-1.5 space-y-3 bg-muted/20 py-3 pl-[90px] pr-3"
+      data-testid={`docflow-item-editor-${item.key}`}
+    >
+      <RunItemDependencyEditor run={run} item={item} items={items} />
+      <TicketBriefEditor run={run} item={item} />
+      {run.status === 'running' && (
+        <p className="text-[11px] leading-snug text-muted-foreground">
+          The run is going: once everything {item.key} starts after is merged, it launches as soon
+          as a slot is free, with the brief as it is then. Pause the run to make several changes
+          first.
+        </p>
+      )}
+    </div>
   )
 }
 
@@ -617,6 +810,7 @@ function RowAction({
   label,
   title,
   disabled,
+  pressed,
   testId,
   onClick,
   children
@@ -625,6 +819,8 @@ function RowAction({
   /** Replaces the label as tooltip, e.g. to say why the action is disabled. */
   title?: string
   disabled?: boolean
+  /** A toggle (the editing panel of a ticket): whether it is on. Undefined for a plain button. */
+  pressed?: boolean
   testId: string
   onClick: () => void
   children: React.ReactNode
@@ -636,9 +832,13 @@ function RowAction({
       size="icon-xs"
       title={title ?? label}
       aria-label={label}
+      aria-pressed={pressed}
       disabled={disabled}
       data-testid={testId}
-      className="text-muted-foreground hover:text-foreground"
+      className={cn(
+        'text-muted-foreground hover:text-foreground',
+        pressed && 'bg-accent text-foreground'
+      )}
       onClick={onClick}
     >
       {children}

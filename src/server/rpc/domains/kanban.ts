@@ -17,6 +17,7 @@ import type {
   TicketLabel
 } from '../../../main/db'
 import { isTicketLabelColorToken, TICKET_LABELS_MAX } from '../../../shared/lib/ticket-labels'
+import type { DocumentFlowService } from '../../../main/services/document-flow/document-flow-service'
 import type { RpcHandler } from '../router'
 
 interface KanbanBoardImportTicket {
@@ -546,6 +547,26 @@ const errorMessage = (error: unknown): string => {
   return error instanceof Error ? error.message : String(error)
 }
 
+/**
+ * Tell the orchestrators made from board tickets that the board changed under them (their graph
+ * is the board's dependencies, and they copy their tickets' titles and descriptions). Only a
+ * service that is already running hears it: one that starts later catches up by itself
+ * (`refreshTicketRuns`), and an ordinary board edit never boots the document flow. Awaited, so
+ * the run is in step when the kanban call returns, but it never fails that call.
+ */
+const notifyTicketRuns = async (
+  notify: (service: DocumentFlowService) => Promise<void>
+): Promise<void> => {
+  try {
+    const { liveDocumentFlowService } =
+      await import('../../../main/services/document-flow/document-flow-service')
+    const service = liveDocumentFlowService()
+    if (service) await notify(service)
+  } catch {
+    // The board change stands; the hooks log their own failures, and the next sync catches up.
+  }
+}
+
 export const makeLiveKanbanRpcService = (): KanbanRpcService => ({
   createTicket: (projectId, data) =>
     Effect.tryPromise({
@@ -591,7 +612,12 @@ export const makeLiveKanbanRpcService = (): KanbanRpcService => ({
     Effect.tryPromise({
       try: async () => {
         const { getKanbanBackendForProject } = await import('../../../main/services/kanban-backend')
-        return getKanbanBackendForProject(projectId).update(projectId, id, data)
+        const updated = await getKanbanBackendForProject(projectId).update(projectId, id, data)
+        // An orchestrator made from board tickets shows their titles and descriptions.
+        if (data.title !== undefined || data.description !== undefined) {
+          await notifyTicketRuns((service) => service.onBoardTicketChanged(projectId, id))
+        }
+        return updated
       },
       catch: (cause) => cause
     }),
@@ -608,7 +634,10 @@ export const makeLiveKanbanRpcService = (): KanbanRpcService => ({
             await import('../../../main/services/document-flow/document-flow-service')
           return (await getDocumentFlowService()).deleteRunTicket(projectId, id, runId)
         }
-        return backend.delete(projectId, id)
+        const deleted = await backend.delete(projectId, id)
+        // A ticket an orchestrator holds and has not launched leaves it with the board.
+        await notifyTicketRuns((service) => service.onBoardTicketChanged(projectId, id))
+        return deleted
       },
       catch: (cause) => cause
     }),
@@ -616,7 +645,13 @@ export const makeLiveKanbanRpcService = (): KanbanRpcService => ({
     Effect.tryPromise({
       try: async () => {
         const { getKanbanBackendForProject } = await import('../../../main/services/kanban-backend')
-        return getKanbanBackendForProject(projectId).archive(projectId, id)
+        const archived = await getKanbanBackendForProject(projectId).archive(projectId, id)
+        // An archived ticket leaves an orchestrator that has not launched it (a run's own
+        // ticket is the run's business, not one of its tickets).
+        if (!documentRunIdOf(archived)) {
+          await notifyTicketRuns((service) => service.onBoardTicketChanged(projectId, id))
+        }
+        return archived
       },
       catch: (cause) => cause
     }),
@@ -647,10 +682,11 @@ export const makeLiveKanbanRpcService = (): KanbanRpcService => ({
   moveTicketToProject: (projectId, id, targetProjectId) =>
     Effect.tryPromise({
       try: async () => {
-        const { moveKanbanTicketToProject } = await import(
-          '../../../main/services/kanban-backend'
-        )
-        return moveKanbanTicketToProject(projectId, id, targetProjectId)
+        const { moveKanbanTicketToProject } = await import('../../../main/services/kanban-backend')
+        const moved = await moveKanbanTicketToProject(projectId, id, targetProjectId)
+        // Gone from this board, as far as an orchestrator of this project is concerned.
+        await notifyTicketRuns((service) => service.onBoardTicketChanged(projectId, id))
+        return moved
       },
       catch: (cause) => cause
     }),
@@ -734,7 +770,16 @@ export const makeLiveKanbanRpcService = (): KanbanRpcService => ({
     Effect.tryPromise({
       try: async () => {
         const { getKanbanBackendForProject } = await import('../../../main/services/kanban-backend')
-        return getKanbanBackendForProject(projectId).addDependency(projectId, dependentId, blockerId)
+        const result = await getKanbanBackendForProject(projectId).addDependency(
+          projectId,
+          dependentId,
+          blockerId
+        )
+        // The board's dependencies are an orchestrator's graph (a refused edge changes nothing).
+        await notifyTicketRuns((service) =>
+          service.onBoardDependenciesChanged(projectId, [dependentId, blockerId])
+        )
+        return result
       },
       catch: (cause) => cause
     }),
@@ -742,11 +787,15 @@ export const makeLiveKanbanRpcService = (): KanbanRpcService => ({
     Effect.tryPromise({
       try: async () => {
         const { getKanbanBackendForProject } = await import('../../../main/services/kanban-backend')
-        return getKanbanBackendForProject(projectId).removeDependency(
+        const removed = await getKanbanBackendForProject(projectId).removeDependency(
           projectId,
           dependentId,
           blockerId
         )
+        await notifyTicketRuns((service) =>
+          service.onBoardDependenciesChanged(projectId, [dependentId, blockerId])
+        )
+        return removed
       },
       catch: (cause) => cause
     }),
@@ -778,7 +827,14 @@ export const makeLiveKanbanRpcService = (): KanbanRpcService => ({
     Effect.tryPromise({
       try: async () => {
         const { getKanbanBackendForProject } = await import('../../../main/services/kanban-backend')
-        return getKanbanBackendForProject(projectId).removeAllDependencies(projectId, ticketId)
+        const removed = await getKanbanBackendForProject(projectId).removeAllDependencies(
+          projectId,
+          ticketId
+        )
+        await notifyTicketRuns((service) =>
+          service.onBoardDependenciesChanged(projectId, [ticketId])
+        )
+        return removed
       },
       catch: (cause) => cause
     }),

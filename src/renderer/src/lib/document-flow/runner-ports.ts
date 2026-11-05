@@ -70,6 +70,7 @@ export type RunnerTicket = Pick<
   | 'column'
   | 'current_session_id'
   | 'worktree_id'
+  | 'archived_at'
 >
 
 export interface RunnerWorktree {
@@ -89,6 +90,11 @@ export interface RunnerConnection {
 export interface RunnerNotice {
   level: 'info' | 'success' | 'warning' | 'error'
   message: string
+  /**
+   * The system notification's title: what kind of run speaks ("Orchestrator" for one made from
+   * board tickets). Absent for a document run's notices, which go out as "Document run".
+   */
+  title?: string
 }
 
 export type RunnerTimer = ReturnType<typeof setTimeout>
@@ -155,6 +161,12 @@ export interface RunnerPorts {
    */
   closeTicketSession(projectId: string, ticketId: string, sessionId: string): Promise<void>
   resetTicketToTodo(projectId: string, ticketId: string): Promise<void>
+  /**
+   * Drop the ticket's link to a session that is over, and nothing else: the ticket stays where
+   * the user left it until the launch that follows links its own session. Rejects when the
+   * write fails, as nothing may be launched over a link still in place.
+   */
+  unlinkTicketSession(projectId: string, ticketId: string): Promise<void>
   /** Rejects when the prompt could not be delivered. */
   sendFollowup(target: { sessionId: string; ticketId: string; prompt: string }): Promise<void>
   /**
@@ -435,6 +447,8 @@ export function createLiveRunnerPorts(): RunnerPorts {
         model_variant: null
       })
     },
+    unlinkTicketSession: (projectId, ticketId) =>
+      useKanbanStore.getState().updateTicket(ticketId, projectId, { current_session_id: null }),
     sendFollowup: ({ sessionId, ticketId, prompt }) =>
       // The ticket keeps the model it was launched with; the app's build default must not
       // replace it on a nudge or a conflict prompt.
@@ -458,10 +472,10 @@ export function createLiveRunnerPorts(): RunnerPorts {
     isSetupScriptRunning: (worktreeId) =>
       useScriptStore.getState().scriptStates[worktreeId]?.setupRunning ?? false,
 
-    notify: ({ level, message }) => {
+    notify: ({ level, message, title }) => {
       toast[level](message)
       // Shown by the main process only while the window is in the background.
-      systemApi.showNotification({ title: 'Document run', body: message }).catch(() => {})
+      systemApi.showNotification({ title: title ?? 'Document run', body: message }).catch(() => {})
     },
     isTransportError: isRpcTransportError,
     now: () => Date.now(),

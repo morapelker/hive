@@ -9,6 +9,14 @@
  * worktree per member repository, connected into one directory. Every git step then runs per
  * member (`integrationCheckouts`), and a ticket's merge is all or nothing across the members.
  *
+ * A run can also be made from tickets the user already has on the board (an "orchestrator",
+ * `source_kind: 'tickets'`): nothing is extracted, each item points at its ticket from the
+ * start, and the board's dependencies between the run's tickets are its graph — `depends_on` is
+ * a cache this service keeps in step with them (`syncDependencies`, and the kanban hooks
+ * `onBoardDependenciesChanged` / `onBoardTicketChanged`). Tickets can join, leave and be
+ * re-linked before and while it runs; a finished one takes more and resumes. From the launch
+ * on it is the same engine.
+ *
  * Runs in the server child. The orchestrator loop that decides WHEN to call these lives in the
  * renderer; nothing here launches or prompts a session. The base branch is only ever read.
  */
@@ -43,6 +51,20 @@ import {
   ticketBranchHint
 } from '@shared/document-flow/planning'
 import {
+  addingTicketsResumesRun,
+  canAddTicketsToRun,
+  defaultTicketRunTitle,
+  dependsOnFromBoard,
+  mintTicketRunKeys,
+  runKindLabel,
+  runOwnsItsTickets,
+  ticketRunItemDraft,
+  ticketRunRefusal,
+  type TicketRunCandidate,
+  type TicketRunOwner
+} from '@shared/document-flow/ticket-runs'
+import { ticketKeyOf } from '@shared/ticket-key'
+import {
   DOCUMENT_TEXT_LIMIT,
   detectDocumentFormat,
   preprocessDocument
@@ -69,6 +91,7 @@ import {
   hasIntegration,
   hasVerifyCommand,
   isConnectionRun,
+  isTicketRun,
   runVerifyCommands,
   type DocumentCommitResult,
   type DocumentMergeCheckMember,
@@ -77,6 +100,7 @@ import {
   type DocumentMergeResult,
   type DocumentMigrationOutcome,
   type DocumentRun,
+  type DocumentRunAddTicketsParams,
   type DocumentRunConfig,
   type DocumentRunDetail,
   type DocumentRunGeneration,
@@ -85,13 +109,16 @@ import {
   type DocumentRunItemPatch,
   type DocumentRunMember,
   type DocumentRunPatch,
+  type DocumentRunRemoveItemParams,
   type DocumentRunReport,
   type DocumentRunReportMember,
+  type DocumentRunSetDependenciesParams,
   type DocumentRunVerdict,
   type DocumentRunnerClaim,
   type DocumentSimpleResult,
   type DocumentSourceFile,
   type DocumentSourceState,
+  type DocumentTicketRunCreateParams,
   type DocumentUpdateStatus,
   type DocumentVerifyResult,
   type SessionFinalMessage
@@ -239,16 +266,41 @@ export interface DocumentFlowWorktree {
   base_branch?: string | null
 }
 
-/** A board ticket as far as a run cares: where it sits. */
+/**
+ * A board ticket as far as a run cares: where it sits, and — for a run made from board tickets,
+ * which adopts it — what decides whether it may join (see `TicketRunCandidate`) and what the
+ * item copies from it. The live `getTicket` returns the whole `KanbanTicket`; a field that is
+ * absent is one the board did not say.
+ */
 export interface DocumentFlowTicket {
   id: string
   column: KanbanTicketColumn
+  project_id?: string
+  title?: string
+  description?: string | null
+  archived_at?: string | null
+  current_session_id?: string | null
+  worktree_id?: string | null
+  external_provider?: string | null
+  external_id?: string | null
+  ticket_prefix?: string | null
+  ticket_number?: number | null
+  pending_launch_config?: string | null
+  parent_ticket_id?: string | null
+}
+
+/** A board edge: `dependent_id` waits for `blocker_id`. */
+export interface DocumentFlowTicketDependency {
+  dependent_id: string
+  blocker_id: string
 }
 
 /**
  * What a run writes on a board ticket after creating it: the model badge and the parent link on
  * a task ticket; on the run's own ticket, its description, the title once extracted and the
- * integration worktree at launch.
+ * integration worktree at launch. A ticket adopted by a run made from board tickets also loses
+ * its queued launch (`pending_launch_config`): the run launches it, not the board. At launch it
+ * also loses a link to a session that has closed (`current_session_id`).
  */
 export type DocumentFlowTicketPatch = Pick<
   KanbanTicketUpdate,
@@ -259,6 +311,8 @@ export type DocumentFlowTicketPatch = Pick<
   | 'description'
   | 'worktree_id'
   | 'parent_ticket_id'
+  | 'pending_launch_config'
+  | 'current_session_id'
 >
 
 export interface DocumentFlowServiceDeps {
@@ -308,13 +362,33 @@ export interface DocumentFlowServiceDeps {
     projectId: string,
     drafts: KanbanTicketBatchCreateItem[]
   ) => Promise<{ tickets: readonly { id: string }[] }>
+  /**
+   * Both board backends answer `{ success, error? }`: a self-dependency, a cycle or a ticket of
+   * another project is refused, not thrown.
+   */
   addTicketDependency: (
     projectId: string,
     dependentTicketId: string,
     blockerTicketId: string
   ) => Promise<unknown>
-  /** The ticket on the project's board; null when it is gone. */
+  /** Drops one board edge (a no-op when there is none). */
+  removeTicketDependency: (
+    projectId: string,
+    dependentTicketId: string,
+    blockerTicketId: string
+  ) => Promise<unknown>
+  /** Every dependency edge on the project's board. */
+  getTicketDependencies: (projectId: string) => Promise<DocumentFlowTicketDependency[]>
+  /** The ticket on the project's board; null when it is gone, or when it cannot be read. */
   getTicket: (projectId: string, ticketId: string) => Promise<DocumentFlowTicket | null>
+  /**
+   * Whether the project's board holds cards it could not read (a markdown card with conflict
+   * markers, a folder that is not there). `getTicket` answers null for those too, so on such a
+   * board null is no proof that a ticket left. Unset for a board that cannot have any.
+   */
+  boardHasUnreadableCards?: (projectId: string) => Promise<boolean>
+  /** Whether the session is still open; a ticket keeps its link to one that closed. */
+  isSessionActive?: (sessionId: string) => boolean
   /** Moves the ticket to the top of `column`. */
   moveTicket: (projectId: string, ticketId: string, column: KanbanTicketColumn) => Promise<unknown>
   /** Re-stamps the model the board shows on a ticket; cosmetic, so never fatal. */
@@ -324,6 +398,8 @@ export interface DocumentFlowServiceDeps {
     patch: DocumentFlowTicketPatch
   ) => Promise<unknown>
   deleteTicket: (projectId: string, ticketId: string) => Promise<unknown>
+  /** Takes the ticket out of the archive, as the board's Unarchive does. */
+  unarchiveTicket: (projectId: string, ticketId: string) => Promise<unknown>
   /** Records the branch a worktree's work is merged into. Not reachable over RPC. */
   setWorktreeBaseBranch: (worktreeId: string, baseBranch: string) => void
   resolveFinalMessage: (input: {
@@ -380,6 +456,73 @@ function sanitizeLine(value: string): string {
     .replace(/["<>]/g, '')
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+/** Most tickets one call adopts into a run made from board tickets (the RPC schema's cap too). */
+export const TICKET_RUN_TICKETS_LIMIT = 200
+
+/** "1 board ticket", "3 board tickets". */
+const boardTicketCount = (count: number): string => `${count} board ticket${count === 1 ? '' : 's'}`
+
+/** The board ticket as the eligibility rules read it; what the board did not say reads as unset. */
+function ticketRunCandidate(ticket: DocumentFlowTicket, projectId: string): TicketRunCandidate {
+  return {
+    id: ticket.id,
+    project_id: ticket.project_id ?? projectId,
+    title: ticket.title ?? '',
+    description: ticket.description ?? null,
+    column: ticket.column,
+    archived_at: ticket.archived_at ?? null,
+    current_session_id: ticket.current_session_id ?? null,
+    external_provider: ticket.external_provider ?? null,
+    external_id: ticket.external_id ?? null,
+    ticket_prefix: ticket.ticket_prefix ?? null,
+    ticket_number: ticket.ticket_number ?? null,
+    pending_launch_config: ticket.pending_launch_config ?? null
+  }
+}
+
+/** How a message names a board ticket: its key (`TD-12`), else its title in quotes. */
+function ticketLabel(ticket: TicketRunCandidate): string {
+  return ticketKeyOf(ticket) ?? `“${sanitizeLine(ticket.title) || ticket.id}”`
+}
+
+/**
+ * Why the board refused a dependency, from its `{ success, error }` answer; null when it took
+ * it (or answered nothing, as an older backend would).
+ */
+function boardRefusal(result: unknown): string | null {
+  if (typeof result !== 'object' || result === null) return null
+  const { success, error } = result as { success?: unknown; error?: unknown }
+  if (success !== false) return null
+  return typeof error === 'string' && error.trim() ? error.trim() : 'The board refused it.'
+}
+
+/**
+ * A cycle through `key` in `dependsOn` — `key`, then each key depending on the next, the last
+ * on `key` — or null. The shortest one, found from what `key` depends on; a loop elsewhere in
+ * the graph that `key` is not part of is not reported (`findDependencyCycle` would).
+ */
+function cycleThrough(
+  key: string,
+  dependsOn: Readonly<Record<string, readonly string[]>>
+): string[] | null {
+  const via = new Map<string, string>()
+  const queue: string[] = [key]
+  while (queue.length > 0) {
+    const node = queue.shift() as string
+    for (const next of dependsOn[node] ?? []) {
+      if (via.has(next)) continue
+      via.set(next, node)
+      if (next === key) {
+        const path: string[] = []
+        for (let at = node; at !== key; at = via.get(at) as string) path.unshift(at)
+        return [key, ...path]
+      }
+      queue.push(next)
+    }
+  }
+  return null
 }
 
 const sameList = (a: readonly string[], b: readonly string[]): boolean =>
@@ -623,6 +766,19 @@ export class DocumentFlowService {
   private readonly runTicketLocks = new KeyedMutex()
   /** One repository joins a run at a time: two windows adding the same one must not both cut it a worktree. */
   private readonly memberLocks = new KeyedMutex()
+  /**
+   * A run made from board tickets: one change of its tickets or their graph at a time (adding,
+   * removing, re-linking, a board change it follows, the checks and the end of its launch), so
+   * two windows cannot mint the same key or adopt the same ticket twice.
+   */
+  private readonly ticketRunLocks = new KeyedMutex()
+  /**
+   * One adoption of board tickets per project at a time, from the check that a ticket is free
+   * to the item that takes it: a ticket belongs to one run, and two orchestrators made at once
+   * (a double click, two windows) or two runs adding the same ticket would otherwise both read
+   * it as free. Taken inside a run's `ticketRunLocks`, never around one.
+   */
+  private readonly adoptionLocks = new KeyedMutex()
 
   constructor(private readonly deps: DocumentFlowServiceDeps) {
     this.db = deps.db
@@ -641,10 +797,14 @@ export class DocumentFlowService {
     return run ? this.detail(this.recoverInterruptedExtraction(run), true) : null
   }
 
-  /** The run's source document, and whether the file is still on disk (it is the user's file). */
+  /**
+   * The run's source document, and whether the file is still on disk (it is the user's file).
+   * A run made from board tickets has none: '' that is not there, without asking the disk.
+   */
   async sourceFile(runId: string): Promise<DocumentSourceFile> {
     const run = this.db.getDocumentRun(runId)
     if (!run) throw notFound('The run')
+    if (isTicketRun(run)) return { path: '', exists: false }
     return { path: run.source_path, exists: await documentFileExists(run.source_path) }
   }
 
@@ -655,9 +815,24 @@ export class DocumentFlowService {
    * `backupKey` (the item's key) an existing file is first copied to
    * `<run_dir>/doc-backups/<KEY>-<timestamp>.<ext>`, so an edit gone wrong can be undone by
    * hand. Never throws for the file itself: a missing or unreadable one is `exists: false`.
+   * A run made from board tickets has no document: nothing is read, written or backed up.
    */
   async inspectSource(runId: string, backupKey?: string | null): Promise<DocumentSourceState> {
     const run = this.requireRun(runId)
+    if (isTicketRun(run)) {
+      return {
+        path: '',
+        exists: false,
+        writable: false,
+        format: null,
+        encoding: null,
+        sha256: null,
+        size: null,
+        insideRepo: false,
+        assetsDir: '',
+        backupPath: null
+      }
+    }
     let path = run.source_path
     try {
       path = normalizeDocumentPath(run.source_path)
@@ -810,6 +985,9 @@ export class DocumentFlowService {
     generation?: DocumentRunGeneration | null
   }): DocumentRunDetail {
     const run = this.recoverInterruptedExtraction(this.requireRun(params.runId))
+    // Its items are the user's tickets: extracting would replace them with nothing.
+    if (isTicketRun(run))
+      throw invalidState('A run made from board tickets has nothing to extract.')
     if (run.status !== 'extract_failed' && run.status !== 'preview') {
       throw invalidState(
         run.status === 'extracting'
@@ -978,6 +1156,916 @@ export class DocumentFlowService {
     return updated
   }
 
+  // ── Runs made from board tickets ──────────────────────────────────────────
+
+  /**
+   * An orchestrator made from tickets the user already has on the board, straight into the
+   * preview (there is nothing to extract): one item per ticket in the order given, linked to
+   * its ticket from the start, keyed by the ticket's key, its title and description copied for
+   * display only (the ticket itself is the brief, read when it launches), its model taken from
+   * a queued launch. The board's dependencies between these tickets are its graph. Every ticket
+   * is checked (`ticketRunRefusal`), and one that cannot join refuses the whole call, naming
+   * each one and why. Adopted tickets lose their queued launch, since the run launches them,
+   * and one that "Save & Queue" left In Progress without a session goes back to To Do. The
+   * run's own ticket waits in To Do as the parent of the adopted ones, as a document run's does.
+   */
+  async createTicketRun(params: DocumentTicketRunCreateParams): Promise<DocumentRunDetail> {
+    const project = this.deps.getProject(params.projectId)
+    if (!project) throw notFound('The project')
+    // A connection project without enough members has nowhere to run: said now, not at launch.
+    this.resolveTarget(project, 'tickets')
+    const ticketIds = this.requireTicketIds(params.ticketIds)
+
+    // Detached, like the run's ticket of a document run: the board of whoever asked reloads
+    // with the adopted tickets as they are now.
+    return this.detach(() =>
+      this.adoptionLocks.run(project.id, () => this.makeTicketRun(project, ticketIds, params))
+    )
+  }
+
+  private async makeTicketRun(
+    project: DocumentFlowProject,
+    ticketIds: readonly string[],
+    params: DocumentTicketRunCreateParams
+  ): Promise<DocumentRunDetail> {
+    // Under the adoption lock of the project: see `adoptionLocks`.
+    const tickets = await this.adoptableTickets(project.id, ticketIds, null)
+    // Read before anything is written: a board that cannot be read makes no half a run.
+    const edges = await this.deps.getTicketDependencies(project.id)
+    const keys = mintTicketRunKeys(tickets)
+    const id = randomUUID()
+    let run = this.db.createDocumentRun({
+      id,
+      project_id: project.id,
+      title:
+        sanitizeLine(params.title ?? '') ||
+        sanitizeLine(defaultTicketRunTitle(tickets)) ||
+        runKindLabel({ source_kind: 'tickets' }),
+      source_kind: 'tickets',
+      source_path: '',
+      // Named like every run's; nothing is ever written there (no document, no figures).
+      run_dir: join(this.runsRoot, id),
+      document_path: null,
+      status: 'preview',
+      config: { ...DEFAULT_DOCUMENT_RUN_CONFIG, generation: params.generation ?? null }
+    })
+    this.db.insertDocumentRunItems(run.id, this.ticketItemDrafts(tickets, keys))
+    this.publishRun(run)
+    this.log(
+      run,
+      'created',
+      `Orchestrator made from ${boardTicketCount(tickets.length)}: ${keys.join(', ')}`,
+      { data: { ticketIds: tickets.map((ticket) => ticket.id) } }
+    )
+    this.writeDependencies(run, edges)
+    // The parent link comes with the run's ticket (`linkChildTickets`).
+    await this.releaseAdoptedTickets(run, tickets, null)
+    run = await this.createRunTicketQuietly(run)
+    return this.detail(run, true)
+  }
+
+  /**
+   * More board tickets for a run made from them: before its launch, while it runs (each waits
+   * for its dependencies and a free slot, like any ticket that has not launched), or once it
+   * finished, which resumes it on its integration branch with its report cleared and its
+   * ticket back In Progress. Tickets already in the run are left as they are; the others are
+   * checked as at creation and come after the run's last ticket, with keys of their own.
+   * Refused once the run is cancelled, while a session executes its migrations, and for a
+   * finished run whose integration branch is gone.
+   */
+  async addTickets(params: DocumentRunAddTicketsParams): Promise<DocumentRunDetail> {
+    const ticketIds = this.requireTicketIds(params.ticketIds)
+    // Refused up front so the caller hears it at once; checked again under the run's lock.
+    this.requireRunTakingTickets(params.runId)
+    return this.detach(() =>
+      this.ticketRunLocks.run(params.runId, () => this.adoptTickets(params.runId, ticketIds))
+    )
+  }
+
+  /**
+   * Takes a ticket out of a run made from board tickets while it has not launched: before the
+   * launch, or while it waits its turn (or its launch failed and left it with no session). The
+   * item goes; the ticket stays on the board, free again (its link to the run's ticket is
+   * dropped), and nothing waits for it any more. A launched ticket is skipped instead.
+   */
+  async removeItem(params: DocumentRunRemoveItemParams): Promise<DocumentRunDetail> {
+    const { run, item } = this.requireItem(params.runId, params.itemId)
+    this.assertTicketOpenToChange(run, item, 'remove')
+    this.assertRunKeepsATicket(run, item)
+    return this.detach(() =>
+      this.ticketRunLocks.run(run.id, () => this.dropItem(run.id, params.itemId))
+    )
+  }
+
+  /**
+   * What an item of a run made from board tickets starts after (keys of the run's other items;
+   * the list replaces the current one). The board's dependencies are the graph, so this writes
+   * them — between this ticket and the run's other tickets only: an edge to a ticket outside
+   * the run is the board's own business and stays — and the items follow. Refused for a change
+   * that would make a cycle (checked here, before the board is touched), and once the item has
+   * launched: what a launched ticket waited for is history.
+   */
+  async setItemDependencies(params: DocumentRunSetDependenciesParams): Promise<DocumentRunDetail> {
+    const { run, item } = this.requireItem(params.runId, params.itemId)
+    this.assertTicketOpenToChange(run, item, 'relink')
+    return this.detach(() =>
+      this.ticketRunLocks.run(run.id, () =>
+        this.relinkItem(run.id, params.itemId, params.dependsOn)
+      )
+    )
+  }
+
+  /**
+   * Kanban hook: the board's dependencies changed around these tickets. Every run made from
+   * board tickets that holds one of them re-derives its graph. Never throws: the board change
+   * stands either way, and the next sync (a launch, an edit) catches up.
+   */
+  async onBoardDependenciesChanged(projectId: string, ticketIds: readonly string[]): Promise<void> {
+    try {
+      for (const runId of this.ticketRunsHolding(projectId, ticketIds)) {
+        await this.followBoard(runId, async (run) => {
+          await this.syncDependencies(run)
+        })
+      }
+    } catch (error) {
+      log.warn('Could not follow a dependency change on the board', {
+        projectId,
+        ticketIds,
+        error: describeError(error)
+      })
+    }
+  }
+
+  /**
+   * Kanban hook: a board ticket was edited, archived, deleted or moved to another project.
+   * Every run made from board tickets that holds it refreshes its copy of the ticket's title
+   * and description; one that left the board or was archived leaves the run while it has not
+   * launched (a launched one stays, and the run reports its ticket gone), unless it is the last
+   * ticket of a launched run or the board has cards it cannot read. Never throws.
+   */
+  async onBoardTicketChanged(projectId: string, ticketId: string): Promise<void> {
+    try {
+      for (const runId of this.ticketRunsHolding(projectId, [ticketId])) {
+        await this.followBoard(runId, (run) => this.followBoardTickets(run, [ticketId]))
+      }
+    } catch (error) {
+      log.warn('Could not follow a ticket change on the board', {
+        projectId,
+        ticketId,
+        error: describeError(error)
+      })
+    }
+  }
+
+  /**
+   * Startup: the runs made from board tickets catch up with what changed on the board while no
+   * service was there to hear it (the kanban hooks only reach a live one). Nobody is watching
+   * this one, and a board that cannot be read right now looks like one whose tickets left, so a
+   * ticket that reads as missing stays for the user to see: the launch and the runner report it.
+   * Safe to repeat; never throws.
+   */
+  async refreshTicketRuns(): Promise<void> {
+    let runs: DocumentRun[]
+    try {
+      runs = this.db.listDocumentRuns(undefined, RECONCILED_RUNS)
+    } catch (error) {
+      log.warn('Could not list the orchestrators to refresh', { error: describeError(error) })
+      return
+    }
+    for (const listed of runs) {
+      if (!this.followsBoard(listed)) continue
+      try {
+        await this.followBoard(listed.id, (run) => this.followBoardTickets(run, null))
+      } catch (error) {
+        log.warn('Could not refresh an orchestrator from the board', {
+          runId: listed.id,
+          error: describeError(error)
+        })
+      }
+    }
+  }
+
+  /** The ids, trimmed and deduplicated, of a call that adopts tickets: at least one, capped. */
+  private requireTicketIds(ticketIds: readonly string[]): string[] {
+    const ids = unique(ticketIds)
+    if (ids.length === 0) throw invalidInput('Pick at least one ticket.')
+    if (ids.length > TICKET_RUN_TICKETS_LIMIT) {
+      throw invalidInput(`Pick at most ${TICKET_RUN_TICKETS_LIMIT} tickets at a time.`)
+    }
+    return ids
+  }
+
+  /**
+   * The tickets, in the order asked for, as the board has them now — or a refusal naming every
+   * one that cannot join (`ticketRunRefusal`): gone from this board, the ticket of a run, a
+   * shell command, archived, held by another run, launched already, or past To Do. `runId` is
+   * the run they would join, if it exists.
+   */
+  private async adoptableTickets(
+    projectId: string,
+    ticketIds: readonly string[],
+    runId: string | null
+  ): Promise<TicketRunCandidate[]> {
+    const tickets: TicketRunCandidate[] = []
+    const refusals: { label: string; reason: string }[] = []
+    for (const ticketId of ticketIds) {
+      const found = await this.deps.getTicket(projectId, ticketId)
+      if (!found || (found.project_id !== undefined && found.project_id !== projectId)) {
+        refusals.push({ label: 'A ticket', reason: "It is no longer on this project's board." })
+        continue
+      }
+      const ticket = ticketRunCandidate(found, projectId)
+      const reason = ticketRunRefusal(ticket, this.ticketOwner(ticket.id), runId)
+      if (reason) refusals.push({ label: ticketLabel(ticket), reason })
+      else tickets.push(ticket)
+    }
+    if (refusals.length === 1) {
+      throw invalidInput(`${refusals[0].label} cannot be orchestrated: ${refusals[0].reason}`)
+    }
+    if (refusals.length > 1) {
+      throw invalidInput(
+        `${refusals.length} tickets cannot be orchestrated. ${refusals.map(({ label, reason }) => `${label}: ${reason}`).join(' ')}`
+      )
+    }
+    return tickets
+  }
+
+  /** The run that holds the ticket now (one that still owns its tickets), if any. */
+  private ticketOwner(ticketId: string): TicketRunOwner | null {
+    for (const item of this.db.findDocumentRunItemsByTicketId(ticketId)) {
+      const run = this.db.getDocumentRun(item.run_id)
+      if (run && runOwnsItsTickets(run.status)) {
+        return { runId: run.id, title: run.title, status: run.status }
+      }
+    }
+    return null
+  }
+
+  /** The items of adopted tickets: no extraction, the ticket is the task; titles kept to one safe line. */
+  private ticketItemDrafts(
+    tickets: readonly TicketRunCandidate[],
+    keys: readonly string[]
+  ): ReturnType<typeof ticketRunItemDraft>[] {
+    return tickets.map((ticket, index) => {
+      const draft = ticketRunItemDraft(ticket, keys[index])
+      return { ...draft, title: sanitizeLine(draft.title) || draft.key }
+    })
+  }
+
+  /**
+   * What adoption changes on the tickets themselves: a queued launch goes (the board would
+   * otherwise launch the ticket on its own once its blockers are done), a ticket "Save &
+   * Queue" left In Progress without a session goes back to To Do, and with `parentId` the
+   * ticket points at the run's ticket. Never fatal: the run holds the ticket either way.
+   */
+  private async releaseAdoptedTickets(
+    run: DocumentRun,
+    tickets: readonly TicketRunCandidate[],
+    parentId: string | null
+  ): Promise<void> {
+    for (const ticket of tickets) {
+      const patch: DocumentFlowTicketPatch = {}
+      if (ticket.pending_launch_config) patch.pending_launch_config = null
+      if (parentId) patch.parent_ticket_id = parentId
+      try {
+        if (Object.keys(patch).length > 0) {
+          await this.deps.updateTicket(run.project_id, ticket.id, patch)
+        }
+        if (ticket.column === 'in_progress' && !ticket.current_session_id) {
+          // Read again: the run holds the ticket by now, and may have launched it meanwhile.
+          const latest = await this.deps.getTicket(run.project_id, ticket.id)
+          if (latest?.column === 'in_progress' && !latest.current_session_id) {
+            await this.deps.moveTicket(run.project_id, ticket.id, 'todo')
+          }
+        }
+      } catch (error) {
+        log.warn('Could not hand a ticket over to its orchestrator', {
+          runId: run.id,
+          ticketId: ticket.id,
+          error: describeError(error)
+        })
+      }
+    }
+  }
+
+  /**
+   * The run, if it takes tickets now: one made from board tickets, not cancelled, no session
+   * executing its migrations, and — finished — still on its integration branch to resume on.
+   */
+  private requireRunTakingTickets(runId: string): DocumentRun {
+    const run = this.requireRun(runId)
+    if (!isTicketRun(run)) {
+      throw invalidState('A document run gets its tickets from its document; it takes no others.')
+    }
+    if (!canAddTicketsToRun(run)) {
+      throw invalidState(
+        run.migration_session_id
+          ? 'A session is executing the migrations of this orchestrator; add tickets once it is done.'
+          : run.status === 'cancelled'
+            ? 'This orchestrator was cancelled; it takes no more tickets.'
+            : `This orchestrator takes no tickets while it is ${run.status.replace(/_/g, ' ')}.`
+      )
+    }
+    if (addingTicketsResumesRun(run) && !(hasIntegration(run) && this.integrationIsActive(run))) {
+      throw invalidState(
+        'This orchestrator has finished and its integration branch is gone, so it cannot resume with more tickets.'
+      )
+    }
+    return run
+  }
+
+  private async adoptTickets(
+    runId: string,
+    ticketIds: readonly string[]
+  ): Promise<DocumentRunDetail> {
+    let run = this.requireRunTakingTickets(runId)
+    const inRun = new Set(
+      this.db
+        .getDocumentRunItems(run.id)
+        .map((item) => item.ticket_id)
+        .filter((id): id is string => !!id)
+    )
+    const fresh = ticketIds.filter((id) => !inRun.has(id))
+    if (fresh.length === 0) return this.detail(run, true)
+    const projectId = run.project_id
+    const adopted = await this.adoptionLocks.run(projectId, async () => {
+      const tickets = await this.adoptableTickets(projectId, fresh, runId)
+      const edges = await this.deps.getTicketDependencies(projectId)
+      const unreadable = await this.itemsWithUnreadableCards(run)
+      // The board was read meanwhile: the run as it is now (the orchestrator may have finished
+      // it).
+      const current = this.requireRunTakingTickets(runId)
+      const keys = mintTicketRunKeys(
+        tickets,
+        this.db.getDocumentRunItems(runId).map((item) => item.key)
+      )
+      // One synchronous block, so nothing reads the run half-way through it. A finished run
+      // owns no tickets, so the status changes with the insert or another adoption would read
+      // these as free. And a new item goes out with its graph: a tick that found it pending
+      // with an empty `depends_on` would launch it ahead of what it waits for.
+      const resumes = addingTicketsResumesRun(current)
+      this.db.insertDocumentRunItems(runId, this.ticketItemDrafts(tickets, keys))
+      this.log(
+        current,
+        'tickets_added',
+        `${boardTicketCount(tickets.length)} joined the orchestrator: ${keys.join(', ')}`,
+        { data: { ticketIds: tickets.map((ticket) => ticket.id) } }
+      )
+      this.writeDependencies(current, edges, unreadable)
+      if (!resumes) {
+        this.publishRun(current)
+        return { current, tickets, resumes }
+      }
+      // A finished run goes on where it stopped: the next report covers every ticket.
+      const resumed = this.saveRun(current, {
+        status: 'running',
+        finished_at: null,
+        report: null,
+        error: null
+      })
+      this.log(
+        resumed,
+        'resumed',
+        `Resumed with ${tickets.length} more ticket${tickets.length === 1 ? '' : 's'}`
+      )
+      return { current: resumed, tickets, resumes }
+    })
+    run = adopted.current
+    await this.releaseAdoptedTickets(run, adopted.tickets, run.ticket_id)
+
+    if (!adopted.resumes) {
+      await this.describeRunTicket(run)
+      return this.detail(run, true)
+    }
+    await this.unarchiveRunTicket(run)
+    try {
+      run = await this.ensureRunTicket(run, 'in_progress')
+    } catch (error) {
+      log.warn('Could not move the ticket of a resumed orchestrator back to in progress', {
+        runId: run.id,
+        error: describeError(error)
+      })
+    }
+    // The resumed run can be cancelled from the moment it is published, and its ticket has just
+    // been moved for a run that goes on: one that ended meanwhile sends it on to Review.
+    await this.settleRunTicket(run)
+    return this.detail(run, true)
+  }
+
+  /**
+   * A resumed run shows on the board through its ticket, and an archived ticket has no card
+   * (nor a way back) outside the Done column. Never fatal: the run goes on either way.
+   */
+  private async unarchiveRunTicket(run: DocumentRun): Promise<void> {
+    const ticketId = run.ticket_id
+    if (!ticketId) return
+    try {
+      const ticket = await this.deps.getTicket(run.project_id, ticketId)
+      if (!ticket?.archived_at) return
+      await this.deps.unarchiveTicket(run.project_id, ticketId)
+      this.log(run, 'run_ticket_unarchived', "The run's ticket came back from the archive")
+    } catch (error) {
+      log.warn('Could not unarchive the ticket of a resumed orchestrator', {
+        runId: run.id,
+        ticketId,
+        error: describeError(error)
+      })
+    }
+  }
+
+  /**
+   * Which tickets a run made from board tickets holds, and what each starts after, change only
+   * while the ticket has not launched: before the launch, or while it waits its turn. A
+   * launched one is history (skip it instead), and so is every ticket of a finished run.
+   */
+  private assertTicketOpenToChange(
+    run: DocumentRun,
+    item: DocumentRunItem,
+    change: 'remove' | 'relink'
+  ): void {
+    if (!isTicketRun(run)) {
+      throw invalidState(
+        change === 'remove'
+          ? 'A ticket of a document run is not removed; deselect it in the preview instead.'
+          : 'What a ticket of a document run starts after is edited in its preview.'
+      )
+    }
+    if (run.status === 'preview') return
+    if (isActiveRunStatus(run.status)) {
+      if (awaitsLaunch(item)) return
+      throw invalidState(
+        change === 'remove'
+          ? `${item.key} has launched; skip it instead.`
+          : `${item.key} has launched; what it starts after can no longer be changed.`
+      )
+    }
+    throw invalidState(
+      run.status === 'cancelled'
+        ? 'This orchestrator was cancelled; its tickets can no longer change.'
+        : 'This orchestrator has finished; its tickets can no longer change.'
+    )
+  }
+
+  /**
+   * A launched run keeps at least one selected ticket: the orchestrator settles a run once all of
+   * its tickets are through, and one with none would never be (it would stay running with
+   * nothing to do). Its last ticket is skipped, or the run cancelled, instead. Before the launch
+   * the preview may be emptied; the launch then asks for a ticket.
+   */
+  private assertRunKeepsATicket(run: DocumentRun, item: DocumentRunItem): void {
+    if (this.isLastTicketOfLaunchedRun(run, item)) {
+      throw invalidState(
+        `${item.key} is the last ticket of this orchestrator; skip it or cancel the run instead.`
+      )
+    }
+  }
+
+  /**
+   * Whether the run would be left with no selected ticket without this one, once launched. A
+   * launch under way counts: the status stays `preview` until it ends, and it has already
+   * checked the tickets it is about to launch.
+   */
+  private isLastTicketOfLaunchedRun(run: DocumentRun, item: DocumentRunItem): boolean {
+    if (!item.selected) return false
+    if (run.status === 'preview' && !this.startsInFlight.has(run.id)) return false
+    return !this.db
+      .getDocumentRunItems(run.id)
+      .some((other) => other.id !== item.id && other.selected)
+  }
+
+  private async dropItem(runId: string, itemId: string): Promise<DocumentRunDetail> {
+    // Under the lock: the run and the item as they are after any change that was ahead.
+    const { run, item } = this.requireItem(runId, itemId)
+    this.assertTicketOpenToChange(run, item, 'remove')
+    this.assertRunKeepsATicket(run, item)
+    this.removeItemRow(
+      run,
+      item,
+      `${item.key} left the orchestrator; its ticket stays on the board`
+    )
+    await this.releaseParentLink(run, item.ticket_id)
+    await this.syncAfterRemoval(run, [item.key])
+    await this.describeRunTicket(run)
+    return this.detail(this.requireRun(run.id), true)
+  }
+
+  private removeItemRow(run: DocumentRun, item: DocumentRunItem, message: string): void {
+    this.db.deleteDocumentRunItem(item.id)
+    this.publishRun(run)
+    this.log(run, 'ticket_removed', message, { data: { key: item.key, ticketId: item.ticket_id } })
+  }
+
+  /** The ticket no longer points at the run's ticket (when it still did). Never fatal. */
+  private async releaseParentLink(run: DocumentRun, ticketId: string | null): Promise<void> {
+    const parentId = run.ticket_id
+    if (!ticketId || !parentId) return
+    try {
+      const ticket = await this.deps.getTicket(run.project_id, ticketId)
+      if (ticket?.parent_ticket_id !== parentId) return
+      await this.deps.updateTicket(run.project_id, ticketId, { parent_ticket_id: null })
+    } catch (error) {
+      log.warn('Could not unlink a ticket from the ticket of its orchestrator', {
+        runId: run.id,
+        ticketId,
+        error: describeError(error)
+      })
+    }
+  }
+
+  /** The graph without the tickets that left; from the board, else at least without their keys. */
+  private async syncAfterRemoval(run: DocumentRun, keys: readonly string[]): Promise<void> {
+    try {
+      await this.syncDependencies(run)
+    } catch (error) {
+      log.warn('Could not read the board dependencies of an orchestrator', {
+        runId: run.id,
+        error: describeError(error)
+      })
+      for (const other of this.db.getDocumentRunItems(run.id)) {
+        const kept = other.depends_on.filter((candidate) => !keys.includes(candidate))
+        if (kept.length < other.depends_on.length)
+          this.saveItem(run, other.id, { depends_on: kept })
+      }
+    }
+  }
+
+  private async relinkItem(
+    runId: string,
+    itemId: string,
+    dependsOn: readonly string[]
+  ): Promise<DocumentRunDetail> {
+    const { run, item } = this.requireItem(runId, itemId)
+    this.assertTicketOpenToChange(run, item, 'relink')
+    const dependentId = item.ticket_id
+    if (!dependentId) throw invalidState(`${item.key} has no ticket on the board.`)
+    const items = this.db.getDocumentRunItems(run.id)
+    const known = new Set(items.map((other) => other.key))
+    const asked = unique(dependsOn)
+    for (const key of asked) {
+      if (key === item.key) throw invalidInput(`${item.key} cannot start after itself.`)
+      if (!known.has(key)) throw invalidInput(`${key} is not a ticket of this orchestrator.`)
+    }
+    // In the run's order, as the board-derived lists are.
+    const wanted = items.filter((other) => asked.includes(other.key)).map((other) => other.key)
+
+    const edges = await this.deps.getTicketDependencies(run.project_id)
+    const graph = dependsOnFromBoard(items, edges)
+    graph[item.key] = wanted
+    // Through this ticket only: a loop elsewhere on the board is not this change's doing (the
+    // sync already keeps the run from scheduling it).
+    const cycle = cycleThrough(item.key, graph)
+    if (cycle) {
+      throw invalidInput(`That would make a cycle: ${[...cycle, cycle[0]].join(' → ')}`)
+    }
+
+    const ticketOfKey = new Map(
+      items.flatMap((other) => (other.ticket_id ? [[other.key, other.ticket_id] as const] : []))
+    )
+    const runTickets = new Set(ticketOfKey.values())
+    const current = new Set(
+      edges
+        .filter(
+          (edge) =>
+            edge.dependent_id === dependentId &&
+            edge.blocker_id !== dependentId &&
+            runTickets.has(edge.blocker_id)
+        )
+        .map((edge) => edge.blocker_id)
+    )
+    const blockers = wanted.flatMap((key) => {
+      const ticketId = ticketOfKey.get(key)
+      return ticketId ? [{ key, ticketId }] : []
+    })
+    let wrote = false
+    let refused: { key: string; reason: string } | null = null
+    try {
+      // Dropped edges first: the board checks a new one for cycles against what is left.
+      for (const blocker of current) {
+        if (blockers.some((wantedBlocker) => wantedBlocker.ticketId === blocker)) continue
+        await this.deps.removeTicketDependency(run.project_id, dependentId, blocker)
+        wrote = true
+      }
+      for (const blocker of blockers) {
+        if (current.has(blocker.ticketId)) continue
+        const reason = boardRefusal(
+          await this.deps.addTicketDependency(run.project_id, dependentId, blocker.ticketId)
+        )
+        if (reason) {
+          refused = { key: blocker.key, reason }
+          break
+        }
+        wrote = true
+      }
+    } finally {
+      // Whatever reached the board is the graph now, also after a refusal half-way.
+      await this.syncDependencies(run).catch((error: unknown) => {
+        log.warn('Could not read the board dependencies of an orchestrator', {
+          runId: run.id,
+          error: describeError(error)
+        })
+      })
+    }
+    if (refused) {
+      throw invalidInput(
+        `The board refused “${item.key} starts after ${refused.key}”: ${refused.reason}`
+      )
+    }
+    if (wrote) {
+      this.log(
+        run,
+        'dependencies_changed',
+        wanted.length > 0
+          ? `${item.key} starts after ${wanted.join(', ')}`
+          : `${item.key} no longer waits for another ticket`,
+        { itemId: item.id, data: { from: item.depends_on, to: wanted } }
+      )
+    }
+    return this.detail(this.requireRun(run.id), true)
+  }
+
+  /**
+   * Writes the board's graph into the items' `depends_on`, for every item whose list differs (on
+   * a launched item it is history, and harmless).
+   * A cycle on the board (which the orchestrator could never schedule) is broken here, at the
+   * edge that points forward in the run's order, as a document run's launch breaks one, and
+   * logged once — when it first costs the run an edge. Returns whether any item changed.
+   */
+  private async syncDependencies(run: DocumentRun): Promise<boolean> {
+    const unreadable = await this.itemsWithUnreadableCards(run)
+    return this.writeDependencies(
+      run,
+      await this.deps.getTicketDependencies(run.project_id),
+      unreadable
+    )
+  }
+
+  /**
+   * The items the board cannot speak for now. An edge lives on the card of the ticket that waits,
+   * so an unreadable card reads as a ticket that waits for nothing, and it would launch early once
+   * its card reads again. Only the cards themselves count: a stray file in the folder says nothing
+   * about the run's tickets, which go on following the board.
+   */
+  private async itemsWithUnreadableCards(run: DocumentRun): Promise<ReadonlySet<string>> {
+    const unreadable = new Set<string>()
+    if (!(await this.deps.boardHasUnreadableCards?.(run.project_id))) return unreadable
+    for (const item of this.db.getDocumentRunItems(run.id)) {
+      if (!item.ticket_id) continue
+      const ticket = await this.deps.getTicket(run.project_id, item.ticket_id)
+      if (!ticket) unreadable.add(item.key)
+    }
+    return unreadable
+  }
+
+  /**
+   * The writes of `syncDependencies`, for a caller that has just read the edges. Synchronous, so
+   * that a caller can make them one step with the items they are about. `keepKeys` keep the list
+   * they have (see `itemsWithUnreadableCards`).
+   */
+  private writeDependencies(
+    run: DocumentRun,
+    board: readonly DocumentFlowTicketDependency[],
+    keepKeys: ReadonlySet<string> = new Set()
+  ): boolean {
+    const items = this.db.getDocumentRunItems(run.id)
+    const fromBoard = dependsOnFromBoard(items, board)
+    const { dependsOn, warnings } = sanitizeDependencies(
+      items.map((item) => ({
+        key: item.key,
+        depends_on: keepKeys.has(item.key) ? item.depends_on : (fromBoard[item.key] ?? [])
+      }))
+    )
+    let changed = false
+    for (const item of items) {
+      const next = dependsOn[item.key] ?? []
+      if (sameList(next, item.depends_on)) continue
+      this.saveItem(run, item.id, { depends_on: next })
+      changed = true
+    }
+    if (changed) for (const warning of warnings) this.log(run, 'dependency_warning', warning)
+    return changed
+  }
+
+  /** A run made from board tickets that still owns them follows the board. */
+  private followsBoard(run: DocumentRun): boolean {
+    return isTicketRun(run) && runOwnsItsTickets(run.status)
+  }
+
+  /** Runs made from board tickets, still owning them, that hold one of these tickets. */
+  private ticketRunsHolding(projectId: string, ticketIds: readonly string[]): string[] {
+    const runIds = new Set<string>()
+    for (const ticketId of new Set(ticketIds)) {
+      for (const item of this.db.findDocumentRunItemsByTicketId(ticketId)) {
+        const run = this.db.getDocumentRun(item.run_id)
+        if (run && run.project_id === projectId && this.followsBoard(run)) runIds.add(run.id)
+      }
+    }
+    return [...runIds]
+  }
+
+  /**
+   * One board change followed by one run: under the run's lock, on the row as it is then, and
+   * detached, so that what it writes on the board reaches the board of whoever made the change.
+   */
+  private followBoard(runId: string, follow: (run: DocumentRun) => Promise<void>): Promise<void> {
+    return this.detach(() =>
+      this.ticketRunLocks.run(runId, async () => {
+        const run = this.db.getDocumentRun(runId)
+        if (run && this.followsBoard(run)) await follow(run)
+      })
+    )
+  }
+
+  /**
+   * The run's copies of its tickets as the board has them now (`ticketIds` null = every one):
+   * titles and descriptions refreshed; a ticket that left the board or was archived leaves the
+   * run while it has not launched; then the graph is derived again. Null from the board is only
+   * believed when a change to this very ticket was just reported (`ticketIds` given) on a board
+   * that reads whole. A launched run keeps its last ticket in any case, as `removeItem` does: the
+   * runner flags it, and the user can skip it.
+   */
+  private async followBoardTickets(
+    run: DocumentRun,
+    ticketIds: readonly string[] | null
+  ): Promise<void> {
+    const scope = ticketIds ? new Set(ticketIds) : null
+    let removed = false
+    for (const item of this.db.getDocumentRunItems(run.id)) {
+      const ticketId = item.ticket_id
+      if (!ticketId || (scope && !scope.has(ticketId))) continue
+      const ticket = await this.deps.getTicket(run.project_id, ticketId)
+      if (ticket && !ticket.archived_at) {
+        this.refreshItemCopy(run, item, ticket)
+        continue
+      }
+      const unlaunched =
+        run.status === 'preview' || (isActiveRunStatus(run.status) && awaitsLaunch(item))
+      if (!unlaunched) continue
+      const context = { runId: run.id, item: item.key, ticketId }
+      if (!ticket && !scope) {
+        log.info('Kept a ticket of an orchestrator that reads as missing at startup', context)
+        continue
+      }
+      if (!ticket && (await this.deps.boardHasUnreadableCards?.(run.project_id))) {
+        log.warn('Kept a ticket of an orchestrator: its board has cards it cannot read', context)
+        continue
+      }
+      if (this.isLastTicketOfLaunchedRun(run, item)) {
+        log.warn('Kept the last ticket of an orchestrator that left the board', context)
+        continue
+      }
+      this.removeItemRow(
+        run,
+        item,
+        ticket
+          ? `${item.key} was archived on the board, so it left the orchestrator`
+          : `${item.key} left the board, so it left the orchestrator`
+      )
+      removed = true
+      if (ticket) await this.releaseParentLink(run, ticketId)
+    }
+    if (removed) await this.describeRunTicket(run)
+    await this.syncDependencies(run)
+  }
+
+  /** The item's copy of its ticket's title and description, where the board said them. */
+  private refreshItemCopy(
+    run: DocumentRun,
+    item: DocumentRunItem,
+    ticket: DocumentFlowTicket
+  ): void {
+    const patch: DocumentRunItemRowPatch = {}
+    if (typeof ticket.title === 'string') {
+      const title = sanitizeLine(ticket.title) || item.key
+      if (title !== item.title) patch.title = title
+    }
+    if (ticket.description !== undefined) {
+      const description = ticket.description ?? ''
+      if (description !== item.description) patch.description = description
+    }
+    if (Object.keys(patch).length > 0) this.saveItem(run, item.id, patch)
+  }
+
+  /**
+   * A run made from board tickets launches its tickets as the board has them now. They are all
+   * checked before anything is written, so a refused launch leaves the preview as it was: a
+   * ticket that left the board, was archived, still has the open session it was launched with
+   * from the board, or was moved past In Progress stops the launch, since the run would launch
+   * one that is gone, give it a second session or pull finished work back. Then the copies and
+   * the graph are brought up to date, a launch the board queued on one since is dropped (the run
+   * launches it), so is a link to a session that has closed, and the board shows the model each
+   * will launch with. Tickets left unchecked go at the end of the launch (`dropLeftOutTickets`).
+   */
+  private async prepareTicketRunLaunch(run: DocumentRun): Promise<DocumentRun> {
+    const problems: string[] = []
+    const launching: { item: DocumentRunItem; ticketId: string; ticket: DocumentFlowTicket }[] = []
+    for (const item of this.db.getDocumentRunItems(run.id)) {
+      if (!item.selected || !awaitsLaunch(item)) continue
+      const ticketId = item.ticket_id
+      if (!ticketId) {
+        problems.push(`${item.key} has no ticket on the board; remove it from the orchestrator.`)
+        continue
+      }
+      const ticket = await this.deps.getTicket(run.project_id, ticketId)
+      if (!ticket) {
+        problems.push(`${item.key} is no longer on the board; remove it from the orchestrator.`)
+        continue
+      }
+      if (ticket.archived_at) {
+        problems.push(`${item.key} is archived; unarchive it or remove it from the orchestrator.`)
+        continue
+      }
+      if (ticket.current_session_id && this.sessionIsActive(ticket.current_session_id)) {
+        problems.push(
+          `${item.key} was launched from the board; close its session or remove it from the orchestrator.`
+        )
+        continue
+      }
+      if (ticket.column === 'review' || ticket.column === 'done' || ticket.column === 'merged') {
+        problems.push(
+          `${item.key} was moved to ${RUN_TICKET_COLUMN_NAMES[ticket.column]} on the board; move it back or remove it from the orchestrator.`
+        )
+        continue
+      }
+      launching.push({ item, ticketId, ticket })
+    }
+    if (problems.length > 0) throw invalidState(problems.join(' '))
+    for (const { item, ticketId, ticket } of launching) {
+      this.refreshItemCopy(run, item, ticket)
+      const patch: DocumentFlowTicketPatch = {}
+      if (ticket.pending_launch_config) patch.pending_launch_config = null
+      if (ticket.current_session_id) patch.current_session_id = null
+      if (Object.keys(patch).length > 0) {
+        await this.deps.updateTicket(run.project_id, ticketId, patch).catch((error: unknown) => {
+          log.warn('Could not clear an orchestrated ticket for its launch', {
+            runId: run.id,
+            ticketId,
+            error: describeError(error)
+          })
+        })
+      }
+      if ((item.launch_config ?? run.config.defaultLaunch)?.model) {
+        this.stampTicketModel(run, item, ticketId)
+      }
+    }
+    await this.syncDependencies(run)
+    return this.db.getDocumentRun(run.id) ?? run
+  }
+
+  /** A session counts as open unless told otherwise: a second session is what the check prevents. */
+  private sessionIsActive(sessionId: string): boolean {
+    return this.deps.isSessionActive?.(sessionId) ?? true
+  }
+
+  /**
+   * A ticket left unchecked in the preview is not part of what launches: it leaves the run here,
+   * so its ticket is free again (to launch by hand, or to join another orchestrator) rather than
+   * held by a run that will never launch it. Only once the integration exists: a launch that
+   * stops earlier keeps the unchecked tickets in the preview, for the retry.
+   */
+  private async dropLeftOutTickets(run: DocumentRun): Promise<void> {
+    const leftOut = this.db
+      .getDocumentRunItems(run.id)
+      .filter((item) => !item.selected && awaitsLaunch(item))
+    if (leftOut.length === 0) return
+    for (const item of leftOut) {
+      this.removeItemRow(
+        run,
+        item,
+        `${item.key} was left out at launch; its ticket stays on the board`
+      )
+      await this.releaseParentLink(run, item.ticket_id)
+    }
+    await this.describeRunTicket(run)
+    await this.syncAfterRemoval(
+      run,
+      leftOut.map((item) => item.key)
+    )
+  }
+
+  /** A launch needs a ticket; unchecking one takes no lock, so it can come at any moment. */
+  private assertRunHasTicketToLaunch(run: DocumentRun): void {
+    if (!this.db.getDocumentRunItems(run.id).some((item) => item.selected)) {
+      throw invalidState('This orchestrator has no ticket left to launch; select or add one.')
+    }
+  }
+
+  /** The run's ticket says how many tickets the run holds; cosmetic, so never fatal. */
+  private async describeRunTicket(run: DocumentRun): Promise<void> {
+    const ticketId = run.ticket_id
+    if (!ticketId) return
+    try {
+      await this.deps.updateTicket(run.project_id, ticketId, {
+        description: this.runTicketDescription(run)
+      })
+    } catch (error) {
+      log.warn('Could not re-describe the ticket of an orchestrator', {
+        runId: run.id,
+        ticketId,
+        error: describeError(error)
+      })
+    }
+  }
+
   // ── Edits ─────────────────────────────────────────────────────────────────
 
   updateRun(runId: string, patch: DocumentRunPatch): DocumentRun {
@@ -1079,6 +2167,25 @@ export class DocumentFlowService {
     const { run, item } = this.requireItem(runId, itemId)
     const launched = !UNLAUNCHED_RUN_STATUSES.includes(run.status)
 
+    // A run made from board tickets keeps neither in the item: the ticket is the brief, and the
+    // board's dependencies are the graph (`setItemDependencies`). What it launches with (the
+    // model, the verification) and whether it is part of the run are its own, as below.
+    if (isTicketRun(run)) {
+      if (patch.depends_on !== undefined) {
+        throw invalidState(
+          'An orchestrator follows the board: change what a ticket starts after with setItemDependencies.'
+        )
+      }
+      if (
+        patch.title !== undefined ||
+        patch.summary !== undefined ||
+        patch.description !== undefined
+      ) {
+        throw invalidState(
+          'The ticket is the brief of an orchestrator: edit the ticket on the board.'
+        )
+      }
+    }
     if (
       PREVIEW_ITEM_FIELDS.some((field) => patch[field] !== undefined) &&
       run.status !== 'preview'
@@ -1211,6 +2318,11 @@ export class DocumentFlowService {
   ): Promise<DocumentRunDetail> {
     let run = initialRun
     try {
+      // Its tickets are already on the board, as the user left them: checked and read again.
+      if (isTicketRun(run)) {
+        const unprepared = run
+        run = await this.ticketRunLocks.run(run.id, () => this.prepareTicketRunLaunch(unprepared))
+      }
       this.cleanDependencies(run)
       if (!hasIntegration(run)) {
         run =
@@ -1222,11 +2334,24 @@ export class DocumentFlowService {
       // created with it as their parent.
       run = await this.ensureRunTicket(run, 'in_progress')
       await this.createTickets(run, defaultSdk)
-      run = this.saveRun(run, {
+      const launched: DocumentRunRowPatch = {
         status: 'running',
         started_at: run.started_at ?? this.now().toISOString(),
         error: null
-      })
+      }
+      if (isTicketRun(run)) {
+        const ready = run
+        run = await this.ticketRunLocks.run(run.id, async () => {
+          // Before anything leaves, or a refused launch would not leave the preview as it was.
+          this.assertRunHasTicketToLaunch(ready)
+          await this.dropLeftOutTickets(ready)
+          // Again, with no gap before the write: the last ticket may have been unchecked since.
+          this.assertRunHasTicketToLaunch(ready)
+          return this.saveRun(ready, launched)
+        })
+      } else {
+        run = this.saveRun(run, launched)
+      }
       this.log(run, 'started', `Run launched on ${run.integration_branch}`)
       return this.detail(run, true)
     } catch (error) {
@@ -1267,7 +2392,7 @@ export class DocumentFlowService {
       projectPath: project.path,
       projectName: project.name,
       branchName: baseBranch,
-      nameHint: integrationBranchHint(run.title),
+      nameHint: integrationBranchHint(run.title, run.source_kind),
       // Both are load-bearing: auto-pull would run `git pull` in the root checkout, and
       // without a base ref a checked-out base branch is duplicated together with its
       // uncommitted files.
@@ -1322,7 +2447,7 @@ export class DocumentFlowService {
       `Base: ${bases.map((base) => `${base.member.name} ${base.baseBranch} at ${base.baseSha.slice(0, 8)}`).join(', ')}`
     )
 
-    const nameHint = integrationBranchHint(run.title)
+    const nameHint = integrationBranchHint(run.title, run.source_kind)
     const worktrees: {
       base: (typeof bases)[number]
       worktree: NonNullable<WorktreeResult['worktree']>
@@ -1392,7 +2517,10 @@ export class DocumentFlowService {
     // The instance shows up in the sidebar under the project: named after the run, like the
     // branches are.
     try {
-      await this.deps.renameConnection?.(connection.id, sanitizeLine(run.title) || 'Document run')
+      await this.deps.renameConnection?.(
+        connection.id,
+        sanitizeLine(run.title) || runKindLabel(run)
+      )
     } catch (error) {
       log.warn('Could not name the integration instance of a document run', {
         runId: run.id,
@@ -1499,7 +2627,7 @@ export class DocumentFlowService {
         projectPath: project.path,
         projectName: project.name,
         branchName: baseBranch,
-        nameHint: integrationBranchHint(run.title),
+        nameHint: integrationBranchHint(run.title, run.source_kind),
         // Same two load-bearing options as at launch: see createIntegrationWorktree.
         autoPull: false,
         baseRef: baseSha
@@ -1787,7 +2915,8 @@ export class DocumentFlowService {
    * worktree, so moving it to Done merges the integration branch into the base branch like any
    * ticket's work. It has no session; the external-source fields mark it (both board backends
    * store those), and `external_url` carries the path of the document the run was made from, so
-   * the ticket row itself says which file to open even once the run record is gone.
+   * the ticket row itself says which file to open even once the run record is gone (a run made
+   * from board tickets has no file: none, so the board offers no document to open).
    * On a connection project the ticket has no worktree: the board merges the run's integration
    * instance member by member from `integration_connection_id` instead.
    * Idempotent: a run that has its ticket gets it placed, not a second one; a ticket deleted
@@ -1805,14 +2934,14 @@ export class DocumentFlowService {
         {
           draft_key: `run-${current.id}`,
           project_id: current.project_id,
-          title: sanitizeLine(current.title) || 'Document run',
+          title: sanitizeLine(current.title) || runKindLabel(current),
           description: this.runTicketDescription(current),
           column,
           mode: null,
           worktree_id: current.integration_worktree_id,
           external_provider: DOCUMENT_RUN_TICKET_PROVIDER,
           external_id: current.id,
-          external_url: current.source_path
+          external_url: isTicketRun(current) ? null : current.source_path
         }
       ])
       const ticket = tickets[0]
@@ -1879,7 +3008,7 @@ export class DocumentFlowService {
     try {
       await this.detach(() =>
         this.deps.updateTicket(run.project_id, ticketId, {
-          title: sanitizeLine(run.title) || 'Document run'
+          title: sanitizeLine(run.title) || runKindLabel(run)
         })
       )
     } catch (error) {
@@ -1900,9 +3029,12 @@ export class DocumentFlowService {
   private linkChildTickets(run: DocumentRun): void {
     const parentId = run.ticket_id
     if (!parentId) return
+    // An orchestrator's unchecked ticket is not part of the launch, and leaves the run at it.
     const children = this.db
       .getDocumentRunItems(run.id)
-      .flatMap((item) => [item.ticket_id, item.fix_ticket_id])
+      .flatMap((item) =>
+        isTicketRun(run) && !item.selected ? [] : [item.ticket_id, item.fix_ticket_id]
+      )
       .filter((id): id is string => !!id && id !== parentId)
     for (const ticketId of children) {
       void this.detach(() =>
@@ -1918,11 +3050,18 @@ export class DocumentFlowService {
   }
 
   private runTicketDescription(run: DocumentRun): string {
+    // A run made from board tickets is named by what it holds: it has no document.
+    const what = isTicketRun(run)
+      ? `Orchestrator of ${boardTicketCount(this.db.getDocumentRunItems(run.id).length)}`
+      : `Document run of ${run.source_path}`
+    const whose = isTicketRun(run) ? 'its tickets' : "the run's tickets"
     if (!hasIntegration(run)) {
-      return `Document run of ${run.source_path}. Its tickets are extracted from the document; open this ticket to review them and launch the run.`
+      return isTicketRun(run)
+        ? `${what}; open this ticket to review them and launch the run.`
+        : `${what}. Its tickets are extracted from the document; open this ticket to review them and launch the run.`
     }
     if (!isConnectionRun(run)) {
-      return `Document run of ${run.source_path}. Its branch ${run.integration_branch} collects the merged work of the run's tickets; move this ticket to Done to merge it into ${run.base_branch}.`
+      return `${what}. Its branch ${run.integration_branch} collects the merged work of ${whose}; move this ticket to Done to merge it into ${run.base_branch}.`
     }
     const branches = run.members
       .map(
@@ -1930,7 +3069,7 @@ export class DocumentFlowService {
           `${member.project_name}: ${member.integration_branch} (from ${member.base_branch})`
       )
       .join(', ')
-    return `Document run of ${run.source_path}. Its integration instance at ${run.integration_connection_path} collects the merged work of the run's tickets, one branch per member repository — ${branches}; move this ticket to Done to merge each into its base branch.`
+    return `${what}. Its integration instance at ${run.integration_connection_path} collects the merged work of ${whose}, one branch per member repository — ${branches}; move this ticket to Done to merge each into its base branch.`
   }
 
   /**
@@ -3187,11 +4326,31 @@ export class DocumentFlowService {
 
   async finalize(runId: string): Promise<DocumentRunDetail> {
     const run = this.requireRun(runId)
+    // A run made from board tickets can take one while it settles: one change at a time, so a
+    // ticket that joins is either in the report or resumes the finished run.
+    return isTicketRun(run)
+      ? this.ticketRunLocks.run(run.id, () => this.finalizeRun(run.id))
+      : this.finalizeRun(run.id)
+  }
+
+  private async finalizeRun(runId: string): Promise<DocumentRunDetail> {
+    const run = this.requireRun(runId)
     if (run.status !== 'running' && run.status !== 'paused') {
       throw invalidState('Only a launched run that has not finished yet can be finalized.')
     }
     // A merge still under way lands (or fails) first, so the report cannot miss it.
     await this.mergesInFlight.get(runId)?.catch(() => undefined)
+    // A ticket that joined after the orchestrator decided the run was over has yet to launch:
+    // not finished after all (the orchestrator asks again later). One whose merge is on the
+    // branch already counts, as below; finishing early skips every other one first.
+    if (
+      isTicketRun(run) &&
+      this.db
+        .getDocumentRunItems(run.id)
+        .some((item) => item.selected && !isTerminalItemStatus(item.status) && !item.merge_sha)
+    ) {
+      return this.detail(this.requireRun(run.id), true)
+    }
     // The orchestrator only finalizes once the document edit lane has drained; finishing early
     // closes whatever is left in it.
     this.skipPendingDocumentUpdates(run, DOCUMENT_UPDATE_FINISHED_DETAIL)
@@ -3205,8 +4364,9 @@ export class DocumentFlowService {
     const settled = items.every((item) => item.status === 'merged' || item.status === 'skipped')
     const status = settled && unconfirmed === 0 ? 'completed' : 'completed_with_issues'
     const updated = this.saveRun(run, { status, report, finished_at: this.now().toISOString() })
-    // Before the run's last log line, so that one stays "Run finished".
-    await this.writeRunStatus(updated, items, report)
+    // Before the run's last log line, so that one stays "Run finished". A run made from board
+    // tickets has no document to write it into.
+    if (!isTicketRun(updated)) await this.writeRunStatus(updated, items, report)
     this.log(
       updated,
       status,
@@ -3594,7 +4754,8 @@ export class DocumentFlowService {
     if (run.migration_session_id && !options.removeFiles) {
       throw invalidState('Stop the migrations of the run before deleting it.')
     }
-    const hasTickets = this.db.getDocumentRunItems(run.id).some((item) => item.ticket_id)
+    const items = this.db.getDocumentRunItems(run.id)
+    const hasTickets = items.some((item) => item.ticket_id)
     const deleted = this.db.deleteDocumentRun(run.id)
     this.lastVerify.delete(run.id)
     const ticketId = run.ticket_id
@@ -3607,6 +4768,13 @@ export class DocumentFlowService {
           runId: run.id,
           ticketId,
           error: describeError(error)
+        })
+      }
+      // The tickets a run made from board tickets adopted are the user's: they stay, no longer
+      // pointing at a ticket that is gone.
+      if (isTicketRun(run)) {
+        await this.detach(async () => {
+          for (const item of items) await this.releaseParentLink(run, item.ticket_id)
         })
       }
     }
@@ -3694,8 +4862,15 @@ export class DocumentFlowService {
     return { run, item }
   }
 
-  /** What the run is made on; a connection project must still have at least two member projects. */
-  private resolveTarget(project: DocumentFlowProject): DocumentFlowRunTarget {
+  /**
+   * What the run is made on; a connection project must still have at least two member projects.
+   * `sourceKind` only words the refusal: an orchestrator made from board tickets implements no
+   * document.
+   */
+  private resolveTarget(
+    project: DocumentFlowProject,
+    sourceKind: DocumentRun['source_kind'] = 'document'
+  ): DocumentFlowRunTarget {
     if (project.kind !== 'connection') return { kind: 'git', project }
     const members = parseMemberProjectIds(project.member_project_ids)
       .map((id) => this.deps.getProject(id))
@@ -3703,8 +4878,9 @@ export class DocumentFlowService {
         (member): member is DocumentFlowProject => member !== null && member.kind !== 'connection'
       )
     if (members.length < 2) {
+      const what = sourceKind === 'tickets' ? 'run an orchestrator in' : 'implement a document in'
       throw invalidState(
-        `${project.name} needs at least two member projects to implement a document in; it has ${members.length}.`
+        `${project.name} needs at least two member projects to ${what}; it has ${members.length}.`
       )
     }
     return { kind: 'connection', project, members }
@@ -3713,7 +4889,7 @@ export class DocumentFlowService {
   private requireTarget(run: DocumentRun): DocumentFlowRunTarget {
     const project = this.deps.getProject(run.project_id)
     if (!project) throw notFound('The project of this run')
-    return this.resolveTarget(project)
+    return this.resolveTarget(project, run.source_kind)
   }
 
   private integrationPath(run: DocumentRun): string {
@@ -4080,10 +5256,29 @@ export async function getDocumentFlowService(
         blockerTicketId
       )
     },
+    removeTicketDependency: async (projectId, dependentTicketId, blockerTicketId) => {
+      const { getKanbanBackendForProject } = await import('../kanban-backend')
+      return getKanbanBackendForProject(projectId).removeDependency(
+        projectId,
+        dependentTicketId,
+        blockerTicketId
+      )
+    },
+    getTicketDependencies: async (projectId) => {
+      const { getKanbanBackendForProject } = await import('../kanban-backend')
+      return getKanbanBackendForProject(projectId).getDependenciesForProject(projectId)
+    },
     getTicket: async (projectId, ticketId) => {
       const { getKanbanBackendForProject } = await import('../kanban-backend')
       return getKanbanBackendForProject(projectId).get(projectId, ticketId)
     },
+    // Asked of the markdown backend whatever the board: it answers nothing for one in SQLite.
+    boardHasUnreadableCards: async (projectId) => {
+      const { getMarkdownKanbanBackend } = await import('../kanban-backend')
+      const diagnostics = await getMarkdownKanbanBackend().getDiagnostics(projectId)
+      return diagnostics.some((diagnostic) => diagnostic.blocking)
+    },
+    isSessionActive: (sessionId) => db.getSession(sessionId)?.status === 'active',
     moveTicket: async (projectId, ticketId, column) => {
       const { getKanbanBackendForProject } = await import('../kanban-backend')
       const backend = getKanbanBackendForProject(projectId)
@@ -4101,6 +5296,10 @@ export async function getDocumentFlowService(
       const { getKanbanBackendForProject } = await import('../kanban-backend')
       return getKanbanBackendForProject(projectId).delete(projectId, ticketId)
     },
+    unarchiveTicket: async (projectId, ticketId) => {
+      const { getKanbanBackendForProject } = await import('../kanban-backend')
+      return getKanbanBackendForProject(projectId).unarchive(projectId, ticketId)
+    },
     resolveFinalMessage: async (input) => {
       const { readClaudeTranscript } = await import('../claude-transcript-reader')
       return resolveSessionFinalMessage(input, {
@@ -4114,5 +5313,16 @@ export async function getDocumentFlowService(
   })
   // Nothing waits for it: the runs are listed as they are and updated when it gets to them.
   void liveService.reconcileRunTickets()
+  // The runs made from board tickets missed every board change made before this.
+  void liveService.refreshTicketRuns()
+  return liveService
+}
+
+/**
+ * The process-wide service if something already made it, else null. For the kanban hooks: a
+ * board change does not start the service (the first one to start catches up on its own, see
+ * `refreshTicketRuns`).
+ */
+export function liveDocumentFlowService(): DocumentFlowService | null {
   return liveService
 }

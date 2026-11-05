@@ -20,9 +20,11 @@ import {
   type DocumentRunItemSummary
 } from '@shared/document-flow/planning'
 import { isActiveRunStatus } from '@shared/document-flow/run-ticket'
+import { runKindLabel } from '@shared/document-flow/ticket-runs'
 import {
   DOCUMENT_RUN_ITEM_MERGE_STATUSES,
   DOCUMENT_VERIFICATION_METHODS,
+  isTicketRun,
   type DocumentRun,
   type DocumentRunConfig,
   type DocumentRunDetail,
@@ -30,6 +32,7 @@ import {
   type DocumentRunItem,
   type DocumentRunItemStatus,
   type DocumentRunMember,
+  type DocumentRunSourceKind,
   type DocumentRunStatus,
   type DocumentVerificationMethod
 } from '@shared/types/document-flow'
@@ -141,12 +144,121 @@ export function isRunDeletable(
  * What deleting a run does to its tickets and files. The run's own ticket goes with it. The
  * server keeps the run directory (the spec text and the figures the task tickets attach by
  * path) as long as any of those exists; a run that never launched has no tickets, so its
- * files go with it.
+ * files go with it. A run made from board tickets has neither spec text nor figures, and its
+ * tickets were the user's before the run adopted them: they stay, out of the orchestrator.
+ * `run` is optional so a caller that only has the items gets the document wording.
  */
-export function describeRunDeletion(items: readonly DocumentRunItem[]): string {
+export function describeRunDeletion(
+  items: readonly DocumentRunItem[],
+  run?: Pick<DocumentRun, 'source_kind'> | null
+): string {
+  if (isTicketRun(run)) {
+    return "The run's own ticket is removed from the board, and branches and worktrees are not touched. The board tickets stay on the board (they are only taken out of the orchestrator)."
+  }
   return items.some((item) => item.ticket_id)
     ? "The run's own ticket is removed from the board. Branches, worktrees and the tickets of its tasks are not touched, and the spec text and figures those tickets attach stay on disk."
     : 'Its spec text and figures are removed from disk as well.'
+}
+
+// ── Run kind ───────────────────────────────────────────────────────────────
+//
+// A run is made from a document or from board tickets (`DocumentRun.source_kind`, see
+// `isTicketRun`). The user-facing copy names the second an "Orchestrator" (`runKindLabel`); the
+// helpers below keep every sentence of a document run as it always read.
+
+/**
+ * What a run is called where its title is missing: the document's file name for a run made
+ * from a document, "Orchestrator" for one made from board tickets (it has no file to name).
+ */
+export function runDisplayTitle(
+  run: Pick<DocumentRun, 'title' | 'source_kind' | 'source_path'>
+): string {
+  if (run.title) return run.title
+  return isTicketRun(run) ? runKindLabel(run) : documentNameFromPath(run.source_path)
+}
+
+/** The run's kind as a noun inside a sentence: "document run", or "orchestrator". */
+export function runKindNoun(run: Pick<DocumentRun, 'source_kind'> | null | undefined): string {
+  return runKindLabel(run).toLowerCase()
+}
+
+/**
+ * `isTicketRun` for the helpers whose callers may pass a run without its kind (a narrow pick
+ * of a document run's fields): no kind reads as a document run.
+ */
+const madeFromTickets = (run: Partial<Pick<DocumentRun, 'source_kind'>>): boolean =>
+  run.source_kind === 'tickets'
+
+/** "a document run" / "an orchestrator". */
+const withArticle = (noun: string): string => `${/^[aeiou]/i.test(noun) ? 'an' : 'a'} ${noun}`
+
+/**
+ * The header of the active runs card: "2 document runs" while every run is made from a
+ * document, "1 orchestrator" while every one is made from board tickets, and "3 runs" for a
+ * mix of both.
+ */
+export function describeRunCount(runs: readonly Pick<DocumentRun, 'source_kind'>[]): {
+  label: string
+  kind: DocumentRunSourceKind | 'mixed'
+} {
+  const tickets = runs.filter((run) => isTicketRun(run)).length
+  if (tickets === 0) return { label: pluralize(runs.length, 'document run'), kind: 'document' }
+  if (tickets === runs.length) {
+    return { label: pluralize(runs.length, 'orchestrator'), kind: 'tickets' }
+  }
+  return { label: pluralize(runs.length, 'run'), kind: 'mixed' }
+}
+
+// ── Runs made from board tickets: what the dashboard may still change ──────
+
+/**
+ * Whether a ticket of a run made from board tickets can still be changed from the dashboard —
+ * what it starts after, its brief (the board ticket's title and description), or taking it out
+ * of the run: the run is going (running or paused) and the ticket has not launched (it waits
+ * its turn, or its launch failed without a session). Once it launched, its brief was sent and
+ * what it waited for is history; the server applies the same rule. Never for a document run,
+ * whose tickets are fixed at launch.
+ */
+export function canEditTicketRunItem(
+  run: Pick<DocumentRun, 'status' | 'source_kind'>,
+  item: Pick<DocumentRunItem, 'status' | 'session_id' | 'selected'>
+): boolean {
+  return isTicketRun(run) && isActiveRunStatus(run.status) && item.selected && awaitsLaunch(item)
+}
+
+/**
+ * The confirmation of "Remove from run" on a ticket of a run made from board tickets: the
+ * ticket stays on the board (out of the orchestrator, free to be launched on its own), and the
+ * run's tickets that start after it — named — no longer wait for it.
+ */
+export function describeTicketRunItemRemoval(
+  item: Pick<DocumentRunItem, 'id' | 'key'>,
+  items: readonly Pick<DocumentRunItem, 'id' | 'key' | 'selected' | 'depends_on'>[]
+): string {
+  const waiting = items
+    .filter(
+      (other) => other.selected && other.id !== item.id && other.depends_on.includes(item.key)
+    )
+    .map((other) => other.key)
+  const stays = `${item.key} leaves the run and stays on the board as an ordinary ticket, which you can launch on its own.`
+  if (waiting.length === 0) return stays
+  const verb = waiting.length === 1 ? 'starts' : 'start'
+  return `${stays} ${waiting.join(', ')} ${verb} after it and will no longer wait for it.`
+}
+
+/**
+ * The item joined a run made from board tickets after it launched ("Add tickets" on the
+ * dashboard, or on a finished run that resumed for it). Its row wears an "added mid-run" pill,
+ * and the report names it, so scope that grew after launch is visible.
+ */
+export function isAddedAfterLaunch(
+  run: Pick<DocumentRun, 'started_at' | 'source_kind'>,
+  item: Pick<DocumentRunItem, 'created_at'>
+): boolean {
+  if (!isTicketRun(run) || !run.started_at) return false
+  const started = Date.parse(run.started_at)
+  const created = Date.parse(item.created_at)
+  return !Number.isNaN(started) && !Number.isNaN(created) && created > started
 }
 
 // ── Item status ────────────────────────────────────────────────────────────
@@ -316,11 +428,12 @@ export interface RunDocumentEditState {
   queued: number
 }
 
+/** Also null for a run made from board tickets: it has no document to edit. */
 export function runDocumentEditState(
-  run: Pick<DocumentRun, 'status'>,
+  run: Pick<DocumentRun, 'status'> & Partial<Pick<DocumentRun, 'source_kind'>>,
   items: readonly DocumentRunItem[]
 ): RunDocumentEditState | null {
-  if (!isActiveRunStatus(run.status)) return null
+  if (!isActiveRunStatus(run.status) || madeFromTickets(run)) return null
   const owner = documentUpdateLaneOwner(items)
   const editing = owner && isDocumentUpdatePending(owner) ? owner : null
   const queued = items.filter(
@@ -413,8 +526,13 @@ export interface DocumentEditQueueState {
   merged: boolean
 }
 
-/** The run's source path as the document edit lane compares it across runs. */
-const lanePath = (run: Pick<DocumentRun, 'source_path'>): string => run.source_path.trim()
+/**
+ * The run's source path as the document edit lane compares it across runs. Null for a run made
+ * from board tickets: it has no document (its `source_path` is ''), so it is in no lane — two
+ * such runs must never read as editing the same file.
+ */
+const lanePath = (run: Pick<DocumentRun, 'source_path' | 'source_kind'>): string | null =>
+  isTicketRun(run) ? null : run.source_path.trim()
 
 /** The item editing `sourcePath` right now, in any run that is on, or null. */
 function documentEditor(
@@ -441,14 +559,14 @@ export function isQueuedForDocumentUpdate(
 ): DocumentEditQueueState | null {
   if (!ticketId) return null
   for (const detail of Object.values(runsById)) {
-    if (!isActiveRunStatus(detail.run.status)) continue
+    const sourcePath = lanePath(detail.run)
+    if (!isActiveRunStatus(detail.run.status) || sourcePath === null) continue
     const item = detail.items.find((candidate) => candidate.ticket_id === ticketId)
     if (!item || !isDocumentUpdatePending(item) || item.document_update_status !== 'queued') {
       continue
     }
     const position = documentUpdateQueuePosition(detail.items, item.id)
     if (position === null) continue
-    const sourcePath = lanePath(detail.run)
     return {
       position,
       editingKey: documentEditor(runsById, sourcePath)?.key ?? null,
@@ -471,7 +589,8 @@ export function runDocumentEditStatus(
 ): 'editing' | 'waiting' | null {
   if (!ref.ticketId && !ref.sessionId) return null
   for (const detail of Object.values(runsById)) {
-    if (!isActiveRunStatus(detail.run.status)) continue
+    // A run made from board tickets has no document to edit
+    if (!isActiveRunStatus(detail.run.status) || isTicketRun(detail.run)) continue
     const item = detail.items.find(
       (candidate) =>
         isDocumentUpdatePending(candidate) &&
@@ -516,11 +635,12 @@ export function describeDocumentEditQueue(state: DocumentEditQueueState): string
  * without a session: the runner would skip it again at once.
  */
 export function canRetryDocumentUpdate(
-  run: Pick<DocumentRun, 'status'>,
+  run: Pick<DocumentRun, 'status'> & Partial<Pick<DocumentRun, 'source_kind'>>,
   item: DocumentRunItem
 ): boolean {
   return (
     isActiveRunStatus(run.status) &&
+    !madeFromTickets(run) &&
     item.selected &&
     item.session_id !== null &&
     (item.status === 'merged' || item.status === 'skipped') &&
@@ -528,12 +648,15 @@ export function canRetryDocumentUpdate(
   )
 }
 
-/** Skip document update: the item waits in the document edit lane or holds it. */
+/**
+ * Skip document update: the item waits in the document edit lane or holds it. Neither this nor
+ * Retry document update applies to a run made from board tickets, which has no document.
+ */
 export function canSkipDocumentUpdate(
-  run: Pick<DocumentRun, 'status'>,
+  run: Pick<DocumentRun, 'status'> & Partial<Pick<DocumentRun, 'source_kind'>>,
   item: DocumentRunItem
 ): boolean {
-  return isActiveRunStatus(run.status) && isDocumentUpdatePending(item)
+  return isActiveRunStatus(run.status) && !madeFromTickets(run) && isDocumentUpdatePending(item)
 }
 
 /** Retry / "mark done" apply to items that are waiting on the user and are not mid-merge. */
@@ -660,6 +783,11 @@ export function isUnlaunchedCardPhase(phase: RunBoardCardPhase | null | undefine
 
 export interface RunBoardCardState {
   title: string
+  /**
+   * Where the run's tickets come from: the card's marker reads "Orchestrator" for a run made
+   * from board tickets, "Document run" otherwise.
+   */
+  sourceKind: DocumentRunSourceKind
   phase: RunBoardCardPhase
   merged: number
   total: number
@@ -720,8 +848,8 @@ export function runBoardCardState(
   const phase = migrating ? 'migrating' : (RUN_BOARD_CARD_PHASES[run.status] ?? 'running')
   const workingLabel = `${running} working`
   // The session editing the document is counted among those at work, or once it stopped for
-  // the user among those waiting
-  const editor = documentUpdateLaneOwner(items)
+  // the user among those waiting. A run made from board tickets has no document to edit.
+  const editor = isTicketRun(run) ? null : documentUpdateLaneOwner(items)
   const pendingEditor = editor && isDocumentUpdatePending(editor) ? editor : null
   const editorWaiting = pendingEditor !== null && isDocumentUpdateWaitingOnUser(pendingEditor)
   const waiting = isActiveRunStatus(run.status)
@@ -753,7 +881,8 @@ export function runBoardCardState(
     migrating: waiting > 0 ? MIGRATIONS_WAITING_LABEL : RUNNING_MIGRATIONS_LABEL
   }
   return {
-    title: run.title || documentNameFromPath(run.source_path),
+    title: runDisplayTitle(run),
+    sourceKind: isTicketRun(run) ? 'tickets' : 'document',
     phase,
     merged: summary.merged,
     total: summary.total,
@@ -776,38 +905,42 @@ export function runBoardCardState(
  * moving the ticket, which launching does. The ticket stays In Progress while the run is on
  * (the app moves it to Review when the run ends); from then on it is the user's to move
  * forward. `status` is null when the run's record is gone. While a session executes the run's
- * migrations (`migrating`) the ticket is held In Progress again.
+ * migrations (`migrating`) the ticket is held In Progress again. `run` names the run's kind in
+ * the copy ("this orchestrator" for a run made from board tickets); without it, or for a run
+ * made from a document, every sentence reads "document run" as it always did.
  */
 export function documentRunTicketDropRefusal(
   status: DocumentRunStatus | null,
   column: string,
-  migrating = false
+  migrating = false,
+  run?: Pick<DocumentRun, 'source_kind'> | null
 ): string | null {
-  if (column === 'todo') return 'The ticket of a document run cannot go back to To Do.'
+  const noun = runKindNoun(run)
+  if (column === 'todo') return `The ticket of ${withArticle(noun)} cannot go back to To Do.`
   if (status === 'extracting') {
-    return 'The tickets of this document run are still being extracted. Wait for them before moving it.'
+    return `The tickets of this ${noun} are still being extracted. Wait for them before moving it.`
   }
   if (status === 'extract_failed') {
-    return 'The tickets of this document run could not be extracted. Open its ticket to try again.'
+    return `The tickets of this ${noun} could not be extracted. Open its ticket to try again.`
   }
   if (status === 'preview') {
     return column === 'in_progress'
       ? null
-      : 'This document run has not been launched yet. Drop its ticket on In Progress, or open it, to launch it.'
+      : `This ${noun} has not been launched yet. Drop its ticket on In Progress, or open it, to launch it.`
   }
   const active = status !== null && isActiveRunStatus(status)
   if (migrating && !active) {
     return column === 'in_progress'
       ? null
-      : 'The migrations of this document run are being executed. Wait for them to finish, or stop them, before moving its ticket.'
+      : `The migrations of this ${noun} are being executed. Wait for them to finish, or stop them, before moving its ticket.`
   }
   if (column === 'in_progress') {
-    return active ? null : 'This document run is over; its ticket cannot go back to In Progress.'
+    return active ? null : `This ${noun} is over; its ticket cannot go back to In Progress.`
   }
   if (!active) return null
   return column === 'review'
-    ? 'The document run is still going; its ticket moves to Review when the run ends.'
-    : 'The document run is still going. Wait for it to end, or cancel it, before merging it.'
+    ? `The ${noun} is still going; its ticket moves to Review when the run ends.`
+    : `The ${noun} is still going. Wait for it to end, or cancel it, before merging it.`
 }
 
 // ── Wizard steps ───────────────────────────────────────────────────────────

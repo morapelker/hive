@@ -16,6 +16,7 @@ import {
   documentUpdateCandidates,
   documentUpdateLaneOwner,
   documentUpdateQueuePosition,
+  findDependencyCycle,
   freeSlotCount,
   integrationBranchHint,
   isDependencySatisfied,
@@ -881,6 +882,39 @@ describe('branch hints', () => {
     const long = integrationBranchHint('A very long document title that goes on and on and on')
     expect(long).toBe('doc-a-very-long-document-title-that-goes')
     expect(long.length).toBeLessThanOrEqual(40)
+  })
+
+  it('names the integration branch of a run made from board tickets orch-', () => {
+    expect(integrationBranchHint('Checkout polish', 'tickets')).toBe('orch-checkout-polish')
+    expect(integrationBranchHint('  ', 'tickets')).toBe('orch-run')
+    expect(integrationBranchHint('Checkout polish', 'document')).toBe('doc-checkout-polish')
+    const long = integrationBranchHint(
+      'A very long document title that goes on and on and on',
+      'tickets'
+    )
+    expect(long).toBe('orch-a-very-long-document-title-that-goes')
+  })
+})
+
+describe('findDependencyCycle', () => {
+  const keys = (...names: string[]) => names.map((key) => ({ key }))
+
+  it('finds no cycle in a graph without one', () => {
+    expect(findDependencyCycle(keys('A', 'B', 'C'), { A: [], B: ['A'], C: ['A', 'B'] })).toBeNull()
+    expect(findDependencyCycle([], {})).toBeNull()
+  })
+
+  it('names the keys of a cycle, each depending on the next', () => {
+    expect(findDependencyCycle(keys('A', 'B', 'C'), { A: ['C'], B: ['A'], C: ['B'] })).toEqual([
+      'A',
+      'C',
+      'B'
+    ])
+    expect(findDependencyCycle(keys('A'), { A: ['A'] })).toEqual(['A'])
+  })
+
+  it('ignores dependencies on keys the run does not have', () => {
+    expect(findDependencyCycle(keys('A', 'B'), { A: ['Z'], B: ['A'] })).toBeNull()
   })
 })
 
