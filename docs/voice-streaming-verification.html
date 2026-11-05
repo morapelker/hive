@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voice: live preview, instant transcript, skippable AI. Verification report</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface-1: #1a1a19; --surface-2: #222221;
+    --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #898781;
+    --grid: #2c2c2a; --border: rgba(255,255,255,0.10);
+    --blue: #3987e5; --blue-soft: #86b6ef; --good: #0ca30c; --warning: #fab219; --serious: #ec835a;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--page); color: var(--text-primary);
+    font: 15px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  a { color: var(--blue-soft); }
+  code, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.86em; }
+  code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; color: var(--text-secondary); }
+  main { max-width: 980px; margin: 0 auto; padding: 32px 24px 96px; }
+  nav.toc { position: sticky; top: 0; z-index: 10; background: rgba(13,13,13,0.92); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); }
+  nav.toc .inner { max-width: 980px; margin: 0 auto; padding: 10px 24px; display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; }
+  nav.toc a { color: var(--text-secondary); text-decoration: none; }
+  nav.toc a:hover { color: var(--text-primary); }
+  section { scroll-margin-top: 56px; }
+  h1 { font-size: 28px; line-height: 1.2; margin: 0 0 6px; letter-spacing: -0.01em; }
+  h2 { font-size: 21px; margin: 52px 0 6px; }
+  h2 + .lede { color: var(--text-secondary); margin: 0 0 16px; }
+  h3 { font-size: 15px; margin: 18px 0 6px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 650; }
+  .sub { color: var(--text-secondary); margin: 0; }
+  .meta { color: var(--text-muted); font-size: 13px; margin-top: 8px; }
+  .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 18px 22px; }
+  .note { border-left: 3px solid var(--blue); background: rgba(57,135,229,0.08); border-radius: 0 8px 8px 0; padding: 10px 16px; margin: 14px 0; }
+  .note b { color: var(--blue-soft); }
+  .warn { border-left: 3px solid var(--warning); background: rgba(250,178,25,0.07); border-radius: 0 8px 8px 0; padding: 10px 16px; margin: 14px 0; }
+  .warn b { color: var(--warning); }
+  ul { padding-left: 20px; margin: 6px 0; }
+  li { margin: 4px 0; }
+  .muted { color: var(--text-muted); }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+  th { color: var(--text-muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  tr:last-child td { border-bottom: none; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.id { white-space: nowrap; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px; color: var(--text-secondary); }
+  .tablewrap { overflow-x: auto; }
+  .pill { font-size: 12px; padding: 1px 9px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); white-space: nowrap; }
+  .pass { color: var(--good); border-color: var(--good); }
+  .part { color: var(--warning); border-color: var(--warning); }
+  .none { color: var(--serious); border-color: var(--serious); }
+  .tiles { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; margin-top: 14px; }
+  @media (max-width: 820px) { .tiles { grid-template-columns: 1fr; } }
+  .tile { background: var(--surface-2); border-radius: 8px; padding: 10px 14px; }
+  .tile .v { font-size: 24px; font-weight: 650; }
+  .tile .l { font-size: 13px; color: var(--text-secondary); }
+  figure { margin: 0 0 18px; }
+  figure img { width: 100%; height: auto; display: block; border-radius: 8px; border: 1px solid var(--border); background: #fff; }
+  figure.dark img { background: #000; }
+  figcaption { font-size: 13px; color: var(--text-secondary); margin-top: 6px; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 820px) { .cols { grid-template-columns: 1fr; } }
+  ul.check { list-style: none; padding-left: 0; }
+  ul.check li { position: relative; padding-left: 26px; }
+  ul.check li::before { content: ""; position: absolute; left: 0; top: 5px; width: 14px; height: 14px; border: 1.5px solid var(--text-muted); border-radius: 3px; }
+  footer { color: var(--text-muted); font-size: 12.5px; margin-top: 64px; border-top: 1px solid var(--border); padding-top: 16px; }
+</style>
+</head>
+<body>
+
+<nav class="toc"><div class="inner">
+  <a href="#result">Result</a>
+  <a href="#setup">Setup</a>
+  <a href="#scenarios">Scenarios</a>
+  <a href="#timing">Timing</a>
+  <a href="#transcripts">Transcripts</a>
+  <a href="#screens">Screenshots</a>
+  <a href="#limits">Limitations</a>
+  <a href="#manual">Manual checklist</a>
+</div></nav>
+
+<main>
+<h1>Voice streaming: verification report</h1>
+<p class="sub">VOICE-10 end-to-end check of live preview, instant transcript and skippable AI polishing in the running app.</p>
+<p class="meta">2026-11-05 · build <span class="mono">b059679</span> · branch <span class="mono">voice-10-end-to-end-verification</span> · Apple M4 Max, 16 cores</p>
+
+<section id="result">
+  <h2>Result</h2>
+  <p class="lede">The feature works in the real app, but the project isn't signed off yet. It needs one check by you.</p>
+  <div class="card">
+    <div class="tiles" style="margin-top:0">
+      <div class="tile"><div class="v" style="color:var(--good)">14</div><div class="l">scenarios passed</div></div>
+      <div class="tile"><div class="v" style="color:var(--warning)">1</div><div class="l">partly checked (14, mobile)</div></div>
+      <div class="tile"><div class="v" style="color:var(--serious)">1</div><div class="l">not run (11, agent panel)</div></div>
+    </div>
+    <p style="margin-bottom:0">No scenario failed, and no code or ticket had to change. Every latency budget was met in the runs made, on small samples.</p>
+  </div>
+  <div class="warn">
+    <b>This was a reduced run, by your decision.</b> You asked for far fewer runs, because the Mac was in use and other agents were taking focus, and said the priority was that the feature works rather than latency statistics. Most scenarios ran once or twice, not the 5+ the ticket asks for. So the budgets below are met on these samples, but a p95 at this size is close to the slowest run, not a firm figure.
+  </div>
+  <h3>What's needed from you</h3>
+  <ul>
+    <li><b>Scenario 11:</b> run it by hand with a signed-in session (<a href="#manual">checklist</a>), or accept it as a limitation.</li>
+    <li><b>Scenario 14:</b> the phone-to-desktop relay wasn't exercised. Test it with a paired phone, or accept that only the desktop transcribe call was checked.</li>
+    <li><b>Reduced sample size:</b> accept it, or re-run the timing when the Mac is free.</li>
+  </ul>
+</section>
+
+<section id="setup">
+  <h2>Setup</h2>
+  <p class="lede">How the app was run and measured.</p>
+  <div class="card">
+    <ul>
+      <li><b>App:</b> this worktree's build, launched with the <span class="mono">verify</span> skill on CDP port 9223, with <span class="mono">TEDOOO_CODE_DESKTOP_BASE_DIR</span> set to an isolated temp dir and <span class="mono">TEDOOO_CODE_VOICE_TEST_CLIPS=1</span>. Page URL confirmed as this worktree's <span class="mono">out/renderer/index.html</span>. The test app didn't use the real <span class="mono">~/.hive/hive.db</span>; it created and set up its own fresh database in the temp dir. Logs still go to the shared <span class="mono">~/.hive/logs</span>, filtered here by process id.</li>
+      <li><b>Models:</b> Nemotron Speech Streaming 0.6B and Parakeet v2, linked from existing local copies. Warm unless stated.</li>
+      <li><b>Timings:</b> the app's own <span class="mono">Dictation summary</span> and <span class="mono">Streaming session finished</span> log lines. 37 dictations in one app process.</li>
+      <li><b>Percentiles:</b> nearest-rank, so every figure is a value that really occurred.</li>
+      <li><b>Speech timing for preview lag:</b> word timestamps from an offline Parakeet decode of each fixture, which is independent of the model being tested. A preview update's lag is its time from capture start minus the end time of the last spoken word it shows. Capture start comes slightly before the clip plays, so lag is overstated a little.</li>
+      <li><b>Inputs:</b> real Esc and ⌥Space (System Events) and real OS clicks (<span class="mono">cliclick</span>). Dictations started through the test bridge, which uses the same toggle as the hotkey.</li>
+      <li><b>Focus retries:</b> a run was retried only when another app held OS focus at delivery. Two scenario runs needed a second try (the 8 s sentence, scenario 4). The driving scripts were throwaway and aren't committed.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="scenarios">
+  <h2>Scenarios</h2>
+  <p class="lede">All 16, with the runs made and the evidence.</p>
+  <div class="card tablewrap">
+    <table>
+      <thead><tr><th>#</th><th>Scenario</th><th>Result</th><th>Runs</th><th>Evidence</th></tr></thead>
+      <tbody>
+        <tr><td class="id">1</td><td>3 s / 25 s / 60 s, cleanup off, into a ticket/composer field</td><td><span class="pill pass">Pass</span></td><td class="num">10 / 3 / 5</td><td>Text landed in the Create Ticket description. Also the session composer (1 run). Max stop → final 95 / 47 / 54 ms; stop → delivered 97 / 48 / 55 ms. Three of the 60 s runs went to the clipboard because another app held focus; those count for stop → final only.</td></tr>
+        <tr><td class="id">2</td><td>Cleanup on, no skip</td><td><span class="pill pass">Pass</span></td><td class="num">1</td><td>HUD showed the text, "Polishing…" and Skip. <code>aiStep:"cleaned"</code>, <code>aiMs:3654</code>. Polished text inserted, with the final period cleanup added.</td></tr>
+        <tr><td class="id">3</td><td>Skip by click / Esc / hotkey</td><td><span class="pill pass">Pass</span></td><td class="num">1 / 2 / 1</td><td><code>aiStep:"skipped"</code> with <code>skipInput</code> <code>click</code>, <code>escape</code>, <code>hotkey</code>. <code>skipToDeliveredMs:1</code> each. Shown text inserted, no notice or error. <span class="mono">claude</span> child seen during polishing, still there at 1 s, gone by 2.5 s after the skip.</td></tr>
+        <tr><td class="id">4</td><td>Cleanup on, forced timeout</td><td><span class="pill pass">Pass</span></td><td class="num">3</td><td><code>aiStep:"timed-out"</code>, <code>aiMs:5122</code>, log <code>AI cleanup did not answer within 5s</code>. Raw text inserted. The provider's <span class="mono">sleep 120</span> was a child of the app during polishing and gone after the timeout.</td></tr>
+        <tr><td class="id">5</td><td>Speech at sample 0</td><td><span class="pill pass">Pass</span></td><td class="num">1</td><td>0 of 8 words different. First word "Hello" present.</td></tr>
+        <tr><td class="id">6</td><td>7 s pause mid-dictation</td><td><span class="pill pass">Pass</span></td><td class="num">1</td><td>0 of 13 words different. Words after the pause came through the stream (<code>textSource:"streamed"</code>).</td></tr>
+        <tr><td class="id">7</td><td>Silence-only clip</td><td><span class="pill pass">Pass</span></td><td class="num">1</td><td>Notice "Nothing heard", <code>outcome:"discarded"</code>, <code>reason:"nothing-heard"</code>. Field stayed empty.</td></tr>
+        <tr><td class="id">8</td><td>Esc during recording</td><td><span class="pill pass">Pass</span></td><td class="num">1</td><td><code>outcome:"cancelled"</code>, <code>reason:"escape"</code>. Field empty. The next dictation delivered normally.</td></tr>
+        <tr><td class="id">9</td><td>Engine killed mid-dictation</td><td><span class="pill pass">Pass</span></td><td class="num">1</td><td>Engine sent <span class="mono">SIGKILL</span> 3 s into the 8 s clip. <code>textSource:"fallback"</code>, <code>fallbackReason:"engine-exited"</code>. 0 of 31 words different. Stop → final 626 ms.</td></tr>
+        <tr><td class="id">10</td><td>Cold start then dictate</td><td><span class="pill pass">Pass</span></td><td class="num">1</td><td>Engine killed while idle, <code>engineLoaded:false</code> confirmed before pressing start. Model reloaded during the dictation. All words present (only the <span class="mono">homepage</span> variant differs).</td></tr>
+        <tr><td class="id">11</td><td>Agent panel target</td><td><span class="pill none">Not run</span></td><td class="num">0</td><td>The agent needs a signed-in Tedooo session in the shell build. You chose to check this one yourself. Unit tests in <span class="mono">voice-controller.agent.test.ts</span> pass, which isn't the same as seeing it work.</td></tr>
+        <tr><td class="id">12</td><td>Terminal target (xterm, native Ghostty)</td><td><span class="pill pass">Pass</span></td><td class="num">1 / 1</td><td>xterm: <code>Delivered dictation {"target":"xterm"}</code>, and a <span class="mono">cat &gt; file</span> in the terminal wrote the exact text. Ghostty: <code>{"target":"ghostty"}</code>, text visible at the prompt (<a href="#screens">screenshot</a>).</td></tr>
+        <tr><td class="id">13</td><td>Parakeet v2 selected</td><td><span class="pill pass">Pass</span></td><td class="num">2</td><td>No preview during recording, <code>streamed:false</code>, <code>textSource:"whole-clip"</code>. Final text shown during polishing, Esc skip worked (<code>skipToDeliveredMs:1</code>). 0 of 12 words different.</td></tr>
+        <tr><td class="id">14</td><td>Mobile path with the streaming model</td><td><span class="pill part">Partial</span></td><td class="num">2</td><td><code>voice.transcribeMobile</code> with Nemotron selected returned correct text for two fixtures (615 ms, 271 ms), and history records the Nemotron model. The phone relay route wasn't exercised.</td></tr>
+        <tr><td class="id">15</td><td>Click just above/beside the HUD</td><td><span class="pill pass">Pass</span></td><td class="num">1</td><td>With the HUD up, real OS clicks at 4 transparent points (top edge, beside the panel, beside the pill, under the pill) all reached the main window. An earlier attempt at a point just above a growing panel missed; the likely cause is the panel growing over that point, and the retest used points the panel can't reach.</td></tr>
+        <tr><td class="id">16</td><td>Engine busy time, 60 s fixture</td><td><span class="pill pass">Pass</span></td><td class="num">5</td><td>Busy 7.7–8.4% of real time (<code>busyMs</code> 4637–5056 of 60304). CDP calls into the main window took at most 11 ms across 592 samples while recording.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note">
+    <b>Two results that looked wrong, explained.</b>
+    <ul>
+      <li><b>A stray <span class="mono">nge</span> at the start of one ticket field.</b> The session's final text was correct, and the app reported inserting 53 characters while the field held 57. The preview never contained it. The extra text was typing from outside the app that landed in the focused test field when the harness took focus. It's a test side effect, not a transcription error, and that run counts as correct.</li>
+      <li><b>A 2–3 s frame gap during two 60 s runs.</b> Measured on the second one: during the gap, timers fired about once a second, which matches Chromium's throttling of a covered window, while CDP calls into the same renderer stayed under 11 ms. So the most likely cause is another window covering the app, not a UI stall. The first gap wasn't timed this closely.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="timing">
+  <h2>Timing</h2>
+  <p class="lede">Measured against the latency budgets. With these sample sizes, p95 is the slowest or second-slowest run.</p>
+  <div class="card tablewrap">
+    <table>
+      <thead><tr><th>Metric</th><th class="num">Budget (p95)</th><th>Sample</th><th class="num">n</th><th class="num">p50</th><th class="num">p95</th><th class="num">Max</th><th>Result</th></tr></thead>
+      <tbody>
+        <tr><td rowspan="3">Stop → final transcript</td><td class="num" rowspan="3">≤ 150 ms</td><td>3 s</td><td class="num">10</td><td class="num">83 ms</td><td class="num">95 ms</td><td class="num">95 ms</td><td><span class="pill pass">Met</span></td></tr>
+        <tr><td>25 s</td><td class="num">3</td><td class="num">45 ms</td><td class="num">47 ms</td><td class="num">47 ms</td><td><span class="pill pass">Met</span></td></tr>
+        <tr><td>60 s</td><td class="num">5</td><td class="num">50 ms</td><td class="num">54 ms</td><td class="num">54 ms</td><td><span class="pill pass">Met</span></td></tr>
+        <tr><td rowspan="3">Stop → delivered, cleanup off</td><td class="num" rowspan="3">≤ 250 ms</td><td>3 s</td><td class="num">10</td><td class="num">84 ms</td><td class="num">97 ms</td><td class="num">97 ms</td><td><span class="pill pass">Met</span></td></tr>
+        <tr><td>25 s</td><td class="num">3</td><td class="num">46 ms</td><td class="num">48 ms</td><td class="num">48 ms</td><td><span class="pill pass">Met</span></td></tr>
+        <tr><td>60 s</td><td class="num">2</td><td class="num">44 ms</td><td class="num">55 ms</td><td class="num">55 ms</td><td><span class="pill pass">Met</span></td></tr>
+        <tr><td>Skip → delivered</td><td class="num">≤ 100 ms</td><td>All skip inputs</td><td class="num">5</td><td class="num">1 ms</td><td class="num">1 ms</td><td class="num">1 ms</td><td><span class="pill pass">Met</span></td></tr>
+        <tr><td>First preview words</td><td class="num">≤ 2 s after speech starts</td><td>All clips</td><td class="num">24</td><td class="num">–</td><td class="num">–</td><td class="num">1,120 ms</td><td><span class="pill pass">Met</span></td></tr>
+        <tr><td rowspan="2">Preview lag, at each update</td><td class="num" rowspan="2">≤ 1.5 s</td><td>25 s, 3 runs</td><td class="num">135</td><td class="num">484 ms</td><td class="num">757 ms</td><td class="num">933 ms</td><td><span class="pill pass">Met</span></td></tr>
+        <tr><td>60 s, 3 runs</td><td class="num">297</td><td class="num">387 ms</td><td class="num">751 ms</td><td class="num">943 ms</td><td><span class="pill pass">Met</span></td></tr>
+        <tr><td rowspan="2">Preview lag, just before the next update</td><td class="num" rowspan="2">≤ 1.5 s</td><td>25 s, 3 runs</td><td class="num">–</td><td class="num">–</td><td class="num">1,321 ms</td><td class="num">1,509 ms</td><td><span class="pill pass">Met</span></td></tr>
+        <tr><td>60 s, 3 runs</td><td class="num">–</td><td class="num">–</td><td class="num">1,407 ms</td><td class="num">1,593 ms</td><td><span class="pill pass">Met</span></td></tr>
+        <tr><td>Engine busy time</td><td class="num">≤ 20% of real time</td><td>25 s and 60 s</td><td class="num">8</td><td class="num">–</td><td class="num">–</td><td class="num">8.4%</td><td><span class="pill pass">Met</span></td></tr>
+        <tr><td>Cold start</td><td class="num">no audio lost</td><td>3 s clip</td><td class="num">1</td><td class="num">–</td><td class="num">–</td><td class="num">–</td><td><span class="pill pass">Met</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note">
+    <b>Reading this table.</b>
+    <ul>
+      <li>Stop → final doesn't grow with length. The 3 s runs were the slowest; their logs show 2 final decodes where the checked 60 s runs show 1.</li>
+      <li>The 3 s group is every cleanup-off dictation under 5 s: ticket field, composer, terminals, the 2.9 s speech-at-start clip and the cold-start run.</li>
+      <li>The two lag rows show the best and worst moment of each update cycle. The "just before" row is the stricter one: it's how far behind the text is right before new words appear. Its p95 meets the budget with little room, and single peaks reach 1.59 s.</li>
+      <li>The 7 s pause clip is left out of the lag rows, because the budget covers continuous talking.</li>
+      <li>Engine CPU over the 60 s clip was 26–27 s across all its threads, about 43% of one core or 3% of this machine. The budget is measured on busy time, as the live test does.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="transcripts">
+  <h2>Transcript comparison</h2>
+  <p class="lede">Word differences on every speech fixture, after lowercasing and removing punctuation. Parakeet is a comparison, not ground truth.</p>
+  <div class="card tablewrap">
+    <table>
+      <thead><tr><th>Fixture</th><th class="num">Words</th><th class="num">Nemotron vs script</th><th class="num">Parakeet v2 vs script</th><th class="num">Nemotron vs Parakeet</th><th>Differences</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">short-command</td><td class="num">12</td><td class="num">2</td><td class="num">0</td><td class="num">2</td><td>Nemotron: "home page" → "homepage"</td></tr>
+        <tr><td class="mono">sentence</td><td class="num">31</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td></td></tr>
+        <tr><td class="mono">paragraph</td><td class="num">101</td><td class="num">1</td><td class="num">1</td><td class="num">0</td><td>Both: "cleared" → "clear"</td></tr>
+        <tr><td class="mono">monologue</td><td class="num">207</td><td class="num">0</td><td class="num">1</td><td class="num">1</td><td>Parakeet: "three" → "3"</td></tr>
+        <tr><td class="mono">pause-mid</td><td class="num">13</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td></td></tr>
+        <tr><td class="mono">speech-at-start</td><td class="num">8</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td></td></tr>
+        <tr><td><b>Total</b></td><td class="num"><b>372</b></td><td class="num"><b>3 (0.8%)</b></td><td class="num"><b>2 (0.5%)</b></td><td class="num"><b>3 (0.8%)</b></td><td></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note">
+    <b>Notes.</b>
+    <ul>
+      <li>Nemotron's text comes from the running app. Parakeet's comes from an offline decode of the same fixtures with the same model files; in the app, Parakeet matched on <span class="mono">short-command</span> (scenario 13).</li>
+      <li><span class="mono">silence</span> isn't in the table, because it has no words. It was run in the app with Nemotron only (scenario 7).</li>
+      <li>No notable errors. The one real word error, "clear" for "cleared", is in both models.</li>
+      <li>Punctuation is ignored above but differs. Nemotron's text didn't end with a period on any fixture, and <span class="mono">short-command</span> and <span class="mono">sentence</span> had no punctuation at all. Longer clips have commas and periods inside the text. AI cleanup added the period in scenario 2; with cleanup off, dictations end unpunctuated.</li>
+      <li>The fixtures are clean synthetic speech (macOS Samantha), so these rates say nothing about real voices or rooms.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="screens">
+  <h2>Screenshots</h2>
+  <p class="lede">Taken from the app's own windows, not the screen.</p>
+  <div class="cols">
+    <figure><img src="voice-streaming-verification.assets/s1-recording-preview.png" alt="Dictation HUD during recording, with three lines of live transcript above the pill"><figcaption>During recording: the preview growing above the pill, 12 s into the 27 s clip.</figcaption></figure>
+    <figure><img src="voice-streaming-verification.assets/s2-polishing.png" alt="Dictation HUD showing the final text, Polishing, Esc to skip and a Skip button"><figcaption>During polishing: final text, "Polishing…", "Esc to skip" and Skip.</figcaption></figure>
+    <figure class="dark"><img src="voice-streaming-verification.assets/s2-after-delivery.png" alt="Create Ticket modal with the polished text in the description field"><figcaption>After delivery: polished text in the ticket field.</figcaption></figure>
+    <figure class="dark"><img src="voice-streaming-verification.assets/s1-after-delivery.png" alt="Create Ticket modal with the end of the 60 second transcript in the description field"><figcaption>After delivery: the end of the 60 s transcript, cleanup off.</figcaption></figure>
+    <figure><img src="voice-streaming-verification.assets/s13-parakeet-polishing.png" alt="Dictation HUD with Parakeet, showing the final text while polishing"><figcaption>Parakeet v2: text appears only at the polishing step, here mid fade-in.</figcaption></figure>
+    <figure class="dark"><img src="voice-streaming-verification.assets/s12-ghostty-window.png" alt="App window with dictated text at the prompt of a native Ghostty terminal and in the session composer"><figcaption>Native Ghostty terminal: text at the shell prompt. The composer run is visible too.</figcaption></figure>
+  </div>
+</section>
+
+<section id="limits">
+  <h2>Known limitations</h2>
+  <p class="lede">What this report doesn't prove, and behaviour you may want to accept or follow up.</p>
+  <div class="card">
+    <h3 style="margin-top:0">Not covered</h3>
+    <ul>
+      <li><b>Agent panel target (11):</b> not exercised in the running app.</li>
+      <li><b>Phone relay (14):</b> only the desktop <span class="mono">transcribeMobile</span> call ran.</li>
+      <li><b>Timing confidence:</b> small samples on a Mac in use by other work, so the numbers can shift either way on a quiet machine. VOICE-04's open check (20 runs at each length) is still open, although no streamed dictation here took more than 100 ms from stop to final.</li>
+      <li><b>Ghostty addon:</b> copied from the installed 1.2.133 app (same Electron 41.10.7) and removed afterwards, not built from this tree.</li>
+      <li><b>Full suite:</b> <code>pnpm test</code> and <code>pnpm lint</code> weren't run across the whole app. Earlier tickets recorded failures outside voice in this environment, and only a report changed here. Voice tests and voice lint were run.</li>
+      <li><b>Real microphone:</b> every run used test clips, which is why the manual checklist below matters.</li>
+    </ul>
+    <h3>Behaviour to know about</h3>
+    <ul>
+      <li>After a skip, the <span class="mono">claude</span> process lives for up to about 2.5 s. Nothing is inserted from it (seen in VOICE-08 too).</li>
+      <li>The fallback isn't instant: 626 ms for a 9 s clip here. It's a failure path, so the budget doesn't apply.</li>
+      <li>Stopping mid-word can still lose that word (VOICE-06, the 0.8 s tail was kept). Clips here stopped after speech ended, so this wasn't exercised.</li>
+      <li>Text goes to the clipboard, not the field, when another app has focus at delivery. That's existing behaviour and it works, but it replaces whatever was on the clipboard.</li>
+    </ul>
+    <h3>Small follow-ups</h3>
+    <ul>
+      <li>The <span class="mono">verify</span> skill says a forced timeout uses a provider whose command "just sleeps". Plain <span class="mono">sleep</span> fails, because the provider flags are appended to the command. <span class="mono">sh -c 'sleep 120'</span> works.</li>
+      <li>Automated voice runs disturb a Mac that's in use: they take focus, can overwrite the clipboard, and can catch typing from outside the app. Plan them for an idle machine.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="manual">
+  <h2>Manual checklist</h2>
+  <p class="lede">For the owner: what automation can't cover, plus the two gaps from this run.</p>
+  <div class="card">
+    <h3 style="margin-top:0">Gaps from this run</h3>
+    <ul class="check">
+      <li><b>Agent panel:</b> signed in, open the agent panel and dictate. Expect the live preview, no "Polishing…", and the text delivered to the agent.</li>
+      <li><b>Phone:</b> with Nemotron selected on the desktop, dictate from the paired phone. Expect correct text.</li>
+    </ul>
+    <h3>Real-world conditions</h3>
+    <ul class="check">
+      <li><b>Real voice and accent:</b> dictate naturally for 30 s or more. Check the preview keeps up and the text is usable.</li>
+      <li><b>Noisy room:</b> repeat with background talk or music. Check no phantom words appear in silence.</li>
+      <li><b>Bluetooth headset mic:</b> check the first words aren't lost while the headset switches profile.</li>
+      <li><b>Speaking right after pressing the hotkey:</b> start mid-breath and check the first word is there.</li>
+      <li><b>Main window on a second display:</b> check the HUD appears on that display. Move the window mid-dictation and check the HUD and final text still behave.</li>
+      <li><b>Full-screen app:</b> dictate with the app full screen, and over another full-screen app. Check the HUD shows and the text arrives.</li>
+    </ul>
+  </div>
+</section>
+
+<footer>Budgets and scenarios: <span class="mono">docs/voice-streaming-tickets.html</span>. Voice unit suites, 25 files passed, 422 tests passed, 22 skipped.</footer>
+</main>
+</body>
+</html>
