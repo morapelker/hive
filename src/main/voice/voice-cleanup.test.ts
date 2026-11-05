@@ -25,7 +25,8 @@ describe('enhanceTranscript', () => {
     expect(outcome).toEqual({
       text: 'hey Mor Claude broke the build',
       cleaned: false,
-      fallbackReason: null
+      fallbackReason: null,
+      ai: 'disabled'
     })
     expect(runModel).not.toHaveBeenCalled()
   })
@@ -34,6 +35,7 @@ describe('enhanceTranscript', () => {
     const runModel = vi.fn()
     const outcome = await enhanceTranscript('   ', settings(), { db: null, runModel })
     expect(outcome.text).toBe('')
+    expect(outcome.ai).toBe('not-applicable')
     expect(runModel).not.toHaveBeenCalled()
   })
 
@@ -44,7 +46,12 @@ describe('enhanceTranscript', () => {
       settings({ dictionary: [{ word: 'Mor', soundsLike: ['moor'], caseSensitive: false }] }),
       { db: null, runModel }
     )
-    expect(outcome).toEqual({ text: 'Hey Mor, fix the bug.', cleaned: true, fallbackReason: null })
+    expect(outcome).toEqual({
+      text: 'Hey Mor, fix the bug.',
+      cleaned: true,
+      fallbackReason: null,
+      ai: 'cleaned'
+    })
     const [prompt, systemPrompt] = runModel.mock.calls[0] as unknown as [string, string]
     expect(prompt).toContain('<transcript>\nhey Mor fix the bug\n</transcript>')
     expect(systemPrompt).toContain('VOCABULARY')
@@ -61,6 +68,18 @@ describe('enhanceTranscript', () => {
     expect(outcome.text).toBe('fix the bug')
     expect(outcome.cleaned).toBe(false)
     expect(outcome.fallbackReason).toContain('provider error: gateway returned 502')
+    expect(outcome.ai).toBe('failed')
+  })
+
+  it('reports a provider-side timeout as timed out, not failed', async () => {
+    const outcome = await enhanceTranscript('fix the bug', settings(), {
+      db: null,
+      runModel: async () => {
+        throw new Error('claude timed out after 10000ms')
+      }
+    })
+    expect(outcome.cleaned).toBe(false)
+    expect(outcome.ai).toBe('timed-out')
   })
 
   it('falls back when the model answers instead of cleaning', async () => {
@@ -70,6 +89,7 @@ describe('enhanceTranscript', () => {
     })
     expect(outcome.cleaned).toBe(false)
     expect(outcome.fallbackReason).toBe('output looks like an assistant reply')
+    expect(outcome.ai).toBe('failed')
   })
 
   it('times out slow providers within the budget', async () => {
@@ -84,6 +104,7 @@ describe('enhanceTranscript', () => {
       const outcome = await pending
       expect(outcome.cleaned).toBe(false)
       expect(outcome.fallbackReason).toMatch(/did not answer within/)
+      expect(outcome.ai).toBe('timed-out')
     } finally {
       vi.useRealTimers()
     }

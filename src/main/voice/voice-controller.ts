@@ -16,6 +16,12 @@ import type { VoiceHistoryRow } from '../db/types'
 import { createLogger } from '../services/logger'
 import { isDigitalSilence, trimSilence } from './voice-audio'
 import { enhanceTranscript } from './voice-cleanup'
+import {
+  DICTATION_SUMMARY_MESSAGE,
+  DictationTrace,
+  type DictationDelivery,
+  type DictationOutcome
+} from './voice-dictation-summary'
 import { voiceEngine } from './voice-engine'
 import { voiceHud } from './voice-hud-window'
 import { voiceMedia } from './voice-media'
@@ -87,6 +93,8 @@ export class VoiceController {
   private maxRecordingTimer: NodeJS.Timeout | null = null
 
   private recordingStartedAt = 0
+  /** Timings of the dictation in flight; logged once as a summary line when it ends. */
+  private dictation: DictationTrace | null = null
   private audioWaiter: {
     resolve: (payload: VoiceAudioPayload) => void
     reject: (error: Error) => void
@@ -130,6 +138,7 @@ export class VoiceController {
   }
 
   dispose(): void {
+    this.endDictation('cancelled', 'shutdown')
     this.generation++
     this.unregisterHotkey()
     this.unregisterEscape()
@@ -172,7 +181,7 @@ export class VoiceController {
     } else {
       this.unregisterHotkey()
       if (this.state === 'recording' || this.state === 'processing') {
-        this.cancel()
+        this.cancel('voice-disabled')
       }
       voiceHud.hide()
       if (voiceEngine.isLoaded) voiceEngine.unload('voice disabled')
@@ -251,7 +260,7 @@ export class VoiceController {
   private registerEscape(): void {
     if (this.escapeRegistered) return
     try {
-      this.escapeRegistered = globalShortcut.register('Escape', () => this.cancel())
+      this.escapeRegistered = globalShortcut.register('Escape', () => this.cancel('escape'))
     } catch {
       this.escapeRegistered = false
     }
@@ -420,6 +429,10 @@ export class VoiceController {
 
   private async startRecording(): Promise<void> {
     if (this.state !== 'idle') return
+    // A second press while the permission dialog was open: the first never recorded.
+    this.endDictation('cancelled', 'superseded')
+    // The start press: every timing in the summary line is measured from here.
+    this.dictation = new DictationTrace(this.settings.speechModel)
 
     // With Chromium's fake capture device (automated runs) no real microphone
     // is opened, so the OS permission pre-flight would only block on a dialog.
@@ -429,10 +442,12 @@ export class VoiceController {
       if (status === 'not-determined') {
         const granted = await this.requestMicrophoneAccess()
         if (granted !== 'granted') {
+          this.endDictation('failed', 'mic-permission')
           this.showTransientNotice('Microphone access denied')
           return
         }
       } else if (status === 'denied' || status === 'restricted') {
+        this.endDictation('failed', 'mic-permission')
         this.showTransientNotice('Grant microphone access in System Settings')
         this.openMicrophoneSettings()
         return
@@ -451,6 +466,7 @@ export class VoiceController {
     if (generation !== this.generation) return
     if (!ready) {
       log.warn('HUD window did not become ready')
+      this.endDictation('failed', 'hud-not-ready')
       this.lastError = 'Could not start recording'
       this.showTransientNotice('Could not start recording')
       return
@@ -484,6 +500,7 @@ export class VoiceController {
   /** The HUD renderer has the microphone open. */
   onCaptureStarted(): void {
     if (this.state !== 'recording') return
+    this.dictation?.markCaptureStarted()
     this.playSound('start')
   }
 
@@ -491,6 +508,7 @@ export class VoiceController {
   onCaptureError(message: string): void {
     if (this.state !== 'recording') return
     log.warn('capture failed', { message })
+    this.endDictation('failed', 'capture-error')
     this.generation++
     this.rejectAudioWaiter(new Error(message))
     void voiceMedia.recordingDidStop()
@@ -506,6 +524,7 @@ export class VoiceController {
 
   private async stopAndProcess(): Promise<void> {
     if (this.state !== 'recording') return
+    this.dictation?.markStop()
     const generation = ++this.generation
     const durationMs = Date.now() - this.recordingStartedAt
     this.clearMaxRecordingTimer()
@@ -524,14 +543,17 @@ export class VoiceController {
       if (generation !== this.generation) return
 
       const seconds = audio.samples.length / Math.max(1, audio.sampleRate)
+      this.dictation?.setAudio(audio.samples.length, audio.sampleRate)
       if (seconds <= MIN_CLIP_SECONDS) {
         log.info('Discarding clip: too short', { seconds })
+        this.endDictation('discarded', 'too-short')
         this.finish()
         return
       }
       const samples = trimSilence(audio.samples, audio.sampleRate)
       if (samples.length / audio.sampleRate <= MIN_CLIP_SECONDS || isDigitalSilence(samples)) {
         log.info('Discarding clip: nothing heard', { seconds })
+        this.endDictation('discarded', 'nothing-heard')
         this.showTransientNotice('Nothing heard', SHORT_NOTICE_SECONDS)
         return
       }
@@ -541,12 +563,14 @@ export class VoiceController {
 
       const { text: raw, decodeMs } = await voiceEngine.transcribe(samples, audio.sampleRate)
       if (generation !== this.generation) return
+      this.dictation?.markTranscript('whole-clip', decodeMs)
       log.info('Transcribed', {
         seconds: Math.round(seconds * 10) / 10,
         decodeMs,
         chars: raw.length
       })
       if (!raw) {
+        this.endDictation('discarded', 'nothing-heard')
         this.showTransientNotice('Nothing heard', SHORT_NOTICE_SECONDS)
         return
       }
@@ -554,14 +578,17 @@ export class VoiceController {
       if (this.settings.cleanup.enabled) {
         this.setHudPhase({ kind: 'enhancing', progress: null, showsProgress: false })
       }
+      this.dictation?.markAiStarted()
       const outcome = await enhanceTranscript(raw, this.settings, { db: this.db })
       if (generation !== this.generation) return
+      this.dictation?.markAiFinished(outcome.ai)
 
       await this.deliver(outcome.text, raw, outcome.cleaned, outcome.fallbackReason, durationMs)
     } catch (error) {
       if (generation !== this.generation) return
       const message = error instanceof Error ? error.message : String(error)
       log.error('Transcription failed', error instanceof Error ? error : new Error(message))
+      this.endDictation('failed', 'transcription-error')
       this.lastError = message
       this.showTransientNotice('Transcription failed')
     }
@@ -575,6 +602,7 @@ export class VoiceController {
     durationMs: number
   ): Promise<void> {
     if (!text.trim()) {
+      this.endDictation('discarded', 'empty-text')
       this.finish()
       return
     }
@@ -598,6 +626,7 @@ export class VoiceController {
       text,
       this.settings.restoreClipboardDelayMs
     )
+    this.endDelivered(delivery, text)
 
     if (entry) {
       this.broadcastResult({ entry, delivery, cleanupFallbackReason: fallbackReason })
@@ -611,8 +640,10 @@ export class VoiceController {
   }
 
   /** Escape, a click on a notice, or the app disabling voice mid-flight. */
-  cancel(): void {
+  cancel(reason = 'user'): void {
     const wasRecording = this.state === 'recording'
+    // A click on the notice after a dictation already ended has nothing left to log.
+    this.endDictation('cancelled', reason)
     this.generation++
     this.clearMaxRecordingTimer()
     this.rejectAudioWaiter(new Error('cancelled'))
@@ -621,6 +652,24 @@ export class VoiceController {
       void voiceMedia.recordingDidStop()
     }
     this.finish()
+  }
+
+  private endDelivered(delivery: DictationDelivery, text: string): void {
+    this.dictation?.markDelivered(delivery, text.length)
+    this.endDictation('delivered')
+  }
+
+  /**
+   * Writes the dictation's one summary line (VOICE-01). Every way a dictation
+   * ends goes through here; the trace is dropped afterwards so a later cancel,
+   * notice click or shutdown cannot log it twice.
+   */
+  private endDictation(outcome: DictationOutcome, reason: string | null = null): void {
+    const trace = this.dictation
+    if (!trace) return
+    this.dictation = null
+    const summary = trace.finish(outcome, reason)
+    if (summary) log.info(DICTATION_SUMMARY_MESSAGE, summary)
   }
 
   private finish(): void {

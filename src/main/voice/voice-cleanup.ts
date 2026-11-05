@@ -36,6 +36,27 @@ export interface VoiceCleanupOutcome {
   readonly cleaned: boolean
   /** Human-readable reason when the raw transcript was used instead. */
   readonly fallbackReason: string | null
+  /** What the AI step did, for the per-dictation summary log. */
+  readonly ai: VoiceCleanupAiResult
+}
+
+/**
+ * `disabled`: cleanup is off (or the caller turned it off). `not-applicable`:
+ * nothing to clean. `timed-out` / `failed`: the raw transcript was used instead.
+ */
+export type VoiceCleanupAiResult =
+  'disabled' | 'not-applicable' | 'cleaned' | 'timed-out' | 'failed'
+
+/** Thrown by our own budget timer, so a slow provider is told apart from a broken one. */
+class CleanupTimeoutError extends Error {
+  override readonly name = 'CleanupTimeoutError'
+}
+
+function isTimeoutError(error: unknown): boolean {
+  if (error instanceof CleanupTimeoutError) return true
+  if (!(error instanceof Error)) return false
+  // Provider spawns enforce the same budget and may fire first (SpawnTimeout, "timed out").
+  return /time(d)?[\s_-]?out/i.test(`${error.name} ${error.message}`)
 }
 
 export interface VoiceCleanupDeps {
@@ -62,7 +83,12 @@ export async function enhanceTranscript(
   const replacer = new DictionaryReplacer(settings.dictionary)
   const raw = replacer.apply(transcript.trim())
   if (!settings.cleanup.enabled || raw.length === 0) {
-    return { text: raw, cleaned: false, fallbackReason: null }
+    return {
+      text: raw,
+      cleaned: false,
+      fallbackReason: null,
+      ai: settings.cleanup.enabled ? 'not-applicable' : 'disabled'
+    }
   }
 
   const input = raw.length > MAX_TRANSCRIPT_CHARS ? `${raw.slice(0, MAX_TRANSCRIPT_CHARS)}…` : raw
@@ -84,7 +110,12 @@ export async function enhanceTranscript(
   } catch (error) {
     const reason = `provider error: ${error instanceof Error ? error.message : String(error)}`
     log.warn('AI cleanup fell back to raw transcript', { reason })
-    return { text: raw, cleaned: false, fallbackReason: reason }
+    return {
+      text: raw,
+      cleaned: false,
+      fallbackReason: reason,
+      ai: isTimeoutError(error) ? 'timed-out' : 'failed'
+    }
   }
 
   const sanitized = sanitizeTranscriptOutput(output ?? '', raw)
@@ -92,10 +123,15 @@ export async function enhanceTranscript(
   if (fallback) {
     const reason = FALLBACK_REASON_DESCRIPTIONS[fallback]
     log.warn('AI cleanup fell back to raw transcript', { reason })
-    return { text: raw, cleaned: false, fallbackReason: reason }
+    return { text: raw, cleaned: false, fallbackReason: reason, ai: 'failed' }
   }
 
-  return { text: replacer.apply(sanitized), cleaned: true, fallbackReason: null }
+  return {
+    text: replacer.apply(sanitized),
+    cleaned: true,
+    fallbackReason: null,
+    ai: 'cleaned'
+  }
 }
 
 export function cleanupBudgetMs(timeoutSeconds: number, transcriptChars: number): number {
@@ -104,7 +140,7 @@ export function cleanupBudgetMs(timeoutSeconds: number, transcriptChars: number)
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(message)), timeoutMs)
+    const timer = setTimeout(() => reject(new CleanupTimeoutError(message)), timeoutMs)
     promise.then(
       (value) => {
         clearTimeout(timer)

@@ -132,7 +132,7 @@ export function initVoiceDictation(options: {
 
   ipcMain.on('voice:hud:click-cancel', (event) => {
     if (!isHud(event)) return
-    voiceController.cancel()
+    voiceController.cancel('hud-click')
   })
 
   ipcMain.on('voice:hud:capture-started', (event) => {
