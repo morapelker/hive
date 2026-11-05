@@ -106,7 +106,7 @@ describe('pet Lottie rendering', () => {
     expect(pet.imageScale?.idle).toBe(1.4)
   })
 
-  it('lists all seven pets in the registry with their names', () => {
+  it('lists all eight pets in the registry with their names', () => {
     expect(
       listPets()
         .map((pet) => [pet.id, pet.name])
@@ -119,7 +119,8 @@ describe('pet Lottie rendering', () => {
         ['french-bulldog', 'Shiba the Frenchie'],
         ['pug', 'Twix the Pug'],
         ['german-shepherd', 'Udi the German Shepherd'],
-        ['bella', 'Bella the Tennis Player']
+        ['bella', 'Bella the Tennis Player'],
+        ['milla', 'Milla the Swimmer']
       ].sort()
     )
   })

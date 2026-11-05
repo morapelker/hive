@@ -75,7 +75,8 @@ describe('pet animation settings', () => {
         'Cooper the Dachshund',
         'Twix the Pug',
         'Udi the German Shepherd',
-        'Bella the Tennis Player'
+        'Bella the Tennis Player',
+        'Milla the Swimmer'
       ])
     )
   })

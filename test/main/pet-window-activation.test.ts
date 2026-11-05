@@ -246,6 +246,13 @@ describe('pet window activation suppression', () => {
       expect.objectContaining({ width: 176, height: 176 })
     )
 
+    // Milla's pool at 10 sessions stays inside her 256 px cell, so her window is square.
+    updatePetSettings({ petId: 'bella' })
+    updatePetSettings({ petId: 'milla' })
+    expect(electronMock.windows[0].setBounds).toHaveBeenLastCalledWith(
+      expect.objectContaining({ width: 176, height: 176 })
+    )
+
     updatePetSettings({ petId: 'bee', size: 'M' })
   })
 

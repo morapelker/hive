@@ -164,6 +164,22 @@ const BELLA_MANIFEST: PetManifest = {
   defaultSize: 'M'
 }
 
+const MILLA_MANIFEST: PetManifest = {
+  id: 'milla',
+  name: 'Milla the Swimmer',
+  version: '1.0.0',
+  author: 'Hive',
+  assets: {
+    idle: 'assets/milla-sitting.webp',
+    working: 'assets/milla-sitting.webp',
+    question: 'assets/milla-sitting.webp',
+    permission: 'assets/milla-sitting.webp',
+    plan_ready: 'assets/milla-sitting.webp'
+  },
+  // Her pool at 10 sessions fits inside the 256 px cell, so the window stays square.
+  defaultSize: 'M'
+}
+
 const PET_MANIFESTS: Record<string, PetManifest> = {
   bee: BEE_MANIFEST,
   corgi: CORGI_MANIFEST,
@@ -171,7 +187,8 @@ const PET_MANIFESTS: Record<string, PetManifest> = {
   dachshund: DACHSHUND_MANIFEST,
   pug: PUG_MANIFEST,
   'german-shepherd': GERMAN_SHEPHERD_MANIFEST,
-  bella: BELLA_MANIFEST
+  bella: BELLA_MANIFEST,
+  milla: MILLA_MANIFEST
 }
 
 interface PetWindowBounds {
