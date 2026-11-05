@@ -1,9 +1,10 @@
 import { BrowserWindow, screen } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
-import type { VoiceHudState } from '@shared/types/voice'
+import type { VoiceCaptureStartOptions, VoiceHudState } from '@shared/types/voice'
 import { createLogger } from '../services/logger'
 import type { VoiceSoundName } from './voice-sounds'
+import { voiceTestClips } from './voice-test-clips'
 
 const log = createLogger({ component: 'VoiceHud' })
 
@@ -156,14 +157,21 @@ export class VoiceHudWindow {
   }
 
   startCapture(): void {
-    this.send('voice:hud:capture-start')
+    // Dev/test only: with TEDOOO_CODE_VOICE_TEST_CLIPS set, the armed clip
+    // replaces the microphone. Normally there are no options and the mic is used.
+    const testClip = voiceTestClips.captureSource()
+    const options: VoiceCaptureStartOptions | undefined =
+      testClip === undefined ? undefined : { testClip }
+    this.send('voice:hud:capture-start', options)
   }
 
   stopCapture(): void {
+    voiceTestClips.captureEnded()
     this.send('voice:hud:capture-stop')
   }
 
   cancelCapture(): void {
+    voiceTestClips.captureEnded()
     this.send('voice:hud:capture-cancel')
   }
 

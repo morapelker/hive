@@ -84,9 +84,30 @@ declare global {
     getSounds: () => Promise<{ start: Uint8Array | null; stop: Uint8Array | null }>
     onState: (callback: (state: import('../shared/types/voice').VoiceHudState) => void) => () => void
     onSound: (callback: (name: 'start' | 'stop') => void) => () => void
-    onCaptureStart: (callback: () => void) => () => void
+    /** Options are only present with test clips on (dev/test); otherwise the mic is used. */
+    onCaptureStart: (
+      callback: (options?: import('../shared/types/voice').VoiceCaptureStartOptions) => void
+    ) => () => void
+    /** The test clip finished playing (dev/test only). */
+    testClipEnded: () => void
     onCaptureStop: (callback: () => void) => () => void
     onCaptureCancel: (callback: () => void) => () => void
+  }
+
+  /** Dev/test only: present when launched with TEDOOO_CODE_VOICE_TEST_CLIPS. */
+  interface VoiceTestBridge {
+    status: () => Promise<import('../shared/types/voice').VoiceTestClipsStatus>
+    listClips: () => Promise<import('../shared/types/voice').VoiceTestClipInfo[]>
+    selectClip: (
+      name: string | null,
+      options?: import('../shared/types/voice').VoiceTestSelectOptions
+    ) => Promise<import('../shared/types/voice').VoiceTestClipsStatus>
+    /** Select a clip and start a dictation (the hotkey's toggle). */
+    start: (
+      options: { clip: string } & import('../shared/types/voice').VoiceTestSelectOptions
+    ) => Promise<import('../shared/types/voice').VoiceTestClipsStatus>
+    /** Stop the running dictation (the hotkey's toggle). */
+    stop: () => Promise<import('../shared/types/voice').VoiceTestClipsStatus>
   }
 
   interface Window {
@@ -95,6 +116,8 @@ declare global {
       voice?: VoiceDesktopBridge
       /** Voice dictation (floating pill window side). */
       voiceHud?: VoiceHudBridge
+      /** Voice test clips (dev/test only; see VoiceTestBridge). */
+      voiceTest?: VoiceTestBridge
       getLocalEnvironmentBootstrap: () => Promise<LocalEnvironmentBootstrap | null>
       getPathForFile: (file: File) => string
       startHiveEnterpriseLogin: (serverUrl: string) => Promise<{ token: string }>

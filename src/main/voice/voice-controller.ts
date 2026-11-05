@@ -29,6 +29,7 @@ import { voiceModelStore } from './voice-model-store'
 import { deliverVoiceText } from './voice-paste'
 import { readVoiceSettings } from './voice-settings'
 import type { VoiceSoundName } from './voice-sounds'
+import { voiceTestClips } from './voice-test-clips'
 
 const log = createLogger({ component: 'VoiceDictation' })
 
@@ -434,9 +435,10 @@ export class VoiceController {
     // The start press: every timing in the summary line is measured from here.
     this.dictation = new DictationTrace(this.settings.speechModel)
 
-    // With Chromium's fake capture device (automated runs) no real microphone
-    // is opened, so the OS permission pre-flight would only block on a dialog.
-    const fakeDevice = app.commandLine.hasSwitch('use-fake-device-for-media-stream')
+    // With Chromium's fake capture device or test clips (automated runs) no real
+    // microphone is opened, so the OS permission pre-flight would only block on a dialog.
+    const fakeDevice =
+      app.commandLine.hasSwitch('use-fake-device-for-media-stream') || voiceTestClips.enabled
     if (process.platform === 'darwin' && !fakeDevice) {
       const status = this.getMicPermission()
       if (status === 'not-determined') {
@@ -515,6 +517,10 @@ export class VoiceController {
     this.lastError = message
     const denied = /permission|denied|notallowed/i.test(message)
     this.showTransientNotice(denied ? 'Microphone access denied' : 'Could not start recording')
+  }
+
+  isRecording(): boolean {
+    return this.state === 'recording'
   }
 
   /** Click on the pill while recording. */

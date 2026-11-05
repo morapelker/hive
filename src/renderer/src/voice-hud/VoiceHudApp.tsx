@@ -93,6 +93,9 @@ export function VoiceHudApp(): React.JSX.Element | null {
         // Input device gone for good: hand over what we have, like Wispelker.
         window.desktopBridge?.voiceHud?.clickStop()
       }
+      recorder.onTestClipEnded = () => {
+        window.desktopBridge?.voiceHud?.testClipEnded()
+      }
       recorderRef.current = recorder
     }
     return recorderRef.current
@@ -121,11 +124,11 @@ export function VoiceHudApp(): React.JSX.Element | null {
         if (!soundsEnabledRef.current) return
         soundsRef.current?.play(name)
       }),
-      bridge.onCaptureStart(() => {
+      bridge.onCaptureStart((options) => {
         const recorder = getRecorder()
         setLevels(EMPTY_LEVELS)
         recorder
-          .start()
+          .start(options)
           .then(() => bridge.captureStarted())
           .catch((error: unknown) => {
             const message =

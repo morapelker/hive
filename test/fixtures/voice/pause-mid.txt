@@ -1,0 +1,1 @@
+Open the terminal for this project. Then run all of the tests again.

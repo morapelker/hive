@@ -320,3 +320,57 @@ export interface VoiceDictationResult {
   readonly delivery: 'pasted' | 'copied'
   readonly cleanupFallbackReason: string | null
 }
+
+// ---- test clips (dev/test only) ----------------------------------------------------------------
+
+/**
+ * Launch-time switch that makes the HUD record a WAV clip instead of the
+ * microphone. `1`/`true` plays the committed fixtures (test/fixtures/voice);
+ * any other non-empty value is a directory of clips. Unset in normal use.
+ */
+export const VOICE_TEST_CLIPS_ENV = 'TEDOOO_CODE_VOICE_TEST_CLIPS'
+
+export function isVoiceTestClipsSwitchOn(value: string | undefined | null): boolean {
+  if (typeof value !== 'string') return false
+  const trimmed = value.trim()
+  return trimmed !== '' && !/^(0|false|no|off)$/i.test(trimmed)
+}
+
+/** A test clip as listed for the verify workflow. */
+export interface VoiceTestClipInfo {
+  readonly name: string
+  readonly durationMs: number
+  readonly sampleRate: number
+  /** Contents of the clip's .txt, or null when it has none. */
+  readonly expectedText: string | null
+}
+
+export interface VoiceTestSelectOptions {
+  /** Stop the dictation this many ms after the clip ends; omit or null to stop manually. */
+  readonly autoStopAfterMs?: number | null
+}
+
+export interface VoiceTestClipsStatus {
+  readonly enabled: boolean
+  readonly dir: string | null
+  readonly selected: string | null
+  readonly durationMs: number | null
+  readonly autoStopAfterMs: number | null
+  /** A dictation is currently playing the clip. */
+  readonly playing: boolean
+}
+
+/** Sent with capture-start when test clips are on: the HUD plays this instead of opening the mic. */
+export interface VoiceTestCaptureClip {
+  readonly name: string
+  readonly samples: Float32Array
+  readonly sampleRate: number
+}
+
+/**
+ * Options for a HUD capture. Absent (the normal case) means the microphone.
+ * `testClip: null` means test clips are on but none is selected: capture fails.
+ */
+export interface VoiceCaptureStartOptions {
+  readonly testClip?: VoiceTestCaptureClip | null
+}

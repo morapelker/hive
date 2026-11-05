@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils, webFrame } from 'electron'
 import { decodeLocalEnvironmentBootstrapArg } from '../shared/desktop-bridge'
+import { VOICE_TEST_CLIPS_ENV, isVoiceTestClipsSwitchOn } from '../shared/types/voice'
 
 const onMainEvent = <T>(channel: string, callback: (payload: T) => void): (() => void) => {
   const listener = (_event: Electron.IpcRendererEvent, payload: T): void => {
@@ -56,17 +57,32 @@ const voiceHud = {
     onMainEvent('voice:hud:state', callback),
   onSound: (callback: (name: string) => void): (() => void) =>
     onMainEvent('voice:hud:sound', callback),
-  onCaptureStart: (callback: () => void): (() => void) =>
+  onCaptureStart: (callback: (options?: unknown) => void): (() => void) =>
     onMainEvent('voice:hud:capture-start', callback),
+  testClipEnded: (): void => ipcRenderer.send('voice:hud:test-clip-ended'),
   onCaptureStop: (callback: () => void): (() => void) =>
     onMainEvent('voice:hud:capture-stop', callback),
   onCaptureCancel: (callback: () => void): (() => void) =>
     onMainEvent('voice:hud:capture-cancel', callback)
 }
 
+// Dev/test only: drive dictation from a WAV clip instead of the microphone
+// (verify workflow over CDP). Exposed only when the app was launched with the switch.
+const voiceTest = isVoiceTestClipsSwitchOn(process.env[VOICE_TEST_CLIPS_ENV])
+  ? {
+      status: (): Promise<unknown> => ipcRenderer.invoke('voice:test:status'),
+      listClips: (): Promise<unknown> => ipcRenderer.invoke('voice:test:list'),
+      selectClip: (name: string | null, options?: unknown): Promise<unknown> =>
+        ipcRenderer.invoke('voice:test:select', name, options),
+      start: (options: unknown): Promise<unknown> => ipcRenderer.invoke('voice:test:start', options),
+      stop: (): Promise<unknown> => ipcRenderer.invoke('voice:test:stop')
+    }
+  : undefined
+
 const desktopBridge = {
   voice,
   voiceHud,
+  ...(voiceTest ? { voiceTest } : {}),
   getLocalEnvironmentBootstrap: async () => decodeLocalEnvironmentBootstrapArg(process.argv),
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   startHiveEnterpriseLogin: (serverUrl: string): Promise<{ token: string }> =>

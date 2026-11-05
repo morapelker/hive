@@ -2,13 +2,15 @@ import { ipcMain, type BrowserWindow, type IpcMainEvent, type IpcMainInvokeEvent
 import {
   sanitizeVoiceSettings,
   VOICE_SPEECH_MODELS,
-  type VoiceSpeechModelId
+  type VoiceSpeechModelId,
+  type VoiceTestSelectOptions
 } from '@shared/types/voice'
 import type { DatabaseService } from '../db/database'
 import { createLogger } from '../services/logger'
 import { voiceController, type VoiceAudioPayload } from './voice-controller'
 import { voiceHud } from './voice-hud-window'
 import { loadVoiceSoundBuffers } from './voice-sounds'
+import { voiceTestClips } from './voice-test-clips'
 
 const log = createLogger({ component: 'VoiceIpc' })
 
@@ -165,6 +167,71 @@ export function initVoiceDictation(options: {
   ipcMain.handle('voice:hud:get-sounds', async (event) => {
     if (!isHud(event)) throw new Error('voice: only the HUD window may load sounds')
     return loadVoiceSoundBuffers()
+  })
+
+  if (voiceTestClips.enabled) registerVoiceTestClipIpc({ isMainWindow, isHud })
+}
+
+/**
+ * Dev/test only (TEDOOO_CODE_VOICE_TEST_CLIPS): lets the verify workflow pick
+ * the clip the HUD plays instead of the microphone, and start/stop a dictation
+ * through the same controller toggle the hotkey uses. Never registered in normal use.
+ */
+export function registerVoiceTestClipIpc(guards: {
+  isMainWindow: (event: IpcMainInvokeEvent | IpcMainEvent) => boolean
+  isHud: (event: IpcMainInvokeEvent | IpcMainEvent) => boolean
+}): void {
+  const requireMain = (event: IpcMainInvokeEvent): void => {
+    if (!guards.isMainWindow(event)) throw new Error('voice: only the main window may call this')
+  }
+  const options = (raw: unknown): VoiceTestSelectOptions => {
+    const record = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+    return {
+      autoStopAfterMs:
+        typeof record.autoStopAfterMs === 'number' ? record.autoStopAfterMs : null
+    }
+  }
+
+  // An elapsed auto-stop presses the hotkey, in effect.
+  voiceTestClips.setStopHandler(() => {
+    if (voiceController.isRecording()) void voiceController.toggle()
+  })
+
+  ipcMain.handle('voice:test:status', (event) => {
+    requireMain(event)
+    return voiceTestClips.status()
+  })
+
+  ipcMain.handle('voice:test:list', (event) => {
+    requireMain(event)
+    return voiceTestClips.list()
+  })
+
+  ipcMain.handle('voice:test:select', (event, name: unknown, raw: unknown) => {
+    requireMain(event)
+    return voiceTestClips.select(name, options(raw))
+  })
+
+  ipcMain.handle('voice:test:start', async (event, raw: unknown) => {
+    requireMain(event)
+    const record = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+    if (voiceController.getStatus().state !== 'idle') {
+      throw new Error('voice: dictation is not idle')
+    }
+    await voiceTestClips.select(record.clip, options(raw))
+    await voiceController.toggle()
+    return voiceTestClips.status()
+  })
+
+  ipcMain.handle('voice:test:stop', async (event) => {
+    requireMain(event)
+    if (voiceController.isRecording()) await voiceController.toggle()
+    return voiceTestClips.status()
+  })
+
+  ipcMain.on('voice:hud:test-clip-ended', (event) => {
+    if (!guards.isHud(event)) return
+    voiceTestClips.clipEnded()
   })
 }
 

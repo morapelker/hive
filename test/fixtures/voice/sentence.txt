@@ -1,0 +1,1 @@
+Please move the settings button to the top right corner of the window, make it a little bigger, and give it the same color as the other buttons on the toolbar.

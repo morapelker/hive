@@ -5,7 +5,15 @@
  * suppression or gain control), Float32 mono at 16 kHz, a level reading per
  * ~96 ms chunk using the same dB mapping, samples accumulated until stop, and
  * the recording surviving an input-device change.
+ *
+ * Dev/test only: when the main process hands over a test clip (launched with
+ * TEDOOO_CODE_VOICE_TEST_CLIPS), the clip is played in real time into the same
+ * worklet instead of the microphone, so levels, chunking and stop handling are
+ * exercised exactly as with a mic. After the clip ends the input stays silent,
+ * like a quiet room, until the dictation is stopped.
  */
+
+import type { VoiceCaptureStartOptions, VoiceTestCaptureClip } from '@shared/types/voice'
 
 export const TARGET_SAMPLE_RATE = 16000
 /** 1536 samples at 16 kHz ≈ 96 ms, close to Wispelker's 4096-frame tap at 48 kHz. */
@@ -65,6 +73,8 @@ export class VoiceRecorder {
   private stream: MediaStream | null = null
   private source: MediaStreamAudioSourceNode | null = null
   private node: AudioWorkletNode | null = null
+  private clipPlayer: AudioBufferSourceNode | null = null
+  private clipFloor: ConstantSourceNode | null = null
   private chunks: Float32Array[] = []
   private flushWaiter: (() => void) | null = null
   private active = false
@@ -75,7 +85,10 @@ export class VoiceRecorder {
     return this.active
   }
 
-  async start(): Promise<void> {
+  /** The test clip has played to its end (dev/test only). */
+  onTestClipEnded: (() => void) | null = null
+
+  async start(options?: VoiceCaptureStartOptions): Promise<void> {
     if (this.active) return
     this.chunks = []
     this.active = true
@@ -106,7 +119,11 @@ export class VoiceRecorder {
       this.node = node
       // The worklet outputs silence; it still has to be connected so the graph pulls it.
       node.connect(context.destination)
-      await this.attachInput()
+      if (options && 'testClip' in options) {
+        this.attachTestClip(options.testClip ?? null)
+      } else {
+        await this.attachInput()
+      }
       if (context.state !== 'running') await context.resume()
     } catch (error) {
       this.teardown()
@@ -152,6 +169,48 @@ export class VoiceRecorder {
   }
 
   onInterrupted: (() => void) | null = null
+
+  /** Dev/test only: play the clip into the worklet in place of the microphone. */
+  private attachTestClip(clip: VoiceTestCaptureClip | null): void {
+    const context = this.context
+    const node = this.node
+    if (!context || !node) return
+    if (!clip) throw new Error('No test clip selected')
+    const buffer = context.createBuffer(1, Math.max(1, clip.samples.length), clip.sampleRate)
+    buffer.copyToChannel(new Float32Array(clip.samples), 0)
+    const player = new AudioBufferSourceNode(context, { buffer })
+    // Zeros once the clip is over, so the worklet keeps receiving input in real
+    // time (like a quiet microphone) until the dictation is stopped.
+    const floor = new ConstantSourceNode(context, { offset: 0 })
+    player.connect(node)
+    floor.connect(node)
+    player.onended = () => {
+      if (this.active && this.clipPlayer === player) this.onTestClipEnded?.()
+    }
+    this.clipPlayer = player
+    this.clipFloor = floor
+    floor.start()
+    player.start()
+  }
+
+  private detachTestClip(): void {
+    for (const source of [this.clipPlayer, this.clipFloor]) {
+      if (!source) continue
+      source.onended = null
+      try {
+        source.stop()
+      } catch {
+        // never started
+      }
+      try {
+        source.disconnect()
+      } catch {
+        // ignore
+      }
+    }
+    this.clipPlayer = null
+    this.clipFloor = null
+  }
 
   private detachInput(): void {
     try {
@@ -218,6 +277,7 @@ export class VoiceRecorder {
 
   private teardown(): void {
     this.detachInput()
+    this.detachTestClip()
     try {
       this.node?.disconnect()
     } catch {
