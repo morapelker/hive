@@ -107,6 +107,24 @@ describe('KanbanTicketCard sidebar hover highlight', () => {
     expect(card).not.toHaveAttribute(HIGHLIGHT_ATTR)
   })
 
+  it('highlights every ticket of the connection project while one of its instances is hovered', () => {
+    // A connection-project ticket has no worktree and its session may not be
+    // loaded yet; the instance → connection project link alone must light it up.
+    render(
+      <KanbanTicketCard ticket={{ ...baseTicket, project_id: 'conn-project' }} isPinnedMode />
+    )
+    const card = screen.getByTestId('kanban-ticket-ticket-1')
+
+    hover({ kind: 'connection', id: 'conn-1', projectId: 'conn-project' })
+    expect(card).toHaveAttribute(HIGHLIGHT_ATTR)
+
+    hover({ kind: 'connection', id: 'conn-1', projectId: 'other-conn-project' })
+    expect(card).not.toHaveAttribute(HIGHLIGHT_ATTR)
+
+    hover({ kind: 'connection', id: 'conn-1', projectId: null })
+    expect(card).not.toHaveAttribute(HIGHLIGHT_ATTR)
+  })
+
   it('highlights a ticket whose session runs inside the hovered connection', () => {
     useSessionStore.setState({
       sessionsByConnection: new Map([
@@ -116,10 +134,10 @@ describe('KanbanTicketCard sidebar hover highlight', () => {
     render(<KanbanTicketCard ticket={{ ...baseTicket, current_session_id: 'sess-1' }} />)
     const card = screen.getByTestId('kanban-ticket-ticket-1')
 
-    hover({ kind: 'connection', id: 'conn-1' })
+    hover({ kind: 'connection', id: 'conn-1', projectId: null })
     expect(card).toHaveAttribute(HIGHLIGHT_ATTR)
 
-    hover({ kind: 'connection', id: 'conn-2' })
+    hover({ kind: 'connection', id: 'conn-2', projectId: null })
     expect(card).not.toHaveAttribute(HIGHLIGHT_ATTR)
   })
 
@@ -135,7 +153,7 @@ describe('KanbanTicketCard sidebar hover highlight', () => {
     render(<KanbanTicketCard ticket={{ ...baseTicket, worktree_id: 'wt-1' }} />)
     const card = screen.getByTestId('kanban-ticket-ticket-1')
 
-    hover({ kind: 'connection', id: 'conn-1' })
+    hover({ kind: 'connection', id: 'conn-1', projectId: null })
     expect(card).toHaveAttribute(HIGHLIGHT_ATTR)
   })
 
@@ -143,7 +161,7 @@ describe('KanbanTicketCard sidebar hover highlight', () => {
     render(<KanbanTicketCard ticket={{ ...baseTicket, worktree_id: 'wt-1' }} />)
     const card = screen.getByTestId('kanban-ticket-ticket-1')
 
-    hover({ kind: 'connection', id: 'conn-1' })
+    hover({ kind: 'connection', id: 'conn-1', projectId: null })
     expect(card).not.toHaveAttribute(HIGHLIGHT_ATTR)
     hover({ kind: 'worktree', id: 'other', projectId: 'other-project' })
     expect(card).not.toHaveAttribute(HIGHLIGHT_ATTR)

@@ -62,7 +62,10 @@ export type SidebarHoverTarget =
   // Worktree hover highlights project-wide: `projectId` is the owning project,
   // resolved at hover time (null when the worktree store can't resolve it).
   | { kind: 'worktree'; id: string; projectId: string | null }
-  | { kind: 'connection'; id: string }
+  // Connection hover highlights its connection project's whole board: `projectId`
+  // is the saved connection project the connection is an instance of (null for an
+  // ad-hoc connection, which only matches through sessions / member worktrees).
+  | { kind: 'connection'; id: string; projectId: string | null }
 
 export interface MarkdownCardPlaceholder {
   projectId: string
@@ -3032,8 +3035,8 @@ export const useKanbanStore = create<KanbanState>()(
           target &&
           current.kind === target.kind &&
           current.id === target.id &&
-          (current.kind === 'worktree' ? current.projectId : null) ===
-            (target.kind === 'worktree' ? target.projectId : null)
+          (current.kind === 'project' ? null : current.projectId) ===
+            (target.kind === 'project' ? null : target.projectId)
         ) {
           return
         }

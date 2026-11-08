@@ -406,8 +406,10 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   )
 
   // ── Sidebar hover → board highlight ─────────────────────────────
-  // True while a sidebar project/worktree card is hovered and this ticket
-  // belongs to that project / runs (or is queued to run) on that worktree.
+  // True while a sidebar project/worktree/connection card is hovered and this
+  // ticket belongs to that project / the worktree's project / the connection
+  // project the connection is an instance of (or, when the project could not be
+  // resolved, runs or is queued to run on that worktree).
   const isLinkedToHoveredSidebarProjectOrWorktree = useKanbanStore(
     useCallback(
       (state) =>
@@ -425,7 +427,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   const hoveredSidebarConnectionId = useKanbanStore((state) =>
     state.hoveredSidebarTarget?.kind === 'connection' ? state.hoveredSidebarTarget.id : null
   )
-  // A hovered connection links tickets whose session runs inside it …
+  // A hovered connection also links tickets whose session runs inside it …
   const isLinkedToHoveredSidebarConnectionSession = useSessionStore(
     useCallback(
       (state) => {

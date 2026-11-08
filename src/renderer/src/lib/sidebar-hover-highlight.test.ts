@@ -46,8 +46,24 @@ describe('isTicketLinkedToSidebarTarget', () => {
     ).toBe(false)
   })
 
-  it('leaves connection targets to the caller', () => {
-    expect(isTicketLinkedToSidebarTarget(ticket, { kind: 'connection', id: 'c1' })).toBe(false)
+  it('matches every ticket of the hovered connection’s connection project', () => {
+    const connectionTicket = { project_id: 'conn-project', worktree_id: null, pending_launch_config: null }
+    expect(
+      isTicketLinkedToSidebarTarget(connectionTicket, {
+        kind: 'connection',
+        id: 'c1',
+        projectId: 'conn-project'
+      })
+    ).toBe(true)
+    expect(
+      isTicketLinkedToSidebarTarget(ticket, { kind: 'connection', id: 'c1', projectId: 'conn-project' })
+    ).toBe(false)
+  })
+
+  it('leaves ad-hoc connection targets (no connection project) to the caller', () => {
+    expect(
+      isTicketLinkedToSidebarTarget(ticket, { kind: 'connection', id: 'c1', projectId: null })
+    ).toBe(false)
   })
 })
 

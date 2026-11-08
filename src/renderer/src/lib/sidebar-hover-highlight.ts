@@ -15,9 +15,9 @@ export function getQueuedWorktreeId(ticket: Pick<KanbanTicket, 'pending_launch_c
 }
 
 /**
- * Project / worktree matching for the sidebar hover highlight. Connection
- * targets are resolved separately by the caller because they need session and
- * connection-member data from other stores.
+ * Project / worktree / connection-project matching for the sidebar hover
+ * highlight. A connection's session and member-worktree links are resolved
+ * separately by the caller because they need data from other stores.
  */
 export function isTicketLinkedToSidebarTarget(
   ticket: Pick<KanbanTicket, 'project_id' | 'worktree_id' | 'pending_launch_config'>,
@@ -33,6 +33,11 @@ export function isTicketLinkedToSidebarTarget(
       // project could not be resolved.
       if (target.projectId) return ticket.project_id === target.projectId
       return ticket.worktree_id === target.id || getQueuedWorktreeId(ticket) === target.id
+    case 'connection':
+      // An instance of a connection project is that project's "worktree": like
+      // worktree hover, highlight every ticket on the connection project's board.
+      // Ad-hoc connections (no project) are left to the caller.
+      return !!target.projectId && ticket.project_id === target.projectId
     default:
       return false
   }

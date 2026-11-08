@@ -4,8 +4,10 @@ import { useSidebarHoverHighlight } from '../useSidebarHoverHighlight'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { useConnectionStore } from '@/stores/useConnectionStore'
 
 type WorktreesByProject = ReturnType<typeof useWorktreeStore.getState>['worktreesByProject']
+type StoreConnection = ReturnType<typeof useConnectionStore.getState>['connections'][number]
 
 describe('useSidebarHoverHighlight', () => {
   afterEach(() => {
@@ -16,6 +18,7 @@ describe('useSidebarHoverHighlight', () => {
     })
     useSessionStore.setState({ sessionsByConnection: new Map() })
     useWorktreeStore.setState({ worktreesByProject: new Map() })
+    useConnectionStore.setState({ connections: [] })
     vi.restoreAllMocks()
   })
 
@@ -47,6 +50,20 @@ describe('useSidebarHoverHighlight', () => {
     })
   })
 
+  it('resolves the connection’s connection project so the highlight covers its whole board', () => {
+    useConnectionStore.setState({
+      connections: [{ id: 'c1', saved_project_id: 'conn-project' } as unknown as StoreConnection]
+    })
+    const { result } = renderHook(() => useSidebarHoverHighlight('connection', 'c1'))
+
+    act(() => result.current.onMouseEnter())
+    expect(useKanbanStore.getState().hoveredSidebarTarget).toEqual({
+      kind: 'connection',
+      id: 'c1',
+      projectId: 'conn-project'
+    })
+  })
+
   it('does not clear a target set by a different card', () => {
     const a = renderHook(() => useSidebarHoverHighlight('project', 'p1'))
     const b = renderHook(() => useSidebarHoverHighlight('connection', 'c1'))
@@ -55,7 +72,11 @@ describe('useSidebarHoverHighlight', () => {
     act(() => b.result.current.onMouseEnter())
     // Leave events can arrive out of order; the stale card must not wipe the new target
     act(() => a.result.current.onMouseLeave())
-    expect(useKanbanStore.getState().hoveredSidebarTarget).toEqual({ kind: 'connection', id: 'c1' })
+    expect(useKanbanStore.getState().hoveredSidebarTarget).toEqual({
+      kind: 'connection',
+      id: 'c1',
+      projectId: null
+    })
   })
 
   it('clears its own target when the card unmounts mid-hover', () => {
@@ -96,6 +117,10 @@ describe('useSidebarHoverHighlight', () => {
 
     act(() => result.current.onMouseEnter())
     expect(load).not.toHaveBeenCalled()
-    expect(useKanbanStore.getState().hoveredSidebarTarget).toEqual({ kind: 'connection', id: 'c1' })
+    expect(useKanbanStore.getState().hoveredSidebarTarget).toEqual({
+      kind: 'connection',
+      id: 'c1',
+      projectId: null
+    })
   })
 })
