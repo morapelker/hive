@@ -1,3 +1,4 @@
+import { shouldAutoReview } from '@/lib/auto-review'
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import type {
@@ -1195,6 +1196,12 @@ export const useKanbanStore = create<KanbanState>()(
             if (isPlanLike(ticket.mode) && !ticket.plan_ready && !apiErrored) {
               get().updateTicket(ticket.id, projectId, { plan_ready: true }).catch(() => {})
             }
+            if (!shouldAutoReview(projectId, ticket.id)) {
+              if (ticket.awaiting_completion) {
+                get().updateTicket(ticket.id, projectId, { awaiting_completion: false }).catch(() => {})
+              }
+              continue
+            }
             get()
               .moveTicket(ticket.id, projectId, 'review', ticket.sort_order)
               .catch(() => {})
@@ -2054,11 +2061,11 @@ export const useKanbanStore = create<KanbanState>()(
                       .catch(() => {})
                   }
                   // The session finished → its progress bar is gone. Any non-terminal
-                  // ticket must advance to review regardless of mode/plan state (board
-                  // invariant: in_progress ⇔ a running progress bar or a paused one).
+                  // ticket advances to review when its effective preference allows it.
                   // Move is idempotent; entering review drops awaiting_completion.
                   if (
                     !heldByDocumentUpdate &&
+                    shouldAutoReview(projectId, ticket.id) &&
                     ticket.column !== 'review' &&
                     ticket.column !== 'done' &&
                     ticket.column !== 'merged'
@@ -2066,14 +2073,13 @@ export const useKanbanStore = create<KanbanState>()(
                     get()
                       .moveTicket(ticket.id, projectId, 'review', ticket.sort_order)
                       .catch(() => {})
-                  } else if (ticket.column === 'review' && ticket.awaiting_completion) {
-                    // A ticket an earlier version parked in review while paused:
-                    // the real completion clears the mark and re-arms the unread
-                    // dot so the finish is noticed.
+                  } else if (ticket.awaiting_completion) {
+                    // Clear a previous pause even when automatic Review is off.
+                    // Tickets already in Review regain their unread indicator.
                     get()
                       .updateTicket(ticket.id, projectId, {
                         awaiting_completion: false,
-                        unread: true
+                        unread: ticket.column === 'review'
                       })
                       .catch(() => {})
                   }
@@ -2111,6 +2117,7 @@ export const useKanbanStore = create<KanbanState>()(
                 // lastSendMode, so the move must not be gated on mode.
                 if (
                   !heldByDocumentUpdate &&
+                  shouldAutoReview(projectId, ticket.id) &&
                   ticket.column !== 'review' &&
                   ticket.column !== 'done' &&
                   ticket.column !== 'merged'
@@ -2217,8 +2224,12 @@ export const useKanbanStore = create<KanbanState>()(
               }
 
               case 'session_error': {
-                // Error requires user attention — move to review if currently in_progress
-                if (!heldByDocumentUpdate && ticket.column === 'in_progress') {
+                // Surface errors in Review only when the workflow preference allows it.
+                if (
+                  !heldByDocumentUpdate &&
+                  shouldAutoReview(projectId, ticket.id) &&
+                  ticket.column === 'in_progress'
+                ) {
                   get()
                     .moveTicket(ticket.id, projectId, 'review', ticket.sort_order)
                     .catch(() => {})
