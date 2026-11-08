@@ -1,3 +1,6 @@
+import { AutoReviewPreference } from './AutoReviewPreference'
+import { useSettingsStore } from '@/stores/useSettingsStore'
+import { autoReviewTaskKey } from '@/lib/auto-review'
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { Eye, EyeOff, Send } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
@@ -45,6 +48,7 @@ export function TicketCreateModal({
   connectionId,
   isPinnedMode
 }: TicketCreateModalProps) {
+  const [autoReview, setAutoReview] = useState<boolean | undefined>(undefined)
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [showPreview, setShowPreview] = useState(false)
@@ -111,6 +115,7 @@ export function TicketCreateModal({
     title.trim().length > 0 ||
     description.trim().length > 0 ||
     attachments.length > 0 ||
+    autoReview !== undefined ||
     (isMultiProjectMode &&
       selectedProjectId !== '' &&
       selectedProjectId !== initialSelectedProjectId)
@@ -155,6 +160,7 @@ export function TicketCreateModal({
   // Reset form when modal opens
   useEffect(() => {
     if (open) {
+      setAutoReview(undefined)
       setTitle('')
       setDescription('')
       setShowPreview(false)
@@ -200,6 +206,13 @@ export function TicketCreateModal({
           attachments: attachments.map((a) => ({ type: a.type, url: a.url, label: a.label })),
           column: 'todo'
         })
+        if (autoReview !== undefined) {
+          const settings = useSettingsStore.getState()
+          settings.updateSetting('autoReviewTasks', {
+            ...settings.autoReviewTasks,
+            [autoReviewTaskKey(targetProjectId, created.id)]: autoReview
+          })
+        }
         createdSuccessfully.current = true
         if (isPinnedMode) setPinnedBoardLastCreateProjectId(targetProjectId)
         setShowDiscardConfirm(false)
@@ -221,6 +234,7 @@ export function TicketCreateModal({
       }
     },
     [
+      autoReview,
       title,
       description,
       attachments,
@@ -386,6 +400,11 @@ export function TicketCreateModal({
               />
             )}
           </div>
+
+          <AutoReviewPreference
+            projectId={isMultiProjectMode ? selectedProjectId : projectId}
+            draft={{ value: autoReview, onChange: setAutoReview }}
+          />
 
           {/* Attachments */}
           <TicketAttachmentEditor

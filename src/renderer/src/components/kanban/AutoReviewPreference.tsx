@@ -4,17 +4,21 @@ import { autoReviewTaskKey, resolveAutoReview } from '@/lib/auto-review'
 /** Personal workflow preferences live in the persisted application settings. */
 export function AutoReviewPreference({
   projectId,
-  ticketId
+  ticketId,
+  draft
 }: {
   projectId?: string
   ticketId?: string
+  draft?: { value: boolean | undefined; onChange: (value: boolean | undefined) => void }
 }): React.JSX.Element {
   const settings = useSettingsStore()
   const field = ticketId ? 'autoReviewTasks' : 'autoReviewProjects'
   const key = ticketId && projectId ? autoReviewTaskKey(projectId, ticketId) : projectId
-  const override = key ? settings[field]?.[key] : settings.autoReview
-  const inherited = resolveAutoReview(settings, ticketId ? projectId : undefined)
-  const effective = resolveAutoReview(settings, projectId, ticketId)
+  const override = draft ? draft.value : key ? settings[field]?.[key] : settings.autoReview
+  const inherited = resolveAutoReview(settings, ticketId || draft ? projectId : undefined)
+  const effective = draft
+    ? (draft.value ?? inherited)
+    : resolveAutoReview(settings, projectId, ticketId)
   return (
     <label
       className="block space-y-1 text-xs"
@@ -28,7 +32,9 @@ export function AutoReviewPreference({
         value={override === undefined ? 'inherit' : String(override)}
         onChange={(event) => {
           const value = event.target.value
-          if (!key) {
+          if (draft) {
+            draft.onChange(value === 'inherit' ? undefined : value === 'true')
+          } else if (!key) {
             settings.updateSetting('autoReview', value === 'true')
           } else {
             const next = { ...settings[field] }
@@ -38,9 +44,9 @@ export function AutoReviewPreference({
           }
         }}
       >
-        {key && (
+        {(key || draft) && (
           <option value="inherit">
-            Inherit {ticketId ? 'project' : 'global'} default ({inherited ? 'On' : 'Off'})
+            Inherit {ticketId || draft ? 'project' : 'global'} default ({inherited ? 'On' : 'Off'})
           </option>
         )}
         <option value="true">On</option>
