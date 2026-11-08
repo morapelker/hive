@@ -15,6 +15,7 @@ import { KanbanColumn } from '@/components/kanban/KanbanColumn'
 import { MergeOnDoneDialog } from '@/components/kanban/MergeOnDoneDialog'
 import { makeDetail } from '@/components/document-flow/test-fixtures'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { forgetBaseBranchPulls } from '@/lib/base-branch-pull'
 import { toast } from '@/lib/toast'
 import { toast as sonnerToast } from 'sonner'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
@@ -318,6 +319,7 @@ beforeEach(() => {
   // The run merged into base already: nothing is dirty, nothing is ahead of anything
   gitApiMocks.hasUncommittedChanges.mockResolvedValue(false)
   gitApiMocks.syncBranchWithOrigin.mockResolvedValue({ success: true, updated: false })
+  forgetBaseBranchPulls()
   gitApiMocks.branchDiffShortStat.mockResolvedValue({
     success: true,
     filesChanged: 0,

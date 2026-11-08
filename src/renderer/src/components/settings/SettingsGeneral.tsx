@@ -36,6 +36,7 @@ export function SettingsGeneral(): React.JSX.Element {
   const {
     autoStartSession,
     autoPullBeforeWorktree,
+    autoPullOnTicketMove,
     warnBeforeQuitting,
     boardMode,
     followUpTriggerColumn,
@@ -178,6 +179,35 @@ export function SettingsGeneral(): React.JSX.Element {
             className={cn(
               'pointer-events-none block h-4 w-4 rounded-full bg-background ring-0 transition-transform',
               autoPullBeforeWorktree ? 'translate-x-4' : 'translate-x-0'
+            )}
+          />
+        </button>
+      </div>
+
+      {/* Pull the base branch before a ticket moves to Done/Merged */}
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <label className="text-sm font-medium">Pull before moving tickets</label>
+          <p className="text-xs text-muted-foreground">
+            Pull the latest base branch from origin before a ticket moved to Done or Merged is
+            checked for work to merge, so a branch already merged on the remote is not merged
+            again. At most once a minute per project, however many tickets move.
+          </p>
+        </div>
+        <button
+          role="switch"
+          aria-checked={autoPullOnTicketMove}
+          onClick={() => updateSetting('autoPullOnTicketMove', !autoPullOnTicketMove)}
+          className={cn(
+            'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors',
+            autoPullOnTicketMove ? 'bg-primary' : 'bg-muted'
+          )}
+          data-testid="auto-pull-on-ticket-move-toggle"
+        >
+          <span
+            className={cn(
+              'pointer-events-none block h-4 w-4 rounded-full bg-background ring-0 transition-transform',
+              autoPullOnTicketMove ? 'translate-x-4' : 'translate-x-0'
             )}
           />
         </button>

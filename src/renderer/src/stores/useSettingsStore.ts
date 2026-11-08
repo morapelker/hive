@@ -127,6 +127,11 @@ export interface AppSettings {
   // General
   autoStartSession: boolean
   autoPullBeforeWorktree: boolean
+  /**
+   * Pull a project's base branch from origin before a ticket's move to Done/Merged checks its
+   * branch against it (at most once a minute per base branch). Off: no such pull at all.
+   */
+  autoPullOnTicketMove: boolean
   warnBeforeQuitting: boolean
   breedType: 'dogs' | 'cats'
   vimModeEnabled: boolean
@@ -301,6 +306,7 @@ export interface AppSettings {
 const DEFAULT_SETTINGS: AppSettings = {
   autoStartSession: true,
   autoPullBeforeWorktree: true,
+  autoPullOnTicketMove: true,
   warnBeforeQuitting: true,
   breedType: 'dogs',
   vimModeEnabled: false,
@@ -542,6 +548,7 @@ function extractSettings(state: SettingsState): AppSettings {
   return {
     autoStartSession: state.autoStartSession,
     autoPullBeforeWorktree: state.autoPullBeforeWorktree,
+    autoPullOnTicketMove: state.autoPullOnTicketMove,
     warnBeforeQuitting: state.warnBeforeQuitting,
     breedType: state.breedType,
     vimModeEnabled: state.vimModeEnabled,
@@ -962,6 +969,7 @@ export const useSettingsStore = create<SettingsState>()(
       partialize: (state) => ({
         autoStartSession: state.autoStartSession,
         autoPullBeforeWorktree: state.autoPullBeforeWorktree,
+        autoPullOnTicketMove: state.autoPullOnTicketMove,
         warnBeforeQuitting: state.warnBeforeQuitting,
         breedType: state.breedType,
         vimModeEnabled: state.vimModeEnabled,

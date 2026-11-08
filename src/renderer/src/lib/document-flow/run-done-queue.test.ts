@@ -6,6 +6,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeDetail } from '@/components/document-flow/test-fixtures'
+import { forgetBaseBranchPulls } from '@/lib/base-branch-pull'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import type {
@@ -169,6 +170,8 @@ beforeEach(() => {
   }))
   gitApiMocks.getFileStatuses.mockResolvedValue({ success: true, files: [] })
   gitApiMocks.syncBranchWithOrigin.mockResolvedValue({ success: true, updated: false })
+  // Pulls hold for a minute: each test drops as if nothing had been pulled before
+  forgetBaseBranchPulls()
   signal.getSessionSignal.mockReturnValue({ kind: 'ended' })
   worktrees['wt-int'].status = 'active'
 })

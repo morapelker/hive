@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { forgetBaseBranchPulls } from '@/lib/base-branch-pull'
 
 const connectionApiMocks = vi.hoisted(() => ({
   get: vi.fn()
@@ -84,6 +85,8 @@ const mainWorktree = worktree({
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // Pulls hold for a minute: each test moves tickets as if none had moved before
+  forgetBaseBranchPulls()
   gitApiMocks.syncBranchWithOrigin.mockResolvedValue({ success: true, updated: false })
   sessionStoreState.sessionsByConnection = new Map()
 })

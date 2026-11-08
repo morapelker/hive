@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { KanbanColumn } from '@/components/kanban/KanbanColumn'
 import { makeDetail } from '@/components/document-flow/test-fixtures'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { forgetBaseBranchPulls } from '@/lib/base-branch-pull'
 import { toast } from '@/lib/toast'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { setKanbanDragData, useKanbanStore } from '@/stores/useKanbanStore'
@@ -196,6 +197,8 @@ beforeEach(() => {
   dbApiMocks.worktree.getActiveByProject.mockResolvedValue([integrationWorktree, mainWorktree])
   gitApiMocks.hasUncommittedChanges.mockResolvedValue(false)
   gitApiMocks.syncBranchWithOrigin.mockResolvedValue({ success: true, updated: false })
+  // Pulls hold for a minute: each test drops as if nothing had been pulled before
+  forgetBaseBranchPulls()
   gitApiMocks.branchDiffShortStat.mockResolvedValue({
     success: true,
     filesChanged: 4,

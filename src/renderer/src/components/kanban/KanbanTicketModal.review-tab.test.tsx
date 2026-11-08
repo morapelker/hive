@@ -4,6 +4,7 @@ import { KanbanTicketModal } from './KanbanTicketModal'
 import { ClaudeCliSessionPortalProvider } from '@/contexts/ClaudeCliSessionPortalContext'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useProjectStore } from '@/stores/useProjectStore'
+import { forgetBaseBranchPulls } from '@/lib/base-branch-pull'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
@@ -306,6 +307,7 @@ function resetMocks(): void {
   gitApiMocks.getBranchDiffFiles.mockResolvedValue({ success: true, files: [] })
   gitApiMocks.onStatusChanged.mockReturnValue(() => {})
   gitApiMocks.syncBranchWithOrigin.mockResolvedValue({ success: true, updated: false })
+  forgetBaseBranchPulls()
 }
 
 function resetStores(): void {
