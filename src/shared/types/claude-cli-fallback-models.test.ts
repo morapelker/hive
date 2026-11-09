@@ -23,7 +23,7 @@ describe('resolveClaudeCliFallbackModel', () => {
 
   it('returns null for selectable models and empty input', () => {
     expect(resolveClaudeCliFallbackModel('claude-opus-5-5-20260101')).toBeNull()
-    expect(resolveClaudeCliFallbackModel('claude-fable-5')).toBeNull()
+    expect(resolveClaudeCliFallbackModel('claude-fable-5-2')).toBeNull()
     expect(resolveClaudeCliFallbackModel('opus')).toBeNull()
     expect(resolveClaudeCliFallbackModel(null)).toBeNull()
     expect(resolveClaudeCliFallbackModel(undefined)).toBeNull()

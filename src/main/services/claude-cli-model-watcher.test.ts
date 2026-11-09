@@ -65,20 +65,20 @@ describe('mainChainAssistantModels', () => {
   it('collects assistant models in order, skipping other line types', () => {
     const text =
       userLine() +
-      assistantLine('claude-fable-5') +
+      assistantLine('claude-fable-5-2') +
       userLine() +
-      assistantLine('claude-sonnet-5-5-20250929')
-    expect(mainChainAssistantModels(text)).toEqual(['claude-fable-5', 'claude-sonnet-5-5-20250929'])
+      assistantLine('claude-sonnet-5-5-20260929')
+    expect(mainChainAssistantModels(text)).toEqual(['claude-fable-5-2', 'claude-sonnet-5-5-20260929'])
   })
 
   it('ignores sidechain, synthetic and malformed lines', () => {
     const text =
-      assistantLine('claude-fable-5') +
+      assistantLine('claude-fable-5-2') +
       assistantLine('claude-haiku-5-5-20261006', { isSidechain: true }) +
       assistantLine('<synthetic>', { isApiErrorMessage: true }) +
       'not json\n' +
       `${JSON.stringify({ type: 'assistant', message: null })}\n`
-    expect(mainChainAssistantModels(text)).toEqual(['claude-fable-5'])
+    expect(mainChainAssistantModels(text)).toEqual(['claude-fable-5-2'])
   })
 })
 
@@ -104,7 +104,7 @@ describe('handleClaudeCliModelChangeHook', () => {
 
   it('does nothing while the session stays on one model', () => {
     const db = makeDb(makeSession())
-    writeFileSync(transcriptPath, assistantLine('claude-fable-5') + assistantLine('claude-fable-5'))
+    writeFileSync(transcriptPath, assistantLine('claude-fable-5-2') + assistantLine('claude-fable-5-2'))
     handleClaudeCliModelChangeHook(SESSION_ID, stopHook(), { db })
     expect(db.updateSession).not.toHaveBeenCalled()
     expect(publishDesktopBackendEvent).not.toHaveBeenCalled()
@@ -112,7 +112,7 @@ describe('handleClaudeCliModelChangeHook', () => {
 
   it('applies a mid-session degrade and publishes the change', () => {
     const db = makeDb(makeSession())
-    writeFileSync(transcriptPath, assistantLine('claude-fable-5'))
+    writeFileSync(transcriptPath, assistantLine('claude-fable-5-2'))
     handleClaudeCliModelChangeHook(SESSION_ID, stopHook(), { db })
 
     appendFileSync(transcriptPath, assistantLine('claude-sonnet-5-5-20250929'))
@@ -135,7 +135,7 @@ describe('handleClaudeCliModelChangeHook', () => {
 
   it('consumes the transcript at a StopFailure boundary (API-error turn end)', () => {
     const db = makeDb(makeSession())
-    writeFileSync(transcriptPath, assistantLine('claude-fable-5'))
+    writeFileSync(transcriptPath, assistantLine('claude-fable-5-2'))
     handleClaudeCliModelChangeHook(SESSION_ID, stopHook(), { db })
 
     // A usage-limit degrade lands mid-turn, then the turn dies with an API
@@ -200,7 +200,7 @@ describe('handleClaudeCliModelChangeHook', () => {
     // A real Opus 5.5 snapshot collapses to the selectable `opus`; only the
     // Opus 4.x fallback keeps its own non-selectable id.
     const db = makeDb(makeSession())
-    writeFileSync(transcriptPath, assistantLine('claude-fable-5'))
+    writeFileSync(transcriptPath, assistantLine('claude-fable-5-2'))
     handleClaudeCliModelChangeHook(SESSION_ID, stopHook(), { db })
 
     appendFileSync(transcriptPath, assistantLine('claude-opus-5-5-20260101'))
@@ -212,7 +212,7 @@ describe('handleClaudeCliModelChangeHook', () => {
     // Opus-tier fallback keeps extended efforts (unlike sonnet/haiku), and a
     // second opus-4-8 line must not rewrite the already-stored id.
     const db = makeDb(makeSession({ model_variant: 'max' }))
-    writeFileSync(transcriptPath, assistantLine('claude-fable-5'))
+    writeFileSync(transcriptPath, assistantLine('claude-fable-5-2'))
     handleClaudeCliModelChangeHook(SESSION_ID, stopHook(), { db })
 
     appendFileSync(transcriptPath, assistantLine('claude-opus-4-8'))
@@ -235,7 +235,7 @@ describe('handleClaudeCliModelChangeHook', () => {
     // from the prior tracker), not the ahead-of-CLI row, so the first fable
     // line is no transition and the pending sonnet choice survives.
     const db = makeDb(makeSession())
-    writeFileSync(transcriptPath, assistantLine('claude-fable-5'))
+    writeFileSync(transcriptPath, assistantLine('claude-fable-5-2'))
     handleClaudeCliModelChangeHook(SESSION_ID, stopHook(), { db })
 
     db.getSession = vi.fn(() => makeSession({ model_id: 'sonnet' }))
@@ -246,7 +246,7 @@ describe('handleClaudeCliModelChangeHook', () => {
       { hook_event_name: 'SessionStart', transcript_path: clearedPath },
       { db }
     )
-    appendFileSync(clearedPath, assistantLine('claude-fable-5'))
+    appendFileSync(clearedPath, assistantLine('claude-fable-5-2'))
     handleClaudeCliModelChangeHook(
       SESSION_ID,
       { hook_event_name: 'Stop', transcript_path: clearedPath },
@@ -263,7 +263,7 @@ describe('handleClaudeCliModelChangeHook', () => {
     const db = makeDb(makeSession({ model_id: 'opus', model_variant: 'max' }))
     writeFileSync(
       transcriptPath,
-      assistantLine('claude-fable-5') + assistantLine('claude-sonnet-5-5-20250929')
+      assistantLine('claude-fable-5-2') + assistantLine('claude-sonnet-5-5-20260929')
     )
     handleClaudeCliModelChangeHook(SESSION_ID, stopHook(), { db })
     expect(db.updateSession).not.toHaveBeenCalled()
@@ -279,21 +279,21 @@ describe('handleClaudeCliModelChangeHook', () => {
     // The user picked sonnet in Hive while the CLI keeps running fable until
     // respawn — the pending choice must not be reverted.
     const db = makeDb(makeSession({ model_id: 'sonnet' }))
-    writeFileSync(transcriptPath, assistantLine('claude-fable-5'))
+    writeFileSync(transcriptPath, assistantLine('claude-fable-5-2'))
     handleClaudeCliModelChangeHook(SESSION_ID, stopHook(), { db })
-    appendFileSync(transcriptPath, assistantLine('claude-fable-5'))
+    appendFileSync(transcriptPath, assistantLine('claude-fable-5-2'))
     handleClaudeCliModelChangeHook(SESSION_ID, stopHook(), { db })
     expect(db.updateSession).not.toHaveBeenCalled()
   })
 
   it('stays quiet when a live switch nets out to the session row model', () => {
     const db = makeDb(makeSession())
-    writeFileSync(transcriptPath, assistantLine('claude-fable-5'))
+    writeFileSync(transcriptPath, assistantLine('claude-fable-5-2'))
     handleClaudeCliModelChangeHook(SESSION_ID, stopHook(), { db })
 
     appendFileSync(
       transcriptPath,
-      assistantLine('claude-sonnet-5-5-20250929') + assistantLine('claude-fable-5')
+      assistantLine('claude-sonnet-5-5-20260929') + assistantLine('claude-fable-5-2')
     )
     handleClaudeCliModelChangeHook(SESSION_ID, stopHook(), { db })
     expect(db.updateSession).not.toHaveBeenCalled()
@@ -313,14 +313,14 @@ describe('handleClaudeCliModelChangeHook', () => {
 
   it('ignores sidechain and synthetic lines when tracking switches', () => {
     const db = makeDb(makeSession())
-    writeFileSync(transcriptPath, assistantLine('claude-fable-5'))
+    writeFileSync(transcriptPath, assistantLine('claude-fable-5-2'))
     handleClaudeCliModelChangeHook(SESSION_ID, stopHook(), { db })
 
     appendFileSync(
       transcriptPath,
       assistantLine('claude-haiku-5-5-20261006', { isSidechain: true }) +
         assistantLine('<synthetic>', { isApiErrorMessage: true }) +
-        assistantLine('claude-fable-5')
+        assistantLine('claude-fable-5-2')
     )
     handleClaudeCliModelChangeHook(SESSION_ID, stopHook(), { db })
     expect(db.updateSession).not.toHaveBeenCalled()
@@ -328,7 +328,7 @@ describe('handleClaudeCliModelChangeHook', () => {
 
   it('clamps an extended effort variant when degrading to sonnet/haiku', () => {
     const db = makeDb(makeSession({ model_variant: 'max' }))
-    writeFileSync(transcriptPath, assistantLine('claude-fable-5'))
+    writeFileSync(transcriptPath, assistantLine('claude-fable-5-2'))
     handleClaudeCliModelChangeHook(SESSION_ID, stopHook(), { db })
 
     appendFileSync(transcriptPath, assistantLine('claude-sonnet-5-5-20250929'))
@@ -347,7 +347,7 @@ describe('handleClaudeCliModelChangeHook', () => {
 
   it('leaves the ultracode variant untouched on degrade', () => {
     const db = makeDb(makeSession({ model_variant: 'ultracode' }))
-    writeFileSync(transcriptPath, assistantLine('claude-fable-5'))
+    writeFileSync(transcriptPath, assistantLine('claude-fable-5-2'))
     handleClaudeCliModelChangeHook(SESSION_ID, stopHook(), { db })
 
     appendFileSync(transcriptPath, assistantLine('claude-sonnet-5-5-20250929'))
@@ -357,7 +357,7 @@ describe('handleClaudeCliModelChangeHook', () => {
 
   it('skips custom-provider sessions entirely', () => {
     const db = makeDb(makeSession({ model_provider_id: 'custom', model_id: 'kimi-sonnet' }))
-    writeFileSync(transcriptPath, assistantLine('claude-fable-5'))
+    writeFileSync(transcriptPath, assistantLine('claude-fable-5-2'))
     handleClaudeCliModelChangeHook(SESSION_ID, stopHook(), { db })
 
     appendFileSync(transcriptPath, assistantLine('claude-sonnet-5-5-20250929'))
@@ -367,7 +367,7 @@ describe('handleClaudeCliModelChangeHook', () => {
 
   it('skips non claude-code-cli sessions and unknown sessions', () => {
     const sdkDb = makeDb(makeSession({ agent_sdk: 'claude-code' }))
-    writeFileSync(transcriptPath, assistantLine('claude-fable-5'))
+    writeFileSync(transcriptPath, assistantLine('claude-fable-5-2'))
     handleClaudeCliModelChangeHook(SESSION_ID, stopHook(), { db: sdkDb })
     appendFileSync(transcriptPath, assistantLine('claude-sonnet-5-5-20250929'))
     handleClaudeCliModelChangeHook(SESSION_ID, stopHook(), { db: sdkDb })
@@ -382,7 +382,7 @@ describe('handleClaudeCliModelChangeHook', () => {
     const db = makeDb(makeSession())
     writeFileSync(
       transcriptPath,
-      assistantLine('claude-fable-5') + assistantLine('claude-sonnet-5-5-20250929')
+      assistantLine('claude-fable-5-2') + assistantLine('claude-sonnet-5-5-20260929')
     )
     handleClaudeCliModelChangeHook(
       SESSION_ID,
@@ -396,7 +396,7 @@ describe('handleClaudeCliModelChangeHook', () => {
 
   it('detects on UserPromptSubmit as well as Stop', () => {
     const db = makeDb(makeSession())
-    writeFileSync(transcriptPath, assistantLine('claude-fable-5'))
+    writeFileSync(transcriptPath, assistantLine('claude-fable-5-2'))
     handleClaudeCliModelChangeHook(
       SESSION_ID,
       { hook_event_name: 'UserPromptSubmit', transcript_path: transcriptPath },
@@ -413,7 +413,7 @@ describe('handleClaudeCliModelChangeHook', () => {
 
   it('leaves a partial trailing line for the next read instead of parsing half a line', () => {
     const db = makeDb(makeSession())
-    writeFileSync(transcriptPath, assistantLine('claude-fable-5'))
+    writeFileSync(transcriptPath, assistantLine('claude-fable-5-2'))
     handleClaudeCliModelChangeHook(SESSION_ID, stopHook(), { db })
 
     const switchLine = assistantLine('claude-sonnet-5-5-20250929')
@@ -429,7 +429,7 @@ describe('handleClaudeCliModelChangeHook', () => {
 
   it('re-baselines when the transcript path changes (new CLI session)', () => {
     const db = makeDb(makeSession())
-    writeFileSync(transcriptPath, assistantLine('claude-fable-5'))
+    writeFileSync(transcriptPath, assistantLine('claude-fable-5-2'))
     handleClaudeCliModelChangeHook(SESSION_ID, stopHook(), { db })
 
     // /clear → new session file, running on sonnet from its first turn: no
@@ -448,7 +448,7 @@ describe('handleClaudeCliModelChangeHook', () => {
     const db = makeDb(makeSession())
     writeFileSync(
       transcriptPath,
-      assistantLine('claude-fable-5') + assistantLine('claude-fable-5')
+      assistantLine('claude-fable-5-2') + assistantLine('claude-fable-5-2')
     )
     handleClaudeCliModelChangeHook(SESSION_ID, stopHook(), { db })
 
@@ -463,7 +463,7 @@ describe('handleClaudeCliModelChangeHook', () => {
 
   it('resetClaudeCliModelWatcher drops state; re-attach re-baselines silently', () => {
     const db = makeDb(makeSession())
-    writeFileSync(transcriptPath, assistantLine('claude-fable-5'))
+    writeFileSync(transcriptPath, assistantLine('claude-fable-5-2'))
     handleClaudeCliModelChangeHook(SESSION_ID, stopHook(), { db })
 
     resetClaudeCliModelWatcher(SESSION_ID)
