@@ -6,7 +6,12 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AddProjectButton } from './AddProjectButton'
 
 const mocks = vi.hoisted(() => ({
-  addProject: vi.fn()
+  addProject: vi.fn(),
+  loadProjects: vi.fn().mockResolvedValue(undefined),
+  selectProject: vi.fn(),
+  selectConnection: vi.fn(),
+  selectWorktreeOnly: vi.fn(),
+  createLearning: vi.fn().mockResolvedValue({ id: 'learning' })
 }))
 
 const settingsMocks = vi.hoisted(() => {
@@ -38,10 +43,15 @@ const toastMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@/stores', () => ({
-  useProjectStore: () => ({
-    addProject: mocks.addProject
+  useProjectStore: Object.assign(() => ({ addProject: mocks.addProject }), {
+    getState: () => mocks
   }),
+  useConnectionStore: { getState: () => mocks },
+  useWorktreeStore: { getState: () => mocks },
   useSettingsStore: settingsMocks.useSettingsStore
+}))
+vi.mock('@/api/db-api', () => ({
+  dbApi: { project: { create: (...args: unknown[]) => mocks.createLearning(...args) } }
 }))
 
 vi.mock('@/api/project-api', () => ({
@@ -78,6 +88,20 @@ describe('AddProjectButton', () => {
     expect(await screen.findByTestId('add-project-menu-new')).toBeInTheDocument()
     expect(screen.getByTestId('add-project-menu-existing')).toBeInTheDocument()
     expect(screen.getByTestId('add-project-menu-repository')).toBeInTheDocument()
+  })
+
+  it('opens the learning board without asking for a repository', async () => {
+    render(<AddProjectButton />)
+    await userEvent.click(screen.getByTestId('add-project-button'))
+    await userEvent.click(await screen.findByTestId('add-project-menu-learning'))
+    await waitFor(() => expect(mocks.selectProject).toHaveBeenCalledWith('learning'))
+    expect(mocks.createLearning).toHaveBeenCalledWith({
+      name: 'Learning & planning',
+      path: '',
+      kind: 'learning'
+    })
+    expect(projectApiMocks.openDirectoryDialog).not.toHaveBeenCalled()
+    expect(mocks.selectWorktreeOnly).toHaveBeenCalledWith(null)
   })
 
   it('adds an existing project via the folder picker', async () => {

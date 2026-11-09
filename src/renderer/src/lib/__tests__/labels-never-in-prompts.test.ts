@@ -198,6 +198,16 @@ afterEach(() => {
 // ── Session launch from a ticket ──────────────────────────────────────
 
 describe('launch prompts', () => {
+  it('learning prompts teach the topic and keep personal labels private', async () => {
+    const prompt = buildPrompt('build', makeTicket(), 'learning')
+    expect(prompt).toContain('Help me learn about or plan')
+    expect(prompt).not.toContain('Please implement')
+    await expectLabelBlind(
+      (variant) => buildPrompt('build', variantOf(makeTicket(), variant), 'learning'),
+      '<ticket title="Ship the checkout">'
+    )
+  })
+
   it.each(['build', 'plan', 'super-plan', 'super-build'] as const)(
     'WorktreePickerModal buildPrompt (%s): picker prefill, quick launch, queued launch config',
     async (mode) => {

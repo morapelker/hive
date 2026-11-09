@@ -364,6 +364,7 @@ export const syncWorktreesOpEffect = (
       const db = yield* Db
       const svc = yield* db.raw
       const project = svc.getProject(params.projectId)
+      if (project?.kind === 'learning') return
 
       const gitWorktrees = yield* Effect.tryPromise(() => gitService.listWorktrees())
       const normalizedGitWorktrees = gitWorktrees.map((worktree) => ({

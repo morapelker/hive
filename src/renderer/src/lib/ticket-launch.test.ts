@@ -225,6 +225,29 @@ describe('launchTicketWithModel', () => {
     useWorktreeStatusStore.setState(initialWorktreeStatusState, true)
   })
 
+  it('launches learning tickets in the local workspace without creating a Git worktree', async () => {
+    const { createSession, createWorktreeFromBranch } = setupStores()
+    useProjectStore.setState({ projects: [{ id: 'project-1', kind: 'learning' }] as never })
+    useWorktreeStore.setState({
+      loadWorktrees: vi.fn().mockResolvedValue(undefined),
+      worktreesByProject: new Map([
+        ['project-1', [{ id: 'learning-workspace', path: '/learning', is_default: true }]]
+      ]) as never
+    })
+    const result = await launchTicketWithModel(
+      baseSpec({ worktree: { type: 'new', sourceBranch: 'main' } })
+    )
+    expect(result.success).toBe(true)
+    expect(createWorktreeFromBranch).not.toHaveBeenCalled()
+    expect(createSession).toHaveBeenCalledWith(
+      'learning-workspace',
+      'project-1',
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ skipKanbanAttach: true })
+    )
+  })
+
   it('refuses the ticket of a document run before creating anything', async () => {
     const { createSession, createWorktreeFromBranch, updateTicket } = setupStores()
     useKanbanStore.setState({

@@ -19,6 +19,7 @@ vi.mock('./useSettingsStore', () => ({
   useSettingsStore: { getState: () => ({ followUpTriggerColumn: 'done' }) }
 }))
 
+import { useProjectStore } from './useProjectStore'
 import { useKanbanStore } from './useKanbanStore'
 import { markNextWorkingStatusExplicit, useWorktreeStatusStore } from './useWorktreeStatusStore'
 import { kanbanApi } from '@/api/kanban-api'
@@ -93,11 +94,13 @@ function setSessionStatus(sessionId: string, status: SessionStatusType | null): 
 
 beforeEach(() => {
   vi.clearAllMocks()
+  useProjectStore.setState({ projects: [] })
   useKanbanStore.setState({ tickets: new Map() })
   useWorktreeStatusStore.setState({ sessionStatuses: {} })
 })
 
 afterEach(() => {
+  useProjectStore.setState({ projects: [] })
   useKanbanStore.setState({ tickets: new Map() })
   useWorktreeStatusStore.setState({ sessionStatuses: {} })
 })
@@ -418,9 +421,9 @@ describe('sessionApiErrors — error mark lifecycle', () => {
 
   it('survives clearWorktreeUnread even though the completed status entry is nulled', async () => {
     const { useSessionStore } = await import('./useSessionStore')
-    const sessionsByWorktree = new Map([
-      ['wt-1', [{ id: SESSION_ID }]]
-    ]) as unknown as ReturnType<typeof useSessionStore.getState>['sessionsByWorktree']
+    const sessionsByWorktree = new Map([['wt-1', [{ id: SESSION_ID }]]]) as unknown as ReturnType<
+      typeof useSessionStore.getState
+    >['sessionsByWorktree']
     useSessionStore.setState({ sessionsByWorktree })
     try {
       const store = useWorktreeStatusStore.getState()
@@ -840,7 +843,12 @@ describe('reconcileFinishedSessions — recovers explicit reopens missed while u
     useKanbanStore.setState((state) => {
       const next = new Map(state.tickets)
       next.set(otherProject, [
-        makeTicket({ id: 'ticket-2', project_id: otherProject, column: 'merged', current_session_id: sessionId })
+        makeTicket({
+          id: 'ticket-2',
+          project_id: otherProject,
+          column: 'merged',
+          current_session_id: sessionId
+        })
       ])
       return { tickets: next }
     })
@@ -876,5 +884,29 @@ describe('reconcileFinishedSessions — recovers explicit reopens missed while u
     useKanbanStore.getState().reconcileFinishedSessions(PROJECT_ID)
     await flush()
     expect(columnOf('ticket-1')).toBe('done')
+  })
+})
+
+describe('learning topics remain in progress', () => {
+  it.each(['session_completed', 'plan_ready'] as const)(
+    'keeps the topic in progress on %s',
+    async (type) => {
+      useProjectStore.setState({ projects: [{ id: PROJECT_ID, kind: 'learning' }] as never })
+      seed(makeTicket({ column: 'in_progress' }))
+      useKanbanStore.getState().syncTicketWithSession(SESSION_ID, { type })
+      await flush()
+      expect(columnOf('ticket-1')).toBe('in_progress')
+      expect(kanbanApi.ticket.move).not.toHaveBeenCalled()
+    }
+  )
+
+  it('keeps a completed topic in progress when reconciling after reload', async () => {
+    useProjectStore.setState({ projects: [{ id: PROJECT_ID, kind: 'learning' }] as never })
+    seed(makeTicket({ column: 'in_progress' }))
+    setSessionStatus(SESSION_ID, 'completed')
+    useKanbanStore.getState().reconcileFinishedSessions(PROJECT_ID)
+    await flush()
+    expect(columnOf('ticket-1')).toBe('in_progress')
+    expect(kanbanApi.ticket.move).not.toHaveBeenCalled()
   })
 })

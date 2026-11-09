@@ -2049,6 +2049,7 @@ export class DatabaseService implements DocumentFlowDb, DataProjectsRepository {
       id: randomUUID(),
       name: data.name,
       path: data.path,
+      kind: data.kind ?? 'git',
       description: data.description ?? null,
       tags: data.tags ? JSON.stringify(data.tags) : null,
       language: null,
@@ -2067,12 +2068,13 @@ export class DatabaseService implements DocumentFlowDb, DataProjectsRepository {
     }
 
     db.prepare(
-      `INSERT INTO projects (id, name, path, description, tags, language, setup_script, run_script, archive_script, worktree_create_script, custom_commands, auto_assign_port, sort_order, created_at, last_accessed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO projects (id, name, path, kind, description, tags, language, setup_script, run_script, archive_script, worktree_create_script, custom_commands, auto_assign_port, sort_order, created_at, last_accessed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       project.id,
       project.name,
       project.path,
+      project.kind,
       project.description,
       project.tags,
       project.language,

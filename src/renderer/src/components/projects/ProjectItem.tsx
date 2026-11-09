@@ -96,7 +96,7 @@ interface Project {
   name: string
   path: string
   /** 'git' (default) or 'connection' (a saved connection promoted to a project). */
-  kind?: 'git' | 'connection'
+  kind?: 'git' | 'connection' | 'learning'
   /** connection projects only: JSON array of member project ids. */
   member_project_ids?: string | null
   description: string | null
@@ -178,6 +178,7 @@ export const ProjectItem = memo(function ProjectItem({
   const connectionModeActive = useConnectionStore((s) => s.connectionModeActive)
 
   // ── Connection project (saved connection) ─────────────────────────
+  const isLearningProject = project.kind === 'learning'
   const isConnectionProject = project.kind === 'connection'
   const shellCommands = getRunnableShellCommands(project)
   const instanceCount = useConnectionStore((s) =>
@@ -236,7 +237,7 @@ export const ProjectItem = memo(function ProjectItem({
   const handleClick = (): void => {
     selectProject(project.id)
     toggleProjectExpanded(project.id)
-    if (isConnectionProject) {
+    if (isConnectionProject || isLearningProject) {
       // Board-first entity: clear worktree/connection selection so the
       // project's own kanban board becomes the main-pane content.
       useConnectionStore.getState().selectConnection(null)
@@ -646,7 +647,7 @@ export const ProjectItem = memo(function ProjectItem({
                       e.stopPropagation()
                       if (!isConnectionProject) setBranchPickerOpen(true)
                     }}
-                    disabled={isCreatingWorktree || isCreatingInstance}
+                    disabled={isLearningProject || isCreatingWorktree || isCreatingInstance}
                   >
                     {isCreatingWorktree || isCreatingInstance ? (
                       <Loader2 className="size-3 animate-spin" />
@@ -673,7 +674,7 @@ export const ProjectItem = memo(function ProjectItem({
                 <Copy className="h-4 w-4 mr-2" />
                 Copy Path
               </ContextMenuItem>
-              {!isConnectionProject && (
+              {!isConnectionProject && !isLearningProject && (
                 <>
                   <ContextMenuItem onClick={() => refreshLanguage(project.id)}>
                     <RefreshCw className="h-4 w-4 mr-2" />
@@ -709,7 +710,7 @@ export const ProjectItem = memo(function ProjectItem({
                   Edit Connection…
                 </ContextMenuItem>
               )}
-              {!isConnectionProject && (
+              {!isConnectionProject && !isLearningProject && (
                 <>
                   <ContextMenuItem
                     onClick={() => useProjectStore.getState().openProjectSettings(project.id)}

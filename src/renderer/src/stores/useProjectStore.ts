@@ -15,7 +15,7 @@ interface Project {
   name: string
   path: string
   /** 'git' (default) or 'connection' (a saved connection promoted to a project). */
-  kind?: 'git' | 'connection'
+  kind?: 'git' | 'connection' | 'learning'
   /** connection projects only: JSON array of member project ids (creation order). */
   member_project_ids?: string | null
   description: string | null

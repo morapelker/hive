@@ -201,9 +201,12 @@ function swapModePrefix(text: string, fromMode: PickerMode, toMode: PickerMode):
  */
 export function buildPrompt(
   mode: PickerMode,
-  ticket: Pick<KanbanTicket, 'title' | 'description' | 'attachments'>
+  ticket: Pick<KanbanTicket, 'title' | 'description' | 'attachments'>,
+  purpose?: 'learning'
 ): string {
-  const prefix = getModePrefix(mode)
+  const prefix = purpose === 'learning'
+    ? 'Help me learn about or plan the following topic. Explain concepts and work through questions with me.'
+    : getModePrefix(mode)
   const description = ticket.description ?? ''
   const attachments = (ticket.attachments ?? []) as Array<{
     type: string
@@ -383,7 +386,7 @@ export async function quickLaunchTicket(ticket: KanbanTicket): Promise<boolean> 
     projectId,
     ticketTitle: ticket.title,
     worktree: { type: 'new', sourceBranch },
-    prompt: buildPrompt('build', ticket),
+    prompt: buildPrompt('build', ticket, ticketProject?.kind === 'learning' ? 'learning' : undefined),
     mode: 'build',
     modelConfig: { sdk, model, codexFastMode: settings.codexFastMode, customProviderId: null },
     goalMode: false,
@@ -967,7 +970,14 @@ export function WorktreePickerModal({
   useEffect(() => {
     // branches.length guard: only fetch once per modal-open cycle (reset clears branches on close)
     // Connection projects have no git repo at project.path — no branches to list.
-    if (!isNewWorktree || !project?.path || isConnectionProjectMode || branches.length > 0) return
+    if (
+      !isNewWorktree ||
+      !project?.path ||
+      project.kind === 'learning' ||
+      isConnectionProjectMode ||
+      branches.length > 0
+    )
+      return
     setBranchesLoading(true)
     gitApi
       .listBranchesWithStatus(project.path)
@@ -2282,6 +2292,35 @@ export function WorktreePickerModal({
     },
     [onOpenChange, runOnRemote, remotePhase]
   )
+
+  if (project?.kind === 'learning') {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Start learning session</DialogTitle>
+            <DialogDescription>{ticket.title}</DialogDescription>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Start a conversation about this topic. No repository or Git worktree is needed.
+          </p>
+          <Button
+            disabled={isSending}
+            onClick={async () => {
+              setIsSending(true)
+              try {
+                if (await quickLaunchTicket(ticket)) onOpenChange(false)
+              } finally {
+                setIsSending(false)
+              }
+            }}
+          >
+            {isSending ? 'Starting...' : 'Start session'}
+          </Button>
+        </DialogContent>
+      </Dialog>
+    )
+  }
 
   return (
     <Dialog open={open} onOpenChange={handleDialogOpenChange}>

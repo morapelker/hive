@@ -217,6 +217,7 @@ const settingGetParamsSchema = z.object({ key: z.string().min(1) }).strict()
 const settingSetParamsSchema = z.object({ key: z.string().min(1), value: z.string() }).strict()
 const settingDeleteParamsSchema = z.object({ key: z.string().min(1) }).strict()
 const projectCreateParamsSchema = z.object({
+  kind: z.enum(['git', 'learning']).optional(),
   name: z.string(),
   path: z.string(),
   description: z.string().nullable().optional(),
@@ -522,6 +523,17 @@ export const makeLiveDbRpcService = (): DbRpcService => ({
           await import('../../../main/services/project-ops')
         const { telemetryService } = await import('../../../main/services/telemetry-service')
         const db = getDatabase()
+        // Learning chats need a local cwd, but never a repository or Git worktree.
+        if (data.kind === 'learning') {
+          const { app } = await import('electron')
+          const { join } = await import('path')
+          const { mkdirSync } = await import('fs')
+          const path = join(app.getPath('userData'), 'learning')
+          const existing = db.getProjectByPath(path)
+          if (existing) return existing
+          mkdirSync(path, { recursive: true })
+          data = { name: 'Learning & planning', path, kind: 'learning' }
+        }
         const project = createProjectWithDefaultWorktree(db, data)
         telemetryService.track('project_added', {})
 

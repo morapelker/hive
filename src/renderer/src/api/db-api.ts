@@ -41,6 +41,7 @@ type DiffCommentUpdateData = {
 }
 
 type ProjectCreateData = {
+  kind?: 'git' | 'learning'
   name: string
   path: string
   description?: string | null

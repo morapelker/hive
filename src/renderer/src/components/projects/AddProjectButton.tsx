@@ -8,12 +8,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
-import { useProjectStore } from '@/stores'
+import { useProjectStore, useConnectionStore, useWorktreeStore } from '@/stores'
 import { useDataProjectStore } from '@/stores/useDataProjectStore'
 import { projectToast, toast } from '@/lib/toast'
 import { GitInitDialog } from './GitInitDialog'
 import { CreateProjectDialog } from './CreateProjectDialog'
 import { AddRepositoryDialog } from './AddRepositoryDialog'
+import { dbApi } from '@/api/db-api'
+import type { Project } from '../../../../main/db/types'
 import { projectApi } from '@/api/project-api'
 import { cn } from '@/lib/utils'
 import {
@@ -141,6 +143,25 @@ export function AddProjectButton(): React.JSX.Element {
           >
             <Github className="h-4 w-4 mr-2" />
             Add repository
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            data-testid="add-project-menu-learning"
+            onSelect={() => {
+              if (isAdding) return
+              setIsAdding(true)
+              void dbApi.project
+                .create<Project>({ name: 'Learning & planning', path: '', kind: 'learning' })
+                .then(async (project) => {
+                  await useProjectStore.getState().loadProjects()
+                  useProjectStore.getState().selectProject(project.id)
+                  useConnectionStore.getState().selectConnection(null)
+                  useWorktreeStore.getState().selectWorktreeOnly(null)
+                })
+                .catch(() => toast.error('Failed to open learning workspace'))
+                .finally(() => setIsAdding(false))
+            }}
+          >
+            Learning &amp; planning (no repository)
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           {/* Data project: a database connection in the sidebar (wizard mounted in AppLayout) */}

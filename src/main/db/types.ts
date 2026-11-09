@@ -3,14 +3,14 @@ import type { ProjectShellCommand } from '@shared/lib/shell-commands'
 import type { TicketLabel } from '@shared/lib/ticket-labels'
 import type { AgentSdk } from '@shared/types/agent-sdk'
 
-/** Project discriminator: 'git' = a regular repo project, 'connection' = a saved connection project. */
-export type ProjectKind = 'git' | 'connection'
+/** Git repository, saved connection, or repository-free learning workspace. */
+export type ProjectKind = 'git' | 'connection' | 'learning'
 
 export interface Project {
   id: string
   name: string
   path: string
-  /** 'git' (default) or 'connection' (a saved connection promoted to a project). */
+  /** Defaults to 'git'. Learning workspaces use a plain local chat directory. */
   kind?: ProjectKind
   /** connection projects only: JSON array of member project ids (creation order). */
   member_project_ids?: string | null
@@ -71,6 +71,7 @@ export interface KanbanStorageConfig {
 }
 
 export interface ProjectCreate {
+  kind?: 'git' | 'learning'
   name: string
   path: string
   description?: string | null

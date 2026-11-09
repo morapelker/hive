@@ -269,7 +269,16 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
   try {
     // 1. Resolve worktree
     let worktreeId: string
-    if (spec.worktree.type === 'new') {
+    const ticketProject = useProjectStore.getState().projects.find((p) => p.id === spec.projectId)
+    if (ticketProject?.kind === 'learning') {
+      await useWorktreeStore.getState().loadWorktrees(spec.projectId)
+      const workspace = useWorktreeStore
+        .getState()
+        .worktreesByProject.get(spec.projectId)
+        ?.find((w) => w.is_default)
+      if (!workspace) return { success: false, error: 'Learning workspace not found' }
+      worktreeId = workspace.id
+    } else if (spec.worktree.type === 'new') {
       const project = useProjectStore.getState().projects.find((p) => p.id === spec.projectId)
       if (!project) {
         return { success: false, error: 'Project not found' }
@@ -336,6 +345,8 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
       prompt: spec.prompt,
       mode: spec.mode,
       modelConfig: spec.modelConfig,
+      // Learning tickets share a local cwd. Link only the requested ticket below.
+      skipKanbanAttach: ticketProject?.kind === 'learning',
       goalMode,
       goalSuccessCriteria,
       // Update ticket: clear pending config (via extras), set session + worktree,

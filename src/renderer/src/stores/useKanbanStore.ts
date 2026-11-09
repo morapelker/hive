@@ -31,12 +31,17 @@ import {
 } from '@shared/lib/ticket-labels'
 import { isClaudeCliCompletionDetected } from '@shared/types/claude-cli-stop-completion'
 import { isPlanLike } from '../lib/constants'
+import { useProjectStore } from './useProjectStore'
 import { useConnectionStore } from './useConnectionStore'
 import { usePinnedStore } from './usePinnedStore'
 import { useWorktreeStatusStore } from './useWorktreeStatusStore'
 import { kanbanApi as kanban } from '@/api/kanban-api'
 import { dbApi } from '@/api/db-api'
 import { toast } from '@/lib/toast'
+
+function isLearningProject(projectId: string): boolean {
+  return useProjectStore.getState().projects.find((project) => project.id === projectId)?.kind === 'learning'
+}
 
 export interface BoardTelegramTarget {
   ticketId: string
@@ -1165,6 +1170,8 @@ export const useKanbanStore = create<KanbanState>()(
           // (see syncTicketWithSession)
           if (isTicketHeldByDocumentUpdate(ticket.id)) continue
           if (ticket.column === 'in_progress') {
+            // A completed answer does not finish an ongoing learning topic.
+            if (isLearningProject(projectId)) continue
             // Only act on positive "finished" evidence — never on progressing/
             // asking/no-status, so we don't yank not-yet-started or actively-
             // running sessions out of in_progress.
@@ -2059,6 +2066,7 @@ export const useKanbanStore = create<KanbanState>()(
                   // Move is idempotent; entering review drops awaiting_completion.
                   if (
                     !heldByDocumentUpdate &&
+                    !isLearningProject(projectId) &&
                     ticket.column !== 'review' &&
                     ticket.column !== 'done' &&
                     ticket.column !== 'merged'
@@ -2111,6 +2119,7 @@ export const useKanbanStore = create<KanbanState>()(
                 // lastSendMode, so the move must not be gated on mode.
                 if (
                   !heldByDocumentUpdate &&
+                  !isLearningProject(projectId) &&
                   ticket.column !== 'review' &&
                   ticket.column !== 'done' &&
                   ticket.column !== 'merged'

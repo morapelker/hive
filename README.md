@@ -120,6 +120,10 @@ See how Hive transforms your git workflow:
 | **Find a worktree** | `cd ~/projects/...` → remember directory names | All worktrees in one sidebar |
 | **Clean up worktrees** | `git worktree remove` → `rm -rf directory` | Click "Archive" → Handles everything |
 
+### Learning and planning tickets
+
+Choose **Add Project → Learning & planning (no repository)** to open a board for learning topics and plans. Create tickets and use **Create & Send** to start their conversations. Chats use a plain local folder managed by Hive; no repository selection or Git worktree is required. Topics stay In Progress after an answer finishes until you move them. Tickets retain their ticket keys and conversation history for later reference.
+
 ## Quick Start
 
 Get up and running in under 2 minutes:
