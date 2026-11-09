@@ -21,6 +21,7 @@ export function RunReportSection({
   report,
   landed = false,
   migrationsAction,
+  manualStepsAction,
   addedKeys
 }: {
   report: DocumentRunReport
@@ -28,6 +29,8 @@ export function RunReportSection({
   landed?: boolean
   /** Shown next to the migrations list: the button that executes them, or stops that. */
   migrationsAction?: React.ReactNode
+  /** Shown next to the manual steps list: the button that opens the prompt to execute them. */
+  manualStepsAction?: React.ReactNode
   /**
    * An orchestrator made from board tickets: the keys of the tickets that joined it after it
    * launched, marked as such in the merged and not-merged lists (scope added after launch).
@@ -134,6 +137,7 @@ export function RunReportSection({
         title="Manual steps"
         testId="docflow-report-manual-steps"
         entries={report.manualSteps}
+        action={manualStepsAction}
       />
 
       {report.merged.length > 0 && (

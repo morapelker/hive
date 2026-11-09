@@ -382,6 +382,54 @@ export function buildMigrationPrompt(input: MigrationPromptInput): string {
   ].join('\n\n')
 }
 
+export const DOC_PATH_PLACEHOLDER = '{doc_path}'
+export const MANUAL_STEPS_PLACEHOLDER = '{manual_steps}'
+
+/** What the user fills in the "Execute manual steps" prompt with, in the order the UI lists them. */
+export const MANUAL_STEPS_PLACEHOLDERS = [DOC_PATH_PLACEHOLDER, MANUAL_STEPS_PLACEHOLDER] as const
+
+export const DEFAULT_MANUAL_STEPS_PROMPT = `we've implemented a bunch of tasks from the document here (and marked their status there as well): ${DOC_PATH_PLACEHOLDER}
+
+here are the manual steps that were mentioned from the implementation: """
+${MANUAL_STEPS_PLACEHOLDER}
+"""
+
+i want you to go over them and execute them. if you need anything from me - ask me using the AskUserQuestion tool
+
+after youre done - we should be ready to qa test the things implemented in that document`
+
+/** Stands in for {doc_path} on a run made from board tickets, which has no document. */
+export const NO_DOCUMENT_PATH_TEXT = '(no document: this run was made from board tickets)'
+
+export interface ManualStepsPromptInput {
+  /** The prompt as the user left it, placeholders and all. */
+  template: string
+  /** The run's source document; null for a run made from board tickets. */
+  documentPath: string | null
+  manualSteps: readonly string[]
+  /** The SDK the prompt launches on: other providers call the ask-the-user tool something else. */
+  sdk: string
+}
+
+const MANUAL_STEPS_TOKENS = /\{doc_path\}|\{manual_steps\}|\bAskUserQuestion\b/g
+
+/**
+ * The prompt of a session that executes a run's manual steps. One pass over the template with
+ * a replacer function: a value that happens to contain a placeholder or a `$&` stays as written.
+ */
+export function buildManualStepsPrompt(input: ManualStepsPromptInput): string {
+  const steps = input.manualSteps
+    .map((step) => step.trim())
+    .filter(Boolean)
+    .map((step) => `- ${step}`)
+    .join('\n')
+  return input.template.trim().replace(MANUAL_STEPS_TOKENS, (token) => {
+    if (token === DOC_PATH_PLACEHOLDER) return input.documentPath ?? NO_DOCUMENT_PATH_TEXT
+    if (token === MANUAL_STEPS_PLACEHOLDER) return steps
+    return questionToolName(input.sdk)
+  })
+}
+
 /**
  * Typed ahead of a follow-up that is pasted into a Claude CLI session. The CLI wraps a pasted
  * prompt in `<pasted_content>` tags and its agent follows instructions in there only where the

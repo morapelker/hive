@@ -88,8 +88,9 @@ export function isPlanLikeMode(mode: string | null | undefined): boolean {
 
 /**
  * Whether a prompt has to go through the TUI composer: slash commands are only
- * recognized there, and a plan-mode prompt must not be submitted before the
- * bridge has switched the TUI into Plan mode.
+ * recognized there, a plan-mode prompt must not be submitted before the bridge
+ * has switched the TUI into Plan mode, and a prompt that opens with a dash (a
+ * markdown list) would be parsed as an option on the command line.
  */
 export function requiresPtyPromptDelivery(
   prompt: string | null | undefined,
@@ -97,7 +98,8 @@ export function requiresPtyPromptDelivery(
 ): boolean {
   if (!prompt || !prompt.trim()) return false
   if (isPlanLikeMode(mode)) return true
-  return prompt.trimStart().startsWith('/')
+  const opening = prompt.trimStart()
+  return opening.startsWith('/') || opening.startsWith('-')
 }
 
 /**

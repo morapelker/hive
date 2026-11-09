@@ -14,7 +14,10 @@ import {
   buildDocumentUpdatePrompt,
   buildFixTicket,
   buildLaunchPrompt,
+  buildManualStepsPrompt,
   buildMigrationPrompt,
+  DEFAULT_MANUAL_STEPS_PROMPT,
+  NO_DOCUMENT_PATH_TEXT,
   buildNudgePrompt,
   buildTicketBrief,
   buildTicketRunPrompt,
@@ -1023,5 +1026,96 @@ describe('runs made from board tickets', () => {
     ])
     // A brief that carries its rules already is left as it is by withRunRules.
     expect(withRunRules(prompt, { interactive: false, sdk: 'claude-code' })).toBe(prompt)
+  })
+})
+
+describe('buildManualStepsPrompt', () => {
+  const build = (
+    template: string,
+    overrides: Partial<Parameters<typeof buildManualStepsPrompt>[0]> = {}
+  ): string =>
+    buildManualStepsPrompt({
+      template,
+      documentPath: '/docs/plan.html',
+      manualSteps: ['Set STRIPE_KEY', 'Rotate the webhook'],
+      sdk: 'claude-code-cli',
+      ...overrides
+    })
+
+  it('starts from the prompt the ticket specified', () => {
+    expect(DEFAULT_MANUAL_STEPS_PROMPT).toBe(
+      [
+        "we've implemented a bunch of tasks from the document here (and marked their status there as well): {doc_path}",
+        '',
+        'here are the manual steps that were mentioned from the implementation: """',
+        '{manual_steps}',
+        '"""',
+        '',
+        'i want you to go over them and execute them. if you need anything from me - ask me using the AskUserQuestion tool',
+        '',
+        'after youre done - we should be ready to qa test the things implemented in that document'
+      ].join('\n')
+    )
+  })
+
+  it('fills both placeholders, the steps as a list', () => {
+    expect(build(DEFAULT_MANUAL_STEPS_PROMPT)).toBe(
+      [
+        "we've implemented a bunch of tasks from the document here (and marked their status there as well): /docs/plan.html",
+        '',
+        'here are the manual steps that were mentioned from the implementation: """',
+        '- Set STRIPE_KEY',
+        '- Rotate the webhook',
+        '"""',
+        '',
+        'i want you to go over them and execute them. if you need anything from me - ask me using the AskUserQuestion tool',
+        '',
+        'after youre done - we should be ready to qa test the things implemented in that document'
+      ].join('\n')
+    )
+  })
+
+  it('fills every occurrence of a placeholder', () => {
+    expect(build('{doc_path} and {doc_path}')).toBe('/docs/plan.html and /docs/plan.html')
+  })
+
+  it('leaves a prompt without placeholders as written', () => {
+    expect(build('just do the steps')).toBe('just do the steps')
+  })
+
+  it('does not treat a value as a replacement pattern or as more placeholders', () => {
+    expect(
+      build('{manual_steps} / {doc_path}', {
+        manualSteps: ['costs $& and {doc_path}'],
+        documentPath: "/docs/$'{manual_steps}.md"
+      })
+    ).toBe("- costs $& and {doc_path} / /docs/$'{manual_steps}.md")
+  })
+
+  it('drops blank steps and trims the rest', () => {
+    expect(build('{manual_steps}', { manualSteps: ['  one ', '', '   ', 'two'] })).toBe(
+      '- one\n- two'
+    )
+  })
+
+  it('says so when the run has no document', () => {
+    expect(build('from: {doc_path}', { documentPath: null })).toBe(
+      `from: ${NO_DOCUMENT_PATH_TEXT}`
+    )
+  })
+
+  it.each([
+    ['claude-code-cli', 'AskUserQuestion'],
+    ['codex', 'request_user_input'],
+    ['codex-cli', 'request_user_input'],
+    ['opencode', 'question']
+  ])('names the ask-the-user tool of %s', (sdk, tool) => {
+    expect(build('use the AskUserQuestion tool', { sdk })).toBe(`use the ${tool} tool`)
+  })
+
+  it('renames the tool in the prompt only, not inside a manual step', () => {
+    expect(
+      build('AskUserQuestion: {manual_steps}', { sdk: 'codex', manualSteps: ['call AskUserQuestion'] })
+    ).toBe('request_user_input: - call AskUserQuestion')
   })
 })

@@ -63,6 +63,8 @@ describe('normalizers', () => {
     expect(requiresPtyPromptDelivery('Fix the bug', 'plan')).toBe(true)
     expect(requiresPtyPromptDelivery('Fix the bug', 'super-plan')).toBe(true)
     expect(requiresPtyPromptDelivery('/goal ship it', 'build')).toBe(true)
+    expect(requiresPtyPromptDelivery('- Set STRIPE_KEY\n- Rotate', 'build')).toBe(true)
+    expect(requiresPtyPromptDelivery('Set STRIPE_KEY - then rotate', 'build')).toBe(false)
     expect(requiresPtyPromptDelivery('   ', 'plan')).toBe(false)
     expect(requiresPtyPromptDelivery(null, 'plan')).toBe(false)
   })

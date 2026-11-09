@@ -298,6 +298,11 @@ export interface AppSettings {
 
   // Review
   reviewPromptType: ReviewPromptType
+  /**
+   * The prompt "Execute manual steps" starts from, when the user chose to keep an edit of it.
+   * Null: the built-in one.
+   */
+  manualStepsPromptTemplate: string | null
 
   // Migration flags
   _boardModeMigratedToStickyTab?: boolean
@@ -402,6 +407,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   codexJsonlResetPerSession: true,
   sessionProfilerEnabled: false,
   reviewPromptType: 'standard',
+  manualStepsPromptTemplate: null,
   _boardModeMigratedToStickyTab: false
 }
 
@@ -620,6 +626,7 @@ function extractSettings(state: SettingsState): AppSettings {
     codexJsonlResetPerSession: state.codexJsonlResetPerSession,
     sessionProfilerEnabled: state.sessionProfilerEnabled,
     reviewPromptType: state.reviewPromptType,
+    manualStepsPromptTemplate: state.manualStepsPromptTemplate,
     _boardModeMigratedToStickyTab: state._boardModeMigratedToStickyTab
   }
 }
@@ -1040,6 +1047,7 @@ export const useSettingsStore = create<SettingsState>()(
         codexJsonlResetPerSession: state.codexJsonlResetPerSession,
         sessionProfilerEnabled: state.sessionProfilerEnabled,
         reviewPromptType: state.reviewPromptType,
+        manualStepsPromptTemplate: state.manualStepsPromptTemplate,
         _boardModeMigratedToStickyTab: state._boardModeMigratedToStickyTab
       })
     }

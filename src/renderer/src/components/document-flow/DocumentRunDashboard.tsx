@@ -8,6 +8,7 @@ import {
   FileText,
   FlagTriangleRight,
   GitBranch,
+  ListChecks,
   Loader2,
   MessageCircleQuestion,
   Pause,
@@ -39,6 +40,7 @@ import {
   DialogTitle
 } from '@/components/ui/dialog'
 import { copyTextToClipboard } from '@/lib/clipboard'
+import type { LaunchedManualSteps } from '@/lib/document-flow/manual-steps'
 import { integrationCheckoutGone } from '@/lib/document-flow/ticket-run-membership'
 import {
   applyQuestionMode,
@@ -69,6 +71,7 @@ import {
 import { AddRunMemberDialog } from './AddRunMemberDialog'
 import { AddRunTicketsDialog } from './AddRunTicketsDialog'
 import { DocumentRunPRRow } from './DocumentRunPRActions'
+import { ExecuteManualStepsDialog } from './ExecuteManualStepsDialog'
 import { TonePill } from './DocumentFlowBadges'
 import { NeedsYouSection, RunItemsTable, useRunItemActions } from './DocumentRunItems'
 import { RunActivityLog, RunReportSection } from './DocumentRunReport'
@@ -220,6 +223,10 @@ function describeQuestionModeResult(interactive: boolean, result: QuestionModeRe
 const errorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause)
 
+/** Next to a withheld "Execute manual steps": the steps often include the migrations themselves. */
+const MANUAL_STEPS_WHILE_MIGRATING_REASON =
+  'A session is executing the migrations of this run; execute the manual steps once it is done.'
+
 /** Next to a withheld "Open document": the file the run was made from is no longer on disk. */
 export const DOCUMENT_DELETED_REASON = 'The document was deleted from disk.'
 
@@ -333,6 +340,8 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
   const [busy, setBusy] = useState<BusyKind | null>(null)
   const [addingMember, setAddingMember] = useState(false)
   const [addingTickets, setAddingTickets] = useState(false)
+  const [executingManualSteps, setExecutingManualSteps] = useState(false)
+  const [manualStepsSession, setManualStepsSession] = useState<LaunchedManualSteps | null>(null)
   // A run made from board tickets has no document: no source line, no check, no edit lane.
   const ticketRun = isTicketRun(run)
   const [source, setSource] = useSourceFile(run, hasDocument(run))
@@ -831,6 +840,52 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
             report={run.report}
             landed={landed}
             addedKeys={addedKeys}
+            manualStepsAction={
+              <>
+                {/* Said in words: a disabled button shows no tooltip */}
+                {migrating && (
+                  <span
+                    className="max-w-[420px] text-right text-[11px] leading-snug text-muted-foreground"
+                    data-testid="docflow-manual-steps-blocked"
+                  >
+                    {MANUAL_STEPS_WHILE_MIGRATING_REASON}
+                  </span>
+                )}
+                {manualStepsSession && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 text-xs"
+                    data-testid="docflow-open-manual-steps-session"
+                    onClick={() => {
+                      const { sessionId, checkout } = manualStepsSession
+                      openSession(
+                        run.project_id,
+                        checkout.kind === 'worktree' ? checkout.worktreeId : null,
+                        sessionId,
+                        checkout.kind === 'connection' ? checkout.connectionId : null
+                      )
+                      closeDashboard()
+                    }}
+                  >
+                    Open session
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-6 text-xs"
+                  data-testid="docflow-execute-manual-steps-btn"
+                  disabled={migrating}
+                  onClick={() => setExecutingManualSteps(true)}
+                >
+                  <ListChecks className="h-3 w-3" />
+                  Execute manual steps
+                </Button>
+              </>
+            }
             migrationsAction={
               migrating ? (
                 <>
@@ -936,6 +991,15 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
       )}
       {offersAddTickets && (
         <AddRunTicketsDialog run={run} open={addingTickets} onOpenChange={setAddingTickets} />
+      )}
+      {run.report && (
+        <ExecuteManualStepsDialog
+          run={run}
+          manualSteps={run.report.manualSteps}
+          open={executingManualSteps}
+          onOpenChange={setExecutingManualSteps}
+          onLaunched={setManualStepsSession}
+        />
       )}
 
       <AlertDialog

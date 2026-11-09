@@ -181,6 +181,9 @@ export function buildClaudeCliPtySpawn(input: ClaudeCliPtySpawnInput): ClaudeCli
 
   const prompt = input.pendingPrompt?.trim()
   if (prompt) {
+    // A prompt that opens with a dash (a markdown list) would be parsed as an unknown option,
+    // and the CLI would exit before doing anything.
+    if (prompt.startsWith('-')) args.push('--')
     args.push(prompt)
   }
 

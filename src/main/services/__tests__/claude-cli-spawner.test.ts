@@ -65,6 +65,25 @@ describe('buildClaudeCliPtySpawn', () => {
     expect(spawn.resumeSessionId).toBe('claude-uuid-1')
   })
 
+  it('ends the options before a prompt that opens with a dash, and only then', () => {
+    const dashed = buildClaudeCliPtySpawn({
+      session: makeSession(),
+      worktreePath: '/repo/worktree',
+      pendingPrompt: '- Set STRIPE_KEY\n- Rotate the webhook',
+      claudeBinary: 'claude'
+    })
+    expect(dashed.args.slice(-2)).toEqual(['--', '- Set STRIPE_KEY\n- Rotate the webhook'])
+
+    const plain = buildClaudeCliPtySpawn({
+      session: makeSession(),
+      worktreePath: '/repo/worktree',
+      pendingPrompt: 'Set STRIPE_KEY - then rotate',
+      claudeBinary: 'claude'
+    })
+    expect(plain.args).not.toContain('--')
+    expect(plain.args.at(-1)).toBe('Set STRIPE_KEY - then rotate')
+  })
+
   it('reports a brand-new session as not resumed', () => {
     const spawn = buildClaudeCliPtySpawn({
       session: makeSession(),

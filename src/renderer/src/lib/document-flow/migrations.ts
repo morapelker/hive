@@ -150,11 +150,10 @@ export function isMigrationSession(sessionId: string): boolean {
 }
 
 /**
- * A session that will never be the run's migration session: closed for good, so it neither
- * keeps running nor lingers as a tab whose queued prompt would run the migrations, untracked,
- * the moment someone opens it.
+ * A session whose launch fell through: closed for good, so it neither keeps running nor lingers
+ * as a tab whose queued prompt would run the work, untracked, the moment someone opens it.
  */
-async function discardSession(sessionId: string): Promise<void> {
+export async function discardSession(sessionId: string): Promise<void> {
   useSessionStore.getState().dequeuePendingMessage(sessionId)
   await abortSdkSession(sessionId).catch(() => undefined)
   try {
