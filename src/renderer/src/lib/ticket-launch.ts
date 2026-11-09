@@ -99,6 +99,8 @@ export interface TicketLaunchSpec {
    * caller leaves it unset, and such a ticket is refused, so it never gets a second session.
    */
   orchestrated?: boolean
+  /** An existing connection instance is not renamed after this ticket (a run's integration instance). */
+  keepInstanceName?: boolean
 }
 
 export interface TicketLaunchResult {
@@ -472,7 +474,8 @@ async function launchTicketOnConnection(
         promptText: spec.prompt,
         goalMode,
         goalSuccessCriteria,
-        headless: true
+        headless: true,
+        ...(spec.keepInstanceName ? { keepInstanceName: true } : {})
       },
       ...(spec.ticketUpdateExtras ? { ticketUpdateExtras: spec.ticketUpdateExtras } : {})
     })

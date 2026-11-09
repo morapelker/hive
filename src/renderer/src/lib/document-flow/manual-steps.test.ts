@@ -2,28 +2,33 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DocumentRunLaunchConfig, DocumentRunMember } from '@shared/types/document-flow'
 import {
   defaultManualStepsTarget,
-  isManualStepsSession,
   launchManualStepsSession,
   manualStepsTargets,
-  resetManualStepsStateForTests,
-  type ManualStepsCheckout,
   type ManualStepsTarget
 } from './manual-steps'
+import type { RunCheckout } from './run-checkout'
 
 const mocks = vi.hoisted(() => ({
-  launchSessionWithModel: vi.fn(),
-  launchSessionOnConnection: vi.fn(),
-  discardSession: vi.fn(),
-  updateSessionName: vi.fn()
+  createTicket: vi.fn(),
+  deleteTicket: vi.fn(),
+  launchTicketOnCheckout: vi.fn()
 }))
 
-vi.mock('@/lib/ticket-launch', () => ({
-  launchSessionWithModel: mocks.launchSessionWithModel,
-  launchSessionOnConnection: mocks.launchSessionOnConnection
+vi.mock('./run-checkout', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./run-checkout')>()),
+  launchTicketOnCheckout: mocks.launchTicketOnCheckout
 }))
-vi.mock('./migrations', () => ({ discardSession: mocks.discardSession }))
-vi.mock('@/stores/useSessionStore', () => ({
-  useSessionStore: { getState: () => ({ updateSessionName: mocks.updateSessionName }) }
+vi.mock('@/lib/ticket-launch', () => ({ launchTicketWithModel: vi.fn() }))
+vi.mock('./migrations', () => ({ discardSession: vi.fn() }))
+vi.mock('./runner-ports', () => ({ resetTicketToTodo: vi.fn() }))
+vi.mock('./ticket-run-membership', () => ({
+  runTitle: (run: { title: string; source_kind: string }) =>
+    run.title.trim() || (run.source_kind === 'tickets' ? 'Orchestrator' : 'Document run')
+}))
+vi.mock('@/stores/useKanbanStore', () => ({
+  useKanbanStore: {
+    getState: () => ({ createTicket: mocks.createTicket, deleteTicket: mocks.deleteTicket })
+  }
 }))
 vi.mock('@/lib/connection-project', () => ({
   isBaseInstance: (c: { is_base?: number; saved_project_id?: string | null }) =>
@@ -38,14 +43,12 @@ const WORKTREE_RUN = {
   integration_branch: 'doc-checkout',
   integration_worktree_id: 'wt-integration',
   integration_connection_id: null,
-  integration_connection_path: null,
   members: null
 }
 const CONNECTION_RUN = {
   ...WORKTREE_RUN,
   integration_worktree_id: null,
   integration_connection_id: 'conn-integration',
-  integration_connection_path: '/connections/doc-checkout',
   members: [{ project_id: 'web' } as DocumentRunMember]
 }
 const INTEGRATION_WORKTREE = {
@@ -132,34 +135,16 @@ describe('manualStepsTargets — a connection run', () => {
       {
         kind: 'integration',
         branch: 'doc-checkout',
-        checkout: {
-          kind: 'connection',
-          connectionId: 'conn-integration',
-          path: '/connections/doc-checkout'
-        },
+        checkout: { kind: 'connection', connectionId: 'conn-integration' },
         refusal: null
       },
       {
         kind: 'no-worktree',
         branch: 'main + master',
-        checkout: { kind: 'connection', connectionId: 'conn-base', path: '/connections/base' },
+        checkout: { kind: 'connection', connectionId: 'conn-base' },
         refusal: null
       }
     ])
-  })
-
-  it('falls back to the store’s path when the run has none', () => {
-    const target = find(
-      manualStepsTargets({ ...CONNECTION_RUN, integration_connection_path: null }, undefined, [
-        INTEGRATION_INSTANCE
-      ]),
-      'integration'
-    )
-    expect(target.checkout).toEqual({
-      kind: 'connection',
-      connectionId: 'conn-integration',
-      path: '/from-store'
-    })
   })
 
   it.each([
@@ -213,116 +198,71 @@ describe('launchManualStepsSession', () => {
     codexFastMode: false,
     customProviderId: null
   }
-  type LaunchTarget = ManualStepsTarget & { checkout: ManualStepsCheckout }
-  const WORKTREE_TARGET: LaunchTarget = {
+  const TARGET: ManualStepsTarget & { checkout: RunCheckout } = {
     kind: 'integration',
     branch: 'doc-checkout',
     checkout: { kind: 'worktree', worktreeId: 'wt-integration' },
     refusal: null
   }
-  const CONNECTION_TARGET: LaunchTarget = {
-    kind: 'integration',
-    branch: 'doc-checkout',
-    checkout: { kind: 'connection', connectionId: 'conn-1', path: '/connections/x' },
-    refusal: null
-  }
-
-  type CreatedHook = (created: { session: { id: string } }) => Promise<void>
-  const launchAs = (
-    fn: typeof mocks.launchSessionWithModel,
-    result: { success: boolean; sessionId?: string; error?: string }
-  ): void => {
-    fn.mockImplementation(async (spec: { onSessionCreated: CreatedHook }) => {
-      if (result.sessionId) await spec.onSessionCreated({ session: { id: result.sessionId } })
-      return result
-    })
-  }
+  const RUN = { project_id: 'project-1', title: 'Checkout redesign', source_kind: 'document' as const }
+  const TICKET = { id: 'ticket-1', project_id: 'project-1', title: 'Manual steps' }
 
   beforeEach(() => {
     vi.resetAllMocks()
-    resetManualStepsStateForTests()
-    mocks.updateSessionName.mockResolvedValue(true)
-    mocks.discardSession.mockResolvedValue(undefined)
+    mocks.createTicket.mockResolvedValue(TICKET)
+    mocks.deleteTicket.mockResolvedValue(undefined)
+    mocks.launchTicketOnCheckout.mockResolvedValue('session-1')
   })
 
-  it('launches in the worktree with no ticket attached, and names the session', async () => {
-    launchAs(mocks.launchSessionWithModel, { success: true, sessionId: 'session-1' })
-
-    await expect(
-      launchManualStepsSession(WORKTREE_TARGET, 'project-1', 'do the steps', CONFIG)
-    ).resolves.toBe('session-1')
-
-    expect(mocks.launchSessionWithModel).toHaveBeenCalledWith(
-      expect.objectContaining({
-        projectId: 'project-1',
-        worktreeId: 'wt-integration',
-        prompt: 'do the steps',
-        mode: 'build',
-        modelConfig: CONFIG,
-        goalMode: false,
-        goalSuccessCriteria: null,
-        skipKanbanAttach: true
-      })
-    )
-    expect(mocks.launchSessionOnConnection).not.toHaveBeenCalled()
-    expect(mocks.updateSessionName).toHaveBeenCalledWith('session-1', 'Manual steps — doc-checkout')
-  })
-
-  it('launches on the connection instance of a connection target', async () => {
-    launchAs(mocks.launchSessionOnConnection, { success: true, sessionId: 'session-2' })
-
-    await launchManualStepsSession(CONNECTION_TARGET, 'project-1', 'do the steps', CONFIG)
-
-    expect(mocks.launchSessionOnConnection).toHaveBeenCalledWith(
-      expect.objectContaining({
-        connectionId: 'conn-1',
-        connectionPath: '/connections/x',
-        prompt: 'do the steps',
-        modelConfig: CONFIG
-      })
-    )
-    expect(mocks.launchSessionWithModel).not.toHaveBeenCalled()
-  })
-
-  it('keeps the board from opening a ticket for the session from its creation on', async () => {
-    let seenDuringLaunch = false
-    mocks.launchSessionWithModel.mockImplementation(
-      async (spec: { onSessionCreated: CreatedHook }) => {
-        await spec.onSessionCreated({ session: { id: 'session-3' } })
-        seenDuringLaunch = isManualStepsSession('session-3')
-        return { success: true, sessionId: 'session-3' }
-      }
+  it('opens a ticket on the board of the run’s project and starts it in the checkout', async () => {
+    await expect(launchManualStepsSession(TARGET, RUN, 'do the steps', CONFIG)).resolves.toBe(
+      'session-1'
     )
 
-    await launchManualStepsSession(WORKTREE_TARGET, 'project-1', 'p', CONFIG)
-
-    expect(seenDuringLaunch).toBe(true)
-    expect(isManualStepsSession('session-3')).toBe(true)
-    expect(isManualStepsSession('another')).toBe(false)
-  })
-
-  it('discards a session that was created but not started, and reports why', async () => {
-    launchAs(mocks.launchSessionWithModel, {
-      success: false,
-      sessionId: 'session-4',
-      error: 'Could not send prompt'
+    expect(mocks.createTicket).toHaveBeenCalledExactlyOnceWith('project-1', {
+      project_id: 'project-1',
+      title: 'Manual steps — Checkout redesign',
+      description: 'do the steps',
+      column: 'todo'
     })
-
-    await expect(
-      launchManualStepsSession(WORKTREE_TARGET, 'project-1', 'p', CONFIG)
-    ).rejects.toThrow('Could not send prompt')
-
-    expect(mocks.discardSession).toHaveBeenCalledWith('session-4')
-    expect(isManualStepsSession('session-4')).toBe(false)
+    expect(mocks.launchTicketOnCheckout).toHaveBeenCalledExactlyOnceWith(TICKET, TARGET.checkout, {
+      prompt: 'do the steps',
+      modelConfig: CONFIG
+    })
+    expect(mocks.deleteTicket).not.toHaveBeenCalled()
   })
 
-  it('has nothing to discard when no session was created', async () => {
-    launchAs(mocks.launchSessionWithModel, { success: false })
+  it('names the ticket after what the run is when it has no title', async () => {
+    await launchManualStepsSession(TARGET, { ...RUN, title: '  ', source_kind: 'tickets' }, 'p', CONFIG)
+    expect(mocks.createTicket.mock.calls[0][1].title).toBe('Manual steps — Orchestrator')
+  })
 
-    await expect(
-      launchManualStepsSession(WORKTREE_TARGET, 'project-1', 'p', CONFIG)
-    ).rejects.toThrow('The session could not be started.')
+  it('takes the ticket off the board again when the session could not be started', async () => {
+    mocks.launchTicketOnCheckout.mockRejectedValue(new Error('Could not send prompt'))
 
-    expect(mocks.discardSession).not.toHaveBeenCalled()
+    await expect(launchManualStepsSession(TARGET, RUN, 'p', CONFIG)).rejects.toThrow(
+      'Could not send prompt'
+    )
+
+    expect(mocks.deleteTicket).toHaveBeenCalledExactlyOnceWith('ticket-1', 'project-1')
+  })
+
+  it('reports the launch failure even when the ticket cannot be removed', async () => {
+    mocks.launchTicketOnCheckout.mockRejectedValue(new Error('Could not send prompt'))
+    mocks.deleteTicket.mockRejectedValue(new Error('database is locked'))
+
+    await expect(launchManualStepsSession(TARGET, RUN, 'p', CONFIG)).rejects.toThrow(
+      'Could not send prompt'
+    )
+  })
+
+  it('starts nothing when the ticket could not be created', async () => {
+    mocks.createTicket.mockRejectedValue(new Error('board is read only'))
+
+    await expect(launchManualStepsSession(TARGET, RUN, 'p', CONFIG)).rejects.toThrow(
+      'board is read only'
+    )
+
+    expect(mocks.launchTicketOnCheckout).not.toHaveBeenCalled()
   })
 })

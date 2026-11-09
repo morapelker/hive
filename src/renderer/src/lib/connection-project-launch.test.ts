@@ -30,6 +30,7 @@ import { connectionApi } from '@/api/connection-api'
 import { worktreeApi } from '@/api/worktree-api'
 import { resetRendererRpcClientForTests, setRendererRpcClient } from '@/api/rpc-client'
 import { useConnectionStore } from '@/stores/useConnectionStore'
+import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useUsageStore } from '@/stores/useUsageStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
@@ -37,7 +38,8 @@ import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import {
   createInstanceWithNewWorktrees,
   resolveConnectionForLaunch,
-  startSessionOnConnection
+  startSessionOnConnection,
+  startTicketSessionOnConnectionInstance
 } from './connection-project-launch'
 import type { WorktreeNameSet } from './connection-project'
 
@@ -521,5 +523,106 @@ describe('startSessionOnConnection', () => {
       error: 'another session is already at it'
     })
     expect(request).not.toHaveBeenCalled()
+  })
+})
+
+describe('startTicketSessionOnConnectionInstance', () => {
+  const initialSessionState = useSessionStore.getState()
+  const initialStatusState = useWorktreeStatusStore.getState()
+  const initialUsageState = useUsageStore.getState()
+  const initialKanbanState = useKanbanStore.getState()
+  const initialConnectionState = useConnectionStore.getState()
+  const renameConnection = vi.fn(async () => undefined)
+  const updateTicket = vi.fn(async () => undefined)
+
+  const start = (extra: Record<string, unknown>): ReturnType<typeof startTicketSessionOnConnectionInstance> =>
+    startTicketSessionOnConnectionInstance({
+      ticket: { id: 'ticket-1', project_id: SAVED_ID, title: 'Manual steps — Shop' },
+      savedProjectId: SAVED_ID,
+      connectionId: 'conn-1',
+      connectionPath: '/tmp/connections/conn-1',
+      options: {
+        mode: 'build',
+        sdk: 'claude-code-cli',
+        model: { providerID: 'anthropic', modelID: 'opus' },
+        codexFastMode: false,
+        promptText: 'do the steps',
+        goalMode: false,
+        goalSuccessCriteria: null,
+        headless: true,
+        ...extra
+      }
+    })
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    useConnectionStore.setState({
+      connections: [makeConnection('conn-1', ['w1', 'w2'])],
+      renameConnection
+    } as never)
+    useKanbanStore.setState({
+      tickets: new Map(),
+      updateTicket,
+      computeSortOrder: () => 3,
+      getTicketsByColumn: () => []
+    } as never)
+    useSessionStore.setState({
+      createConnectionSession: vi.fn(async () => ({
+        success: true,
+        session: { id: 'session-1', agent_sdk: 'claude-code-cli', mode: 'build' }
+      })),
+      updateSessionName: vi.fn(async () => true),
+      setSessionModel: vi.fn(async () => undefined),
+      dequeuePendingMessage: vi.fn(),
+      setSessionMode: vi.fn(async () => undefined)
+    } as never)
+    useWorktreeStatusStore.setState({
+      setSessionStatus: vi.fn(),
+      setLastMessageTime: vi.fn()
+    } as never)
+    useUsageStore.setState({ fetchUsageForProvider: vi.fn() } as never)
+    resetRendererRpcClientForTests()
+    setRendererRpcClient({
+      request: vi.fn(async (method: string) =>
+        method === 'terminalOps.createClaudeCli' ? { success: true } : null
+      ) as never,
+      subscribe: vi.fn()
+    })
+  })
+
+  afterEach(() => {
+    resetRendererRpcClientForTests()
+    useSessionStore.setState(initialSessionState, true)
+    useWorktreeStatusStore.setState(initialStatusState, true)
+    useUsageStore.setState(initialUsageState, true)
+    useKanbanStore.setState(initialKanbanState, true)
+    useConnectionStore.setState(initialConnectionState, true)
+  })
+
+  it('names the instance after the ticket by default', async () => {
+    await start({})
+    expect(renameConnection).toHaveBeenCalledExactlyOnceWith('conn-1', 'Manual steps — Shop')
+  })
+
+  it('leaves the instance’s name alone when asked', async () => {
+    const result = await start({ keepInstanceName: true })
+
+    expect(result).toMatchObject({ success: true, sessionId: 'session-1', connectionId: 'conn-1' })
+    expect(renameConnection).not.toHaveBeenCalled()
+  })
+
+  it('links the ticket to its session on the saved project’s board, without a worktree', async () => {
+    await start({ keepInstanceName: true })
+
+    expect(updateTicket).toHaveBeenCalledWith(
+      'ticket-1',
+      SAVED_ID,
+      expect.objectContaining({
+        current_session_id: 'session-1',
+        worktree_id: null,
+        column: 'in_progress',
+        mode: 'build'
+      })
+    )
   })
 })

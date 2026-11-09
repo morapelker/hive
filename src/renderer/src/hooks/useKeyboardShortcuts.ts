@@ -472,7 +472,10 @@ function tryCloseOpenModal(): boolean {
   // Document run dashboard and "Implement document" wizard
   const documentFlow = useDocumentFlowStore.getState()
   if (documentFlow.dashboardRunId !== null) {
-    documentFlow.closeDashboard()
+    // A ticket being written over the dashboard is not thrown away by closing what is under it
+    if (!document.querySelector('[data-testid="ticket-create-modal"]')) {
+      documentFlow.closeDashboard()
+    }
     return true
   }
   if (documentFlow.wizard.open) {

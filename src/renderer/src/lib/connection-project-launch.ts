@@ -87,6 +87,8 @@ export interface ConnectionProjectLaunchOptions {
    * to the front in sticky-tab mode, as the git-project headless launch never does.
    */
   headless?: boolean
+  /** The instance is not renamed after the ticket (a run's integration instance keeps its name). */
+  keepInstanceName?: boolean
 }
 
 export interface ConnectionProjectLaunchResult {
@@ -652,7 +654,13 @@ export async function startTicketSessionOnConnectionInstance(args: {
         .getState()
         .connections.find((c) => c.id === connectionId)
       const ticketTitle = ticket.title.trim()
-      if (connection && !isBaseInstance(connection) && !connection.custom_name && ticketTitle) {
+      if (
+        !options.keepInstanceName &&
+        connection &&
+        !isBaseInstance(connection) &&
+        !connection.custom_name &&
+        ticketTitle
+      ) {
         void useConnectionStore.getState().renameConnection(connectionId, ticketTitle)
       }
 

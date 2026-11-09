@@ -72,6 +72,7 @@ import { AddRunMemberDialog } from './AddRunMemberDialog'
 import { AddRunTicketsDialog } from './AddRunTicketsDialog'
 import { DocumentRunPRRow } from './DocumentRunPRActions'
 import { ExecuteManualStepsDialog } from './ExecuteManualStepsDialog'
+import { NewRunBranchSession } from './NewRunBranchSession'
 import { TonePill } from './DocumentFlowBadges'
 import { NeedsYouSection, RunItemsTable, useRunItemActions } from './DocumentRunItems'
 import { RunActivityLog, RunReportSection } from './DocumentRunReport'
@@ -635,6 +636,7 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
                 Open instance
               </Button>
             )}
+            {!remote && <NewRunBranchSession run={run} />}
             {run.base_branch && (
               <span data-testid="docflow-base-branch-line">
                 from <span className="font-mono text-foreground">{run.base_branch}</span>

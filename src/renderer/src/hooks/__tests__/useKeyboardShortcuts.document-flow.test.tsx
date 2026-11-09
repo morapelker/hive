@@ -121,6 +121,21 @@ describe('Cmd+W with a document-flow dialog open', () => {
     expect(closeSession).not.toHaveBeenCalled()
   })
 
+  it('does not close the dashboard under a ticket being written over it', () => {
+    useDocumentFlowStore.setState({ dashboardRunId: 'run-1' })
+    render(
+      <>
+        <Harness />
+        <div data-testid="ticket-create-modal" />
+      </>
+    )
+
+    fireEvent.keyDown(document.body, { key: 'w', metaKey: true })
+
+    expect(useDocumentFlowStore.getState().dashboardRunId).toBe('run-1')
+    expect(closeSession).not.toHaveBeenCalled()
+  })
+
   it('leaves the active session open on the keydown path too', () => {
     render(<Harness />)
 

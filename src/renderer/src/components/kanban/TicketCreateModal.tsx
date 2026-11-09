@@ -29,12 +29,26 @@ import { ShortcutHint } from '@/components/ui/shortcut-hint'
 import { submitShortcutLabel } from '@/lib/shortcut-labels'
 import { quickLaunchTicket, quickLaunchTicketOnConnection } from './WorktreePickerModal'
 
+/** The branch the modal was opened for: its ticket is sent there, by `send`, and only there. */
+export interface TicketCreateSendTarget {
+  branch: string
+  /** Called once the ticket exists and the modal closed; reports its own failures. */
+  send: (ticket: KanbanTicket) => void | Promise<void>
+}
+
 interface TicketCreateModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   projectId: string
   connectionId?: string
   isPinnedMode?: boolean
+  /**
+   * Opened for a branch that is already picked (a run's, from its dashboard): "Create & Send" is
+   * the only action.
+   */
+  sendTo?: TicketCreateSendTarget | null
+  /** Where the focus goes on closing, when nothing opened the modal as its trigger. */
+  onCloseAutoFocus?: (event: Event) => void
 }
 
 // ── Component ───────────────────────────────────────────────────────
@@ -43,7 +57,9 @@ export function TicketCreateModal({
   onOpenChange,
   projectId,
   connectionId,
-  isPinnedMode
+  isPinnedMode,
+  sendTo = null,
+  onCloseAutoFocus
 }: TicketCreateModalProps) {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
@@ -216,7 +232,8 @@ export function TicketCreateModal({
       // Progress. Runs after the modal closes; the launch reports its own
       // success/failure toasts.
       if (action === 'send') {
-        if (connectionId) void quickLaunchTicketOnConnection(created, connectionId)
+        if (sendTo) void sendTo.send(created)
+        else if (connectionId) void quickLaunchTicketOnConnection(created, connectionId)
         else void quickLaunchTicket(created)
       }
     },
@@ -232,12 +249,20 @@ export function TicketCreateModal({
       isPinnedMode,
       setPinnedBoardLastCreateProjectId,
       onOpenChange,
-      connectionId
+      connectionId,
+      sendTo
     ]
   )
 
   const handleCreate = useCallback(() => submit('create'), [submit])
   const handleCreateAndSend = useCallback(() => submit('send'), [submit])
+
+  const keepEditing = useCallback(() => {
+    setShowDiscardConfirm(false)
+    // Opened by no trigger, so Radix has nothing to give the focus back to: on the body it would
+    // be out of the modal, and Tab would flip the mode of a session behind it.
+    setTimeout(() => titleInputRef.current?.focus(), 50)
+  }, [])
 
   const closeImmediately = useCallback(() => {
     setShowDiscardConfirm(false)
@@ -272,12 +297,12 @@ export function TicketCreateModal({
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && title.trim()) {
         e.preventDefault()
         // Cmd/Ctrl+Shift+Enter creates and sends with the default launch
-        // arguments; Cmd/Ctrl+Enter just creates.
-        if (e.shiftKey) handleCreateAndSend()
+        // arguments; Cmd/Ctrl+Enter just creates, unless sending is all the modal does.
+        if (e.shiftKey || sendTo) handleCreateAndSend()
         else handleCreate()
       }
     },
-    [handleCreate, handleCreateAndSend, title]
+    [handleCreate, handleCreateAndSend, title, sendTo]
   )
 
   const isTitleEmpty = !title.trim()
@@ -293,10 +318,20 @@ export function TicketCreateModal({
         onDragEnter={handleDragEnter}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
+        // Over a dashboard, over a session: Shift+Tab is the form's, not that session's mode
+        {...(sendTo ? { 'data-tab-navigates': '' } : {})}
+        {...(onCloseAutoFocus ? { onCloseAutoFocus } : {})}
       >
         <DialogHeader>
           <DialogTitle>Create Ticket</DialogTitle>
-          <DialogDescription>Add a new ticket to the To Do column.</DialogDescription>
+          {sendTo ? (
+            <DialogDescription data-testid="ticket-create-send-branch">
+              The ticket starts right away on{' '}
+              <span className="font-mono text-foreground">{sendTo.branch}</span>.
+            </DialogDescription>
+          ) : (
+            <DialogDescription>Add a new ticket to the To Do column.</DialogDescription>
+          )}
         </DialogHeader>
 
         <div className="space-y-4">
@@ -406,30 +441,36 @@ export function TicketCreateModal({
           </Button>
           <Button
             type="button"
-            variant="secondary"
+            variant={sendTo ? 'default' : 'secondary'}
             data-testid="ticket-create-send-btn"
-            title="Create the ticket and start it now with the default launch settings"
+            title={
+              sendTo
+                ? `Create the ticket and start it on ${sendTo.branch} with the default launch settings`
+                : 'Create the ticket and start it now with the default launch settings'
+            }
             disabled={isTitleEmpty || isCreating}
             onClick={handleCreateAndSend}
           >
             <Send className="h-3.5 w-3.5" />
             {creatingAction === 'send' ? 'Sending...' : 'Create & Send'}
-            <ShortcutHint label={submitShortcutLabel({ shift: true })} />
+            <ShortcutHint label={submitShortcutLabel(sendTo ? undefined : { shift: true })} />
           </Button>
-          <Button
-            type="button"
-            data-testid="ticket-create-btn"
-            disabled={isTitleEmpty || isCreating}
-            onClick={handleCreate}
-          >
-            {creatingAction === 'create' ? 'Creating...' : 'Create'}
-            <ShortcutHint label={submitShortcutLabel()} />
-          </Button>
+          {!sendTo && (
+            <Button
+              type="button"
+              data-testid="ticket-create-btn"
+              disabled={isTitleEmpty || isCreating}
+              onClick={handleCreate}
+            >
+              {creatingAction === 'create' ? 'Creating...' : 'Create'}
+              <ShortcutHint label={submitShortcutLabel()} />
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
       <TicketDiscardChangesDialog
         open={showDiscardConfirm}
-        onKeepEditing={() => setShowDiscardConfirm(false)}
+        onKeepEditing={keepEditing}
         onDiscard={closeImmediately}
       />
     </Dialog>

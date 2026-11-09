@@ -242,6 +242,38 @@ describe('launchTicketWithModel on a connection project', () => {
     expect(result).toEqual({ success: true, sessionId: 'session-1', connectionId: 'conn-int' })
   })
 
+  it('tells the instance to keep its name when asked', async () => {
+    mocks.resolveConnectionForLaunch.mockResolvedValue({
+      connectionId: 'conn-int',
+      connectionPath: '/connections/conn-int'
+    })
+
+    await launchTicketWithModel({
+      ...spec,
+      worktree: { type: 'existing-connection', connectionId: 'conn-int' },
+      keepInstanceName: true
+    })
+
+    expect(mocks.startTicketSessionOnConnectionInstance.mock.calls[0][0].options).toMatchObject({
+      keepInstanceName: true
+    })
+  })
+
+  it('leaves the instance’s naming as it was for every other launch', async () => {
+    mocks.resolveConnectionForLaunch.mockResolvedValue({
+      connectionId: 'conn-int',
+      connectionPath: '/connections/conn-int'
+    })
+
+    await launchTicketWithModel({
+      ...spec,
+      worktree: { type: 'existing-connection', connectionId: 'conn-int' }
+    })
+
+    const { options } = mocks.startTicketSessionOnConnectionInstance.mock.calls[0][0]
+    expect(options).not.toHaveProperty('keepInstanceName')
+  })
+
   it('fails when the saved project is not in the store', async () => {
     useProjectStore.setState({ projects: [] })
 

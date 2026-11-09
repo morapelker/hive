@@ -306,6 +306,24 @@ export function resolveDefaultLaunchConfig(): DocumentRunLaunchConfig {
   }
 }
 
+/** Back to To Do with nothing of the launch left on it: no session, no worktree, no badge. */
+export function resetTicketToTodo(projectId: string, ticketId: string): Promise<void> {
+  const store = useKanbanStore.getState()
+  return store.updateTicket(ticketId, projectId, {
+    column: 'todo',
+    sort_order: store.computeSortOrder(store.getTicketsByColumn(projectId, 'todo'), 0),
+    current_session_id: null,
+    worktree_id: null,
+    plan_ready: false,
+    mode: null,
+    goal_mode: false,
+    goal_success_criteria: null,
+    model_provider_id: null,
+    model_id: null,
+    model_variant: null
+  })
+}
+
 export function createLiveRunnerPorts(): RunnerPorts {
   startSessionSignalLatch()
 
@@ -431,22 +449,7 @@ export function createLiveRunnerPorts(): RunnerPorts {
         ticket?.column === 'done' ? 'done' : 'merged'
       )
     },
-    resetTicketToTodo: (projectId, ticketId) => {
-      const store = useKanbanStore.getState()
-      return store.updateTicket(ticketId, projectId, {
-        column: 'todo',
-        sort_order: store.computeSortOrder(store.getTicketsByColumn(projectId, 'todo'), 0),
-        current_session_id: null,
-        worktree_id: null,
-        plan_ready: false,
-        mode: null,
-        goal_mode: false,
-        goal_success_criteria: null,
-        model_provider_id: null,
-        model_id: null,
-        model_variant: null
-      })
-    },
+    resetTicketToTodo,
     unlinkTicketSession: (projectId, ticketId) =>
       useKanbanStore.getState().updateTicket(ticketId, projectId, { current_session_id: null }),
     sendFollowup: ({ sessionId, ticketId, prompt }) =>

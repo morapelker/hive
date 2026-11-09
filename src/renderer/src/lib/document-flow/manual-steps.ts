@@ -4,95 +4,34 @@ import {
   type DocumentRunLaunchConfig
 } from '@shared/types/document-flow'
 import { baseInstanceLabel, isBaseInstance } from '@/lib/connection-project'
-import { launchSessionOnConnection, launchSessionWithModel } from '@/lib/ticket-launch'
-import { useSessionStore } from '@/stores/useSessionStore'
-import { discardSession } from './migrations'
+import { useKanbanStore } from '@/stores/useKanbanStore'
+import {
+  launchTicketOnCheckout,
+  runBranchTarget,
+  type RunBranchTarget,
+  type RunCheckout,
+  type RunCheckoutConnection,
+  type RunCheckoutRun,
+  type RunCheckoutWorktree
+} from './run-checkout'
+import { runTitle } from './ticket-run-membership'
 
 // Executing the manual steps of a finished run: one agent session, started from the report in
-// the run dashboard with a prompt the user may edit. Unlike the migrations the run does not
-// track it: it is an ordinary session in the checkout the user picked, and only its launch
-// lives here.
+// the run dashboard with a prompt the user may edit. It is an ordinary ticket of the run's
+// project, on the board like any other so its session can be followed there, in the checkout
+// the user picked; only its launch lives here.
 
 /** The run's own branch, or the project's checkout without a worktree (main, most of the time). */
 export type ManualStepsTargetKind = 'integration' | 'no-worktree'
 
-export type ManualStepsCheckout =
-  | { kind: 'worktree'; worktreeId: string }
-  | { kind: 'connection'; connectionId: string; path: string | null }
-
-export interface ManualStepsTarget {
+export interface ManualStepsTarget extends RunBranchTarget {
   kind: ManualStepsTargetKind
-  /** The branch the session would run on. */
-  branch: string
-  /** Null exactly when `refusal` is set. */
-  checkout: ManualStepsCheckout | null
-  /** Why this target cannot be picked, in words; null when it can. */
-  refusal: string | null
-}
-
-type TargetRun = Pick<
-  DocumentRun,
-  | 'project_id'
-  | 'base_branch'
-  | 'integration_branch'
-  | 'integration_worktree_id'
-  | 'integration_connection_id'
-  | 'integration_connection_path'
-  | 'members'
->
-
-type TargetWorktree = { id: string; is_default: boolean; branch_name: string }
-type TargetConnection = {
-  id: string
-  status: string
-  path: string
-  saved_project_id?: string | null
-  is_base?: number
-  members?: ReadonlyArray<{ worktree_branch?: string | null }>
-}
-
-function integrationTarget(
-  run: TargetRun,
-  worktrees: readonly TargetWorktree[] | undefined,
-  connections: readonly TargetConnection[] | undefined
-): ManualStepsTarget {
-  const branch = run.integration_branch ?? 'the integration branch'
-  const refused = (refusal: string): ManualStepsTarget => ({
-    kind: 'integration',
-    branch,
-    checkout: null,
-    refusal
-  })
-  if (isConnectionRun(run)) {
-    const connectionId = run.integration_connection_id
-    if (!connectionId) return refused('The run has no integration instance to run in.')
-    const instance = connections?.find((c) => c.id === connectionId)
-    if (connections && instance?.status !== 'active') {
-      return refused(`The instance of ${branch} was archived or deleted.`)
-    }
-    return {
-      kind: 'integration',
-      branch,
-      checkout: {
-        kind: 'connection',
-        connectionId,
-        path: run.integration_connection_path ?? instance?.path ?? null
-      },
-      refusal: null
-    }
-  }
-  const worktreeId = run.integration_worktree_id
-  if (!worktreeId) return refused('The run has no integration worktree to run in.')
-  if (worktrees && !worktrees.some((worktree) => worktree.id === worktreeId)) {
-    return refused(`The worktree of ${branch} was archived.`)
-  }
-  return { kind: 'integration', branch, checkout: { kind: 'worktree', worktreeId }, refusal: null }
 }
 
 function noWorktreeTarget(
-  run: TargetRun,
-  worktrees: readonly TargetWorktree[] | undefined,
-  connections: readonly TargetConnection[] | undefined
+  run: RunCheckoutRun,
+  worktrees: readonly RunCheckoutWorktree[] | undefined,
+  connections: readonly RunCheckoutConnection[] | undefined
 ): ManualStepsTarget {
   const refused = (refusal: string): ManualStepsTarget => ({
     kind: 'no-worktree',
@@ -110,7 +49,7 @@ function noWorktreeTarget(
     return {
       kind: 'no-worktree',
       branch: baseInstanceLabel(base.members),
-      checkout: { kind: 'connection', connectionId: base.id, path: base.path },
+      checkout: { kind: 'connection', connectionId: base.id },
       refusal: null
     }
   }
@@ -131,12 +70,12 @@ function noWorktreeTarget(
  * carries; the no-worktree target has to be looked up in them, so it waits.
  */
 export function manualStepsTargets(
-  run: TargetRun,
-  worktrees: readonly TargetWorktree[] | undefined,
-  connections: readonly TargetConnection[] | undefined
+  run: RunCheckoutRun,
+  worktrees: readonly RunCheckoutWorktree[] | undefined,
+  connections: readonly RunCheckoutConnection[] | undefined
 ): ManualStepsTarget[] {
   return [
-    integrationTarget(run, worktrees, connections),
+    { kind: 'integration', ...runBranchTarget(run, worktrees, connections) },
     noWorktreeTarget(run, worktrees, connections)
   ]
 }
@@ -150,70 +89,34 @@ export function defaultManualStepsTarget(
     : 'no-worktree'
 }
 
-/** Sessions this page started for manual steps; forgotten when the page reloads. */
-const launched = new Set<string>()
-
 /**
- * Whether `sessionId` was started by this page to execute manual steps. Marked as the session
- * is created: the agent's first prompt is only reported back once it is already running.
- */
-export function isManualStepsSession(sessionId: string): boolean {
-  return launched.has(sessionId)
-}
-
-/**
- * Start the session. Resolves with its id, and rejects with a message for the user when it could
- * not be started, leaving nothing behind: the user is still in the dialog and may launch again.
+ * Open the session's ticket on the board of the run's project and start it. Resolves with the
+ * session's id, and rejects with a message for the user when it could not be started, leaving
+ * nothing behind: the user is still in the dialog and may launch again.
  */
 export async function launchManualStepsSession(
-  target: ManualStepsTarget & { checkout: ManualStepsCheckout },
-  projectId: string,
+  target: ManualStepsTarget & { checkout: RunCheckout },
+  run: Pick<DocumentRun, 'project_id' | 'title' | 'source_kind'>,
   prompt: string,
   modelConfig: DocumentRunLaunchConfig
 ): Promise<string> {
-  const onSessionCreated = async ({ session }: { session: { id: string } }): Promise<void> => {
-    launched.add(session.id)
-    await useSessionStore
-      .getState()
-      .updateSessionName(session.id, `Manual steps — ${target.branch}`)
+  const store = useKanbanStore.getState()
+  const ticket = await store.createTicket(run.project_id, {
+    project_id: run.project_id,
+    title: `Manual steps — ${runTitle(run)}`,
+    description: prompt,
+    column: 'todo'
+  })
+  try {
+    return await launchTicketOnCheckout(ticket, target.checkout, { prompt, modelConfig })
+  } catch (cause) {
+    await store.deleteTicket(ticket.id, run.project_id).catch(() => undefined)
+    throw cause
   }
-  const base = {
-    prompt,
-    mode: 'build' as const,
-    modelConfig,
-    goalMode: false,
-    goalSuccessCriteria: null,
-    onSessionCreated
-  }
-  const { checkout } = target
-  const result =
-    checkout.kind === 'connection'
-      ? await launchSessionOnConnection({
-          ...base,
-          connectionId: checkout.connectionId,
-          connectionPath: checkout.path
-        })
-      : await launchSessionWithModel({
-          ...base,
-          projectId,
-          worktreeId: checkout.worktreeId,
-          // A ticket that merely waits on this worktree must not be handed the session.
-          skipKanbanAttach: true
-        })
-  if (result.success && result.sessionId) return result.sessionId
-  if (result.sessionId) {
-    launched.delete(result.sessionId)
-    await discardSession(result.sessionId)
-  }
-  throw new Error(result.error ?? 'The session could not be started.')
 }
 
 /** A session the dialog started, and the checkout it runs in. */
 export interface LaunchedManualSteps {
   sessionId: string
-  checkout: ManualStepsCheckout
-}
-
-export function resetManualStepsStateForTests(): void {
-  launched.clear()
+  checkout: RunCheckout
 }

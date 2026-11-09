@@ -3127,10 +3127,6 @@ registerKanbanAutoCreateTicket(({ sessionId, rawPrompt }) => {
       // ticket, which holds no session: it must not get a second ticket here.
       const { isMigrationSession } = await import('@/lib/document-flow/migrations')
       if (isMigrationSession(sessionId)) return
-      // Nor one executing its manual steps: on the run's integration branch, a ticket of
-      // its own would offer to merge that branch when it reaches Done.
-      const { isManualStepsSession } = await import('@/lib/document-flow/manual-steps')
-      if (isManualStepsSession(sessionId)) return
 
       // Idempotency gate (authoritative — immune to the auto-attach timing and a
       // stale in-memory tickets map): skip if any non-archived ticket is linked.

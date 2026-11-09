@@ -25,10 +25,10 @@ import {
   launchManualStepsSession,
   manualStepsTargets,
   type LaunchedManualSteps,
-  type ManualStepsCheckout,
   type ManualStepsTarget,
   type ManualStepsTargetKind
 } from '@/lib/document-flow/manual-steps'
+import type { RunCheckout } from '@/lib/document-flow/run-checkout'
 import { resolveDefaultLaunchConfig } from '@/lib/document-flow/runner-ports'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
@@ -63,7 +63,7 @@ const errorMessage = (cause: unknown): string =>
 
 const canLaunchOn = (
   target: ManualStepsTarget | undefined
-): target is ManualStepsTarget & { checkout: ManualStepsCheckout } => !!target?.checkout
+): target is ManualStepsTarget & { checkout: RunCheckout } => !!target?.checkout
 
 interface ExecuteManualStepsDialogProps {
   run: DocumentRun
@@ -185,7 +185,7 @@ function ManualStepsBody({
         manualSteps,
         sdk: modelConfig.sdk
       })
-      const sessionId = await launchManualStepsSession(target, projectId, prompt, modelConfig)
+      const sessionId = await launchManualStepsSession(target, run, prompt, modelConfig)
       toast.success(`Executing the manual steps on ${target.branch}`)
       onLaunched({ sessionId, checkout: target.checkout })
       setLaunching(false)
@@ -201,7 +201,8 @@ function ManualStepsBody({
       <DialogHeader>
         <DialogTitle className="text-[15px]">Execute manual steps</DialogTitle>
         <DialogDescription>
-          A new agent session is sent this prompt. The placeholders are filled in when it launches.
+          A new ticket on the board starts an agent session with this prompt. The placeholders are
+          filled in when it launches.
         </DialogDescription>
       </DialogHeader>
 

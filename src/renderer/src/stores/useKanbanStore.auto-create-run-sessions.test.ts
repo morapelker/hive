@@ -2,11 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const gates = vi.hoisted(() => ({
   isMigrationSession: vi.fn(() => false),
-  isManualStepsSession: vi.fn(() => false)
+  getBySession: vi.fn(async (): Promise<{ id: string; archived_at: string | null }[]> => [])
 }))
 
 vi.mock('@/api/kanban-api', () => ({
-  kanbanApi: { ticket: { getBySession: vi.fn().mockResolvedValue([]) } }
+  kanbanApi: { ticket: { getBySession: gates.getBySession } }
 }))
 vi.mock('./useSettingsStore', () => ({
   useSettingsStore: { getState: () => ({ automaticallyCreateTicket: true }) }
@@ -29,9 +29,6 @@ vi.mock('./useSessionStore', () => ({
 vi.mock('@/lib/document-flow/migrations', () => ({
   isMigrationSession: gates.isMigrationSession
 }))
-vi.mock('@/lib/document-flow/manual-steps', () => ({
-  isManualStepsSession: gates.isManualStepsSession
-}))
 vi.mock('@/lib/auto-pin', () => ({ autoPinForBoardPrompt: vi.fn() }))
 
 import { useKanbanStore } from './useKanbanStore'
@@ -48,7 +45,7 @@ describe('the board’s automatic ticket for a session', () => {
   beforeEach(() => {
     createTicket.mockClear()
     gates.isMigrationSession.mockReturnValue(false)
-    gates.isManualStepsSession.mockReturnValue(false)
+    gates.getBySession.mockResolvedValue([])
     useKanbanStore.setState({ createTicket } as never)
   })
 
@@ -58,11 +55,11 @@ describe('the board’s automatic ticket for a session', () => {
     expect(createTicket).toHaveBeenCalledTimes(1)
   })
 
-  it('does not for a session executing a run’s manual steps', async () => {
-    gates.isManualStepsSession.mockReturnValue(true)
+  it('does not for a session launched with its ticket, as a run’s manual steps are', async () => {
+    gates.getBySession.mockResolvedValue([{ id: 'manual-steps-ticket', archived_at: null }])
     notifyKanbanAutoCreateTicket({ sessionId: 'session-1', rawPrompt: 'do the steps' })
     await flush()
-    expect(gates.isManualStepsSession).toHaveBeenCalledWith('session-1')
+    expect(gates.getBySession).toHaveBeenCalledWith('session-1')
     expect(createTicket).not.toHaveBeenCalled()
   })
 

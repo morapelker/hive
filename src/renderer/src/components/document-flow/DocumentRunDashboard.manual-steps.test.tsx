@@ -107,6 +107,28 @@ afterEach(async () => {
   useWorktreeStore.setState(initialWorktrees, true)
 })
 
+describe('DocumentRunDashboard — a new session on the run’s branch', () => {
+  it('sits next to the branch, once the run has one', async () => {
+    await renderDashboard(finished(['Rotate the key']))
+    expect(screen.getByTestId('docflow-new-branch-session')).toHaveTextContent('New session')
+  })
+
+  it('is not there before the run has a branch', async () => {
+    await renderDashboard(finished([], { integration_branch: null }))
+    expect(screen.queryByTestId('docflow-new-branch-session')).toBeNull()
+  })
+
+  it('opens over the dashboard and cancels back to it', async () => {
+    await renderDashboard(finished(['Rotate the key']))
+    await click('docflow-new-branch-session')
+    expect(screen.getByTestId('ticket-create-modal')).toBeInTheDocument()
+
+    await click('ticket-cancel-btn')
+    expect(screen.queryByTestId('ticket-create-modal')).toBeNull()
+    expect(screen.getByTestId('docflow-dashboard')).toBeInTheDocument()
+  })
+})
+
 describe('DocumentRunDashboard — executing manual steps', () => {
   it('offers "Execute manual steps" next to the manual steps header', async () => {
     await renderDashboard(finished(['Rotate the key']))

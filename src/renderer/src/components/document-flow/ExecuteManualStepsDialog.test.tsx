@@ -399,7 +399,7 @@ describe('ExecuteManualStepsDialog — where it runs', () => {
 
     expect(lastLaunch().target).toMatchObject({
       kind: 'no-worktree',
-      checkout: { kind: 'connection', connectionId: 'conn-base', path: '/c/base' }
+      checkout: { kind: 'connection', connectionId: 'conn-base' }
     })
   })
 })
