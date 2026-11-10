@@ -75,6 +75,7 @@ const API_METHODS = [
   'startMigrations',
   'endMigrations',
   'delete',
+  'duplicate',
   'logEvent',
   'suggestVerifyCommand',
   'addMember',
@@ -124,6 +125,7 @@ function makeService(overrides: Partial<DocumentFlowRpcService> = {}): DocumentF
     startMigrations: () => Effect.succeed(detail),
     endMigrations: () => Effect.succeed(detail),
     delete: () => Effect.succeed(true),
+    duplicate: () => Effect.succeed(detail),
     logEvent: () => Effect.succeed(undefined),
     suggestVerifyCommand: () => Effect.succeed(null),
     createTicketRun: () => Effect.succeed(detail),
@@ -286,6 +288,7 @@ describe('documentFlow RPC handlers', () => {
       finalize: record('finalize', detail),
       cancel: record('cancel', detail),
       delete: record('delete', true),
+      duplicate: record('duplicate', detail),
       suggestVerifyCommand: record('suggestVerifyCommand', 'pnpm run lint'),
       retryExtraction: record('retryExtraction', detail)
     })
@@ -304,6 +307,7 @@ describe('documentFlow RPC handlers', () => {
     await call(service, 'finalize', { runId: 'run-1' })
     await call(service, 'cancel', { runId: 'run-1' })
     await call(service, 'delete', { runId: 'run-1' })
+    await call(service, 'duplicate', { runId: 'run-1' })
     await call(service, 'suggestVerifyCommand', { projectId: 'project-1' })
     await call(service, 'retryExtraction', { runId: 'run-1', generation: null })
 
@@ -323,6 +327,7 @@ describe('documentFlow RPC handlers', () => {
       finalize: ['run-1'],
       cancel: ['run-1'],
       delete: ['run-1'],
+      duplicate: ['run-1'],
       suggestVerifyCommand: ['project-1'],
       retryExtraction: [{ runId: 'run-1', generation: null }]
     })

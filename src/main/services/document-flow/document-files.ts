@@ -1,6 +1,7 @@
 import {
   chmod,
   copyFile,
+  cp,
   mkdir,
   readFile,
   realpath,
@@ -345,4 +346,25 @@ export async function removeRunDir(runDir: string, root: string): Promise<void> 
     throw new Error(`Refusing to delete ${runDir}: it is not a run directory inside ${root}`)
   }
   await rm(resolve(runDir), { recursive: true, force: true })
+}
+
+/** What a run directory holds that a copy of the run needs: not the document backups. */
+const COPIED_RUN_ENTRIES = ['document.md', 'blocks.json', 'figures', 'source'] as const
+
+/**
+ * Copy a run directory for a duplicate of its run: `document.md`, `blocks.json`, `figures/` and
+ * (a run received from another Mac) `source/`, whichever are there. The target is created here
+ * (0700) and must not exist yet. A source directory that is gone copies nothing: the duplicate
+ * then points at files that are not there, exactly as its original does.
+ */
+export async function copyRunDir(fromDir: string, toDir: string): Promise<void> {
+  await mkdir(dirname(toDir), { recursive: true })
+  await mkdir(toDir, { mode: 0o700 })
+  for (const entry of COPIED_RUN_ENTRIES) {
+    try {
+      await cp(join(fromDir, entry), join(toDir, entry), { recursive: true, errorOnExist: true })
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+  }
 }

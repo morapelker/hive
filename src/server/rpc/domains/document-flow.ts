@@ -123,6 +123,8 @@ export interface DocumentFlowRpcService {
     outcome: DocumentMigrationOutcome
   ) => Rpc<DocumentRunDetail>
   readonly delete: (runId: string) => Rpc<boolean>
+  /** A fresh copy of the run in the preview, with what the user chose on the original. */
+  readonly duplicate: (runId: string) => Rpc<DocumentRunDetail>
   readonly logEvent: (params: DocumentFlowLogEventParams) => Rpc<void>
   readonly suggestVerifyCommand: (projectId: string) => Rpc<string | null>
 }
@@ -400,6 +402,7 @@ export const makeLiveDocumentFlowRpcService = (eventBus?: EventBus): DocumentFlo
     endMigrations: (runId, sessionId, outcome) =>
       call((service) => service.endMigrations(runId, sessionId, outcome)),
     delete: (runId) => call((service) => service.delete(runId)),
+    duplicate: (runId) => call((service) => service.duplicateRun(runId)),
     logEvent: (params) => call((service) => service.logEvent(params)),
     suggestVerifyCommand: (projectId) => call((service) => service.suggestVerifyCommand(projectId))
   }
@@ -518,6 +521,10 @@ export const makeDocumentFlowRpcHandlers = (
       )
     ],
     ['documentFlow.delete', handle(runIdParamsSchema, ({ runId }) => service.delete(runId))],
+    [
+      'documentFlow.duplicate',
+      handle(runIdParamsSchema, ({ runId }) => service.duplicate(runId))
+    ],
     ['documentFlow.logEvent', handle(logEventParamsSchema, (params) => service.logEvent(params))],
     [
       'documentFlow.suggestVerifyCommand',

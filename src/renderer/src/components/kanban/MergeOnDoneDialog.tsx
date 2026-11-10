@@ -1335,7 +1335,9 @@ export function MergeOnDoneDialog() {
         className={cn(
           inspecting
             ? 'max-w-[720px] w-[calc(100vw-2rem)] h-[min(600px,85vh)] flex flex-col gap-3'
-            : 'max-w-md'
+            : // Capped to the window: a long step (a run batch's kept branches) scrolls inside
+              // instead of pushing the buttons off-screen
+              'max-w-md max-h-[85vh] flex flex-col'
         )}
         onEscapeKeyDown={(event) => {
           // Escape peels the innermost layer first: an open diff goes back to
@@ -1453,11 +1455,11 @@ export function MergeOnDoneDialog() {
 
             {step !== 'commit_base' && resolved.carriedRunTickets.length > 0 && (
               <p
-                className="flex shrink-0 items-start gap-1.5 text-xs text-amber-500"
+                className="flex max-h-16 shrink-0 items-start gap-1.5 overflow-y-auto scrollbar-sleek text-xs text-amber-500"
                 data-testid="merge-carried-run-tickets"
               >
                 <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
-                <span>
+                <span className="min-w-0 break-words">
                   This branch was cut from its {runNoun}, so the merge also brings{' '}
                   {resolved.carriedRunTickets.join(', ')} into {resolved.baseBranch}, ahead of
                   the run&rsquo;s own ticket.
@@ -1542,7 +1544,7 @@ export function MergeOnDoneDialog() {
         )}
 
         {step === 'archive' && resolved && (
-          <div className="flex flex-col gap-3 py-2">
+          <div className="flex min-h-0 flex-col gap-3 py-2">
             <p className="text-xs text-muted-foreground">
               {resolved.alreadyMerged ? 'Branch already merged.' : 'Merge successful!'}{' '}
               {resolved.members ? (
@@ -1608,18 +1610,31 @@ export function MergeOnDoneDialog() {
               </p>
             )}
             {keptEntries.length > 0 && (
-              <p
-                className="flex items-start gap-1.5 text-xs text-amber-500"
+              // A run cancelled early keeps every ticket it never started: the list scrolls
+              // (and gives way first when the window is short), the buttons stay in view
+              <div
+                className="flex min-h-0 items-start gap-1.5 text-xs text-amber-500"
                 data-testid="archive-kept-branches"
               >
                 <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
-                <span>
-                  Kept as {keptEntries.length === 1 ? 'it is' : 'they are'}:{' '}
-                  {keptEntries.map((k) => `${k.label} (${k.reason})`).join(', ')}.
-                </span>
-              </p>
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-1 self-stretch">
+                  <span className="shrink-0">
+                    Kept as {keptEntries.length === 1 ? 'it is' : `they are (${keptEntries.length})`}:
+                  </span>
+                  <ul
+                    className="max-h-40 min-h-0 space-y-0.5 overflow-y-auto scrollbar-sleek rounded-md border border-amber-500/20 bg-amber-500/5 px-2 py-1.5"
+                    data-testid="archive-kept-branches-list"
+                  >
+                    {keptEntries.map((k, index) => (
+                      <li key={index} className="break-words">
+                        {k.label} ({k.reason})
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
             )}
-            <div className="flex items-center justify-between">
+            <div className="flex shrink-0 items-center justify-between">
               <Button
                 variant="outline"
                 size="sm"

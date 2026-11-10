@@ -197,6 +197,14 @@ export const documentFlowApi = {
   /** Delete a run that is not `running` (rows and the run directory; never git state). */
   delete: (runId: string): Promise<boolean> => request('delete', { runId }),
 
+  /**
+   * A fresh copy of the run, in the preview with its own ticket in To Do: the title, the config
+   * (models included) and each ticket's model, verification and selection come along; nothing
+   * of what the original did does. An orchestrator's tickets are copied on the board too.
+   * Refused while the run's tickets are still being extracted.
+   */
+  duplicate: (runId: string): Promise<DocumentRunDetail> => request('duplicate', { runId }),
+
   logEvent: (params: {
     runId: string
     itemId?: string | null

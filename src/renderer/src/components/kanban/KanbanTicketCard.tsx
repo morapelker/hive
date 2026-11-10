@@ -304,6 +304,13 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       integrationCheckoutGone(run, runCheckouts.worktrees, runCheckouts.connectionIds)
     )
   })
+  // A run of this Mac can be duplicated once its tickets are known: a fresh copy in To Do with
+  // the models and settings chosen here, to launch again (a cancelled or finished run has no
+  // other way back). Not while they are still being extracted, nor for a record that is gone.
+  const canDuplicateRun = useDocumentFlowStore((s) => {
+    const run = documentRunId && !remoteOrigin ? s.runsById[documentRunId]?.run : null
+    return !!run && run.status !== 'extracting'
+  })
   const documentPath =
     documentRunId && !isTicketRunTicket ? ticket.external_url || runSourcePath : null
   const documentRunPhase = documentRunView?.state?.phase ?? null
@@ -1406,6 +1413,28 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       toast.error('Failed to duplicate ticket')
     }
   }, [ticket])
+
+  // The run's own Duplicate: the server copies the run (and, for an orchestrator, its tickets);
+  // the copy's ticket lands at the top of To Do. One at a time: an orchestrator of many tickets
+  // takes a moment, and a second click would make a second copy.
+  const duplicatingRunRef = useRef(false)
+  const handleDuplicateRun = useCallback(async () => {
+    if (!documentRunId || duplicatingRunRef.current) return
+    duplicatingRunRef.current = true
+    const progress = toast.loading(`Duplicating the ${runKindLower}…`)
+    try {
+      await useDocumentFlowStore.getState().duplicateRun(documentRunId)
+      toast.success(`${runKind} duplicated: its copy is in To Do`, { id: progress })
+    } catch (err) {
+      // The server says why (still extracting, a board that refused a ticket)
+      toast.error(
+        err instanceof Error && err.message ? err.message : `Failed to duplicate the ${runKindLower}`,
+        { id: progress }
+      )
+    } finally {
+      duplicatingRunRef.current = false
+    }
+  }, [documentRunId, runKind, runKindLower])
 
   const handleAddToFavorites = useCallback(async () => {
     try {
@@ -2610,6 +2639,18 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   ? 'Creating PRs…'
                   : 'Creating PR…'
                 : documentRunPRs.label}
+            </ContextMenuItem>
+          )}
+          {/* A fresh copy of the run in To Do, models and settings included: how a cancelled
+              or finished one is run again */}
+          {documentRunId && canDuplicateRun && (
+            <ContextMenuItem
+              data-testid="ctx-duplicate-run"
+              onClick={() => void handleDuplicateRun()}
+              className="gap-2"
+            >
+              <Copy className="h-3.5 w-3.5" />
+              Duplicate
             </ContextMenuItem>
           )}
 

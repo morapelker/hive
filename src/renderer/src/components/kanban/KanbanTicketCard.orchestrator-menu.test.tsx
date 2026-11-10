@@ -16,7 +16,8 @@ vi.setConfig({ testTimeout: 120_000 })
 const api = vi.hoisted(() => ({
   get: vi.fn(),
   addTickets: vi.fn(),
-  removeItem: vi.fn()
+  removeItem: vi.fn(),
+  duplicate: vi.fn()
 }))
 const launches = vi.hoisted(() => ({
   quickLaunchTicket: vi.fn(async () => true),
@@ -26,7 +27,8 @@ const toastMock = vi.hoisted(() => ({
   success: vi.fn(),
   error: vi.fn(),
   warning: vi.fn(),
-  info: vi.fn()
+  info: vi.fn(),
+  loading: vi.fn(() => 'toast-loading')
 }))
 
 vi.mock('@/api/document-flow-api', () => ({ documentFlowApi: api }))
@@ -487,6 +489,67 @@ describe("an orchestrator's own ticket", () => {
     await screen.findByTestId('ctx-open-document-run')
 
     expect(screen.queryByTestId('ctx-run-add-tickets')).toBeNull()
+  })
+
+  it('duplicates a cancelled orchestrator from its ticket in Done: the copy is known at once', async () => {
+    seedRuns(ticketRun('run-a', { title: 'Checkout', status: 'cancelled' }))
+    const copy = ticketRun('run-b', { title: 'Checkout', status: 'preview', ticket_id: 'ticket-run-b' })
+    api.duplicate.mockResolvedValue(copy)
+    render(<KanbanTicketCard ticket={runTicket({ column: 'done' })} />)
+
+    fireEvent.contextMenu(card('ticket-run-a'))
+    const duplicate = await screen.findByTestId('ctx-duplicate-run')
+    expect(duplicate).toHaveTextContent('Duplicate')
+    // The ordinary ticket's Duplicate would copy the card, not the run
+    expect(screen.queryByTestId('ctx-duplicate-ticket')).toBeNull()
+    fireEvent.click(duplicate)
+
+    await waitFor(() =>
+      expect(toastMock.success).toHaveBeenCalledWith(
+        'Orchestrator duplicated: its copy is in To Do',
+        { id: 'toast-loading' }
+      )
+    )
+    expect(api.duplicate).toHaveBeenCalledExactlyOnceWith('run-a')
+    expect(toastMock.loading).toHaveBeenCalledWith('Duplicating the orchestrator…')
+    const { runsById } = useDocumentFlowStore.getState()
+    expect(runsById['run-b']?.run.status).toBe('preview')
+    expect(runsById['run-a']?.run.status).toBe('cancelled')
+  })
+
+  it('says why when the orchestrator could not be duplicated', async () => {
+    seedRuns(ticketRun('run-a', { status: 'cancelled' }))
+    api.duplicate.mockRejectedValue(new Error('TD-2 could not wait for TD-1: read-only board'))
+    render(<KanbanTicketCard ticket={runTicket({ column: 'review' })} />)
+
+    fireEvent.contextMenu(card('ticket-run-a'))
+    fireEvent.click(await screen.findByTestId('ctx-duplicate-run'))
+
+    await waitFor(() =>
+      expect(toastMock.error).toHaveBeenCalledWith(
+        'TD-2 could not wait for TD-1: read-only board',
+        { id: 'toast-loading' }
+      )
+    )
+    expect(toastMock.success).not.toHaveBeenCalled()
+  })
+
+  it('offers no Duplicate while the tickets are being extracted, nor for a run that is not known', async () => {
+    seedRuns(
+      makeDetail({ id: 'run-a', project_id: 'proj-1', status: 'extracting', ticket_id: 'ticket-run-a' })
+    )
+    const { unmount } = render(<KanbanTicketCard ticket={runTicket({ column: 'todo' })} />)
+    fireEvent.contextMenu(card('ticket-run-a'))
+    await screen.findByTestId('ctx-open-document-run')
+    expect(screen.queryByTestId('ctx-duplicate-run')).toBeNull()
+    unmount()
+
+    seedRuns()
+    api.get.mockResolvedValue(null)
+    render(<KanbanTicketCard ticket={runTicket({ column: 'done' })} />)
+    fireEvent.contextMenu(card('ticket-run-a'))
+    await screen.findByTestId('ctx-open-document-run')
+    expect(screen.queryByTestId('ctx-duplicate-run')).toBeNull()
   })
 
   it('offers no "Add tickets…" once a finished orchestrator has no checkout to resume on', async () => {

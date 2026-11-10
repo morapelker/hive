@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MergeOnDoneDialog } from './MergeOnDoneDialog'
 import { useKanbanStore } from '@/stores/useKanbanStore'
@@ -1480,6 +1480,28 @@ describe('MergeOnDoneDialog — document-run batch (shift-drop of the run ticket
     expect((await screen.findByTestId('archive-kept-branches')).textContent).toContain(
       'A3 · Gamma (never started)'
     )
+    expect(screen.getByRole('button', { name: 'Archive all (2)' })).toBeTruthy()
+  })
+
+  it('lists many left-out branches in a scrolling list, the dialog capped to the window', async () => {
+    // A run cancelled right after launch: every ticket it never started is kept
+    const kept = Array.from({ length: 40 }, (_, i) => ({
+      label: `A${i + 2} · Ticket number ${i + 2}`,
+      reason: 'never started'
+    }))
+    seedPending(integration, [archiveAlpha], { run: { ...run, kept } })
+
+    render(<MergeOnDoneDialog />)
+
+    const list = await screen.findByTestId('archive-kept-branches-list')
+    expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual(
+      kept.map((k) => `${k.label} (${k.reason})`)
+    )
+    expect(screen.getByTestId('archive-kept-branches').textContent).toContain('Kept as they are (40):')
+    // The list scrolls within a bounded height; the dialog never outgrows the window
+    expect(list.className).toContain('max-h-40')
+    expect(list.className).toContain('overflow-y-auto')
+    expect(screen.getByTestId('merge-on-done-dialog').className).toContain('max-h-[85vh]')
     expect(screen.getByRole('button', { name: 'Archive all (2)' })).toBeTruthy()
   })
 })

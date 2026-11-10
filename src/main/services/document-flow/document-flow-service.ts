@@ -135,6 +135,7 @@ import { downloadDocument, isDocumentUrl, type DocumentFetch } from './document-
 import {
   DocumentFileError,
   assertDocumentFile,
+  copyRunDir,
   decodeDocument,
   documentFileExists,
   documentRunsRoot,
@@ -398,6 +399,12 @@ export interface DocumentFlowServiceDeps {
     patch: DocumentFlowTicketPatch
   ) => Promise<unknown>
   deleteTicket: (projectId: string, ticketId: string) => Promise<unknown>
+  /**
+   * A copy of the ticket in To Do, as the board's own Duplicate makes it: title, description,
+   * labels, mark, note and its own copies of the attachment files; no session, worktree or
+   * parent. Throws when the ticket cannot be copied.
+   */
+  duplicateTicket: (projectId: string, ticketId: string) => Promise<{ id: string }>
   /** Takes the ticket out of the archive, as the board's Unarchive does. */
   unarchiveTicket: (projectId: string, ticketId: string) => Promise<unknown>
   /** Records the branch a worktree's work is merged into. Not reachable over RPC. */
@@ -582,6 +589,37 @@ function memberOf(checkout: { member: DocumentRunMember | null }): DocumentRunMe
 }
 
 /** Runs tasks that share a key one after the other. */
+/** What the duplicate of a run made from board tickets takes over from its original. */
+interface TicketRunOrigin {
+  title: string
+  config: DocumentRunConfig
+  /** By the id of the new ticket: what the user chose on the item its original belongs to. */
+  choices: ReadonlyMap<string, Pick<DocumentRunItem, 'selected' | 'verification' | 'launch_config'>>
+}
+
+/** The item as a draft: what extraction and the user's edits made of it, nothing of what a run did. */
+function draftOfItem(item: DocumentRunItem): DocumentRunItemDraft {
+  return {
+    key: item.key,
+    title: item.title,
+    summary: item.summary,
+    description: item.description,
+    kind: item.kind,
+    depends_on: [...item.depends_on],
+    has_migration: item.has_migration,
+    size: item.size,
+    conflict_risk: item.conflict_risk,
+    doc_status: item.doc_status,
+    selected: item.selected,
+    figures: item.figures.map((figure) => ({ ...figure })),
+    open_questions: [...item.open_questions],
+    verification_suggested: [...item.verification_suggested],
+    verification: [...item.verification],
+    verification_reason: item.verification_reason,
+    launch_config: item.launch_config ? structuredClone(item.launch_config) : null
+  }
+}
+
 class KeyedMutex {
   private readonly tails = new Map<string, Promise<void>>()
 
@@ -1186,7 +1224,9 @@ export class DocumentFlowService {
   private async makeTicketRun(
     project: DocumentFlowProject,
     ticketIds: readonly string[],
-    params: DocumentTicketRunCreateParams
+    params: DocumentTicketRunCreateParams,
+    // A duplicate (`duplicateRun`): the original's config, and its choices per ticket.
+    origin: TicketRunOrigin | null = null
   ): Promise<DocumentRunDetail> {
     // Under the adoption lock of the project: see `adoptionLocks`.
     const tickets = await this.adoptableTickets(project.id, ticketIds, null)
@@ -1207,14 +1247,30 @@ export class DocumentFlowService {
       run_dir: join(this.runsRoot, id),
       document_path: null,
       status: 'preview',
-      config: { ...DEFAULT_DOCUMENT_RUN_CONFIG, generation: params.generation ?? null }
+      config: origin
+        ? structuredClone(origin.config)
+        : { ...DEFAULT_DOCUMENT_RUN_CONFIG, generation: params.generation ?? null }
     })
-    this.db.insertDocumentRunItems(run.id, this.ticketItemDrafts(tickets, keys))
+    this.db.insertDocumentRunItems(
+      run.id,
+      this.ticketItemDrafts(tickets, keys).map((draft) => {
+        const chosen = origin?.choices.get(draft.ticket_id)
+        if (!chosen) return draft
+        return {
+          ...draft,
+          selected: chosen.selected,
+          verification: [...chosen.verification],
+          launch_config: chosen.launch_config ? structuredClone(chosen.launch_config) : null
+        }
+      })
+    )
     this.publishRun(run)
     this.log(
       run,
       'created',
-      `Orchestrator made from ${boardTicketCount(tickets.length)}: ${keys.join(', ')}`,
+      origin
+        ? `Duplicated from “${origin.title}” with ${boardTicketCount(tickets.length)}: ${keys.join(', ')}`
+        : `Orchestrator made from ${boardTicketCount(tickets.length)}: ${keys.join(', ')}`,
       { data: { ticketIds: tickets.map((ticket) => ticket.id) } }
     )
     this.writeDependencies(run, edges)
@@ -4793,6 +4849,184 @@ export class DocumentFlowService {
     return deleted
   }
 
+  // ── Duplicates ────────────────────────────────────────────────────────────
+
+  /**
+   * A fresh copy of the run, back at the start: a new run in the preview with a ticket of its
+   * own in To Do, to review and launch again. What the user chose comes along: the title, the
+   * whole config (models, parallel tickets, verify commands, base branches, prompt style) and,
+   * per ticket, its model, its verification and whether it is selected. Nothing of what the
+   * original did does: every item is `pending` again with no session, worktree, branch or merge,
+   * and the copy has no integration branch, report or event log of the original's.
+   *
+   * A document run is copied with its extraction (items, figures and the pre-processed text, in
+   * a run directory of its own), so nothing is extracted again. A run made from board tickets
+   * gets a new ticket in To Do for each of its own, a copy of it as the board has it now, linked
+   * as the originals were; the original tickets stay where they are.
+   *
+   * Any run can be duplicated except one whose tickets are still being extracted. The original
+   * is never changed.
+   */
+  async duplicateRun(runId: string): Promise<DocumentRunDetail> {
+    const source = this.recoverInterruptedExtraction(this.requireRun(runId))
+    if (source.status === 'extracting' || this.extractionJobs.has(source.id)) {
+      throw invalidState('Wait for the extraction to finish.')
+    }
+    const project = this.deps.getProject(source.project_id)
+    if (!project) throw notFound('The project of this run')
+    // A connection project that lost members since has nowhere to run the copy: said now.
+    this.resolveTarget(project, source.source_kind)
+    return isTicketRun(source)
+      ? // Detached, as when an orchestrator is made: the board of whoever asked shows the copies.
+        this.detach(() => this.duplicateTicketRun(project, source))
+      : this.duplicateDocumentRun(source)
+  }
+
+  /**
+   * The copy of a document run: its files in a run directory of its own (a copy that shared the
+   * original's would lose them when the original is deleted), every path into the old directory
+   * re-pointed, the items as drafts. A run whose extraction failed is copied as that, to retry.
+   */
+  private async duplicateDocumentRun(source: DocumentRun): Promise<DocumentRunDetail> {
+    const id = randomUUID()
+    const runDir = join(this.runsRoot, id)
+    const map: RunPathMap = { [source.run_dir]: runDir }
+    let created = false
+    try {
+      await copyRunDir(source.run_dir, runDir)
+      const blocksPath = join(runDir, 'blocks.json')
+      if (existsSync(blocksPath)) {
+        // Only a run received from another Mac has paths in it (its source sits in the run dir).
+        const rewritten = rewriteBlocksJson(await readFile(blocksPath, 'utf8'), map)
+        if (rewritten.ok) await writeFile(blocksPath, rewritten.json, 'utf8')
+      }
+      const rewritten = rewriteRunPaths(
+        {
+          run: {
+            source_path: source.source_path,
+            run_dir: source.run_dir,
+            document_path: source.document_path
+          },
+          items: this.db.getDocumentRunItems(source.id).map(draftOfItem)
+        },
+        map
+      )
+      const failed = source.status === 'extract_failed'
+      let run = this.db.createDocumentRun({
+        id,
+        project_id: source.project_id,
+        title: source.title,
+        source_kind: source.source_kind,
+        source_path: rewritten.run.source_path,
+        run_dir: runDir,
+        document_path: rewritten.run.document_path,
+        status: failed ? 'extract_failed' : 'preview',
+        config: structuredClone(source.config)
+      })
+      created = true
+      this.db.replaceDocumentRunItems(run.id, rewritten.items)
+      run = this.saveRun(run, {
+        extraction: source.extraction ? structuredClone(source.extraction) : null,
+        error: failed && source.error !== null ? rewritePathsInText(source.error, map) : null
+      })
+      this.log(run, 'created', `Duplicated from “${source.title}”`, {
+        data: { sourceRunId: source.id }
+      })
+      run = await this.createRunTicketQuietly(run)
+      return this.detail(run, true)
+    } catch (error) {
+      // Half a copy is worse than none: the original is untouched, and the user can try again.
+      if (created) {
+        try {
+          this.db.deleteDocumentRun(id)
+          this.deps.publish({ runId: id, projectId: source.project_id, reason: 'deleted' })
+        } catch (cleanupError) {
+          log.warn('Could not remove the rows of a failed run duplicate', {
+            runId: id,
+            error: describeError(cleanupError)
+          })
+        }
+      }
+      await removeRunDir(runDir, this.runsRoot).catch(() => undefined)
+      throw error
+    }
+  }
+
+  /**
+   * The copy of a run made from board tickets. Its tickets are the brief, so each gets a copy on
+   * the board first (the board's own Duplicate; one that left the board is written again from
+   * the item's copy of it), in To Do and in the items' order, waiting for the copies of what the
+   * original waited for. The new run then adopts them as any orchestrator adopts tickets. A step
+   * that fails takes the copies made so far off the board again.
+   */
+  private async duplicateTicketRun(
+    project: DocumentFlowProject,
+    source: DocumentRun
+  ): Promise<DocumentRunDetail> {
+    const items = this.db.getDocumentRunItems(source.id)
+    if (items.length === 0) throw invalidState('This orchestrator has no tickets to duplicate.')
+    const copyOf = new Map<string, string>()
+    const choices = new Map<string, DocumentRunItem>()
+    try {
+      for (const item of items) {
+        const original = item.ticket_id
+          ? await this.deps.getTicket(project.id, item.ticket_id)
+          : null
+        const copy = original
+          ? await this.deps.duplicateTicket(project.id, original.id)
+          : (
+              await this.deps.createTickets(project.id, [
+                {
+                  draft_key: item.key,
+                  project_id: project.id,
+                  title: item.title,
+                  description: item.description || null,
+                  column: 'todo'
+                }
+              ])
+            ).tickets[0]
+        if (!copy) throw new Error(`The board did not create a ticket for ${item.key}.`)
+        copyOf.set(item.key, copy.id)
+        choices.set(copy.id, item)
+      }
+      // The graph of a run made from board tickets is the board's: the copies wait for each
+      // other as the originals did. A lost edge would launch a ticket ahead of what it needs.
+      for (const item of items) {
+        const dependent = copyOf.get(item.key)
+        for (const key of item.depends_on) {
+          const blocker = copyOf.get(key)
+          if (!dependent || !blocker || blocker === dependent) continue
+          const refusal = boardRefusal(
+            await this.deps.addTicketDependency(project.id, dependent, blocker)
+          )
+          if (refusal) throw invalidState(`${item.key} could not wait for ${key}: ${refusal}`)
+        }
+      }
+      const ticketIds = items.map((item) => copyOf.get(item.key) as string)
+      return await this.adoptionLocks.run(project.id, () =>
+        this.makeTicketRun(
+          project,
+          ticketIds,
+          { projectId: project.id, ticketIds, title: source.title },
+          { title: source.title, config: source.config, choices }
+        )
+      )
+    } catch (error) {
+      for (const ticketId of copyOf.values()) {
+        await Promise.resolve(this.deps.deleteTicket(project.id, ticketId)).catch(
+          (cleanupError: unknown) => {
+            log.warn('Could not remove a ticket copied for a failed orchestrator duplicate', {
+              runId: source.id,
+              ticketId,
+              error: describeError(cleanupError)
+            })
+          }
+        )
+      }
+      throw error
+    }
+  }
+
   logEvent(params: {
     runId: string
     itemId?: string | null
@@ -5295,6 +5529,12 @@ export async function getDocumentFlowService(
     deleteTicket: async (projectId, ticketId) => {
       const { getKanbanBackendForProject } = await import('../kanban-backend')
       return getKanbanBackendForProject(projectId).delete(projectId, ticketId)
+    },
+    duplicateTicket: async (projectId, ticketId) => {
+      const { getKanbanBackendForProject } = await import('../kanban-backend')
+      return getKanbanBackendForProject(projectId).duplicate(projectId, ticketId, {
+        column: 'todo'
+      })
     },
     unarchiveTicket: async (projectId, ticketId) => {
       const { getKanbanBackendForProject } = await import('../kanban-backend')

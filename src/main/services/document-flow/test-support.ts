@@ -495,6 +495,8 @@ export interface ServiceHarness {
   /** Every model badge or parent link the service wrote on a board ticket, in order. */
   ticketUpdates: { projectId: string; ticketId: string; patch: DocumentFlowTicketPatch }[]
   deletedTickets: string[]
+  /** Every `duplicateTicket` call, in order: the ticket copied and the copy the board made. */
+  ticketDuplicates: { projectId: string; ticketId: string; copyId: string }[]
   /** Worktree id → base branch, as the service re-pointed them. */
   baseBranchWrites: { worktreeId: string; baseBranch: string }[]
   /** Scratch directory: holds the run directories and stands in for the home directory. */
@@ -530,6 +532,7 @@ type OverridableDeps = Required<
     | 'moveTicket'
     | 'updateTicket'
     | 'deleteTicket'
+    | 'duplicateTicket'
     | 'unarchiveTicket'
     | 'setWorktreeBaseBranch'
     | 'resolveFinalMessage'
@@ -597,6 +600,7 @@ export function createServiceHarness(
   const ticketMoves: ServiceHarness['ticketMoves'] = []
   const ticketUpdates: ServiceHarness['ticketUpdates'] = []
   const deletedTickets: string[] = []
+  const ticketDuplicates: ServiceHarness['ticketDuplicates'] = []
   const baseBranchWrites: ServiceHarness['baseBranchWrites'] = []
   const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'docflow-service-')))
   const runsRoot = join(scratch, 'document-runs')
@@ -863,6 +867,19 @@ export function createServiceHarness(
       dropEdges((edge) => edge.dependent_id !== ticketId && edge.blocker_id !== ticketId)
       return boardTickets.delete(ticketId)
     },
+    // The board's Duplicate: a new ticket in To Do with the title and description, a key of its
+    // own, and nothing of the original's session, worktree, parent, archive or run marks.
+    duplicateTicket: async (projectId, ticketId) => {
+      const source = boardTickets.get(ticketId)
+      if (!source || source.projectId !== projectId) throw new Error('Ticket does not exist')
+      const copyId = addBoardTicket({
+        projectId,
+        title: source.title,
+        description: source.description ?? null
+      })
+      ticketDuplicates.push({ projectId, ticketId, copyId })
+      return { id: copyId }
+    },
     unarchiveTicket: async (_projectId, ticketId) => {
       const ticket = boardTickets.get(ticketId)
       if (ticket) ticket.archived_at = null
@@ -917,6 +934,7 @@ export function createServiceHarness(
     moveTicket: (...args) => (overrides.moveTicket ?? fakes.moveTicket)(...args),
     updateTicket: (...args) => (overrides.updateTicket ?? fakes.updateTicket)(...args),
     deleteTicket: (...args) => (overrides.deleteTicket ?? fakes.deleteTicket)(...args),
+    duplicateTicket: (...args) => (overrides.duplicateTicket ?? fakes.duplicateTicket)(...args),
     unarchiveTicket: (...args) => (overrides.unarchiveTicket ?? fakes.unarchiveTicket)(...args),
     setWorktreeBaseBranch: (...args) =>
       (overrides.setWorktreeBaseBranch ?? fakes.setWorktreeBaseBranch)(...args),
@@ -961,6 +979,7 @@ export function createServiceHarness(
     ticketMoves,
     ticketUpdates,
     deletedTickets,
+    ticketDuplicates,
     baseBranchWrites,
     scratch,
     runsRoot,

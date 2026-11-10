@@ -143,6 +143,11 @@ interface DocumentFlowState {
   /** Skip everything that is not merged yet and finalize with what is. */
   finishRunNow: (runId: string) => Promise<void>
   deleteRun: (runId: string) => Promise<void>
+  /**
+   * A fresh copy of the run in the preview, its own ticket in To Do, with the models and
+   * settings chosen on this one (see `documentFlowApi.duplicate`). The original is untouched.
+   */
+  duplicateRun: (runId: string) => Promise<DocumentRunDetail>
   /** Put a flagged item back into the pipeline: re-judge its session, or relaunch it. */
   retryItem: (runId: string, itemId: string) => Promise<void>
   /** Override the classifier: treat the item as done and queue it for merging. */
@@ -502,6 +507,12 @@ export const useDocumentFlowStore = create<DocumentFlowState>()(
       deleteRun: async (runId) => {
         await documentFlowApi.delete(runId)
         get().removeRun(runId)
+      },
+
+      duplicateRun: async (runId) => {
+        const detail = await documentFlowApi.duplicate(runId)
+        get().applyDetail(detail)
+        return detail
       },
 
       retryItem: async (runId, itemId) => {
