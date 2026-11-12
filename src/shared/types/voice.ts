@@ -421,7 +421,7 @@ export interface VoiceDictationResult {
  * microphone. `1`/`true` plays the committed fixtures (test/fixtures/voice);
  * any other non-empty value is a directory of clips. Unset in normal use.
  */
-export const VOICE_TEST_CLIPS_ENV = 'TEDOOO_CODE_VOICE_TEST_CLIPS'
+export const VOICE_TEST_CLIPS_ENV = 'HIVE_VOICE_TEST_CLIPS'
 
 export function isVoiceTestClipsSwitchOn(value: string | undefined | null): boolean {
   if (typeof value !== 'string') return false

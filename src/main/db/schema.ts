@@ -22,7 +22,7 @@ export const CURRENT_SCHEMA_VERSION = 61
  * project); its items have `connection_id` and `members` (JSON, one worktree per member with
  * that member's merge bookkeeping) instead of `worktree_id`. The `document_update_*` item
  * columns (v65) track the post-merge step in which a merged ticket's session updates the run's
- * source document; `document_update_report` is JSON. `document_runs.source_kind` (v69) says
+ * source document; `document_update_report` is JSON. `document_runs.source_kind` (v61) says
  * where a run's tickets come from: `document` (extracted from `source_path`), or `tickets`
  * (adopted from the board, `source_path` = '', items linked to their tickets from the start).
  * CREATE TABLE IF NOT EXISTS, replayed by ensureDocumentFlowTables() in database.ts.

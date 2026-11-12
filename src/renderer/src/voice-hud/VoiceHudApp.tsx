@@ -333,12 +333,12 @@ export function VoiceHudApp(): React.JSX.Element | null {
     )
   }
 
-  if (phase.kind === 'transcribing' || phase.kind === 'enhancing') {
+  if (phase.kind === 'transcribing') {
     const showPercent = phase.showsProgress && phase.progress !== null
     return layout(
       <div
         className="voice-pill"
-        title={phase.kind === 'enhancing' ? 'Polishing…' : 'Transcribing…'}
+        title="Transcribing…"
         onMouseDown={preventFocus}
         data-testid="voice-hud-processing"
         {...hit}

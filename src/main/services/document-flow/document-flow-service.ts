@@ -105,6 +105,7 @@ import {
   type DocumentRunDetail,
   type DocumentRunGeneration,
   type DocumentRunItem,
+  type DocumentRunItemDraft,
   type DocumentRunItemMember,
   type DocumentRunItemPatch,
   type DocumentRunMember,
@@ -147,6 +148,12 @@ import {
 } from './document-files'
 import * as documentFlowGit from './document-flow-git'
 import { resolveSessionFinalMessage } from './final-message'
+import {
+  rewriteBlocksJson,
+  rewritePathsInText,
+  rewriteRunPaths,
+  type RunPathMap
+} from './run-paths'
 import { runVerifyCommand, type VerifyCommandResult } from './verify-command'
 
 const log = createLogger({ component: 'DocumentFlow' })
@@ -4896,7 +4903,7 @@ export class DocumentFlowService {
       await copyRunDir(source.run_dir, runDir)
       const blocksPath = join(runDir, 'blocks.json')
       if (existsSync(blocksPath)) {
-        // Only a run received from another Mac has paths in it (its source sits in the run dir).
+        // Paths into the run directory, when the blocks file has any, follow the copy.
         const rewritten = rewriteBlocksJson(await readFile(blocksPath, 'utf8'), map)
         if (rewritten.ok) await writeFile(blocksPath, rewritten.json, 'utf8')
       }

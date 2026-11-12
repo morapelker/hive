@@ -264,7 +264,7 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
     }
   }
   // A ticket its run will launch is launched by the run alone: auto-launch of a queued ticket,
-  // the picker, a quick launch or the Tedooo agent would give it a session the run never made
+  // the picker, or a quick launch would give it a session the run never made
   if (!spec.orchestrated) {
     const refusal = orchestratorLaunchRefusal(spec.ticketId)
     if (refusal) return { success: false, error: refusal }

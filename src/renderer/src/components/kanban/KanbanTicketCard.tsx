@@ -304,11 +304,11 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       integrationCheckoutGone(run, runCheckouts.worktrees, runCheckouts.connectionIds)
     )
   })
-  // A run of this Mac can be duplicated once its tickets are known: a fresh copy in To Do with
+  // A run can be duplicated once its tickets are known: a fresh copy in To Do with
   // the models and settings chosen here, to launch again (a cancelled or finished run has no
   // other way back). Not while they are still being extracted, nor for a record that is gone.
   const canDuplicateRun = useDocumentFlowStore((s) => {
-    const run = documentRunId && !remoteOrigin ? s.runsById[documentRunId]?.run : null
+    const run = documentRunId ? s.runsById[documentRunId]?.run : null
     return !!run && run.status !== 'extracting'
   })
   const documentPath =

@@ -6,8 +6,8 @@ one 0.8 second loop at 30 fps). The atlases were approved in `docs/french-bulldo
 ("Smooth · 30 fps", design study 05) and are extracted from that file verbatim:
 
 ```sh
-pnpm -C apps/tedooo-code extract:french-bulldog
-pnpm -C apps/tedooo-code preview:french-bulldog
+pnpm extract:french-bulldog
+pnpm preview:french-bulldog
 ```
 
 The second command opens `src/renderer/french-bulldog-preview.html` through Vite with the real

@@ -198,7 +198,7 @@ export function initVoiceDictation(options: {
 }
 
 /**
- * Dev/test only (TEDOOO_CODE_VOICE_TEST_CLIPS): lets the verify workflow pick
+ * Dev/test only (HIVE_VOICE_TEST_CLIPS): lets the verify workflow pick
  * the clip the HUD plays instead of the microphone, and start/stop a dictation
  * through the same controller toggle the hotkey uses. Never registered in normal use.
  */

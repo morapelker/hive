@@ -220,7 +220,7 @@ export class VoiceHudWindow {
    * it is recorded, tagged with that id, as well as the whole clip at stop.
    */
   startCapture({ streamId }: { streamId?: number } = {}): void {
-    // Dev/test only: with TEDOOO_CODE_VOICE_TEST_CLIPS set, the armed clip
+    // Dev/test only: with HIVE_VOICE_TEST_CLIPS set, the armed clip
     // replaces the microphone. Normally there is no test clip and the mic is used.
     const testClip = voiceTestClips.captureSource()
     const options: VoiceCaptureStartOptions = {

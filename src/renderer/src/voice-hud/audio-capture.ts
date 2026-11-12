@@ -7,7 +7,7 @@
  * the recording surviving an input-device change.
  *
  * Dev/test only: when the main process hands over a test clip (launched with
- * TEDOOO_CODE_VOICE_TEST_CLIPS), the clip is played in real time into the same
+ * HIVE_VOICE_TEST_CLIPS), the clip is played in real time into the same
  * worklet instead of the microphone, so levels, chunking and stop handling are
  * exercised exactly as with a mic. After the clip ends the input stays silent,
  * like a quiet room, until the dictation is stopped.

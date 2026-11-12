@@ -16,7 +16,7 @@ import { createLogger } from '../services/logger'
 
 const log = createLogger({ component: 'VoiceTestClips' })
 
-/** The committed fixtures, relative to the app root (apps/tedooo-code in a dev checkout). */
+/** The committed fixtures, relative to the app root (the repo root in a dev checkout). */
 const FIXTURES_RELATIVE_DIR = join('test', 'fixtures', 'voice')
 
 /** Clip names are bare file stems: no paths, no traversal. */
@@ -132,7 +132,7 @@ interface LoadedClip {
 /**
  * Dev/test only: lets the HUD record a WAV clip instead of the microphone, so
  * dictation can be driven end-to-end from the verify workflow (CDP). Inert
- * unless the app was launched with TEDOOO_CODE_VOICE_TEST_CLIPS set.
+ * unless the app was launched with HIVE_VOICE_TEST_CLIPS set.
  *
  * The selected clip is handed to the HUD each time capture starts and plays
  * through the same worklet as the mic, in real time. When it ends, the HUD

@@ -4,7 +4,7 @@
  *
  * Every clip is 16 kHz mono 16-bit WAV spoken by macOS `say` (Samantha), with
  * its expected transcript in a .txt file of the same name. The app plays them
- * instead of the microphone when launched with TEDOOO_CODE_VOICE_TEST_CLIPS=1
+ * instead of the microphone when launched with HIVE_VOICE_TEST_CLIPS=1
  * (see .claude/skills/verify/SKILL.md).
  *
  *   node scripts/generate-voice-fixtures.mjs

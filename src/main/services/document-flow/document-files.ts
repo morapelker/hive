@@ -353,7 +353,7 @@ const COPIED_RUN_ENTRIES = ['document.md', 'blocks.json', 'figures', 'source'] a
 
 /**
  * Copy a run directory for a duplicate of its run: `document.md`, `blocks.json`, `figures/` and
- * (a run received from another Mac) `source/`, whichever are there. The target is created here
+ * `source/`, whichever are there. The target is created here
  * (0700) and must not exist yet. A source directory that is gone copies nothing: the duplicate
  * then points at files that are not there, exactly as its original does.
  */

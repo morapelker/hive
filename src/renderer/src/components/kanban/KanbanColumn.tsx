@@ -1151,7 +1151,7 @@ export function KanbanColumn({
     >
       {/* Column header */}
       <ContextMenu>
-        <ContextMenuTrigger asChild disabled={!isDoneColumn}>
+        <ContextMenuTrigger asChild disabled={!isDoneColumn && !(isTodoColumn && !searchActive)}>
           <div
             ref={headerRef}
             data-title-mode={isInProgressColumn ? titleMode : 'centered'}

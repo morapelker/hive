@@ -636,7 +636,7 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
                 Open instance
               </Button>
             )}
-            {!remote && <NewRunBranchSession run={run} />}
+            <NewRunBranchSession run={run} />
             {run.base_branch && (
               <span data-testid="docflow-base-branch-line">
                 from <span className="font-mono text-foreground">{run.base_branch}</span>

@@ -100,7 +100,7 @@ declare global {
     onCaptureCancel: (callback: () => void) => () => void
   }
 
-  /** Dev/test only: present when launched with TEDOOO_CODE_VOICE_TEST_CLIPS. */
+  /** Dev/test only: present when launched with HIVE_VOICE_TEST_CLIPS. */
   interface VoiceTestBridge {
     status: () => Promise<import('../shared/types/voice').VoiceTestClipsStatus>
     listClips: () => Promise<import('../shared/types/voice').VoiceTestClipInfo[]>
