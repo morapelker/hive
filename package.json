@@ -120,7 +120,7 @@
     "@noble/curves": "2.4.0",
     "@noble/hashes": "2.4.0",
     "@opencode-ai/sdk": "^1.1.51",
-    "@radix-ui/react-context-menu": "^2.2.16",
+    "@radix-ui/react-context-menu": "^2.3.7",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-dropdown-menu": "^2.1.16",
     "@radix-ui/react-slot": "^1.1.1",
