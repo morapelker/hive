@@ -11,7 +11,9 @@ const mocks = vi.hoisted(() => ({
   unsubscribeUpdated: vi.fn(),
   list: vi.fn(),
   runnerStart: vi.fn(),
-  runnerStop: vi.fn()
+  runnerStop: vi.fn(),
+  scheduleRunBoardReload: vi.fn(),
+  cancelRunBoardReloads: vi.fn()
 }))
 
 vi.mock('@/api/document-flow-api', () => ({
@@ -19,6 +21,11 @@ vi.mock('@/api/document-flow-api', () => ({
     onUpdated: mocks.onUpdated,
     list: mocks.list
   }
+}))
+
+vi.mock('@/lib/document-flow/board-sync', () => ({
+  scheduleRunBoardReload: mocks.scheduleRunBoardReload,
+  cancelRunBoardReloads: mocks.cancelRunBoardReloads
 }))
 
 vi.mock('@/lib/document-flow/runner-ports', () => ({
@@ -63,6 +70,12 @@ describe('useDocumentFlowRunner', () => {
       projectId: 'project-1',
       reason: 'item'
     })
+    // The server may have written to the board too: the push reloads it
+    expect(mocks.scheduleRunBoardReload).toHaveBeenCalledWith({
+      runId: 'run-1',
+      projectId: 'project-1',
+      reason: 'item'
+    })
     expect(mocks.list).toHaveBeenCalledWith(undefined)
     expect(DocumentFlowRunner).toHaveBeenCalledWith({ fake: true })
     expect(mocks.runnerStart).toHaveBeenCalledTimes(1)
@@ -76,6 +89,7 @@ describe('useDocumentFlowRunner', () => {
     unmount()
     expect(mocks.runnerStop).toHaveBeenCalledTimes(1)
     expect(mocks.unsubscribeUpdated).toHaveBeenCalledTimes(1)
+    expect(mocks.cancelRunBoardReloads).toHaveBeenCalledTimes(1)
   })
 
   it('still loads and drives runs when the RPC client cannot subscribe', async () => {
