@@ -1002,7 +1002,7 @@ describeIf('database migration safety', () => {
     })
   })
 
-  describe('document run source kind (v69)', () => {
+  describe('document run source kind (v61)', () => {
     it('adds document_runs.source_kind on a fresh database', () => {
       const db = new DatabaseService(makeDbPath())
       db.init()
@@ -1013,7 +1013,7 @@ describeIf('database migration safety', () => {
       db.close()
     })
 
-    it('upgrades a v68-shaped database keeping its runs, which read as document runs', () => {
+    it('upgrades a v60-shaped database keeping its runs, which read as document runs', () => {
       const dbPath = makeDbPath()
       const seeded = new DatabaseService(dbPath)
       seeded.init()
@@ -1027,9 +1027,9 @@ describeIf('database migration safety', () => {
         status: 'preview',
         config: DEFAULT_DOCUMENT_RUN_CONFIG
       })
-      // v68 shape: document_runs without the source kind.
+      // v60 shape: document_runs without the source kind.
       seeded.getRawDb().exec('ALTER TABLE document_runs DROP COLUMN source_kind')
-      seeded.setSetting('schema_version', '68')
+      seeded.setSetting('schema_version', '60')
       seeded.close()
 
       const db = new DatabaseService(dbPath)

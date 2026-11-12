@@ -870,9 +870,7 @@ describe('MergeOnDoneDialog — archive override (shift-drag Merged → Done)', 
     fireEvent.click(await screen.findByRole('button', { name: 'Archive' }))
 
     await waitFor(() =>
-      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5, {
-        interactive: true
-      })
+      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5)
     )
     await waitFor(() =>
       expect(archiveWorktreeMock).toHaveBeenCalledWith(
@@ -893,9 +891,7 @@ describe('MergeOnDoneDialog — archive override (shift-drag Merged → Done)', 
     fireEvent.click(await screen.findByRole('button', { name: 'Keep' }))
 
     await waitFor(() =>
-      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5, {
-        interactive: true
-      })
+      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5)
     )
     expect(archiveWorktreeMock).not.toHaveBeenCalled()
   })
@@ -906,9 +902,7 @@ describe('MergeOnDoneDialog — archive override (shift-drag Merged → Done)', 
     render(<MergeOnDoneDialog />)
 
     await waitFor(() =>
-      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5, {
-        interactive: true
-      })
+      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5)
     )
     expect(archiveWorktreeMock).not.toHaveBeenCalled()
   })
@@ -932,9 +926,7 @@ describe('MergeOnDoneDialog — archive override (shift-drag Merged → Done)', 
     fireEvent.click(await screen.findByRole('button', { name: 'Archive all' }))
 
     await waitFor(() =>
-      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5, {
-        interactive: true
-      })
+      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5)
     )
     await waitFor(() => expect(archiveWorktreeMock).toHaveBeenCalledTimes(3))
     expect(archiveWorktreeMock).toHaveBeenCalledWith(

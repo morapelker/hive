@@ -30,8 +30,8 @@ vi.mock('@/api/system-api', async (importOriginal) => {
   }
 })
 
-vi.mock('@/lib/tedooo-code-enterprise-telemetry', () => ({
-  startTedoooCodePromptTelemetry: vi.fn()
+vi.mock('@/lib/hive-enterprise-telemetry', () => ({
+  startHivePromptTelemetry: vi.fn()
 }))
 
 describe('createLiveRunnerPorts().notify', () => {

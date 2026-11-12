@@ -5,10 +5,13 @@ const electron = vi.hoisted(() => ({
   app: {
     on: vi.fn(),
     off: vi.fn(),
-    getPath: vi.fn(() => '/tmp/tedooo-code-test-voice'),
+    getPath: vi.fn(() => '/tmp/hive-test-voice'),
     commandLine: { hasSwitch: vi.fn(() => true) }
   },
-  globalShortcut: { register: vi.fn(() => true), unregister: vi.fn() },
+  globalShortcut: {
+    register: vi.fn((_accelerator: string, _callback: () => void) => true),
+    unregister: vi.fn()
+  },
   systemPreferences: {
     getMediaAccessStatus: vi.fn(() => 'granted'),
     askForMediaAccess: vi.fn(async () => true)
@@ -72,8 +75,7 @@ vi.mock('./voice-model-store', () => ({
 }))
 
 const paste = vi.hoisted(() => ({
-  deliverVoiceText: vi.fn(async () => 'pasted' as const),
-  probeVoiceFocus: vi.fn(async () => null)
+  deliverVoiceText: vi.fn(async () => 'pasted' as const)
 }))
 vi.mock('./voice-paste', () => paste)
 
@@ -123,14 +125,6 @@ const ENABLED: VoiceSettings = {
   // The offline (whole-clip) flow; the streaming default is covered in voice-controller.stream.test.ts.
   speechModel: 'parakeet-tdt-0.6b-v2',
   cleanup: { ...DEFAULT_VOICE_SETTINGS.cleanup, enabled: true }
-}
-
-const AGENT_CONTEXT = {
-  boardIdle: true,
-  ticketOpen: false,
-  sessionOpen: false,
-  agentPanelOpen: false,
-  agentAvailable: true
 }
 
 const TRANSCRIPT = 'create a ticket'
@@ -229,7 +223,6 @@ describe('VoiceController dictation summary log', () => {
       speechModel: ENABLED.speechModel,
       streamed: false,
       textSource: 'whole-clip',
-      target: 'paste',
       audioMs: 1_000,
       decodeMs: 3,
       aiStep: 'cleaned',
@@ -247,23 +240,6 @@ describe('VoiceController dictation summary log', () => {
       if (key.endsWith('Ms') && value !== null) expect(Number.isInteger(value), key).toBe(true)
     }
     expectNoTranscriptInLogs()
-  })
-
-  it('marks the AI step not applicable for the agent target', async () => {
-    controller.setUiContext(AGENT_CONTEXT)
-    await record()
-    controller.onHudStopClick()
-    controller.onAudio(AUDIO)
-    await vi.waitFor(() => expect(controller.getStatus().state).toBe('idle'))
-
-    expect(onlySummary()).toMatchObject({
-      outcome: 'delivered',
-      target: 'agent',
-      aiStep: 'not-applicable',
-      aiMs: null,
-      delivery: 'agent',
-      chars: TRANSCRIPT.length
-    })
   })
 
   it('reports an AI timeout and the clipboard fallback', async () => {
@@ -331,7 +307,6 @@ describe('VoiceController dictation summary log', () => {
     expect(summary).toMatchObject({
       outcome: 'cancelled',
       reason: 'escape',
-      target: 'paste',
       recordMs: null,
       audioMs: null,
       stopToTranscriptMs: null

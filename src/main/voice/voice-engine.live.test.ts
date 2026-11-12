@@ -9,7 +9,7 @@
  *
  * Skips cleanly unless VOICE_ENGINE_LIVE=1 and the model is on disk.
  *   VOICE_ENGINE_LIVE_MODEL_DIR     Nemotron folder (default: <base>/voice/models/<archive>,
- *                                   base = TEDOOO_CODE_DESKTOP_BASE_DIR or ~/.hive)
+ *                                   base = HIVE_DESKTOP_BASE_DIR or ~/.hive)
  *   VOICE_ENGINE_LIVE_PARAKEET_DIR  Parakeet v2 folder for the whole-clip regression check
  *                                   (same default rule; skipped when missing)
  *   VOICE_ENGINE_LIVE_RUNS          finish-latency repeats per timed fixture (default 5)

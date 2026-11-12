@@ -257,9 +257,9 @@ describe('document flow schema', () => {
     )
   })
 
-  it('ships the source kind of a run as the v69 migration, a column added by the repair step', () => {
-    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(69)
-    const migration = MIGRATIONS.find((m) => m.version === 69)
+  it('ships the source kind of a run as the v61 migration, a column added by the repair step', () => {
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(61)
+    const migration = MIGRATIONS.find((m) => m.version === 61)
     expect(migration?.name).toBe('add_document_run_source_kind')
     // Comment only: safeAddColumn() adds the column, so a replay cannot fail on a duplicate.
     expect(migration?.up.replace(/--.*$/gm, '').trim()).toBe('')
@@ -504,7 +504,7 @@ describeIf('document flow tables', () => {
     const db = openDb(path)
     const run = makeRun(db, makeProject(db), { id: 'run-old' })
     db.getRawDb().exec('ALTER TABLE document_runs DROP COLUMN source_kind')
-    db.setSetting('schema_version', '68')
+    db.setSetting('schema_version', '60')
     db.close()
 
     const upgraded = openDb(path)

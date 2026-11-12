@@ -5,7 +5,7 @@ const electron = vi.hoisted(() => ({
   app: {
     on: vi.fn(),
     off: vi.fn(),
-    getPath: vi.fn(() => '/tmp/tedooo-code-test-voice'),
+    getPath: vi.fn(() => '/tmp/hive-test-voice'),
     commandLine: { hasSwitch: vi.fn(() => true) }
   },
   globalShortcut: { register: vi.fn(() => true), unregister: vi.fn() },
@@ -72,8 +72,7 @@ vi.mock('./voice-model-store', () => ({
 }))
 
 const paste = vi.hoisted(() => ({
-  deliverVoiceText: vi.fn(async () => 'pasted' as const),
-  probeVoiceFocus: vi.fn(async () => null)
+  deliverVoiceText: vi.fn(async () => 'pasted' as const)
 }))
 vi.mock('./voice-paste', () => paste)
 
@@ -125,14 +124,6 @@ const ENABLED: VoiceSettings = {
   speechModel: 'parakeet-tdt-0.6b-v2',
   cleanup: { ...DEFAULT_VOICE_SETTINGS.cleanup, enabled: true },
   dictionary: [{ word: 'Tedooo', soundsLike: ['tedo'], caseSensitive: false }]
-}
-
-const AGENT_CONTEXT = {
-  boardIdle: true,
-  ticketOpen: false,
-  sessionOpen: false,
-  agentPanelOpen: false,
-  agentAvailable: true
 }
 
 /** What the engine heard, and what the pill shows once the dictionary has run. */
@@ -637,23 +628,6 @@ describe('VoiceController skippable AI polishing (VOICE-08)', () => {
       )
       expect(onlySummary()).toMatchObject({ aiStep: 'disabled', skipInput: null })
       expect(results(window)).toEqual([expect.objectContaining({ cleanup: 'disabled' })])
-    })
-
-    it('for the agent target: no polishing phase, no AI request, delivered at once', async () => {
-      controller.setUiContext(AGENT_CONTEXT)
-      await record()
-      controller.onHudStopClick()
-      controller.onAudio(AUDIO)
-      await untilIdle()
-
-      expect(hudPhases()).not.toContain('enhancing')
-      expect(cleanup.enhanceTranscript).toHaveBeenCalledWith(
-        TRANSCRIPT,
-        expect.objectContaining({ cleanup: expect.objectContaining({ enabled: false }) }),
-        { db }
-      )
-      expect(controller.skipPolishing('click')).toBe(false)
-      expect(onlySummary()).toMatchObject({ target: 'agent', aiStep: 'not-applicable' })
     })
   })
 })

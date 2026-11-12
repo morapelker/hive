@@ -38,8 +38,8 @@ vi.mock('@/api/opencode-api', () => ({
 vi.mock('@/api/connection-api', () => ({
   connectionApi: { create: vi.fn(), get: vi.fn(), rename: vi.fn() }
 }))
-vi.mock('@/lib/tedooo-code-enterprise-telemetry', () => ({
-  startTedoooCodePromptTelemetry: vi.fn()
+vi.mock('@/lib/hive-enterprise-telemetry', () => ({
+  startHivePromptTelemetry: vi.fn()
 }))
 
 const initialSessionState = useSessionStore.getState()

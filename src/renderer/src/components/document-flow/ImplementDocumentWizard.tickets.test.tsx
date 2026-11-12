@@ -7,16 +7,13 @@
 // The document path has its own tests (ImplementDocumentWizard.pick / .preview).
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { MOVE_RUN_REFUSAL } from '@/lib/peers/move-run'
 import { toast } from '@/lib/toast'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { ticketKey, useKanbanStore } from '@/stores/useKanbanStore'
-import { usePeerStore } from '@/stores/usePeerStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { DOCUMENT_RUN_TICKET_PROVIDER } from '@shared/document-flow/run-ticket'
 import { SHELL_COMMAND_TICKET_PROVIDER } from '@shared/lib/shell-commands'
-import type { PeerState } from '@shared/remote-access/peer-protocol'
 import type {
   DocumentRunDetail,
   DocumentRunItem,
@@ -57,26 +54,6 @@ const initialFlowState = useDocumentFlowStore.getState()
 const initialKanbanState = useKanbanStore.getState()
 const initialProjectState = useProjectStore.getState()
 const initialSettingsState = useSettingsStore.getState()
-const initialPeerState = usePeerStore.getState()
-
-/** Another Mac, live and taking moves. */
-const STUDIO: PeerState = {
-  desktopId: 'mac-b',
-  desktopName: 'Studio Mac',
-  instanceId: null,
-  slot: null,
-  appVersion: null,
-  platform: null,
-  online: true,
-  paired: true,
-  pairedInbound: true,
-  link: 'live',
-  executorOnline: true,
-  capabilities: ['move-v1'],
-  lastError: null,
-  lastSeenAt: null,
-  pairing: null
-}
 
 const PROJECT = TEST_PROJECT.id
 const NOW = '2026-11-04T10:00:00.000Z'
@@ -303,7 +280,6 @@ afterEach(async () => {
   useKanbanStore.setState(initialKanbanState, true)
   useProjectStore.setState(initialProjectState, true)
   useSettingsStore.setState(initialSettingsState, true)
-  usePeerStore.setState(initialPeerState, true)
 })
 
 describe('ImplementDocumentWizard — board tickets source', () => {
@@ -692,31 +668,4 @@ describe('ImplementDocumentWizard — orchestrator preview', () => {
     expect(screen.queryByTestId('docflow-add-tickets-dialog')).toBeNull()
   })
 
-  it('keeps an orchestrator on this Mac, even with another Mac live and chosen', async () => {
-    usePeerStore.setState({ peers: [STUDIO], loaded: true })
-    seedRuns(ticketRunDetail())
-    openWizard({
-      runId: 'run-t',
-      destination: { kind: 'peer', desktopId: 'mac-b', desktopName: 'Studio Mac' }
-    })
-    await renderWizard()
-
-    expect(screen.getByTestId('docflow-run-on-select')).toBeDisabled()
-    expect(screen.getByTestId('docflow-run-on-note')).toHaveTextContent(MOVE_RUN_REFUSAL.tickets)
-    expect(screen.getByTestId('docflow-launch-btn')).toHaveTextContent('Launch run (2)')
-  })
-
-  it('refuses to send an orchestrator to another Mac from the previous runs', async () => {
-    usePeerStore.setState({ peers: [STUDIO], loaded: true })
-    seedRuns(ticketRunDetail())
-    openWizard()
-    await renderWizard()
-
-    expect(screen.getByTestId('docflow-move-to-mac-run-t')).toBeDisabled()
-    expect(screen.getByTestId('docflow-move-to-mac-run-t')).toHaveAttribute(
-      'title',
-      MOVE_RUN_REFUSAL.tickets
-    )
-    expect(screen.getByTestId('docflow-run-on-mac-run-t')).toBeDisabled()
-  })
 })

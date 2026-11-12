@@ -21,10 +21,13 @@ const electron = vi.hoisted(() => ({
   app: {
     on: vi.fn(),
     off: vi.fn(),
-    getPath: vi.fn(() => '/tmp/tedooo-code-test-voice'),
+    getPath: vi.fn(() => '/tmp/hive-test-voice'),
     commandLine: { hasSwitch: vi.fn(() => true) }
   },
-  globalShortcut: { register: vi.fn(() => true), unregister: vi.fn() },
+  globalShortcut: {
+    register: vi.fn((_accelerator: string, _callback: () => void) => true),
+    unregister: vi.fn()
+  },
   systemPreferences: {
     getMediaAccessStatus: vi.fn(() => 'granted'),
     askForMediaAccess: vi.fn(async () => true)
@@ -143,8 +146,7 @@ vi.mock('./voice-model-store', () => ({
 }))
 
 const paste = vi.hoisted(() => ({
-  deliverVoiceText: vi.fn(async () => 'pasted' as const),
-  probeVoiceFocus: vi.fn(async () => null)
+  deliverVoiceText: vi.fn(async () => 'pasted' as const)
 }))
 vi.mock('./voice-paste', () => paste)
 
@@ -691,41 +693,6 @@ describe('VoiceController streaming dictation flow (VOICE-06)', () => {
         skipInput: 'click'
       })
     })
-
-    it('delivers to the agent with the streamed text, a live preview and no AI step', async () => {
-      controller.setUiContext({
-        boardIdle: true,
-        ticketOpen: false,
-        sessionOpen: false,
-        agentPanelOpen: true,
-        agentAvailable: true
-      })
-      controller.applySettings({ ...STREAMING, cleanup: { ...STREAMING.cleanup, enabled: true } })
-      const session = await record()
-      session.options.onUpdate?.('fix the')
-      expect(hudStates().at(-1)).toEqual({
-        phase: { kind: 'recording', target: 'agent' },
-        sounds: true,
-        transcript: 'fix the'
-      })
-      const clip = recording(12 * CHUNK)
-      session.finish.mockResolvedValueOnce(streamedResult('fix the flaky test', clip))
-      await stopWith(clip)
-      expect(onlySummary()).toMatchObject({
-        target: 'agent',
-        delivery: 'agent',
-        aiStep: 'not-applicable',
-        textSource: 'streamed'
-      })
-      expect(cleanup.enhanceTranscript).toHaveBeenCalledWith(
-        'fix the flaky test',
-        expect.objectContaining({ cleanup: expect.objectContaining({ enabled: false }) }),
-        expect.anything()
-      )
-      expect(hudStates().some((state) => state.phase.kind === 'enhancing')).toBe(false)
-      expect(engine.transcribe).not.toHaveBeenCalled()
-      expect(paste.deliverVoiceText).not.toHaveBeenCalled()
-    })
   })
 
   describe('fallback to the whole clip', () => {
@@ -913,7 +880,7 @@ describe('VoiceController streaming dictation flow (VOICE-06)', () => {
       expect(second).not.toBe(first)
       // The new recording shows no leftover text.
       expect(hudStates().at(-1)).toEqual({
-        phase: { kind: 'recording', target: 'paste' },
+        phase: { kind: 'recording' },
         sounds: true
       })
       const clip = recording(8 * CHUNK)
@@ -991,7 +958,7 @@ describe('VoiceController streaming dictation flow (VOICE-06)', () => {
       const session = await record()
       session.options.onUpdate?.('open')
       expect(hudStates().at(-1)).toEqual({
-        phase: { kind: 'recording', target: 'paste' },
+        phase: { kind: 'recording' },
         sounds: true,
         transcript: 'open'
       })
@@ -1020,7 +987,7 @@ describe('VoiceController streaming dictation flow (VOICE-06)', () => {
       // it on the pill just before delivery hides it.
       expect(hudStates().slice(-2)).toEqual([
         {
-          phase: { kind: 'transcribing', progress: null, showsProgress: false, target: 'paste' },
+          phase: { kind: 'transcribing', progress: null, showsProgress: false },
           sounds: true,
           transcript: 'open Tedooo settings'
         },
@@ -1057,7 +1024,7 @@ describe('VoiceController streaming dictation flow (VOICE-06)', () => {
       session.options.onError?.(engineExited(9))
       expect(controller.getStatus().state).toBe('recording')
       expect(hudStates().at(-1)).toEqual({
-        phase: { kind: 'recording', target: 'paste' },
+        phase: { kind: 'recording' },
         sounds: true
       })
     })
@@ -1073,7 +1040,7 @@ describe('VoiceController streaming dictation flow (VOICE-06)', () => {
       await vi.waitFor(() => expect(controller.getStatus().state).toBe('idle'))
       const states = hudStates()
       expect(states.filter((state) => state.phase.kind === 'recording')).toEqual([
-        { phase: { kind: 'recording', target: 'paste' }, sounds: true }
+        { phase: { kind: 'recording' }, sounds: true }
       ])
       expect(states.find((state) => state.phase.kind === 'enhancing')?.transcript).toBe(
         'create a ticket'

@@ -81,12 +81,11 @@ function pushPhase(phase: VoiceHudPhase, transcript?: string): void {
   })
 }
 
-const RECORDING: VoiceHudPhase = { kind: 'recording', target: 'paste' }
+const RECORDING: VoiceHudPhase = { kind: 'recording' }
 const TRANSCRIBING: VoiceHudPhase = {
   kind: 'transcribing',
   progress: null,
-  showsProgress: false,
-  target: 'paste'
+  showsProgress: false
 }
 const ENHANCING: VoiceHudPhase = { ...TRANSCRIBING, kind: 'enhancing' }
 
@@ -127,47 +126,20 @@ describe('VoiceHudApp', () => {
     expect(screen.queryByTestId('voice-hud-processing')).toBeNull()
   })
 
-  it('shows the Tedooo icon first on the recording pill when the target is the agent', async () => {
+  it('shows the level bars first on the recording pill', async () => {
     await mount()
-    pushPhase({ kind: 'recording', target: 'agent' })
+    pushPhase({ kind: 'recording' })
     const pill = screen.getByTestId('voice-hud-recording')
-    const icon = screen.getByTestId('voice-hud-agent-icon')
-    expect(pill.firstElementChild).toBe(icon)
-    expect(icon).toHaveClass('voice-agent-icon')
-    expect(icon).toHaveAttribute('src')
-    expect(pill).toHaveAttribute('title', 'Tedooo agent · Click to stop · Esc to cancel')
-  })
-
-  it('shows no icon on the recording pill when the target is paste', async () => {
-    await mount()
-    pushPhase({ kind: 'recording', target: 'paste' })
-    const pill = screen.getByTestId('voice-hud-recording')
-    expect(screen.queryByTestId('voice-hud-agent-icon')).toBeNull()
     expect(pill.firstElementChild).toBe(screen.getByTestId('voice-hud-bars'))
     expect(pill).toHaveAttribute('title', 'Click to stop · Esc to cancel')
   })
 
-  it('keeps the icon while transcribing and enhancing for the agent', async () => {
+  it('shows the usual titles while processing a dictation', async () => {
     await mount()
-    pushPhase({ kind: 'transcribing', progress: null, showsProgress: false, target: 'agent' })
-    let pill = screen.getByTestId('voice-hud-processing')
-    expect(pill.firstElementChild).toBe(screen.getByTestId('voice-hud-agent-icon'))
-    expect(pill).toHaveAttribute('title', 'Sending to Tedooo agent…')
-
-    pushPhase({ kind: 'enhancing', progress: null, showsProgress: false, target: 'agent' })
-    pill = screen.getByTestId('voice-hud-processing')
-    expect(pill.firstElementChild).toBe(screen.getByTestId('voice-hud-agent-icon'))
-    expect(pill).toHaveAttribute('title', 'Sending to Tedooo agent…')
-  })
-
-  it('shows no icon and the usual titles while processing a paste dictation', async () => {
-    await mount()
-    pushPhase({ kind: 'transcribing', progress: null, showsProgress: false, target: 'paste' })
-    expect(screen.queryByTestId('voice-hud-agent-icon')).toBeNull()
+    pushPhase({ kind: 'transcribing', progress: null, showsProgress: false })
     expect(screen.getByTestId('voice-hud-processing')).toHaveAttribute('title', 'Transcribing…')
 
-    pushPhase({ kind: 'enhancing', progress: null, showsProgress: false, target: 'paste' })
-    expect(screen.queryByTestId('voice-hud-agent-icon')).toBeNull()
+    pushPhase({ kind: 'enhancing', progress: null, showsProgress: false })
     expect(screen.getByTestId('voice-hud-processing')).toHaveAttribute(
       'title',
       'Polishing… Esc to skip'
@@ -178,8 +150,7 @@ describe('VoiceHudApp', () => {
     const ENHANCING_PASTE: VoiceHudPhase = {
       kind: 'enhancing',
       progress: null,
-      showsProgress: false,
-      target: 'paste'
+      showsProgress: false
     }
 
     it('shows "Polishing…", an "Esc to skip" hint and a Skip button under the final text', async () => {
@@ -231,13 +202,11 @@ describe('VoiceHudApp', () => {
       expect(voiceHud.setInteractive).toHaveBeenLastCalledWith(true)
     })
 
-    it('has no Skip while transcribing, recording, or sending to the agent', async () => {
+    it('has no Skip while transcribing or recording', async () => {
       await mount()
-      pushPhase({ kind: 'recording', target: 'paste' }, 'create a')
+      pushPhase({ kind: 'recording' }, 'create a')
       expect(screen.queryByTestId('voice-hud-skip')).toBeNull()
-      pushPhase({ kind: 'transcribing', progress: null, showsProgress: false, target: 'paste' })
-      expect(screen.queryByTestId('voice-hud-skip')).toBeNull()
-      pushPhase({ ...ENHANCING_PASTE, target: 'agent' }, 'create a ticket')
+      pushPhase({ kind: 'transcribing', progress: null, showsProgress: false })
       expect(screen.queryByTestId('voice-hud-skip')).toBeNull()
     })
   })
@@ -308,7 +277,7 @@ describe('VoiceHudApp', () => {
 
   it('keeps the level bars when the recording state is re-sent with a live transcript', async () => {
     await mount()
-    pushPhase({ kind: 'recording', target: 'paste' })
+    pushPhase({ kind: 'recording' })
     await act(async () => captureStartListener?.({ streamId: 3 }))
     const levels = recorder.instance as unknown as { onLevel: ((level: number) => void) | null }
     act(() => levels.onLevel?.(1))
@@ -318,7 +287,7 @@ describe('VoiceHudApp', () => {
 
     act(() => {
       stateListener?.({
-        phase: { kind: 'recording', target: 'paste' },
+        phase: { kind: 'recording' },
         sounds: false,
         transcript: 'create a ticket'
       })
@@ -327,17 +296,8 @@ describe('VoiceHudApp', () => {
 
     // A new recording starts with empty bars.
     pushPhase({ kind: 'hidden' })
-    pushPhase({ kind: 'recording', target: 'paste' })
+    pushPhase({ kind: 'recording' })
     expect(lastBar().style.height).toBe('3px')
-  })
-
-  it('drops the icon once the pill shows a notice', async () => {
-    await mount()
-    pushPhase({ kind: 'recording', target: 'agent' })
-    expect(screen.getByTestId('voice-hud-agent-icon')).toBeInTheDocument()
-    pushPhase({ kind: 'notice', text: 'Copied to clipboard' })
-    expect(screen.queryByTestId('voice-hud-agent-icon')).toBeNull()
-    expect(screen.getByTestId('voice-hud-notice')).toHaveTextContent('Copied to clipboard')
   })
   describe('live transcript preview', () => {
     const previewText = (): HTMLElement | null => screen.queryByTestId('voice-hud-preview-text')
@@ -387,13 +347,6 @@ describe('VoiceHudApp', () => {
       expect(screen.queryByTestId('voice-hud-preview')).toBeNull()
       pushPhase(ENHANCING, 'create a ticket')
       expect(previewText()).toHaveTextContent('create a ticket')
-    })
-
-    it('shows the same way for the agent target', async () => {
-      await mount()
-      pushPhase({ kind: 'recording', target: 'agent' }, 'open settings')
-      expect(previewText()).toHaveTextContent('open settings')
-      expect(screen.getByTestId('voice-hud-agent-icon')).toBeInTheDocument()
     })
 
     it('never shows with a notice', async () => {

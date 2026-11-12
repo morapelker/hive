@@ -25,7 +25,7 @@ const canRunDatabaseTests = (): boolean => {
 const describeIf = canRunDatabaseTests() ? describe : describe.skip
 
 const setup = (): { db: DatabaseService; a: string; b: string; c: string } => {
-  const dir = mkdtempSync(join(tmpdir(), 'tedooo-code-ticket-cycle-'))
+  const dir = mkdtempSync(join(tmpdir(), 'hive-ticket-cycle-'))
   tempDirs.push(dir)
   const db = new DatabaseService(join(dir, 'state.sqlite'))
   db.init()

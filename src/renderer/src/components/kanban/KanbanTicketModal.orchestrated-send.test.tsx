@@ -20,11 +20,11 @@ import { makeDetail } from '@/components/document-flow/test-fixtures'
 import { toast } from '@/lib/toast'
 import type { KanbanTicket, Session, Worktree } from '../../../../main/db/types'
 
-vi.mock('@/api/tedooo-code-enterprise/client', () => ({
-  isTedoooCodeTelemetryEnabled: vi.fn(() => false),
-  recordTedoooCodePromptStart: vi.fn(),
-  recordTedoooCodePromptIdle: vi.fn(),
-  recordTedoooCodeQuestionsAnswered: vi.fn()
+vi.mock('@/api/hive-enterprise/client', () => ({
+  isHiveTelemetryEnabled: vi.fn(() => false),
+  recordHivePromptStart: vi.fn(),
+  recordHivePromptIdle: vi.fn(),
+  recordHiveQuestionsAnswered: vi.fn()
 }))
 
 vi.mock('@/components/terminal/TerminalView', () => ({

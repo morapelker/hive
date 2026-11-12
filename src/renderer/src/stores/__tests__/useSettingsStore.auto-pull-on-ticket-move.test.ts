@@ -29,7 +29,7 @@ vi.mock('@/api/pet-api', () => ({ petApi: apiMocks.petApi }))
 
 import { useSettingsStore } from '@/stores/useSettingsStore'
 
-const PERSIST_KEY = 'tedooo-code-settings'
+const PERSIST_KEY = 'hive-settings'
 
 const initialSettingsState = useSettingsStore.getState()
 
@@ -84,7 +84,7 @@ describe('useSettingsStore autoPullOnTicketMove', () => {
     useSettingsStore.setState({ autoPullOnTicketMove: false })
     apiMocks.dbApi.setting.get.mockResolvedValue(JSON.stringify({ boardMode: 'toggle' }))
 
-    await useSettingsStore.getState().loadFromDatabase({ writeBack: false })
+    await useSettingsStore.getState().loadFromDatabase()
 
     expect(useSettingsStore.getState().autoPullOnTicketMove).toBe(true)
   })

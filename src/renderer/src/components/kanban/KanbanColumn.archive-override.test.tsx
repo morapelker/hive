@@ -100,11 +100,6 @@ function makeTicket(overrides: Partial<KanbanTicket> = {}): KanbanTicket {
     external_url: null,
     github_pr_number: null,
     github_pr_url: null,
-    sync_task_id: null,
-    sync_task_title: null,
-    sync_task_status: null,
-    sync_task_org_id: null,
-    sync_task_assignees: null,
     mark: null,
     total_tokens: 0,
     pending_launch_config: null,
@@ -287,11 +282,7 @@ describe('shift-dragging a ticket from Merged to Done', () => {
 
     await drop(makeTicket(), 'done', { atStart: true })
 
-    await waitFor(() =>
-      expect(moveTicket).toHaveBeenCalledWith('ticket-1', 'proj-web', 'done', 0, {
-        interactive: true
-      })
-    )
+    await waitFor(() => expect(moveTicket).toHaveBeenCalledWith('ticket-1', 'proj-web', 'done', 0))
     expectNoMergeChecks()
   })
 
@@ -353,11 +344,9 @@ describe('drops the override leaves alone', () => {
     })
     runDoneQueue.queueDocumentRunDone.mockResolvedValue('queued')
 
-    await drop(
-      makeTicket({ external_provider: 'document-run', external_id: 'run-1' }),
-      'done',
-      { atStart: true }
-    )
+    await drop(makeTicket({ external_provider: 'document-run', external_id: 'run-1' }), 'done', {
+      atStart: true
+    })
 
     await waitFor(() =>
       expect(runDoneQueue.queueDocumentRunDone).toHaveBeenCalledWith(

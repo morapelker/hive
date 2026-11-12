@@ -15,7 +15,6 @@ describe('DictationTrace', () => {
   it('measures a delivered dictation from the start and stop presses', () => {
     const c = clock()
     const trace = new DictationTrace('parakeet-tdt-0.6b-v2', c.now)
-    trace.setTarget('paste')
     c.advance(120.4)
     trace.markCaptureStarted()
     c.advance(3_000)
@@ -36,7 +35,6 @@ describe('DictationTrace', () => {
       streamed: false,
       textSource: 'whole-clip',
       fallbackReason: null,
-      target: 'paste',
       audioMs: 3_000,
       startToCaptureMs: 120,
       previewUpdates: null,
@@ -105,7 +103,6 @@ describe('DictationTrace', () => {
       streamed: false,
       textSource: null,
       fallbackReason: null,
-      target: null,
       audioMs: null,
       startToCaptureMs: null,
       previewUpdates: null,

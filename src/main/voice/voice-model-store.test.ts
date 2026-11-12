@@ -130,18 +130,18 @@ afterAll(async () => {
 })
 
 let baseDir: string
-const previousBaseDir = process.env.TEDOOO_CODE_DESKTOP_BASE_DIR
+const previousBaseDir = process.env.HIVE_DESKTOP_BASE_DIR
 
 beforeEach(() => {
   baseDir = mkdtempSync(join(workDir, 'base-'))
-  process.env.TEDOOO_CODE_DESKTOP_BASE_DIR = baseDir
+  process.env.HIVE_DESKTOP_BASE_DIR = baseDir
   mode = { body: archive, cutAfter: null }
   requests = []
 })
 
 afterEach(() => {
-  if (previousBaseDir === undefined) delete process.env.TEDOOO_CODE_DESKTOP_BASE_DIR
-  else process.env.TEDOOO_CODE_DESKTOP_BASE_DIR = previousBaseDir
+  if (previousBaseDir === undefined) delete process.env.HIVE_DESKTOP_BASE_DIR
+  else process.env.HIVE_DESKTOP_BASE_DIR = previousBaseDir
 })
 
 const modelsDir = (): string => join(baseDir, 'voice', 'models')

@@ -712,7 +712,7 @@ describe('useDocumentFlowStore', () => {
   })
 
   describe('prefs and persistence', () => {
-    it('setPrefs merges, and only prefs are persisted', () => {
+    it('setPrefs merges, and only prefs and the unfolded run cards are persisted', () => {
       useDocumentFlowStore.setState({ runsById: { 'run-1': makeDetail() } })
       useDocumentFlowStore.getState().setPrefs({ interactive: false })
 
@@ -723,7 +723,8 @@ describe('useDocumentFlowStore', () => {
       const persisted = JSON.parse(localStorage.getItem('hive-document-flow') ?? '{}') as {
         state?: Record<string, unknown>
       }
-      expect(Object.keys(persisted.state ?? {})).toEqual(['prefs'])
+      // The prefs, and which run cards are unfolded on the board
+      expect(Object.keys(persisted.state ?? {})).toEqual(['prefs', 'expandedRunTickets'])
       expect(persisted.state?.prefs).toEqual(useDocumentFlowStore.getState().prefs)
     })
 

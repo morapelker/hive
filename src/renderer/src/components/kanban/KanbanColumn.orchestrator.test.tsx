@@ -247,7 +247,7 @@ describe('dropping a ticket its run will launch on In Progress', () => {
     await drop(makeTicket({ column: 'in_progress' }), 'todo')
 
     expect(toast.error).not.toHaveBeenCalled()
-    expect(moveTicket).toHaveBeenCalledWith('ticket-1', 'proj-1', 'todo', 0, { interactive: true })
+    expect(moveTicket).toHaveBeenCalledWith('ticket-1', 'proj-1', 'todo', 0)
   })
 })
 

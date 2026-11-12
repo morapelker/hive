@@ -2,16 +2,13 @@
 // document line and no source-file check, a "Made from N board tickets" line with "Add
 // tickets", and — on the tickets that have not launched while the run is going — an editing
 // panel (what the ticket starts after, its brief) and "Remove from run". Launched tickets stay
-// read-only, a mirrored dashboard of another Mac offers none of it, and a document run's
-// dashboard reads as it always did. The dialogs and editors the panel hosts have their own
+// read-only, and a document run's dashboard reads as it always did. The dialogs and editors the panel hosts have their own
 // tests; here they are stand-ins that say they were mounted.
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { useProjectStore } from '@/stores/useProjectStore'
-import { useRemoteBoardStore } from '@/stores/useRemoteBoardStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
-import type { RemoteBoardPeer } from '@/lib/peers/contract'
 import type { DocumentRun, DocumentRunDetail, DocumentRunItem } from '@shared/types/document-flow'
 import { DocumentRunDashboard } from './DocumentRunDashboard'
 import { TEST_PROJECT, makeDetail, makeReport } from './test-fixtures'
@@ -26,23 +23,9 @@ const api = vi.hoisted(() => ({
   finalize: vi.fn(),
   delete: vi.fn()
 }))
-const peerApi = vi.hoisted(() => ({ command: vi.fn(), rpc: vi.fn() }))
 
 vi.mock('@/api/document-flow-api', () => ({ documentFlowApi: api }))
 vi.mock('@/api/project-api', () => ({ projectApi: { openPath: vi.fn() } }))
-vi.mock('@/api/peer-api', () => ({
-  peerApi: {
-    command: peerApi.command,
-    rpc: peerApi.rpc,
-    onPeerEvent: vi.fn(() => () => {}),
-    onPeers: vi.fn(() => () => {}),
-    onMoveChanged: vi.fn(() => () => {}),
-    onSyncProgress: vi.fn(() => () => {}),
-    listMoves: vi.fn(async () => ({ moves: [] }))
-  },
-  onRpcOpen: () => () => {},
-  isSyncProgressEvent: () => false
-}))
 vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() }
 }))
@@ -71,7 +54,6 @@ vi.mock('./TicketBriefEditor', () => ({
 
 const initialFlowState = useDocumentFlowStore.getState()
 const initialProjectState = useProjectStore.getState()
-const initialRemoteState = useRemoteBoardStore.getState()
 const initialWorktreeState = useWorktreeStore.getState()
 
 const STARTED_AT = '2026-05-04T10:05:00.000Z'
@@ -152,8 +134,6 @@ beforeEach(() => {
       return { ...detail, items: detail.items.filter((item) => item.id !== itemId) }
     }
   )
-  peerApi.command.mockResolvedValue({ ok: true })
-  peerApi.rpc.mockResolvedValue({ path: '', exists: false })
   useProjectStore.setState({ projects: [TEST_PROJECT] } as never)
 })
 
@@ -163,7 +143,6 @@ afterEach(async () => {
   vi.resetAllMocks()
   useDocumentFlowStore.setState(initialFlowState, true)
   useProjectStore.setState(initialProjectState, true)
-  useRemoteBoardStore.setState(initialRemoteState, true)
   useWorktreeStore.setState(initialWorktreeState, true)
 })
 
@@ -437,53 +416,5 @@ describe('DocumentRunDashboard — a document run is untouched', () => {
     expect(screen.getByTestId('docflow-dashboard')).toHaveAccessibleDescription(
       'Progress of the document run Checkout redesign'
     )
-  })
-})
-
-describe('DocumentRunDashboard — orchestrator on another Mac', () => {
-  const DESKTOP = 'desk-b'
-
-  const remotePeer = (detail: DocumentRunDetail): RemoteBoardPeer => ({
-    desktopId: DESKTOP,
-    desktopName: 'Studio Mac',
-    projects: [],
-    identities: {},
-    worktrees: {},
-    tickets: {},
-    sessionStatuses: {},
-    questions: {},
-    pendingPlans: {},
-    documentRuns: { [detail.run.id]: detail },
-    executorOnline: true,
-    syncedAt: null,
-    loading: false,
-    error: null
-  })
-
-  it('shows what the run is made from, but offers no way to change it from here', async () => {
-    const detail = makeDetail(TICKETS_RUN, ticketItems())
-    useRemoteBoardStore.setState({
-      peers: { [DESKTOP]: remotePeer(detail) },
-      remoteDashboard: { desktopId: DESKTOP, runId: detail.run.id },
-      refetchDocumentRun: vi.fn(async () => {}),
-      openRemoteTicket: vi.fn()
-    })
-    await act(async () => {
-      render(<DocumentRunDashboard />)
-    })
-
-    expect(screen.getByTestId('docflow-dashboard')).toHaveAttribute('data-docflow-source', 'remote')
-    expect(screen.getByTestId('docflow-tickets-source-count')).toHaveTextContent(
-      'Made from 4 board tickets'
-    )
-    // No source-file probe over the tunnel either
-    expect(peerApi.rpc).not.toHaveBeenCalled()
-    expect(api.sourceFile).not.toHaveBeenCalled()
-    expect(screen.queryByTestId('docflow-dashboard-add-tickets')).toBeNull()
-    expect(screen.queryByTestId('stub-add-tickets-dialog')).toBeNull()
-    expect(screen.queryByTestId('docflow-item-edit-TD-3')).toBeNull()
-    expect(screen.queryByTestId('docflow-item-remove-TD-3')).toBeNull()
-    // The rows themselves are there, as on any mirrored dashboard
-    expect(screen.getByTestId('docflow-row-TD-3')).toBeInTheDocument()
   })
 })
