@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { downloadDocument, isDocumentUrl } from './document-download'
+import { downloadDocument, isDocumentUrl, saveDocumentCopy } from './document-download'
 import { DOCUMENT_MAX_BYTES, DocumentFileError } from './document-files'
 
 const HTML = '<html><body><h1>Factory spec</h1><p>Translate the screen.</p></body></html>'
@@ -173,5 +173,71 @@ describe('downloadDocument', () => {
     await expect(
       downloadDocument({ url: `${origin}/spec.html`, targetDir: join(dir, 'missing') })
     ).rejects.toThrow(/could not be saved in .*missing \(ENOENT\)/)
+  })
+})
+
+describe('saveDocumentCopy', () => {
+  let downloads: string
+
+  beforeEach(() => {
+    downloads = mkdtempSync(join(tmpdir(), 'docflow-copy-'))
+  })
+
+  afterEach(() => {
+    rmSync(downloads, { recursive: true, force: true })
+  })
+
+  const downloadedAs = (name: string, content: string | Buffer = HTML): string => {
+    const path = join(downloads, name)
+    writeFileSync(path, content)
+    return path
+  }
+
+  it('copies the document into the directory under its own name and leaves the source', async () => {
+    const sourcePath = downloadedAs('0b8a-4f1e.html')
+
+    const saved = await saveDocumentCopy({ sourcePath, name: 'Factory spec.html', targetDir: dir })
+
+    expect(saved).toBe(join(dir, 'Factory spec.html'))
+    expect(readFileSync(saved, 'utf8')).toBe(HTML)
+    expect(readFileSync(sourcePath, 'utf8')).toBe(HTML)
+  })
+
+  it('numbers the copy when the name is taken, and never leaves the directory', async () => {
+    const sourcePath = downloadedAs('0b8a-4f1e.md', '# Spec')
+    writeFileSync(join(dir, 'spec.md'), 'mine')
+
+    expect(await saveDocumentCopy({ sourcePath, name: 'spec.md', targetDir: dir })).toBe(
+      join(dir, 'spec-2.md')
+    )
+    expect(readFileSync(join(dir, 'spec.md'), 'utf8')).toBe('mine')
+    expect(
+      await saveDocumentCopy({ sourcePath, name: '../../etc/.hidden/Plan.MD', targetDir: dir })
+    ).toBe(join(dir, 'etc-.hidden-Plan.md'))
+    expect(await saveDocumentCopy({ sourcePath, name: '..md', targetDir: dir })).toBe(
+      join(dir, 'document.md')
+    )
+  })
+
+  it('refuses a name that is not a document, bytes that are not text, and a missing file', async () => {
+    const pdf = downloadedAs('0b8a-4f1e.pdf', Buffer.from([0x25, 0x50, 0x44, 0x46, 0, 1, 2]))
+
+    await expect(
+      saveDocumentCopy({ sourcePath: pdf, name: 'spec.pdf', targetDir: dir })
+    ).rejects.toThrow('"spec.pdf" is not a document')
+    await expect(
+      saveDocumentCopy({ sourcePath: pdf, name: 'spec.html', targetDir: dir })
+    ).rejects.toThrow('This file is not text')
+    await expect(
+      saveDocumentCopy({
+        sourcePath: downloadedAs('empty.md', ''),
+        name: 'spec.md',
+        targetDir: dir
+      })
+    ).rejects.toThrow('The document is empty')
+    await expect(
+      saveDocumentCopy({ sourcePath: join(downloads, 'gone.md'), name: 'spec.md', targetDir: dir })
+    ).rejects.toBeInstanceOf(DocumentFileError)
+    expect(readdirSync(dir)).toEqual([])
   })
 })

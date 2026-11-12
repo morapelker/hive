@@ -132,7 +132,12 @@ import type {
 import { createLogger } from '../logger'
 import type { CreateFromBranchParams, WorktreeResult } from '../worktree-ops'
 import type { DocumentFlowDb, DocumentRunItemRowPatch, DocumentRunRowPatch } from './db-port'
-import { downloadDocument, isDocumentUrl, type DocumentFetch } from './document-download'
+import {
+  downloadDocument,
+  isDocumentUrl,
+  saveDocumentCopy,
+  type DocumentFetch
+} from './document-download'
 import {
   DocumentFileError,
   assertDocumentFile,
@@ -958,6 +963,12 @@ export class DocumentFlowService {
   async createRun(params: {
     projectId: string
     documentPath: string
+    /**
+     * `documentPath` is a download kept under a name that is not the document's (a Tedooo Sync
+     * task's file in the attachment store): the run gets a copy in the project directory under
+     * this name instead, and the download is left to whoever made it.
+     */
+    documentName?: string | null
     generation?: DocumentRunGeneration | null
     notes?: string | null
   }): Promise<DocumentRunDetail> {
@@ -968,13 +979,30 @@ export class DocumentFlowService {
 
     // A link is downloaded into the project directory first; the run then reads that file.
     // For a connection project that is the connection directory, which every member is linked
-    // from; extraction reads the members through those links too.
+    // from; extraction reads the members through those links too. A named download is copied
+    // there the same way.
     const link = isDocumentUrl(params.documentPath) ? params.documentPath.trim() : null
+    const documentName = link ? null : params.documentName?.trim() || null
     let sourcePath: string
+    let copiedFrom: string | null = null
     try {
-      sourcePath = link
-        ? await downloadDocument({ url: link, targetDir: project.path, fetch: this.deps.fetch })
-        : normalizeDocumentPath(params.documentPath, this.deps.homeDir)
+      if (link) {
+        sourcePath = await downloadDocument({
+          url: link,
+          targetDir: project.path,
+          fetch: this.deps.fetch
+        })
+      } else {
+        sourcePath = normalizeDocumentPath(params.documentPath, this.deps.homeDir)
+        if (documentName) {
+          copiedFrom = sourcePath
+          sourcePath = await saveDocumentCopy({
+            sourcePath,
+            name: documentName,
+            targetDir: project.path
+          })
+        }
+      }
       await assertDocumentFile(sourcePath)
     } catch (error) {
       throw invalidInput(describeError(error))
@@ -999,7 +1027,11 @@ export class DocumentFlowService {
     this.log(
       run,
       'created',
-      link ? `Document downloaded from ${link} to ${sourcePath}` : `Document picked: ${sourcePath}`
+      link
+        ? `Document downloaded from ${link} to ${sourcePath}`
+        : copiedFrom
+          ? `Document "${documentName}" saved to ${sourcePath}`
+          : `Document picked: ${sourcePath}`
     )
     // The run's ticket waits in To Do from the start: the board shows the extraction on it, and
     // opening it is how the run gets launched. A board that cannot be written does not stop the

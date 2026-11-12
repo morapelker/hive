@@ -264,6 +264,54 @@ describe('createRun', () => {
     }
   })
 
+  it('keeps a named download as a copy in the project directory, under that name', async () => {
+    const projectPath = harness.projects.get(TEST_PROJECT_ID)!.path
+    mkdirSync(projectPath, { recursive: true })
+    // A Tedooo Sync task's file as the attachment store holds it: a random name.
+    const downloadPath = join(harness.scratch, '6f1c2a9e.md')
+    writeFileSync(downloadPath, SPEC)
+    harness.replies.push(replyFor())
+
+    const detail = await harness.service.createRun({
+      projectId: TEST_PROJECT_ID,
+      documentPath: downloadPath,
+      documentName: ' Factory changes.md '
+    })
+
+    const saved = join(projectPath, 'Factory changes.md')
+    expect(detail.run).toMatchObject({
+      status: 'extracting',
+      title: 'Factory changes.md',
+      source_path: saved
+    })
+    expect(readFileSync(saved, 'utf8')).toBe(SPEC)
+    expect(existsSync(downloadPath)).toBe(true)
+    expect(detail.events.map((event) => event.message)).toEqual([
+      `Document "Factory changes.md" saved to ${saved}`,
+      'The run got its ticket on the board'
+    ])
+
+    await harness.service.whenExtractionSettled(detail.run.id)
+    expect(harness.service.get(detail.run.id)?.items.map((item) => item.key)).toEqual(['A1', 'A2'])
+  })
+
+  it('refuses a named download that is not a document and creates nothing', async () => {
+    const projectPath = harness.projects.get(TEST_PROJECT_ID)!.path
+    mkdirSync(projectPath, { recursive: true })
+    const downloadPath = join(harness.scratch, '6f1c2a9e.pdf')
+    writeFileSync(downloadPath, SPEC)
+
+    await expect(
+      harness.service.createRun({
+        projectId: TEST_PROJECT_ID,
+        documentPath: downloadPath,
+        documentName: 'Factory changes.pdf'
+      })
+    ).rejects.toThrow('"Factory changes.pdf" is not a document')
+    expect(harness.db.listDocumentRuns(TEST_PROJECT_ID)).toEqual([])
+    expect(existsSync(join(projectPath, 'Factory changes.pdf'))).toBe(false)
+  })
+
   it('refuses a link that cannot be downloaded and creates nothing', async () => {
     const site = await serve((response) => response.writeHead(410).end('gone'))
 

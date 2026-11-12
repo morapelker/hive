@@ -42,11 +42,15 @@ export const documentFlowApi = {
   /**
    * Pre-process the document and start extracting tickets in the background. Resolves as soon
    * as the run row exists (`status: 'extracting'`); the result arrives through `onUpdated`.
-   * `notes` tell the extraction model which tickets to make and how.
+   * `notes` tell the extraction model which tickets to make and how. With `documentName`, the
+   * file at `documentPath` is a download kept under another name (a Tedooo Sync task's file):
+   * the run gets a copy in the project directory under that name, and the download stays the
+   * caller's to delete.
    */
   createRun: (params: {
     projectId: string
     documentPath: string
+    documentName?: string
     generation?: DocumentRunGeneration | null
     notes?: string
   }): Promise<DocumentRunDetail> => request('createRun', params),

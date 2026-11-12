@@ -1,9 +1,13 @@
-import { writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { extname, join } from 'node:path'
-import { DOCUMENT_MAX_BYTES, DocumentFileError } from './document-files'
+import { DOCUMENT_MAX_BYTES, DocumentFileError, assertDocumentFile } from './document-files'
 
 // A document given as a link. It is downloaded once, into the project directory, before the run
 // is created; from there on the run reads the saved file like any picked document.
+//
+// A document somebody else downloaded (a Tedooo Sync task's file, which lands in the attachment
+// store under a random name) is saved the same way, under the name it has where it came from:
+// saveDocumentCopy.
 
 export const DOCUMENT_DOWNLOAD_TIMEOUT_MS = 60_000
 /** Extensions the pre-processing tells formats apart by; anything else is saved as `.html`. */
@@ -32,6 +36,13 @@ const tooLarge = (): DocumentFileError =>
     `The document behind the link is too large (the limit is ${megabytes(DOCUMENT_MAX_BYTES)} MB).`
   )
 
+// The name becomes a file in the project: no separators, no hidden files.
+const cleanFileName = (value: string): string =>
+  value
+    .replace(/[^\p{L}\p{N}._ -]+/gu, '-')
+    .replace(/^[.\s-]+|[.\s-]+$/g, '')
+    .slice(0, FILE_NAME_MAX_CHARS)
+
 /** `spec.html` for https://host/docs/spec.html; the host name when the path names no file. */
 function fileNameFor(url: URL, contentType: string): string {
   let segment = url.pathname.split('/').filter(Boolean).pop() ?? ''
@@ -40,16 +51,10 @@ function fileNameFor(url: URL, contentType: string): string {
   } catch {
     // Kept as written.
   }
-  // The name becomes a file in the project: no separators, no hidden files.
-  const clean = (value: string): string =>
-    value
-      .replace(/[^\p{L}\p{N}._ -]+/gu, '-')
-      .replace(/^[.\s-]+|[.\s-]+$/g, '')
-      .slice(0, FILE_NAME_MAX_CHARS)
-  const name = clean(segment)
+  const name = cleanFileName(segment)
   const extension = extname(name).toLowerCase()
   if (DOCUMENT_EXTENSIONS.has(extension) && name.length > extension.length) return name
-  const stem = name || clean(url.hostname) || 'document'
+  const stem = name || cleanFileName(url.hostname) || 'document'
   return `${stem}${EXTENSION_BY_CONTENT_TYPE.get(contentType) ?? '.html'}`
 }
 
@@ -153,6 +158,53 @@ export async function downloadDocument(input: {
     const code = (error as NodeJS.ErrnoException).code
     throw new DocumentFileError(
       `The downloaded document could not be saved in ${input.targetDir}${code ? ` (${code})` : ''}.`
+    )
+  }
+}
+
+/**
+ * Save a copy of the document at `sourcePath` into `targetDir` under `name` (a file name from
+ * somewhere else, cleaned like a link's; `name-2`… when taken) and return the copy's path. The
+ * name says what the document is, so it must carry one of the document extensions; the bytes
+ * must be text. The file at `sourcePath` is left as it is.
+ */
+export async function saveDocumentCopy(input: {
+  sourcePath: string
+  name: string
+  targetDir: string
+}): Promise<string> {
+  // An extension longer than the cap would be cut off with the rest of the name.
+  const extension = extname(input.name.trim()).toLowerCase()
+  if (!DOCUMENT_EXTENSIONS.has(extension)) {
+    throw new DocumentFileError(
+      `"${input.name.trim()}" is not a document. HTML, Markdown and plain-text documents are supported.`
+    )
+  }
+  const stem =
+    cleanFileName(input.name.trim().slice(0, -extension.length))
+      .slice(0, FILE_NAME_MAX_CHARS - extension.length)
+      .replace(/[.\s-]+$/, '') || 'document'
+
+  await assertDocumentFile(input.sourcePath)
+  let bytes: Buffer
+  try {
+    bytes = await readFile(input.sourcePath)
+  } catch {
+    throw new DocumentFileError(`The document cannot be read: ${input.sourcePath}`)
+  }
+  if (bytes.length === 0) throw new DocumentFileError('The document is empty.')
+  if (bytes.subarray(0, BINARY_SNIFF_BYTES).includes(0)) {
+    throw new DocumentFileError(
+      'This file is not text. HTML, Markdown and plain-text documents are supported.'
+    )
+  }
+
+  try {
+    return await writeNewFile(input.targetDir, `${stem}${extension}`, bytes)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    throw new DocumentFileError(
+      `The document could not be saved in ${input.targetDir}${code ? ` (${code})` : ''}.`
     )
   }
 }

@@ -44,6 +44,8 @@ import type { RpcHandler } from '../router'
 export interface DocumentFlowCreateRunParams {
   projectId: string
   documentPath: string
+  /** The document's own name, when `documentPath` is a download kept under another one. */
+  documentName?: string | null
   generation?: DocumentRunGeneration | null
   notes?: string | null
 }
@@ -282,10 +284,13 @@ const addMemberParamsSchema = z
   })
   .strict() satisfies z.ZodType<DocumentFlowAddMemberParams>
 const projectIdParamsSchema = z.object({ projectId: idSchema }).strict()
+/** Longer than any file name a file system takes; the service cuts the name it keeps. */
+const DOCUMENT_NAME_MAX_CHARS = 1024
 const createRunParamsSchema = z
   .object({
     projectId: idSchema,
     documentPath: z.string().min(1),
+    documentName: z.string().min(1).max(DOCUMENT_NAME_MAX_CHARS).nullable().optional(),
     generation: generationSchema.nullable().optional(),
     notes: z.string().max(DOCUMENT_RUN_NOTES_LIMIT).nullable().optional()
   })

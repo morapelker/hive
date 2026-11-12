@@ -97,7 +97,16 @@ interface DocumentFlowState {
   openRun: (projectId: string, runId: string) => void
 
   // ── Actions (RPC wrappers that apply the result; they reject on failure) ──
-  createRun: (projectId: string, documentPath: string, notes?: string) => Promise<DocumentRunDetail>
+  /**
+   * `documentName`: the document's own name, when `documentPath` is a download kept under
+   * another one (see `documentFlowApi.createRun`).
+   */
+  createRun: (
+    projectId: string,
+    documentPath: string,
+    notes?: string,
+    documentName?: string
+  ) => Promise<DocumentRunDetail>
   retryExtraction: (runId: string) => Promise<DocumentRunDetail>
   /**
    * Create an orchestrator from board tickets (straight into preview) and show it in the
@@ -375,13 +384,14 @@ export const useDocumentFlowStore = create<DocumentFlowState>()(
         get().openDashboard(runId)
       },
 
-      createRun: async (projectId, documentPath, notes) => {
+      createRun: async (projectId, documentPath, notes, documentName) => {
         const trimmedNotes = notes?.trim()
         const detail = await documentFlowApi.createRun({
           projectId,
           documentPath,
           generation: resolveDocumentFlowGeneration(),
-          ...(trimmedNotes ? { notes: trimmedNotes } : {})
+          ...(trimmedNotes ? { notes: trimmedNotes } : {}),
+          ...(documentName ? { documentName } : {})
         })
         get().applyDetail(detail)
         set((state) => ({ wizard: { ...state.wizard, projectId, runId: detail.run.id } }))
