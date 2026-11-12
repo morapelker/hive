@@ -72,8 +72,14 @@ function claudeBlob(
   })
 }
 
-async function readSequenceFile(): Promise<any> {
-  return JSON.parse(await readFile(sequencePath(), 'utf-8'))
+interface SequenceFile {
+  activeAccountNumber: number | null
+  sequence: number[]
+  accounts: Record<string, Record<string, unknown>>
+}
+
+async function readSequenceFile(): Promise<SequenceFile> {
+  return JSON.parse(await readFile(sequencePath(), 'utf-8')) as SequenceFile
 }
 
 describe('account-store-claude', () => {

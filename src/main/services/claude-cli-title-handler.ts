@@ -10,6 +10,7 @@ const log = createLogger({ component: 'ClaudeCliTitle' })
 
 // Matches OSC 0 or OSC 2 with BEL or ST terminator.
 // Body excludes BEL (\x07) and ESC (\x1b) so partial sequences stay unmatched.
+// eslint-disable-next-line no-control-regex
 const OSC_TITLE_RE = /\x1b\][02];([^\x07\x1b]*)(?:\x07|\x1b\\)/g
 
 // Tail buffer cap — a partial OSC sequence should never exceed this in practice.

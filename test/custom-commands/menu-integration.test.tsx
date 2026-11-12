@@ -107,24 +107,24 @@ describe('ProjectItem - Custom Commands Menu Integration', () => {
       removeProject: vi.fn(),
       refreshLanguage: vi.fn(),
       openProjectSettings: vi.fn()
-    } as any)
+    } as never)
 
     useWorktreeStore.setState({
       createWorktree: vi.fn(),
       creatingForProjectId: null,
       syncWorktrees: vi.fn()
-    } as any)
+    } as never)
 
     useSpaceStore.setState({
       spaces: [],
       projectSpaceMap: {},
       assignProjectToSpace: vi.fn(),
       removeProjectFromSpace: vi.fn()
-    } as any)
+    } as never)
 
     useConnectionStore.setState({
       connectionModeActive: false
-    } as any)
+    } as never)
 
     useHintStore.setState({
       hintMap: new Map(),
@@ -133,17 +133,17 @@ describe('ProjectItem - Custom Commands Menu Integration', () => {
       actionMode: null,
       filterActive: false,
       inputFocused: false
-    } as any)
+    } as never)
 
     useVimModeStore.setState({
       mode: 'insert'
-    } as any)
+    } as never)
 
     useSettingsStore.setState({
       vimModeEnabled: false,
       autoPullBeforeWorktree: false,
       customProjectCommands: []
-    } as any)
+    } as never)
   })
 
   test('should not render custom commands section when no commands are configured', async () => {
@@ -185,7 +185,7 @@ describe('ProjectItem - Custom Commands Menu Integration', () => {
           prompt: 'Generate documentation for {{project.path}}'
         }
       ]
-    } as any)
+    } as never)
 
     render(<WorktreeItem worktree={mockWorktree} projectPath={mockProject.path} />)
 

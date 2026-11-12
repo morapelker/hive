@@ -95,6 +95,7 @@ function stripPathDecorations(path: string): string {
 
 export function isSafeGitRemoteUrl(url: string): boolean {
   if (!url || url.startsWith('-')) return false
+  // eslint-disable-next-line no-control-regex
   if (/[\s\x00-\x1f\x7f]/.test(url)) return false
   if (/^[A-Za-z0-9][A-Za-z0-9+.-]*::/.test(url)) return false
 

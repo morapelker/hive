@@ -727,6 +727,7 @@ async function uniquePath(deps: BackupOpsDeps, basePath: string): Promise<string
 // widened to also reject whitespace/control characters, which are never
 // valid in a git ref name.
 function invalidBranchName(branch: string): boolean {
+  // eslint-disable-next-line no-control-regex
   return !branch || branch.startsWith('-') || /[\s\x00-\x1f\x7f]/.test(branch)
 }
 

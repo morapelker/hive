@@ -90,24 +90,24 @@ describe('Custom Commands E2E Integration', () => {
       removeProject: vi.fn(),
       refreshLanguage: vi.fn(),
       openProjectSettings: vi.fn()
-    } as any)
+    } as never)
 
     useWorktreeStore.setState({
       createWorktree: vi.fn(),
       creatingForProjectId: null,
       syncWorktrees: vi.fn()
-    } as any)
+    } as never)
 
     useSpaceStore.setState({
       spaces: [],
       projectSpaceMap: {},
       assignProjectToSpace: vi.fn(),
       removeProjectFromSpace: vi.fn()
-    } as any)
+    } as never)
 
     useConnectionStore.setState({
       connectionModeActive: false
-    } as any)
+    } as never)
 
     useHintStore.setState({
       hintMap: new Map(),
@@ -116,18 +116,18 @@ describe('Custom Commands E2E Integration', () => {
       actionMode: null,
       filterActive: false,
       inputFocused: false
-    } as any)
+    } as never)
 
     useVimModeStore.setState({
       mode: 'insert'
-    } as any)
+    } as never)
 
     // Reset settings with empty custom commands
     useSettingsStore.setState({
       vimModeEnabled: false,
       autoPullBeforeWorktree: false,
       customProjectCommands: []
-    } as any)
+    } as never)
   })
 
   it('should execute custom command end-to-end with template replacement', async () => {
@@ -144,7 +144,7 @@ describe('Custom Commands E2E Integration', () => {
 
     useSettingsStore.setState({
       customProjectCommands: commands
-    } as any)
+    } as never)
 
     // Mock event listener
     const eventListener = vi.fn()
@@ -201,7 +201,7 @@ describe('Custom Commands E2E Integration', () => {
 
     useSettingsStore.setState({
       customProjectCommands: commands
-    } as any)
+    } as never)
 
     render(<WorktreeItem worktree={mockWorktree} projectPath={mockProject.path} />)
 

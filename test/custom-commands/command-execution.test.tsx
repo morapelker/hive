@@ -82,24 +82,24 @@ describe('Custom Command Execution', () => {
       removeProject: vi.fn(),
       refreshLanguage: vi.fn(),
       openProjectSettings: vi.fn()
-    } as any)
+    } as never)
 
     useWorktreeStore.setState({
       createWorktree: vi.fn(),
       creatingForProjectId: null,
       syncWorktrees: vi.fn()
-    } as any)
+    } as never)
 
     useSpaceStore.setState({
       spaces: [],
       projectSpaceMap: {},
       assignProjectToSpace: vi.fn(),
       removeProjectFromSpace: vi.fn()
-    } as any)
+    } as never)
 
     useConnectionStore.setState({
       connectionModeActive: false
-    } as any)
+    } as never)
 
     useHintStore.setState({
       hintMap: new Map(),
@@ -108,11 +108,11 @@ describe('Custom Command Execution', () => {
       actionMode: null,
       filterActive: false,
       inputFocused: false
-    } as any)
+    } as never)
 
     useVimModeStore.setState({
       mode: 'insert'
-    } as any)
+    } as never)
 
     useSettingsStore.setState({
       vimModeEnabled: false,
@@ -124,7 +124,7 @@ describe('Custom Command Execution', () => {
           prompt: 'Test {{project.name}} in {{project.path}}'
         }
       ]
-    } as any)
+    } as never)
   })
 
   afterEach(() => {

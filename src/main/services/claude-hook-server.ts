@@ -275,9 +275,9 @@ export function mapHookEventToStatus(hook: ParsedClaudeHook): SessionStatusType 
     case 'SessionStart':
     case 'SessionEnd':
     case 'Stop':
-    // An API error ends the turn just like a Stop; the error classification
-    // rides the status metadata + the dedicated api-error channel.
     case 'StopFailure':
+      // An API error (StopFailure) ends the turn just like a Stop; the error
+      // classification rides the status metadata + the dedicated api-error channel.
       return 'completed'
     case 'UserPromptSubmit':
       return hook.permission_mode === 'plan' ? 'planning' : 'working'
