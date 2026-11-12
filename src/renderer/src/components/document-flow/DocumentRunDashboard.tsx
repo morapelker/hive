@@ -151,7 +151,7 @@ const CONFIRM_COPY: Record<
   migrations: {
     title: 'Execute the migrations against production?',
     description:
-      'A new agent session is asked to check which of the listed migrations production already has, and to run the ones it does not.',
+      'A new ticket on the board starts an agent session that is asked to check which of the listed migrations production already has, and to run the ones it does not.',
     action: 'Execute migrations',
     destructive: false
   }

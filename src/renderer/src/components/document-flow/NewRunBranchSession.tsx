@@ -25,7 +25,8 @@ const errorMessage = (cause: unknown): string =>
 /**
  * The run dashboard's way to start one more session on the run's branch: the new ticket modal,
  * whose ticket is an ordinary one of the run's project and launches on that branch with the
- * app's default agent, as "Create & Send" does.
+ * app's default agent, as "Create & Send" does. The ticket is a child of the run's own ticket,
+ * whose card names it while its session runs.
  */
 export function NewRunBranchSession({ run }: { run: DocumentRun }): React.JSX.Element {
   const [target, setTarget] = useState<SendableTarget | null>(null)
@@ -98,6 +99,7 @@ export function NewRunBranchSession({ run }: { run: DocumentRun }): React.JSX.El
           onOpenChange={setOpen}
           projectId={run.project_id}
           sendTo={{ branch: target.branch, send: (ticket) => send(ticket, target) }}
+          parentTicketId={run.ticket_id}
           // Opened by no trigger, so Radix has nothing to give the focus back to: on the body
           // it would be out of the dashboard, and Tab would flip the session behind it.
           onCloseAutoFocus={(event) => {

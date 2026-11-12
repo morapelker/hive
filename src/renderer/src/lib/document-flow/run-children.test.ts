@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { childColumnCounts, nestedRunChildIds, runChildrenOf } from './run-children'
+import {
+  childColumnCounts,
+  nestedRunChildIds,
+  runChildrenOf,
+  spawnedRunTickets
+} from './run-children'
 import type { KanbanTicket } from '../../../../main/db/types'
 
 const now = '2026-06-01T00:00:00.000Z'
@@ -122,5 +127,45 @@ describe('childColumnCounts', () => {
         child('d', { column: 'merged' })
       ])
     ).toEqual({ todo: 1, in_progress: 2, review: 0, merged: 1, done: 0 })
+  })
+})
+
+describe('spawnedRunTickets', () => {
+  const items = [
+    { ticket_id: 'task-1', fix_ticket_id: 'fix-1' },
+    { ticket_id: 'task-2', fix_ticket_id: null },
+    // An item that has no ticket yet names nothing
+    { ticket_id: null, fix_ticket_id: null }
+  ]
+
+  it('lists the children of the run that stand for none of its items, oldest first', () => {
+    const spawned = spawnedRunTickets(
+      [
+        run(),
+        child('task-1', { column: 'merged' }),
+        child('fix-1', { column: 'merged' }),
+        child('task-2', { column: 'in_progress' }),
+        child('manual', { created_at: '2026-06-03T00:00:00.000Z' }),
+        child('migrations', { created_at: '2026-06-02T00:00:00.000Z' }),
+        child('session', { created_at: '2026-06-04T00:00:00.000Z' })
+      ],
+      'run-ticket',
+      items
+    )
+    expect(spawned.map((t) => t.id)).toEqual(['migrations', 'manual', 'session'])
+  })
+
+  it('leaves out archived tickets, the children of another run and tickets of no run', () => {
+    const spawned = spawnedRunTickets(
+      [
+        run(),
+        child('archived', { archived_at: now }),
+        ticket({ id: 'other-run-child', parent_ticket_id: 'other-run' }),
+        ticket({ id: 'plain' })
+      ],
+      'run-ticket',
+      items
+    )
+    expect(spawned).toEqual([])
   })
 })

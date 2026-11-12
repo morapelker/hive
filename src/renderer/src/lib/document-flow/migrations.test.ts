@@ -15,6 +15,7 @@ import type {
 } from '@/lib/ticket-launch'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
+import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStatusStore, type SessionStatusEntry } from '@/stores/useWorktreeStatusStore'
@@ -45,6 +46,8 @@ const mocks = vi.hoisted(() => ({
   worktreeGet: vi.fn(),
   launchSessionWithModel: vi.fn(),
   launchSessionOnConnection: vi.fn(),
+  resolveBadgeModel: vi.fn(),
+  resolveCustomProviderBadge: vi.fn(),
   resolveDefaultLaunchConfig: vi.fn(),
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() }
 }))
@@ -80,7 +83,9 @@ vi.mock('@/api/db-api', () => ({
 }))
 vi.mock('@/lib/ticket-launch', () => ({
   launchSessionWithModel: mocks.launchSessionWithModel,
-  launchSessionOnConnection: mocks.launchSessionOnConnection
+  launchSessionOnConnection: mocks.launchSessionOnConnection,
+  resolveBadgeModel: mocks.resolveBadgeModel,
+  resolveCustomProviderBadge: mocks.resolveCustomProviderBadge
 }))
 vi.mock('@/lib/toast', () => ({ toast: mocks.toast }))
 vi.mock('./runner-ports', () => ({
@@ -88,6 +93,9 @@ vi.mock('./runner-ports', () => ({
 }))
 
 const RUN = 'run-1'
+/** The run's own ticket on the board, and the ticket opened for its migration session. */
+const RUN_TICKET = 'ticket-run'
+const MIGRATION_TICKET = 'ticket-mig'
 const SESSION = 's-mig'
 const OPENCODE_SESSION = 'opc-mig'
 const WORKTREE = 'wt-integration'
@@ -113,6 +121,7 @@ const APP_LAUNCH: DocumentRunLaunchConfig = {
 }
 
 const initialFlowState = useDocumentFlowStore.getState()
+const initialKanbanState = useKanbanStore.getState()
 const initialSessionState = useSessionStore.getState()
 const initialWorktreeState = useWorktreeStore.getState()
 const initialStatusState = useWorktreeStatusStore.getState()
@@ -257,6 +266,8 @@ let updateSessionName: ReturnType<typeof vi.fn>
 let closeSession: ReturnType<typeof vi.fn>
 let dequeuePendingMessage: ReturnType<typeof vi.fn>
 let loadWorktrees: ReturnType<typeof vi.fn>
+let createTicket: ReturnType<typeof vi.fn>
+let deleteTicket: ReturnType<typeof vi.fn>
 
 beforeAll(
   () =>
@@ -290,6 +301,16 @@ beforeEach(() => {
   useSessionStore.setState({ updateSessionName, closeSession, dequeuePendingMessage })
   useWorktreeStore.setState({ ...initialWorktreeState, loadWorktrees }, true)
   seedWorktrees()
+  // The board as it answers when all is well: the session's ticket is opened, and deleted.
+  createTicket = vi.fn(async () => ({ id: MIGRATION_TICKET }))
+  deleteTicket = vi.fn(async () => undefined)
+  useKanbanStore.setState({ ...initialKanbanState, createTicket, deleteTicket } as never, true)
+  mocks.resolveCustomProviderBadge.mockReturnValue(null)
+  mocks.resolveBadgeModel.mockReturnValue({
+    providerID: 'anthropic',
+    modelID: 'opus',
+    variant: null
+  })
 
   // The server as it answers when all is well: the session is recorded, then released, and
   // in between the run is what this page holds.
@@ -319,6 +340,7 @@ afterEach(() => {
   resetMigrationStateForTests()
   resetSessionSignalLatchForTests()
   useDocumentFlowStore.setState(initialFlowState, true)
+  useKanbanStore.setState(initialKanbanState, true)
   useSessionStore.setState(initialSessionState, true)
   useWorktreeStore.setState(initialWorktreeState, true)
   useWorktreeStatusStore.setState(initialStatusState, true)
@@ -468,7 +490,7 @@ describe('startRunMigrations', () => {
       modelConfig: RUN_LAUNCH,
       goalMode: false,
       goalSuccessCriteria: null,
-      // The run's own ticket shows the session: no other ticket of the worktree is handed it.
+      // The session has a ticket of its own: no other ticket of the worktree is handed it.
       skipKanbanAttach: true,
       onSessionCreated: expect.any(Function)
     })
@@ -531,6 +553,88 @@ describe('startRunMigrations', () => {
     })
     expect(mocks.endMigrations).not.toHaveBeenCalled()
     expect(closeSession).not.toHaveBeenCalled()
+  })
+
+  it("opens a ticket for the session on the board, In Progress under the run's ticket", async () => {
+    seedRun(
+      finishedRun({
+        ticket_id: RUN_TICKET,
+        config: { ...makeRun().config, defaultLaunch: RUN_LAUNCH }
+      })
+    )
+    mocks.resolveBadgeModel.mockReturnValue({
+      providerID: 'codex',
+      modelID: 'gpt-5.5',
+      variant: 'high'
+    })
+
+    await startRunMigrations(RUN)
+
+    expect(createTicket).toHaveBeenCalledTimes(1)
+    expect(createTicket).toHaveBeenCalledWith('project-1', {
+      project_id: 'project-1',
+      title: 'Migrations — Checkout redesign',
+      // What the session was asked: the ticket reads like any other that was sent.
+      description: launchedSpec().prompt,
+      column: 'in_progress',
+      sort_order: expect.any(Number),
+      // Linked from the start: the board follows the session and opens it from the card.
+      current_session_id: SESSION,
+      worktree_id: WORKTREE,
+      mode: 'build',
+      model_provider_id: 'codex',
+      model_id: 'gpt-5.5',
+      model_variant: 'high',
+      // A child of the run's ticket, whose card names it while the session runs.
+      parent_ticket_id: RUN_TICKET
+    })
+    expect(mocks.resolveBadgeModel).toHaveBeenCalledWith(RUN_LAUNCH, CLI_SESSION)
+    expect(deleteTicket).not.toHaveBeenCalled()
+  })
+
+  it('names the ticket after what the run is when the run has no title', async () => {
+    seedRun(finishedRun({ title: '', source_kind: 'tickets' }))
+
+    await startRunMigrations(RUN)
+
+    expect(createTicket.mock.calls[0][1]).toMatchObject({ title: 'Migrations — Orchestrator' })
+  })
+
+  it('opens the ticket once the run holds the session, before the agent is started', async () => {
+    seedRun(finishedRun())
+    const order: string[] = []
+    mocks.startMigrations.mockImplementation(async (runId: string, sessionId: string) => {
+      order.push('recorded')
+      return serverDetail(runId, { migration_session_id: sessionId })
+    })
+    createTicket.mockImplementation(async () => {
+      order.push('ticket opened')
+      return { id: MIGRATION_TICKET }
+    })
+    launchEnds(() => {
+      order.push('agent started')
+      return { success: true, sessionId: SESSION }
+    })
+
+    await startRunMigrations(RUN)
+
+    expect(order).toEqual(['recorded', 'ticket opened', 'agent started'])
+  })
+
+  it('executes the migrations all the same when their ticket could not be created', async () => {
+    seedRun(finishedRun())
+    seedSession(CLI_SESSION)
+    createTicket.mockRejectedValue(new Error('database is locked'))
+
+    await expect(startRunMigrations(RUN)).resolves.toBeUndefined()
+
+    // Said, not thrown: the run's own ticket and its dashboard still show the session.
+    expect(mocks.toast.warning).toHaveBeenCalledTimes(1)
+    expect(mocks.toast.warning.mock.calls[0][0]).toContain('database is locked')
+    expect(runInStore().migration_session_id).toBe(SESSION)
+    expect(closeSession).not.toHaveBeenCalled()
+    expect(mocks.endMigrations).not.toHaveBeenCalled()
+    expect(deleteTicket).not.toHaveBeenCalled()
   })
 
   it('reloads the worktrees of the project before it decides', async () => {
@@ -618,6 +722,21 @@ describe('startRunMigrations', () => {
       expect(updateSessionName).toHaveBeenCalledWith(SESSION, `Migrations — ${BRANCH}`)
       expect(mocks.startMigrations).toHaveBeenCalledWith(RUN, SESSION)
       expect(runInStore().migration_session_id).toBe(SESSION)
+    })
+
+    it('opens the ticket of the session without a worktree: it runs on the instance', async () => {
+      seedRun(finishedConnectionRun({ ticket_id: RUN_TICKET }))
+
+      await startRunMigrations(RUN)
+
+      expect(createTicket).toHaveBeenCalledTimes(1)
+      expect(createTicket.mock.calls[0][1]).toMatchObject({
+        title: 'Migrations — Checkout redesign',
+        column: 'in_progress',
+        current_session_id: SESSION,
+        worktree_id: null,
+        parent_ticket_id: RUN_TICKET
+      })
     })
 
     it('reloads the connections, not the worktrees, before it decides', async () => {
@@ -798,6 +917,9 @@ describe('startRunMigrations', () => {
     expect(mocks.endMigrations).toHaveBeenCalledWith(RUN, SESSION, 'stopped')
     expect(runInStore().migration_session_id).toBeNull()
     expect(isMigrationSession(SESSION)).toBe(false)
+    // The ticket opened for the session goes with it: it has nothing left to show.
+    expect(deleteTicket).toHaveBeenCalledTimes(1)
+    expect(deleteTicket).toHaveBeenCalledWith(MIGRATION_TICKET, 'project-1')
   })
 
   it('aborts an SDK session it discards', async () => {
@@ -870,6 +992,8 @@ describe('startRunMigrations', () => {
     expect(closeSession).not.toHaveBeenCalled()
     expect(dequeuePendingMessage).not.toHaveBeenCalled()
     expect(runInStore().migration_session_id).toBeNull()
+    // And so is its ticket, the way to it from the board.
+    expect(deleteTicket).not.toHaveBeenCalled()
   })
 
   it('keeps the session of a launch the server still records for the run', async () => {
@@ -889,6 +1013,8 @@ describe('startRunMigrations', () => {
     expect(mocks.abort).not.toHaveBeenCalled()
     expect(mocks.endMigrations).not.toHaveBeenCalled()
     expect(isMigrationSession(SESSION)).toBe(true)
+    expect(createTicket).toHaveBeenCalledTimes(1)
+    expect(deleteTicket).not.toHaveBeenCalled()
   })
 
   it('discards the session of a launch that was stopped while its prompt was on its way', async () => {
@@ -914,6 +1040,9 @@ describe('startRunMigrations', () => {
     expect(mocks.endMigrations).toHaveBeenCalledWith(RUN, SESSION, 'stopped')
     expect(runInStore().migration_session_id).toBeNull()
     expect(isMigrationSession(SESSION)).toBe(false)
+    // The session was closed for good: its ticket is not left on the board.
+    expect(deleteTicket).toHaveBeenCalledTimes(1)
+    expect(deleteTicket).toHaveBeenCalledWith(MIGRATION_TICKET, 'project-1')
   })
 
   it.each([
@@ -995,6 +1124,9 @@ describe('startRunMigrations', () => {
     expect(mocks.endMigrations).not.toHaveBeenCalled()
     expect(runInStore().migration_session_id).toBeNull()
     expect(isMigrationSession(SESSION)).toBe(false)
+    // No ticket was opened for a session the run never held.
+    expect(createTicket).not.toHaveBeenCalled()
+    expect(deleteTicket).not.toHaveBeenCalled()
   })
 })
 

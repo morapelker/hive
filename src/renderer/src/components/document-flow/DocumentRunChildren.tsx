@@ -11,12 +11,11 @@ import {
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { ticketKey, useKanbanStore } from '@/stores/useKanbanStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
-import { useSessionStore } from '@/stores/useSessionStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
-import type { SessionStatusType } from '@shared/types/session-status'
 import type { KanbanTicket, KanbanTicketColumn } from '../../../../main/db/types'
 import { pluralize } from './document-flow-ui'
+import { NEEDS_YOU_STATUSES, useTicketSessionState } from './useTicketSessionState'
 
 // The tickets of an "Implement document" run, folded into the run's card on the board (the
 // "Group document run tickets" setting): a strip under the run's body with a header that says
@@ -47,61 +46,6 @@ const COLUMN_DOT_CLASS: Record<KanbanTicketColumn, string> = {
   review: 'bg-orange-500',
   merged: 'bg-violet-500',
   done: 'bg-emerald-500'
-}
-
-/** Statuses of a session that wait on the user: a question, a permission, a command approval. */
-const NEEDS_YOU_STATUSES = new Set<SessionStatusType>(['answering', 'permission', 'command_approval'])
-/** Statuses of a session at work. */
-const WORKING_STATUSES = new Set<SessionStatusType>(['working', 'planning'])
-
-type ChildSessionState = 'needs_you' | 'working' | 'error' | null
-
-/**
- * What a ticket's session is doing, from the stores every card reads: waiting on the user
- * (a pending question, or a status that needs an answer), at work, errored, or nothing of note.
- */
-function useChildSessionState(sessionId: string | null): ChildSessionState {
-  const hasQuestion = useQuestionStore(
-    useCallback(
-      (state) => !!sessionId && (state.pendingBySession.get(sessionId)?.length ?? 0) > 0,
-      [sessionId]
-    )
-  )
-  const status = useWorktreeStatusStore(
-    useCallback(
-      (state) => (sessionId ? (state.sessionStatuses[sessionId]?.status ?? null) : null),
-      [sessionId]
-    )
-  )
-  const errored = useSessionStore(
-    useCallback(
-      (state) => {
-        if (!sessionId) return false
-        for (const sessions of state.sessionsByWorktree.values()) {
-          const found = sessions.find((s) => s.id === sessionId)
-          if (found) return found.status === 'error'
-        }
-        for (const sessions of state.sessionsByConnection.values()) {
-          const found = sessions.find((s) => s.id === sessionId)
-          if (found) return found.status === 'error'
-        }
-        return false
-      },
-      [sessionId]
-    )
-  )
-  // A Claude CLI API failure (rate limit, server error) is not a session status: it ends the
-  // turn as `completed` and is kept apart, as on a card, whose red perimeter reads it too.
-  const hasApiError = useWorktreeStatusStore(
-    useCallback(
-      (state) => !!sessionId && state.sessionApiErrors[sessionId] !== undefined,
-      [sessionId]
-    )
-  )
-  if (hasQuestion || (status && NEEDS_YOU_STATUSES.has(status))) return 'needs_you'
-  if (errored || hasApiError) return 'error'
-  if (status && WORKING_STATUSES.has(status)) return 'working'
-  return null
 }
 
 /** How many of the rows' sessions wait on the user: the header says so even when collapsed. */
@@ -141,7 +85,7 @@ interface DocumentRunChildRowProps {
 }
 
 function DocumentRunChildRow({ ticket }: DocumentRunChildRowProps): React.JSX.Element {
-  const sessionState = useChildSessionState(ticket.current_session_id)
+  const sessionState = useTicketSessionState(ticket.current_session_id)
   const open = useCallback(
     (e: React.MouseEvent) => {
       if (useKanbanStore.getState().dependencyMode?.active) return

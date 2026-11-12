@@ -24,6 +24,7 @@ vi.mock('@/lib/toast', () => ({
 
 const RUN = {
   id: 'run-1',
+  ticket_id: 'ticket-run',
   status: 'completed',
   project_id: 'project-1',
   title: 'Checkout redesign',
@@ -119,7 +120,12 @@ describe('NewRunBranchSession', () => {
     await waitFor(() => expect(checkout.launchTicketOnCheckout).toHaveBeenCalledTimes(1))
     expect(useKanbanStore.getState().createTicket).toHaveBeenCalledWith(
       'project-1',
-      expect.objectContaining({ project_id: 'project-1', column: 'todo' })
+      // A child of the run's ticket, whose card names it while the session runs.
+      expect.objectContaining({
+        project_id: 'project-1',
+        column: 'todo',
+        parent_ticket_id: 'ticket-run'
+      })
     )
     const [ticket, target, launch] = checkout.launchTicketOnCheckout.mock.calls[0]
     expect(ticket).toBe(TICKET)

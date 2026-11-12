@@ -616,6 +616,34 @@ describe('buildRunDoneQueue', () => {
     })
   })
 
+  it('keeps the ticket of a session started from the dashboard while it is still working', async () => {
+    // Children no item names: a manual steps session at work, and a migration session over.
+    signal.getSessionSignal.mockImplementation((id: string) => ({
+      kind: id === 's-manual' ? 'working' : 'ended'
+    }))
+    const board = [
+      ...tickets(),
+      ticket('t-manual', 'in_progress', {
+        title: 'Manual steps — The run',
+        current_session_id: 's-manual'
+      }),
+      ticket('t-migrations', 'review', {
+        title: 'Migrations — The run',
+        current_session_id: 's-migrations'
+      })
+    ]
+
+    const queue = await buildRunDoneQueue(detail(), 'run-ticket', board)
+
+    // Moving it to Done would close the session under the agent.
+    expect(queue.alsoMoveTicketIds).not.toContain('t-manual')
+    expect(queue.kept).toContainEqual({
+      label: 'Manual steps — The run',
+      reason: 'its session is still working — stop it first'
+    })
+    expect(queue.alsoMoveTicketIds).toContain('t-migrations')
+  })
+
   it('keeps a branch with unresolved conflict markers', async () => {
     gitApiMocks.getFileStatuses.mockImplementation(async (path: string) => ({
       success: true,

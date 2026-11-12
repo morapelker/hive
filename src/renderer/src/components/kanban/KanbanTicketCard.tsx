@@ -156,6 +156,7 @@ import { copyTicketLabelsForNewTicket, ticketLabelsOf } from '@shared/lib/ticket
 import { DocumentRunTicketBody } from '@/components/document-flow/DocumentRunTicketBody'
 import { DocumentRunPRLinks } from '@/components/document-flow/DocumentRunPRActions'
 import { DocumentRunChildren } from '@/components/document-flow/DocumentRunChildren'
+import { DocumentRunSpawnedSessions } from '@/components/document-flow/DocumentRunSpawnedSessions'
 import { useDocumentRunPRs } from '@/components/document-flow/useDocumentRunPRs'
 import {
   documentRunTicketToneClass,
@@ -1943,7 +1944,11 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                 view={documentRunView}
                 documentPath={documentPath}
                 error={isError || isEliteError}
-              />
+              >
+                {/* The sessions started from the run's dashboard (migrations, manual steps, a
+                    new session), named while they run. */}
+                <DocumentRunSpawnedSessions runId={documentRunId} runTicket={ticket} />
+              </DocumentRunTicketBody>
             )}
             {/* Document run: its PRs (one per repository); the dashboard has the button that makes them */}
             {documentRunId && documentRunView && (

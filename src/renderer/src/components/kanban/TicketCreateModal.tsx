@@ -47,6 +47,11 @@ interface TicketCreateModalProps {
    * the only action.
    */
   sendTo?: TicketCreateSendTarget | null
+  /**
+   * The orchestrator (run) ticket the modal was opened from: the new ticket is its child, so
+   * the run's card names it while its session runs.
+   */
+  parentTicketId?: string | null
   /** Where the focus goes on closing, when nothing opened the modal as its trigger. */
   onCloseAutoFocus?: (event: Event) => void
 }
@@ -59,6 +64,7 @@ export function TicketCreateModal({
   connectionId,
   isPinnedMode,
   sendTo = null,
+  parentTicketId = null,
   onCloseAutoFocus
 }: TicketCreateModalProps) {
   const [title, setTitle] = useState('')
@@ -214,7 +220,8 @@ export function TicketCreateModal({
           title: title.trim(),
           description: description.trim() || null,
           attachments: attachments.map((a) => ({ type: a.type, url: a.url, label: a.label })),
-          column: 'todo'
+          column: 'todo',
+          ...(parentTicketId ? { parent_ticket_id: parentTicketId } : {})
         })
         createdSuccessfully.current = true
         if (isPinnedMode) setPinnedBoardLastCreateProjectId(targetProjectId)
@@ -250,7 +257,8 @@ export function TicketCreateModal({
       setPinnedBoardLastCreateProjectId,
       onOpenChange,
       connectionId,
-      sendTo
+      sendTo,
+      parentTicketId
     ]
   )
 

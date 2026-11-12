@@ -4,6 +4,7 @@
 // This module decides which tickets fold and in what order; the board and the card both read it
 // so a ticket is never shown twice or not at all.
 import { isDocumentRunTicket } from '@shared/document-flow/run-ticket'
+import type { DocumentRunItem } from '@shared/types/document-flow'
 import type { KanbanTicket, KanbanTicketColumn } from '../../../../main/db/types'
 
 /** Board order of the columns: a run's rows are listed in it, queued first, done last. */
@@ -67,6 +68,30 @@ export function runChildrenOf(
   return tickets
     .filter((t) => t.parent_ticket_id === runTicketId && !t.archived_at)
     .sort(compareRunChildren)
+}
+
+/**
+ * The tickets of a run that stand for none of its items: the sessions started from the run's
+ * dashboard once it ended (its migrations, its manual steps, a new session on its branch),
+ * each made a child of the run's own ticket. The run's card names the ones whose session is
+ * running (DocumentRunSpawnedSessions); the run's items are counted in its label instead.
+ * Oldest first, so a row keeps its place while others come and go.
+ */
+export function spawnedRunTickets(
+  tickets: readonly KanbanTicket[],
+  runTicketId: string,
+  items: readonly Pick<DocumentRunItem, 'ticket_id' | 'fix_ticket_id'>[]
+): KanbanTicket[] {
+  const itemTicketIds = new Set<string>()
+  for (const item of items) {
+    if (item.ticket_id) itemTicketIds.add(item.ticket_id)
+    if (item.fix_ticket_id) itemTicketIds.add(item.fix_ticket_id)
+  }
+  return tickets
+    .filter(
+      (t) => t.parent_ticket_id === runTicketId && !t.archived_at && !itemTicketIds.has(t.id)
+    )
+    .sort((a, b) => a.created_at.localeCompare(b.created_at))
 }
 
 /** How many rows sit in each column: the strip's header says it even when collapsed. */

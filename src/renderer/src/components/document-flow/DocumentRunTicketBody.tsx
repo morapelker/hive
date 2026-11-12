@@ -69,6 +69,11 @@ interface DocumentRunTicketBodyProps {
   documentPath?: string | null
   /** The card wears a red perimeter: the footer says "Error" in place of the document. */
   error?: boolean
+  /**
+   * Drawn right under the run's state, above the footer: the sessions started from the run's
+   * dashboard that are running (DocumentRunSpawnedSessions), on a card of this Mac's board.
+   */
+  children?: React.ReactNode
 }
 
 /**
@@ -77,13 +82,15 @@ interface DocumentRunTicketBodyProps {
  * one progress bar (moving while the run is on, like any ticket at work, and again in its own
  * color while a session executes the run's migrations, or in pink while the only session at work
  * is a merged ticket's updating the document), the sessions at work or waiting for an answer
- * (or how the run ended) and merged of total, then a footer naming the document.
+ * (or how the run ended) and merged of total, the tickets of the sessions started from the
+ * run's dashboard while they run (`children`), then a footer naming the document.
  */
 export function DocumentRunTicketBody({
   runId,
   view,
   documentPath = null,
-  error = false
+  error = false,
+  children
 }: DocumentRunTicketBodyProps): React.JSX.Element {
   const { state, missing } = view
   // Known once the run is loaded; until then the card reads as it always did.
@@ -209,6 +216,7 @@ export function DocumentRunTicketBody({
           </div>
         </>
       )}
+      {children}
       {(error || documentName) && (
         <div
           className="mt-[7px] flex items-center gap-1"

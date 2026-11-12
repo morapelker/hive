@@ -19,7 +19,8 @@ import { runTitle } from './ticket-run-membership'
 // Executing the manual steps of a finished run: one agent session, started from the report in
 // the run dashboard with a prompt the user may edit. It is an ordinary ticket of the run's
 // project, on the board like any other so its session can be followed there, in the checkout
-// the user picked; only its launch lives here.
+// the user picked; only its launch lives here. The ticket is a child of the run's own ticket,
+// whose card names it while its session runs.
 
 /** The run's own branch, or the project's checkout without a worktree (main, most of the time). */
 export type ManualStepsTargetKind = 'integration' | 'no-worktree'
@@ -96,7 +97,7 @@ export function defaultManualStepsTarget(
  */
 export async function launchManualStepsSession(
   target: ManualStepsTarget & { checkout: RunCheckout },
-  run: Pick<DocumentRun, 'project_id' | 'title' | 'source_kind'>,
+  run: Pick<DocumentRun, 'project_id' | 'title' | 'source_kind' | 'ticket_id'>,
   prompt: string,
   modelConfig: DocumentRunLaunchConfig
 ): Promise<string> {
@@ -105,7 +106,8 @@ export async function launchManualStepsSession(
     project_id: run.project_id,
     title: `Manual steps — ${runTitle(run)}`,
     description: prompt,
-    column: 'todo'
+    column: 'todo',
+    parent_ticket_id: run.ticket_id
   })
   try {
     return await launchTicketOnCheckout(ticket, target.checkout, { prompt, modelConfig })

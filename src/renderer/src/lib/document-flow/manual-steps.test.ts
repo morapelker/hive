@@ -204,7 +204,12 @@ describe('launchManualStepsSession', () => {
     checkout: { kind: 'worktree', worktreeId: 'wt-integration' },
     refusal: null
   }
-  const RUN = { project_id: 'project-1', title: 'Checkout redesign', source_kind: 'document' as const }
+  const RUN = {
+    project_id: 'project-1',
+    title: 'Checkout redesign',
+    source_kind: 'document' as const,
+    ticket_id: 'ticket-run'
+  }
   const TICKET = { id: 'ticket-1', project_id: 'project-1', title: 'Manual steps' }
 
   beforeEach(() => {
@@ -223,7 +228,9 @@ describe('launchManualStepsSession', () => {
       project_id: 'project-1',
       title: 'Manual steps — Checkout redesign',
       description: 'do the steps',
-      column: 'todo'
+      column: 'todo',
+      // A child of the run's ticket, whose card names it while the session runs.
+      parent_ticket_id: 'ticket-run'
     })
     expect(mocks.launchTicketOnCheckout).toHaveBeenCalledExactlyOnceWith(TICKET, TARGET.checkout, {
       prompt: 'do the steps',

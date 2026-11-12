@@ -16,24 +16,31 @@ import { findSessionById } from '@/lib/session-followup'
 import {
   launchSessionOnConnection,
   launchSessionWithModel,
+  resolveBadgeModel,
+  resolveCustomProviderBadge,
+  type LaunchModelConfig,
   type SessionLaunchCreated,
   type SessionLaunchResult
 } from '@/lib/ticket-launch'
 import { toast } from '@/lib/toast'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
+import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import type { Session } from '../../../../main/db/types'
 import { resolveDefaultLaunchConfig } from './runner-ports'
 import { getSessionSignal, startSessionSignalLatch, USER_ABORT_REASON } from './session-signal'
+import { runTitle } from './ticket-run-membership'
 
 // Executing the migrations of a finished run: one agent session in the run's integration
 // worktree (the branch the run's tickets were merged into), started from the report in the run
 // dashboard. The server records the session on the run (`migration_session_id`) and holds the
 // run's ticket In Progress while it is set, so every window and a reloaded one see the same
-// thing; this module starts the session, stops it, and tells the server when it is over.
+// thing; this module starts the session, stops it, and tells the server when it is over. The
+// session also gets a ticket of its own on the board (a child of the run's ticket), so it can
+// be followed and opened from there like the session of any other ticket.
 
 /** A turn end must stand this long before it counts: sessions bounce in and out of completed. */
 export const MIGRATION_SETTLE_MS = 3_000
@@ -139,8 +146,8 @@ function loadedConnectionIds(): ReadonlySet<string> | undefined {
 }
 
 /**
- * Whether `sessionId` executes the migrations of a run. Such a session belongs to the run's
- * own ticket, which shows it; the board must not open a ticket of its own for it.
+ * Whether `sessionId` executes the migrations of a run. Such a session gets its ticket from
+ * `startRunMigrations`; the board must not open a second one for it on its first message.
  */
 export function isMigrationSession(sessionId: string): boolean {
   if (launched.has(sessionId)) return true
@@ -165,9 +172,59 @@ export async function discardSession(sessionId: string): Promise<void> {
 }
 
 /**
+ * The board's ticket of a migration session: an ordinary ticket of the run's project, In
+ * Progress and linked to the session before the agent is started, as a launched ticket is. It
+ * is a child of the run's own ticket, whose card names it while the session runs. Resolves
+ * with the ticket's id, or null when it could not be opened: the migrations are executed all
+ * the same, and the run's ticket and dashboard still show the session.
+ */
+async function openMigrationTicket(
+  run: Pick<
+    DocumentRun,
+    'project_id' | 'ticket_id' | 'title' | 'source_kind' | 'integration_worktree_id' | 'members'
+  >,
+  { session, customProviderId, model }: SessionLaunchCreated,
+  prompt: string,
+  modelConfig: LaunchModelConfig
+): Promise<string | null> {
+  const kanban = useKanbanStore.getState()
+  try {
+    const badge =
+      resolveCustomProviderBadge(customProviderId, model) ??
+      resolveBadgeModel(modelConfig, session)
+    const ticket = await kanban.createTicket(run.project_id, {
+      project_id: run.project_id,
+      title: `Migrations — ${runTitle(run)}`,
+      description: prompt,
+      column: 'in_progress',
+      sort_order: kanban.computeSortOrder(
+        kanban.getTicketsByColumn(run.project_id, 'in_progress'),
+        0
+      ),
+      current_session_id: session.id,
+      // A connection run's session runs on its integration instance: no worktree to name.
+      worktree_id: isConnectionRun(run) ? null : run.integration_worktree_id,
+      mode: 'build',
+      model_provider_id: badge.providerID,
+      model_id: badge.modelID,
+      model_variant: badge.variant,
+      parent_ticket_id: run.ticket_id
+    })
+    return ticket.id
+  } catch (error) {
+    console.warn('[documentFlow] could not open the ticket of a migration session', error)
+    toast.warning(
+      `The migrations are being executed, but their ticket could not be created: ${describeError(error)}`
+    )
+    return null
+  }
+}
+
+/**
  * Start a session in the run's integration worktree that executes its migrations against
  * production, with the model the run launches its tickets with (the app's default launch when
- * the run has none). Rejects with a message for the user when it could not be started.
+ * the run has none), and open its ticket on the board. Rejects with a message for the user
+ * when it could not be started.
  */
 export async function startRunMigrations(runId: string): Promise<void> {
   const store = useDocumentFlowStore.getState()
@@ -189,17 +246,6 @@ export async function startRunMigrations(runId: string): Promise<void> {
     const branch = run.integration_branch as string
 
     const modelConfig = run.config.defaultLaunch ?? resolveDefaultLaunchConfig()
-    let recorded = false
-    const onSessionCreated = async ({ session }: SessionLaunchCreated): Promise<void> => {
-      // Known as a migration session before its first prompt is seen by anyone.
-      launched.add(session.id)
-      await useSessionStore.getState().updateSessionName(session.id, `Migrations — ${branch}`)
-      // Recorded before the agent is started: from here on the run shows the session and
-      // can stop it, also from a window reloaded while the prompt is still on its way. A
-      // refusal (another session is at it) fails the launch before anything runs.
-      store.applyDetail(await documentFlowApi.startMigrations(runId, session.id))
-      recorded = true
-    }
     const prompt = buildMigrationPrompt({
       documentTitle: run.title,
       integrationBranch: branch,
@@ -210,6 +256,29 @@ export async function startRunMigrations(runId: string): Promise<void> {
       // migration paths start with the member's directory.
       ...(connectionRun ? { workspace: workspaceOfMembers(run.members) } : {})
     })
+    let recorded = false
+    let ticketId: string | null = null
+    const onSessionCreated = async (created: SessionLaunchCreated): Promise<void> => {
+      const { session } = created
+      // Known as a migration session before its first prompt is seen by anyone.
+      launched.add(session.id)
+      await useSessionStore.getState().updateSessionName(session.id, `Migrations — ${branch}`)
+      // Recorded before the agent is started: from here on the run shows the session and
+      // can stop it, also from a window reloaded while the prompt is still on its way. A
+      // refusal (another session is at it) fails the launch before anything runs.
+      store.applyDetail(await documentFlowApi.startMigrations(runId, session.id))
+      recorded = true
+      // Only once the run holds the session: a refused start leaves no ticket behind.
+      ticketId = await openMigrationTicket(run, created, prompt, modelConfig)
+    }
+    // The ticket of a session that was discarded: there is nothing left for it to show.
+    const dropTicket = async (): Promise<void> => {
+      if (!ticketId) return
+      await useKanbanStore
+        .getState()
+        .deleteTicket(ticketId, run.project_id)
+        .catch(() => undefined)
+    }
     const result: SessionLaunchResult = connectionRun
       ? await launchSessionOnConnection({
           connectionId: run.integration_connection_id as string,
@@ -234,8 +303,8 @@ export async function startRunMigrations(runId: string): Promise<void> {
           modelConfig,
           goalMode: false,
           goalSuccessCriteria: null,
-          // The run's own ticket shows this session; a ticket that merely waits on the
-          // integration worktree must not be handed it.
+          // The session has a ticket of its own (opened above); a ticket that merely waits
+          // on the integration worktree must not be handed it.
           skipKanbanAttach: true,
           onSessionCreated
         })
@@ -248,6 +317,7 @@ export async function startRunMigrations(runId: string): Promise<void> {
         useDocumentFlowStore.getState().applyDetail(current)
         launched.delete(result.sessionId)
         await discardSession(result.sessionId)
+        await dropTicket()
       }
       return
     }
@@ -259,6 +329,7 @@ export async function startRunMigrations(runId: string): Promise<void> {
     if (recorded && current !== sessionId) return
     // Nothing would ever finish it: it must neither keep running nor hold the run.
     await discardSession(sessionId)
+    await dropTicket()
     launched.delete(sessionId)
     if (recorded) {
       await documentFlowApi

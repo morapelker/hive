@@ -102,6 +102,13 @@ async function classifyBranch(args: {
   return { kind: 'work' }
 }
 
+/** The session's agent is at work, or stopped mid-turn for the user: not over. */
+function isSessionLive(sessionId: string | null): boolean {
+  if (!sessionId) return false
+  const kind = getSessionSignal(sessionId).kind
+  return kind === 'working' || kind === 'blocked'
+}
+
 /** What the builders share: the run, the board rows, and the lists they fill. */
 class RunQueueDraft {
   readonly byId: Map<string, KanbanTicket>
@@ -170,11 +177,7 @@ class RunQueueDraft {
     if (this.moveable(item.fix_ticket_id)) this.alsoMoveTicketIds.push(item.fix_ticket_id)
 
     // An agent may still be writing on the branch (a cancelled run keeps its sessions)
-    const live = [item.session_id, item.fix_session_id].some((sessionId) => {
-      if (!sessionId) return false
-      const kind = getSessionSignal(sessionId).kind
-      return kind === 'working' || kind === 'blocked'
-    })
+    const live = [item.session_id, item.fix_session_id].some(isSessionLive)
     if (live) {
       this.kept.push({ label, reason: 'its session is still working — stop it first' })
       return true
@@ -220,7 +223,11 @@ class RunQueueDraft {
     if (this.moveable(item.ticket_id)) this.alsoMoveTicketIds.push(item.ticket_id)
   }
 
-  /** Tickets the run opened that no item names any more (a superseded fix ticket, say). */
+  /**
+   * Tickets the run opened that no item names: a superseded fix ticket, say, or a session
+   * started from the run's dashboard (its migrations, its manual steps, a new session on its
+   * branch). Moving one to Done closes its session, so one still at work stays where it is.
+   */
   addOrphanTickets(): void {
     for (const ticket of this.tickets) {
       if (
@@ -235,6 +242,11 @@ class RunQueueDraft {
       }
       if (ticket.column === 'todo') {
         this.kept.push({ label: ticket.title, reason: 'never started' })
+      } else if (isSessionLive(ticket.current_session_id)) {
+        this.kept.push({
+          label: ticket.title,
+          reason: 'its session is still working — stop it first'
+        })
       } else {
         this.alsoMoveTicketIds.push(ticket.id)
       }
