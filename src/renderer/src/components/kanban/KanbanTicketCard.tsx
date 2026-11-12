@@ -1,3 +1,4 @@
+import { AutoReviewPreference } from '@/components/kanban/AutoReviewPreference'
 import { memo, useCallback, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import {
@@ -1843,6 +1844,9 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
               >
             {isDocumentRunTicket && <EliteDragonIcon look={eliteLook} />}
             {/* Title + top-right indicators */}
+{!isDocumentRunTicket && !isArchived && (
+              <AutoReviewPreference projectId={ticket.project_id} ticketId={ticket.id} />
+            )}
             <div
               className={cn(
                 'flex items-start justify-between gap-2',

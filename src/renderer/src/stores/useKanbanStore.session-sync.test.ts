@@ -14,9 +14,11 @@ vi.mock('@/api/kanban-api', () => ({
   }
 }))
 
+const preferences = vi.hoisted(() => ({ autoReview: true }))
+
 // moveTicket dynamically imports useSettingsStore for the follow-up trigger.
 vi.mock('./useSettingsStore', () => ({
-  useSettingsStore: { getState: () => ({ followUpTriggerColumn: 'done' }) }
+  useSettingsStore: { getState: () => ({ followUpTriggerColumn: 'done', ...preferences }) }
 }))
 
 import { useKanbanStore } from './useKanbanStore'
@@ -92,6 +94,7 @@ function setSessionStatus(sessionId: string, status: SessionStatusType | null): 
 }
 
 beforeEach(() => {
+  preferences.autoReview = true
   vi.clearAllMocks()
   useKanbanStore.setState({ tickets: new Map() })
   useWorktreeStatusStore.setState({ sessionStatuses: {} })
@@ -876,5 +879,29 @@ describe('reconcileFinishedSessions — recovers explicit reopens missed while u
     useKanbanStore.getState().reconcileFinishedSessions(PROJECT_ID)
     await flush()
     expect(columnOf('ticket-1')).toBe('done')
+  })
+})
+
+
+describe('automatic Review disabled', () => {
+  it.each(['session_completed', 'plan_ready', 'session_error'] as const)('keeps repeated %s turns in progress', async (type) => {
+    preferences.autoReview = false
+    seed(makeTicket({ column: 'in_progress' }))
+    for (let turn = 0; turn < 2; turn++) {
+      useKanbanStore.getState().syncTicketWithSession(SESSION_ID, { type })
+      await flush()
+      expect(columnOf('ticket-1')).toBe('in_progress')
+    }
+    expect(kanbanApi.ticket.move).not.toHaveBeenCalled()
+  })
+
+  it('keeps a finished session in progress when reconciling on reload', async () => {
+    preferences.autoReview = false
+    seed(makeTicket({ column: 'in_progress' }))
+    setSessionStatus(SESSION_ID, 'completed')
+    useKanbanStore.getState().reconcileFinishedSessions(PROJECT_ID)
+    await flush()
+    expect(columnOf('ticket-1')).toBe('in_progress')
+    expect(kanbanApi.ticket.move).not.toHaveBeenCalled()
   })
 })

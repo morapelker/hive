@@ -1,3 +1,4 @@
+import { AutoReviewPreference } from '@/components/kanban/AutoReviewPreference'
 import { useState, useEffect, useId } from 'react'
 import { toast } from '@/lib/toast'
 import { Brain, ChevronDown, Folder, FolderKanban, FolderPlus, ImageIcon, X } from 'lucide-react'
@@ -427,6 +428,7 @@ export function ProjectSettingsDialog({
             </TabsList>
 
             <TabsContent value="general" className="space-y-5">
+              <AutoReviewPreference projectId={project.id} />
               {/* Project Icon */}
               <div className="space-y-1.5">
                 <label className="text-sm font-medium">Project Icon</label>

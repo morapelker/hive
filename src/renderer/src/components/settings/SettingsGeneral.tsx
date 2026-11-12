@@ -1,3 +1,4 @@
+import { AutoReviewPreference } from '@/components/kanban/AutoReviewPreference'
 import { useThemeStore } from '@/stores/useThemeStore'
 import { DEFAULT_THEME_ID } from '@/lib/themes'
 import { useSettingsStore } from '@/stores/useSettingsStore'
@@ -95,6 +96,8 @@ export function SettingsGeneral(): React.JSX.Element {
         <h3 className="text-base font-medium mb-1">General</h3>
         <p className="text-sm text-muted-foreground">Basic application settings</p>
       </div>
+
+      <AutoReviewPreference />
 
       {/* Warn before quitting */}
       <div className="flex items-center justify-between gap-4">

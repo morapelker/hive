@@ -125,6 +125,9 @@ export interface CommandFilterSettings {
 
 export interface AppSettings {
   // General
+  autoReview: boolean
+  autoReviewProjects: Record<string, boolean>
+  autoReviewTasks: Record<string, boolean>
   autoStartSession: boolean
   autoPullBeforeWorktree: boolean
   /**
@@ -309,6 +312,9 @@ export interface AppSettings {
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
+  autoReview: true,
+  autoReviewProjects: {},
+  autoReviewTasks: {},
   autoStartSession: true,
   autoPullBeforeWorktree: true,
   autoPullOnTicketMove: true,
@@ -552,6 +558,9 @@ async function loadSettingsFromDatabase(): Promise<AppSettings | null> {
 
 function extractSettings(state: SettingsState): AppSettings {
   return {
+    autoReview: state.autoReview,
+    autoReviewProjects: state.autoReviewProjects,
+    autoReviewTasks: state.autoReviewTasks,
     autoStartSession: state.autoStartSession,
     autoPullBeforeWorktree: state.autoPullBeforeWorktree,
     autoPullOnTicketMove: state.autoPullOnTicketMove,
@@ -974,6 +983,9 @@ export const useSettingsStore = create<SettingsState>()(
         }
       },
       partialize: (state) => ({
+        autoReview: state.autoReview,
+        autoReviewProjects: state.autoReviewProjects,
+        autoReviewTasks: state.autoReviewTasks,
         autoStartSession: state.autoStartSession,
         autoPullBeforeWorktree: state.autoPullBeforeWorktree,
         autoPullOnTicketMove: state.autoPullOnTicketMove,

@@ -1,3 +1,4 @@
+import { useSettingsStore } from '@/stores/useSettingsStore'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TicketCreateModal } from './TicketCreateModal'
@@ -85,6 +86,22 @@ describe('TicketCreateModal — Create & Send', () => {
       expect(quickLaunchTicketOnConnection).toHaveBeenCalledWith(createdTicket, 'conn-1')
     )
     expect(quickLaunchTicket).not.toHaveBeenCalled()
+  })
+
+  it('saves a creation-time override before launching', async () => {
+    useSettingsStore.setState({ autoReview: true, autoReviewTasks: {} })
+    render(<TicketCreateModal open onOpenChange={onOpenChange} projectId="project-1" />)
+    typeTitle()
+    fireEvent.change(
+      screen.getByLabelText('Automatically move to Review when the agent finishes'),
+      {
+        target: { value: 'false' }
+      }
+    )
+    expect(useSettingsStore.getState().autoReviewTasks).toEqual({})
+    fireEvent.click(screen.getByTestId('ticket-create-send-btn'))
+    await waitFor(() => expect(quickLaunchTicket).toHaveBeenCalled())
+    expect(useSettingsStore.getState().autoReviewTasks['["project-1","t1"]']).toBe(false)
   })
 
   it('plain Create never launches', async () => {
