@@ -976,7 +976,8 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     (e: React.DragEvent) => {
       // Store drag data
       // Shift held on the ticket of a document run: dropping it on Done/Merged merges
-      // and archives the run's branches as one batch (KanbanColumn.handleDrop). Shift
+      // and archives the run's branches as one batch; on any other ticket, Merged → Done
+      // skips the merge checks for the archive step (KanbanColumn.handleDrop). Shift
       // only — see KanbanDragData.modifiers for why ⌘/⌥/⌃ cannot work here.
       setKanbanDragData({
         projectId: ticket.project_id,
@@ -1790,7 +1791,8 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   'group cursor-pointer rounded-md border bg-card px-2.5 pt-2.5 pb-2 transition-[border-color,background-color] duration-150',
                   'hover:border-muted-foreground/35',
                   // Shift-dragging the card (a document run's ticket: finish the whole run on
-                  // Done/Merged) needs the element under the mouse itself to be draggable —
+                  // Done/Merged; any other: Merged → Done without the merge checks) needs the
+                  // element under the mouse itself to be draggable —
                   // see .ticket-draggable in globals.css
                   'ticket-draggable',
                   // Type cues: a shell command has a torn-receipt bottom edge, the ticket of

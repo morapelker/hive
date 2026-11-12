@@ -404,6 +404,30 @@ export function MergeOnDoneDialog() {
           return
         }
 
+        // The override (shift-drag from Merged to Done): nothing is pulled, checked,
+        // committed or merged — straight to archive/keep, whatever the branch still holds
+        if (pending.skipMergeChecks) {
+          const project = await dbApi.project.get<MergeProject>(featureWorktree.project_id)
+          if (cancelled) return
+          setResolved({
+            featureWorktreeId: featureWorktree.id,
+            featureWorktreePath: featureWorktree.path,
+            featureBranch: featureWorktree.branch_name,
+            baseWorktreeId: '',
+            baseWorktreePath: featureWorktree.path,
+            baseBranch: featureWorktree.base_branch ?? '',
+            ticketTitle: entryTitle,
+            projectPath: project?.path ?? featureWorktree.path,
+            projectName: project?.name ?? null,
+            baseDirty: false,
+            branchStats: { filesChanged: 0, insertions: 0, deletions: 0, commitsAhead: 0 },
+            alreadyMerged: false,
+            carriedRunTickets: []
+          })
+          setStep('archive')
+          return
+        }
+
         // Resolve base branch (connection members may live in another project)
         const activeWorktrees = await dbApi.worktree.getActiveByProject<MergeWorktree>(
           pending.worktreeProjectId ?? pending.projectId
@@ -1032,6 +1056,8 @@ export function MergeOnDoneDialog() {
   const archiveAllCandidates = useMemo(() => {
     const remaining = pendingDoneMove?.remainingWorktrees ?? []
     if (!pendingDoneMove?.offerArchive || remaining.length === 0) return []
+    // The override never merges: every member left is an archive/keep prompt
+    if (pendingDoneMove.skipMergeChecks) return remaining
     return remaining.every((w) => w.alreadyMerged) ? remaining : []
   }, [pendingDoneMove])
 
@@ -1101,8 +1127,11 @@ export function MergeOnDoneDialog() {
       resolved.members && runEntry?.connectionId ? [runEntry.connectionId] : []
     )
     // Archive removes the worktree and deletes the branch, so a target is only
-    // archived while it has nothing to commit or merge
+    // archived while it has nothing to commit or merge — except on the override, which
+    // archives every member as it is
+    const unchecked = !!pendingDoneMove?.skipMergeChecks
     const isClean = async (worktreePath: string, baseBranch: string): Promise<boolean> => {
+      if (unchecked) return true
       const [dirty, stat] = await Promise.all([
         gitApi.hasUncommittedChanges(worktreePath),
         gitApi.branchDiffShortStat(worktreePath, baseBranch)
@@ -1125,14 +1154,14 @@ export function MergeOnDoneDialog() {
       const activeWorktrees = await dbApi.worktree.getActiveByProject<MergeWorktree>(projectId)
       const baseBranch =
         worktree.base_branch ?? activeWorktrees.find((w) => w.is_default)?.branch_name
-      if (!baseBranch) return 'unknown-base'
-      if (!(await isClean(worktree.path, baseBranch))) return 'kept'
+      if (!baseBranch && !unchecked) return 'unknown-base'
+      if (!(await isClean(worktree.path, baseBranch ?? ''))) return 'kept'
       const project = await dbApi.project.get<MergeProject>(worktree.project_id)
       return {
         worktreeId: worktree.id,
         worktreePath: worktree.path,
         branch: worktree.branch_name,
-        baseBranch,
+        baseBranch: baseBranch ?? '',
         projectPath: project?.path ?? worktree.path
       }
     }
@@ -1242,13 +1271,15 @@ export function MergeOnDoneDialog() {
       }
       for (const f of failed) toast.error(`Failed to archive ${f.branch}: ${f.error}`)
     })
-  }, [resolved, runEntry, archiveAllCandidates, pendingIdentity, completeDoneMove])
+  }, [resolved, runEntry, archiveAllCandidates, pendingDoneMove, pendingIdentity, completeDoneMove])
 
   // The dialog serves both the Done and the optional Merged column
   const targetLabel = pendingDoneMove?.targetColumn === 'merged' ? 'Merged' : 'Done'
 
   // Connection tickets run this dialog once per member worktree with changes
   const isConnectionFlow = !!pendingDoneMove?.worktreeId
+  // The override (shift-drag from Merged to Done): archive without the merge checks
+  const isOverride = !!pendingDoneMove?.skipMergeChecks
   const remainingCount = pendingDoneMove?.remainingWorktrees?.length ?? 0
 
   const stepTitle: Record<Step, string> = {
@@ -1546,7 +1577,11 @@ export function MergeOnDoneDialog() {
         {step === 'archive' && resolved && (
           <div className="flex min-h-0 flex-col gap-3 py-2">
             <p className="text-xs text-muted-foreground">
-              {resolved.alreadyMerged ? 'Branch already merged.' : 'Merge successful!'}{' '}
+              {isOverride
+                ? 'Commit and merge checks skipped.'
+                : resolved.alreadyMerged
+                  ? 'Branch already merged.'
+                  : 'Merge successful!'}{' '}
               {resolved.members ? (
                 <>
                   Archive the {resolved.members.length} worktree
@@ -1561,9 +1596,29 @@ export function MergeOnDoneDialog() {
                 </>
               )}
             </p>
+            {isOverride && (
+              <p
+                className="flex items-start gap-1.5 text-xs text-amber-500"
+                data-testid="archive-override-warning"
+              >
+                <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
+                <span className="min-w-0">
+                  Archiving deletes the branch as it is: uncommitted changes and commits that
+                  were never merged are discarded.
+                </span>
+              </p>
+            )}
             {archiveAllCandidates.length > 0 && (
               <p className="text-xs text-muted-foreground" data-testid="archive-all-hint">
-                {pendingDoneMove?.run && archiveAllScope.isConnectionRun ? (
+                {isOverride ? (
+                  <>
+                    Archive all does the same for the{' '}
+                    {archiveAllCandidates.length === 1
+                      ? 'other project'
+                      : `other ${archiveAllCandidates.length} projects`}{' '}
+                    in this connection.
+                  </>
+                ) : pendingDoneMove?.run && archiveAllScope.isConnectionRun ? (
                   archiveAllScope.instances > 1 ? (
                     <>
                       The{' '}

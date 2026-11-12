@@ -60,6 +60,7 @@ import type {
 } from '../../../../main/db/types'
 import { documentRunIdOf, isDocumentRunTicket } from '@shared/document-flow/run-ticket'
 import { queueDocumentRunDone } from '@/lib/document-flow/run-done-queue'
+import { queueArchiveOverride } from '@/lib/archive-override'
 import { pullBaseBranches } from '@/lib/base-branch-pull'
 import { orchestratorLaunchRefusal } from '@/lib/document-flow/ticket-run-membership'
 import type { DocumentRun } from '@shared/types/document-flow'
@@ -554,8 +555,9 @@ export function KanbanColumn({
 
       const { ticketId, sourceColumn, projectId: draggedProjectId } = dragData
       // Shift (held at drag start or at the drop): a document run's ticket dropped on
-      // Done/Merged finishes the whole run — see the batch branch below
-      const batchRun = Boolean(dragData.modifiers?.shift || e.shiftKey)
+      // Done/Merged finishes the whole run — see the batch branch below; any other ticket
+      // dragged from Merged to Done skips the merge checks — see the override below
+      const shiftHeld = Boolean(dragData.modifiers?.shift || e.shiftKey)
       setKanbanDragData(null) // Clear after reading
 
       const targetIndex = dropIndexRef.current ?? tickets.length
@@ -633,7 +635,7 @@ export function KanbanColumn({
           // step each), then the integration branch into base, and the archive step offers
           // to archive all of them and move their tickets along. A branch that cannot be
           // verified refuses the drop: Done means merged.
-          if (batchRun && (column === 'done' || column === 'merged')) {
+          if (shiftHeld && (column === 'done' || column === 'merged')) {
             try {
               const outcome = await queueDocumentRunDone({
                 runId: documentRunId,
@@ -773,8 +775,36 @@ export function KanbanColumn({
           }
         }
 
+        // shift, Merged → Done: the override, for throwing a ticket out with its changes.
+        // No pull, no commit or merge step — straight to archive/keep for its worktree
+        // ("Archive all" for a connection ticket's members), whatever the branches still
+        // hold. Never a document run's ticket: shift finishes the whole run there (above).
+        const archiveOverride =
+          shiftHeld && column === 'done' && sourceColumn === 'merged' && !documentRunId
+        if (archiveOverride) {
+          const draggedTicket = findTicket(ticketId, ticketProjectId)
+          if (draggedTicket) {
+            try {
+              const queued = await queueArchiveOverride({
+                ticket: draggedTicket,
+                sortOrder: store.computeSortOrder(
+                  projectTicketsForColumn(ticketProjectId),
+                  projectLocalDropIndex(ticketProjectId, targetIndex)
+                )
+              })
+              if (queued) return
+            } catch (err) {
+              toast.warning(
+                `Could not look up the ticket's worktrees: ${err instanceof Error ? err.message : String(err)}`
+              )
+              return
+            }
+          }
+          // Nothing left to archive — plain move below, unchecked
+        }
+
         // Merge-on-done: intercept drops to Done/Merged for feature-branch worktrees
-        if (column === 'done' || column === 'merged') {
+        if (!archiveOverride && (column === 'done' || column === 'merged')) {
           const draggedTicket = findTicket(ticketId, ticketProjectId)
           if (draggedTicket?.worktree_id) {
             try {

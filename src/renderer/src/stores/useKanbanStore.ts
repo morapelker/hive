@@ -101,8 +101,9 @@ export interface KanbanDragData {
   /**
    * Modifier keys held when the drag started. Shift on the ticket of a document run dropped
    * on Done/Merged merges and archives the run's branches as one batch (see
-   * lib/document-flow/run-done-queue.ts). The drop event is consulted too, so Shift pressed
-   * mid-drag counts as well.
+   * lib/document-flow/run-done-queue.ts); on any other ticket dragged from Merged to Done it
+   * skips the merge checks and goes straight to archive/keep (see lib/archive-override.ts).
+   * The drop event is consulted too, so Shift pressed mid-drag counts as well.
    *
    * Shift is the only modifier a drag can carry on macOS: AppKit filters the drag's allowed
    * operations by the modifier held (⌘ → generic, ⌥ → copy, ⌃ → link), and a card drags
@@ -522,6 +523,12 @@ export interface PendingDoneMove {
    * queue was built). Their branches are kept, and the run's ticket stays put at the end.
    */
   keptWorktrees?: PendingDoneMoveKept[]
+  /**
+   * The override (shift-drag of a ticket from Merged to Done, never a document run's): no
+   * commit or merge step. The dialog opens on the archive/keep step for each worktree of
+   * the ticket, unchecked: archiving discards whatever its branch still holds.
+   */
+  skipMergeChecks?: boolean
 }
 
 /**
@@ -583,6 +590,7 @@ function nextPendingDoneMove(
     worktreeProjectId: nextWorktree.projectId,
     remainingWorktrees: restWorktrees,
     offerArchive: pending.offerArchive,
+    ...(pending.skipMergeChecks ? { skipMergeChecks: true } : {}),
     ...(conflictedWorktrees.length > 0 ? { conflictedWorktrees } : {}),
     ...(pending.run ? { entry: nextWorktree, run: pending.run } : {}),
     ...(keptWorktrees.length > 0 ? { keptWorktrees } : {})

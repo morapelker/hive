@@ -761,6 +761,221 @@ describe('MergeOnDoneDialog — Archive all (connection queue)', () => {
   })
 })
 
+describe('MergeOnDoneDialog — archive override (shift-drag Merged → Done)', () => {
+  const nextWorktree = {
+    id: 'worktree-next',
+    project_id: 'project-2',
+    branch_name: 'feature-next',
+    path: '/repo2/feature',
+    status: 'active' as const,
+    is_default: false,
+    base_branch: null
+  }
+  const lastWorktree = {
+    id: 'worktree-last',
+    project_id: 'project-3',
+    branch_name: 'feature-last',
+    path: '/repo3/feature',
+    status: 'active' as const,
+    is_default: false,
+    base_branch: null
+  }
+
+  /** The override on a connection ticket: one prompt per member, none of them checked. */
+  function setConnectionOverride(): void {
+    useKanbanStore.setState({
+      tickets: new Map([['project-1', [{ ...ticket, worktree_id: null }]]]),
+      pendingDoneMove: {
+        ticketId: 'ticket-1',
+        projectId: 'project-1',
+        sortOrder: 5,
+        targetColumn: 'done',
+        skipMergeChecks: true,
+        worktreeId: 'worktree-1',
+        worktreeProjectId: 'project-1',
+        remainingWorktrees: [
+          { worktreeId: 'worktree-next', projectId: 'project-2' },
+          { worktreeId: 'worktree-last', projectId: 'project-3' }
+        ],
+        offerArchive: true
+      }
+    })
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    moveTicketMock.mockResolvedValue(undefined)
+    archiveWorktreeMock.mockResolvedValue({ success: true })
+    mockAlreadyMergedBranch()
+    // Every branch still has work: uncommitted changes, and commits its base lacks
+    gitApiMocks.hasUncommittedChanges.mockResolvedValue(true)
+    gitApiMocks.branchDiffShortStat.mockResolvedValue({
+      success: true,
+      filesChanged: 2,
+      insertions: 10,
+      deletions: 3,
+      commitsAhead: 4
+    })
+    dbApiMocks.worktree.get.mockImplementation(async (id: string) => {
+      if (id === 'worktree-1') return featureWorktree
+      if (id === 'worktree-next') return nextWorktree
+      if (id === 'worktree-last') return lastWorktree
+      return null
+    })
+    dbApiMocks.project.get.mockImplementation(async (projectId: string) => ({
+      path: `/${projectId}`
+    }))
+    setupStores()
+    useKanbanStore.setState({
+      pendingDoneMove: {
+        ticketId: 'ticket-1',
+        projectId: 'project-1',
+        sortOrder: 5,
+        targetColumn: 'done',
+        skipMergeChecks: true
+      }
+    })
+  })
+
+  afterEach(() => {
+    cleanup()
+    useKanbanStore.setState({ pendingDoneMove: null })
+  })
+
+  const expectNoGitChecks = (): void => {
+    expect(gitApiMocks.hasUncommittedChanges).not.toHaveBeenCalled()
+    expect(gitApiMocks.branchDiffShortStat).not.toHaveBeenCalled()
+    expect(gitApiMocks.pull).not.toHaveBeenCalled()
+  }
+
+  it('opens on the archive step without checking the branch, and says what archiving discards', async () => {
+    render(<MergeOnDoneDialog />)
+
+    expect(await screen.findByText(/Commit and merge checks skipped/)).toBeTruthy()
+    expect(screen.getByTestId('archive-override-warning').textContent).toContain('discarded')
+    expect(screen.getByRole('button', { name: 'Archive' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Keep' })).toBeTruthy()
+    // A ticket with one worktree has nothing to archive "all" of
+    expect(screen.queryByRole('button', { name: 'Archive all' })).toBeNull()
+    // No commit or merge step, for a branch that has both to do
+    expect(screen.queryByRole('button', { name: 'Commit' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Merge' })).toBeNull()
+    expectNoGitChecks()
+    expect(moveTicketMock).not.toHaveBeenCalled()
+  })
+
+  it('Archive moves the ticket to Done and archives the unmerged worktree', async () => {
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Archive' }))
+
+    await waitFor(() =>
+      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5, {
+        interactive: true
+      })
+    )
+    await waitFor(() =>
+      expect(archiveWorktreeMock).toHaveBeenCalledWith(
+        'worktree-1',
+        '/repo/feature',
+        'feature',
+        '/project-1'
+      )
+    )
+    expectNoGitChecks()
+    expect(gitApiMocks.commit).not.toHaveBeenCalled()
+    expect(gitApiMocks.merge).not.toHaveBeenCalled()
+  })
+
+  it('Keep moves the ticket to Done and leaves the worktree', async () => {
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Keep' }))
+
+    await waitFor(() =>
+      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5, {
+        interactive: true
+      })
+    )
+    expect(archiveWorktreeMock).not.toHaveBeenCalled()
+  })
+
+  it('moves the ticket when its worktree is gone already', async () => {
+    dbApiMocks.worktree.get.mockResolvedValue({ ...featureWorktree, status: 'archived' })
+
+    render(<MergeOnDoneDialog />)
+
+    await waitFor(() =>
+      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5, {
+        interactive: true
+      })
+    )
+    expect(archiveWorktreeMock).not.toHaveBeenCalled()
+  })
+
+  it('offers Archive all for a connection ticket, whatever its members still hold', async () => {
+    setConnectionOverride()
+
+    render(<MergeOnDoneDialog />)
+
+    expect(await screen.findByRole('button', { name: 'Archive all' })).toBeTruthy()
+    expect(screen.getByTestId('archive-all-hint').textContent).toContain('other 2 projects')
+    expect(screen.getByTestId('archive-override-warning')).toBeTruthy()
+    expectNoGitChecks()
+  })
+
+  it('Archive all archives every member unchecked, then moves the ticket', async () => {
+    setConnectionOverride()
+
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Archive all' }))
+
+    await waitFor(() =>
+      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5, {
+        interactive: true
+      })
+    )
+    await waitFor(() => expect(archiveWorktreeMock).toHaveBeenCalledTimes(3))
+    expect(archiveWorktreeMock).toHaveBeenCalledWith(
+      'worktree-next',
+      '/repo2/feature',
+      'feature-next',
+      '/project-2'
+    )
+    expect(archiveWorktreeMock).toHaveBeenCalledWith(
+      'worktree-last',
+      '/repo3/feature',
+      'feature-last',
+      '/project-3'
+    )
+    expect(useKanbanStore.getState().pendingDoneMove).toBeNull()
+    expectNoGitChecks()
+  })
+
+  it('Archive takes one member and carries the override to the next', async () => {
+    setConnectionOverride()
+
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Archive' }))
+
+    await waitFor(() => expect(archiveWorktreeMock).toHaveBeenCalledTimes(1))
+    await waitFor(() =>
+      expect(useKanbanStore.getState().pendingDoneMove).toMatchObject({
+        worktreeId: 'worktree-next',
+        skipMergeChecks: true,
+        offerArchive: true
+      })
+    )
+    // The next member opens on the archive step too, unchecked
+    expect(await screen.findByText(/feature-next/)).toBeTruthy()
+    expect(screen.getByTestId('archive-override-warning')).toBeTruthy()
+    expectNoGitChecks()
+    expect(moveTicketMock).not.toHaveBeenCalled()
+  })
+})
+
 describe('MergeOnDoneDialog — changed files', () => {
   const branchFiles = [
     { relativePath: 'src/app.ts', status: 'M', additions: 10, deletions: 3, binary: false },
