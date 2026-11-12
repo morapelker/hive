@@ -36,6 +36,7 @@ const toastMocks = vi.hoisted(() => ({
   success: vi.fn(),
   info: vi.fn(),
   loading: vi.fn(() => 'toast-1'),
+  progress: vi.fn((..._args: unknown[]) => 'toast-1'),
   dismiss: vi.fn()
 }))
 
@@ -1012,8 +1013,56 @@ describe('queueDocumentRunDone', () => {
 
     await queueDocumentRunDone(args)
 
-    expect(toastMocks.loading).toHaveBeenCalledWith('Checking 2 branches of The run…')
+    expect(toastMocks.progress).toHaveBeenCalledWith('Checking 2 branches of The run…', {
+      done: 0,
+      total: 2
+    })
     expect(toastMocks.dismiss).toHaveBeenCalledWith('toast-1')
+  })
+
+  it('fills the bar of the checking toast as the branches are checked', async () => {
+    flowApi.get.mockResolvedValue(detail())
+    // What the toast showed each time a branch was about to be checked
+    const shownAtCheck: unknown[] = []
+    gitApiMocks.hasUncommittedChanges.mockImplementation(async () => {
+      shownAtCheck.push(toastMocks.progress.mock.lastCall?.[1])
+      return false
+    })
+
+    await queueDocumentRunDone(args)
+
+    expect(shownAtCheck).toEqual([
+      { done: 0, total: 2 },
+      { done: 1, total: 2 }
+    ])
+    // Every step moves the bar of the one toast, which is full before it goes
+    const message = 'Checking 2 branches of The run…'
+    expect(toastMocks.progress.mock.calls).toEqual([
+      [message, { done: 0, total: 2 }],
+      [message, { done: 1, total: 2 }, { id: 'toast-1' }],
+      [message, { done: 2, total: 2 }, { id: 'toast-1' }]
+    ])
+    // (the base pull dismisses its own toast earlier: the last dismissal is this toast's)
+    expect(toastMocks.dismiss.mock.invocationCallOrder.at(-1)).toBeGreaterThan(
+      toastMocks.progress.mock.invocationCallOrder[2]
+    )
+  })
+
+  it('counts a branch that needs no git check as checked too', async () => {
+    flowApi.get.mockResolvedValue(
+      detail([
+        { key: 'A1', title: 'Alpha', status: 'merged', ticket_id: 't-a', worktree_id: null },
+        { key: 'A2', title: 'Beta', status: 'needs_attention', ticket_id: 't-b', worktree_id: 'wt-b', session_id: 's-b' }
+      ])
+    )
+
+    await queueDocumentRunDone(args)
+
+    expect(toastMocks.progress.mock.calls.map((call) => call[1])).toEqual([
+      { done: 0, total: 2 },
+      { done: 1, total: 2 },
+      { done: 2, total: 2 }
+    ])
   })
 
   it('clears the checking toast when a branch cannot be verified', async () => {
@@ -1065,7 +1114,21 @@ describe('queueDocumentRunDone', () => {
 
     await queueDocumentRunDone(args)
 
-    expect(toastMocks.loading).toHaveBeenCalledWith('Checking 4 branches of The run…')
+    expect(toastMocks.progress).toHaveBeenCalledWith('Checking 4 branches of The run…', {
+      done: 0,
+      total: 4
+    })
+  })
+
+  it('moves the bar one member worktree of a connection run at a time', async () => {
+    useConnectionWorktrees()
+    flowApi.get.mockResolvedValue(connectionDetail())
+
+    await queueDocumentRunDone(args)
+
+    expect(toastMocks.progress.mock.calls.map((call) => call[1])).toEqual(
+      [0, 1, 2, 3, 4].map((done) => ({ done, total: 4 }))
+    )
   })
 
   it('moves the worktree-less children along and leaves the run ticket to the caller when nothing is queued', async () => {

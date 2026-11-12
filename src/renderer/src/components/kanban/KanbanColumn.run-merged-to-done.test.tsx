@@ -62,7 +62,7 @@ vi.mock('@/api/db-api', () => ({ dbApi: dbApiMocks }))
 vi.mock('@/api/git-api', () => ({ gitApi: gitApiMocks }))
 vi.mock('@/api/kanban-api', () => ({ kanbanApi: kanbanApiMocks }))
 vi.mock('@/lib/toast', () => ({
-  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn(), loading: vi.fn(() => 1), dismiss: vi.fn() }
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn(), loading: vi.fn(() => 1), progress: vi.fn(() => 1), dismiss: vi.fn() }
 }))
 // MergeOnDoneDialog toasts through sonner directly
 vi.mock('sonner', () => ({

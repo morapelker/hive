@@ -266,18 +266,66 @@ class RunQueueDraft {
 const selectedItems = (detail: DocumentRunDetail): DocumentRunItem[] =>
   [...detail.items].filter((item) => item.selected).sort((a, b) => a.position - b.position)
 
+/** The branches an item stands for in the batch's count: one per member repository. */
+const branchesOf = (item: Pick<DocumentRunItem, 'members'>): number =>
+  Math.max(1, item.members?.length ?? 0)
+
+/** The branches the batch walks: what the checking toast counts, and its progress bar's end. */
+const countBranches = (detail: DocumentRunDetail): number =>
+  selectedItems(detail).reduce((count, item) => count + branchesOf(item), 0)
+
+/**
+ * How far the walk over the batch's branches is, for the checking toast's progress bar. An
+ * item settles in many places (kept, gone, queued), so nothing reports that it did: moving on
+ * to the next item (or finishing) accounts for every branch of the one before.
+ */
+class BranchProgress {
+  private checked = 0
+  /** Where `checked` stands once the item being walked is settled. */
+  private settled = 0
+
+  constructor(private readonly report?: (checked: number) => void) {}
+
+  /** The walk reached `item`: the branches of every item before it are accounted for. */
+  enter(item: Pick<DocumentRunItem, 'members'>): void {
+    this.set(this.settled)
+    this.settled += branchesOf(item)
+  }
+
+  /** One branch of the item being walked was checked. */
+  tick(): void {
+    this.set(Math.min(this.checked + 1, this.settled))
+  }
+
+  /** The walk is over. */
+  finish(): void {
+    this.set(this.settled)
+  }
+
+  private set(checked: number): void {
+    if (checked === this.checked) return
+    this.checked = checked
+    this.report?.(checked)
+  }
+}
+
 /**
  * Classify every ticket branch of `detail` for the batch. Rejects when a branch cannot be
  * verified (git failure): unchecked work must never be treated as clean. `tickets` are the
  * board's rows of the run's project (archived rows, when loaded, are never moved).
+ * `onProgress` hears how many of the batch's branches are checked, each time that grows.
  */
 export async function buildRunDoneQueue(
   detail: DocumentRunDetail,
   runTicketId: string,
-  tickets: readonly KanbanTicket[]
+  tickets: readonly KanbanTicket[],
+  onProgress?: (checked: number) => void
 ): Promise<RunDoneQueue> {
   const { run } = detail
-  if (isConnectionRun(run)) return buildConnectionRunDoneQueue(detail, run, runTicketId, tickets)
+  const progress = new BranchProgress(onProgress)
+  if (isConnectionRun(run)) {
+    return buildConnectionRunDoneQueue(detail, run, runTicketId, tickets, progress)
+  }
 
   const projectId = run.project_id
   const integrationId = run.integration_worktree_id
@@ -311,6 +359,7 @@ export async function buildRunDoneQueue(
   }
 
   for (const item of selectedItems(detail)) {
+    progress.enter(item)
     const label = itemLabel(item.key, item.title)
     const worktreeId = item.worktree_id && item.worktree_id !== integrationId ? item.worktree_id : null
     if (draft.settleItemWithoutBranch(item, label, !!worktreeId)) continue
@@ -405,6 +454,7 @@ export async function buildRunDoneQueue(
     })
     draft.archiveEntries.push(archiveEntry)
   }
+  progress.finish()
 
   return draft.finish(
     integrationActive
@@ -432,7 +482,8 @@ async function buildConnectionRunDoneQueue(
   detail: DocumentRunDetail,
   run: DocumentRun & { members: DocumentRunMember[] },
   runTicketId: string,
-  tickets: readonly KanbanTicket[]
+  tickets: readonly KanbanTicket[],
+  progress: BranchProgress
 ): Promise<RunDoneQueue> {
   const draft = new RunQueueDraft(run, runTicketId, tickets)
   const memberByProject = new Map(run.members.map((m) => [m.project_id, m]))
@@ -471,6 +522,7 @@ async function buildConnectionRunDoneQueue(
   const landingOn = new Set<string>()
 
   for (const item of selectedItems(detail)) {
+    progress.enter(item)
     const label = itemLabel(item.key, item.title)
     const owns = (item.members ?? []).filter(
       (own) => memberByProject.has(own.project_id) && !seenWorktrees.has(own.worktree_id)
@@ -539,6 +591,7 @@ async function buildConnectionRunDoneQueue(
           checkMarkers: true
         })
       })
+      progress.tick()
     }
     const names = (filter: (v: (typeof verdicts)[number]) => boolean): string =>
       verdicts.filter(filter).map((v) => v.member.project_name).join(', ')
@@ -619,6 +672,7 @@ async function buildConnectionRunDoneQueue(
     }
     draft.archiveEntries.push({ ...instance, alreadyMerged: true, kind: 'run-child-archive' })
   }
+  progress.finish()
 
   // The integration instance, one member at a time — members with work first, so the last
   // merge lands on an archive step where everything left is already merged
@@ -663,18 +717,16 @@ export async function queueDocumentRunDone(args: {
 
   const store = useKanbanStore.getState()
   const tickets = store.tickets.get(args.projectId) ?? []
-  // Every branch is checked with git before anything shows: say so meanwhile, so a drop
-  // never looks like it did nothing
-  const branchCount = selectedItems(detail).reduce(
-    (count, item) => count + Math.max(1, item.members?.length ?? 0),
-    0
-  )
-  const checking = toast.loading(
-    `Checking ${branchCount} branch${branchCount === 1 ? '' : 'es'} of ${detail.run.title}…`
-  )
+  // Every branch is checked with git before anything shows: say so meanwhile, with a bar
+  // that fills as the branches are checked, so a drop never looks like it did nothing
+  const branchCount = countBranches(detail)
+  const message = `Checking ${branchCount} branch${branchCount === 1 ? '' : 'es'} of ${detail.run.title}…`
+  const checking = toast.progress(message, { done: 0, total: branchCount })
   let queue: RunDoneQueue
   try {
-    queue = await buildRunDoneQueue(detail, args.ticketId, tickets)
+    queue = await buildRunDoneQueue(detail, args.ticketId, tickets, (checked) => {
+      toast.progress(message, { done: checked, total: branchCount }, { id: checking })
+    })
   } finally {
     toast.dismiss(checking)
   }

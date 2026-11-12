@@ -1,6 +1,8 @@
 import { createElement } from 'react'
 import { toast as sonnerToast, ExternalToast } from 'sonner'
 import { CheckCircle2, XCircle, Info as InfoIcon, AlertTriangle } from 'lucide-react'
+import { ToastProgress, type ToastProgressProps } from '@/components/ui/toast-progress'
+import { cn } from '@/lib/utils'
 
 type ToastOptions = ExternalToast & {
   retry?: () => void | Promise<void>
@@ -69,6 +71,24 @@ export const toast = {
     return sonnerToast.loading(message, {
       duration: Infinity,
       ...options
+    })
+  },
+
+  /**
+   * Show a loading toast with a progress bar under its message. Pass the returned id back as
+   * `options.id` to move the bar of the same toast along.
+   */
+  progress: (
+    message: string,
+    progress: ToastProgressProps,
+    options?: ToastOptions
+  ): string | number => {
+    return sonnerToast.loading(message, {
+      duration: Infinity,
+      description: createElement(ToastProgress, progress),
+      ...options,
+      // The bar spans the toast, not just the width of its message
+      classNames: { ...options?.classNames, content: cn('min-w-0 flex-1', options?.classNames?.content) }
     })
   },
 
