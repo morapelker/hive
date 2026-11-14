@@ -31,6 +31,12 @@ export interface CreateConnectionFromProjectsOptions {
    * new project on the desktop.
    */
   saveAsProject?: boolean
+  /**
+   * Pull each project's base branch (the branch its new worktree is cut from) from origin
+   * before the worktree is created. Overrides the "auto-pull before worktree" setting for this
+   * one connection; left out, the setting decides. The New Connection dialog passes its switch.
+   */
+  autoPull?: boolean
 }
 
 export type CreateConnectionFromProjectsResult =
@@ -47,6 +53,12 @@ export type CreateConnectionFromProjectsResult =
        * project). Never a reason to create it again.
        */
       warning?: string
+      /**
+       * Names of the projects whose base branch could not be pulled although `autoPull: true`
+       * asked for it (offline, diverged from origin, ...). Their worktrees were cut from the
+       * local branch as it was. Absent when every pull went through.
+       */
+      pullFailed?: string[]
     }
   | { ok: false; error: string }
 
@@ -129,13 +141,16 @@ export async function createConnectionFromProjects(
     }
   }
 
+  const pullFailed: string[] = []
+
   for (const project of projects) {
     let result: Awaited<ReturnType<typeof worktreeApi.create>>
     try {
       result = await worktreeApi.create({
         projectId: project.id,
         projectPath: project.path,
-        projectName: project.name
+        projectName: project.name,
+        ...(opts.autoPull === undefined ? {} : { autoPull: opts.autoPull })
       })
     } catch (error) {
       result = { success: false, error: error instanceof Error ? error.message : String(error) }
@@ -151,6 +166,11 @@ export async function createConnectionFromProjects(
     // the new worktree and closes open file tabs.
     useWorktreeStore.getState().addWorktreeToProject(project.id, result.worktree)
     created.push({ project, worktree: result.worktree })
+    // A failed pull never fails the creation (the worktree is cut from the local branch), so
+    // it is only visible here.
+    if (opts.autoPull === true && result.pullInfo?.pulled === false) {
+      pullFailed.push(project.name)
+    }
   }
 
   // Only fire setup scripts once every worktree has been created successfully — the
@@ -226,6 +246,7 @@ export async function createConnectionFromProjects(
     connectionName: connection.custom_name || connection.name,
     connectionPath: connection.path,
     savedProjectId,
-    ...(warning ? { warning } : {})
+    ...(warning ? { warning } : {}),
+    ...(pullFailed.length > 0 ? { pullFailed } : {})
   }
 }

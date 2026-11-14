@@ -39091,6 +39091,52 @@ describe('rpc router', () => {
     })
   })
 
+  it('passes a worktreeOps.create autoPull override through to the service', async () => {
+    const seen: unknown[] = []
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      worktreeOps: {
+        hasCommits: () => Effect.succeed(false),
+        create: (params) => {
+          seen.push(params)
+          return Effect.succeed({ success: true })
+        },
+        delete: () => Effect.succeed({ success: false }),
+        sync: () => Effect.succeed({ success: false }),
+        exists: () => Effect.succeed(false),
+        openInTerminal: () => Effect.succeed({ success: false }),
+        openInEditor: () => Effect.succeed({ success: false }),
+        getBranches: () => Effect.succeed({ success: false }),
+        branchExists: () => Effect.succeed(false),
+        duplicate: () => Effect.succeed({ success: false }),
+        renameBranch: () => Effect.succeed({ success: false }),
+        createFromBranch: () => Effect.succeed({ success: false })
+      }
+    })
+    const params = {
+      projectId: 'project-1',
+      projectPath: '/tmp/hive',
+      projectName: 'Hive',
+      autoPull: false
+    }
+
+    const response = await Effect.runPromise(
+      router.handle({ id: 'worktree-ops-create-3', method: 'worktreeOps.create', params })
+    )
+
+    expect(response).toMatchObject({ id: 'worktree-ops-create-3', ok: true })
+    expect(seen).toEqual([params])
+
+    const invalid = await Effect.runPromise(
+      router.handle({
+        id: 'worktree-ops-create-4',
+        method: 'worktreeOps.create',
+        params: { ...params, autoPull: 'yes' }
+      })
+    )
+    expect(invalid).toMatchObject({ ok: false, error: { code: 'VALIDATION_FAILED' } })
+  })
+
   it('validates worktreeOps.create params', async () => {
     const router = makeRpcRouter({
       eventBus: makeEventBus(),

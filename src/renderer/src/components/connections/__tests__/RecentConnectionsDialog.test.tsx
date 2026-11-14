@@ -204,7 +204,9 @@ describe('RecentConnectionsDialog all-projects panel', () => {
     await userEvent.click(screen.getByTestId('recent-connection-row-selected-combo'))
     await userEvent.click(screen.getByTestId('recent-connections-create-button'))
 
-    await waitFor(() => expect(quickCreateConnection).toHaveBeenCalledWith([delta, epsilon]))
+    await waitFor(() =>
+      expect(quickCreateConnection).toHaveBeenCalledWith([delta, epsilon], { autoPull: true })
+    )
   })
 
   it('filters store projects with the same fuzzy matching as the sidebar', async () => {
@@ -268,7 +270,9 @@ describe('RecentConnectionsDialog pinned selection row', () => {
     await userEvent.click(screen.getByTestId('recent-connection-row-selected-combo'))
     await userEvent.click(screen.getByTestId('recent-connections-create-button'))
 
-    await waitFor(() => expect(quickCreateConnection).toHaveBeenCalledWith([alpha, beta, gamma]))
+    await waitFor(() =>
+      expect(quickCreateConnection).toHaveBeenCalledWith([alpha, beta, gamma], { autoPull: true })
+    )
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
@@ -307,5 +311,61 @@ describe('RecentConnectionsDialog pinned selection row', () => {
 
     expect(screen.queryByTestId('recent-connection-row-selected-combo')).not.toBeInTheDocument()
     expect(screen.getByTestId('recent-connections-create-button')).toBeDisabled()
+  })
+})
+
+describe('RecentConnectionsDialog auto-pull switch', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setStoreProjects([])
+  })
+
+  it('starts switched on and creates the connection with a pull', async () => {
+    const quickCreateConnection = vi.fn().mockResolvedValue('conn-1')
+    useConnectionStore.setState({ quickCreateConnection } as never)
+    await renderDialog()
+
+    expect(screen.getByTestId('recent-connections-auto-pull-switch')).toBeChecked()
+
+    await userEvent.click(screen.getByTestId('recent-connection-row-e1'))
+    await userEvent.click(screen.getByTestId('recent-connections-create-button'))
+
+    await waitFor(() =>
+      expect(quickCreateConnection).toHaveBeenCalledWith([alpha, beta], { autoPull: true })
+    )
+  })
+
+  it('creates the connection without a pull when switched off', async () => {
+    const quickCreateConnection = vi.fn().mockResolvedValue('conn-1')
+    useConnectionStore.setState({ quickCreateConnection } as never)
+    await renderDialog()
+
+    await userEvent.click(screen.getByTestId('recent-connections-auto-pull-switch'))
+    expect(screen.getByTestId('recent-connections-auto-pull-switch')).not.toBeChecked()
+
+    await userEvent.click(screen.getByTestId('recent-connection-row-e1'))
+    await userEvent.click(screen.getByTestId('recent-connections-create-button'))
+
+    await waitFor(() =>
+      expect(quickCreateConnection).toHaveBeenCalledWith([alpha, beta], { autoPull: false })
+    )
+  })
+
+  it('is back on the next time the dialog opens', async () => {
+    vi.mocked(connectionApi.getRecentConnections).mockResolvedValue({ success: true, entries })
+    const { rerender } = render(<RecentConnectionsDialog open onOpenChange={() => {}} />)
+    await waitFor(() =>
+      expect(screen.queryByTestId('recent-connections-loading')).not.toBeInTheDocument()
+    )
+
+    await userEvent.click(screen.getByTestId('recent-connections-auto-pull-switch'))
+    expect(screen.getByTestId('recent-connections-auto-pull-switch')).not.toBeChecked()
+
+    rerender(<RecentConnectionsDialog open={false} onOpenChange={() => {}} />)
+    rerender(<RecentConnectionsDialog open onOpenChange={() => {}} />)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('recent-connections-auto-pull-switch')).toBeChecked()
+    )
   })
 })

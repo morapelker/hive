@@ -5,6 +5,7 @@ import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 import { Db } from '../../src/main/effect/db/service'
+import { APP_SETTINGS_DB_KEY } from '../../src/shared/types/settings'
 import { makeTestDbLayer } from '../utils/db-effect-test-utils'
 import { canRunDatabaseTests, createTestDatabase } from '../utils/db-test-utils'
 import { expectExitSuccess, runEffect } from '../utils/effect-test-utils'
@@ -92,6 +93,27 @@ describeIf('Session 7: worktree-ops Effect orchestrators', () => {
     expect(result.success).toBe(true)
     expect(result.worktree?.path).toBe('/tmp/fake-wt')
     expect(testDb.db.getWorktreesByProject(projectId)).toHaveLength(1)
+  })
+
+  test('createWorktreeOpEffect lets an autoPull override win over the setting', async () => {
+    const params = { projectId, projectPath: '/tmp/p', projectName: 'p' }
+    const autoPullOf = (call: number): unknown =>
+      (gitServiceMocks.createWorktree.mock.calls[call] as unknown[])[2]
+
+    // No override: the setting decides, and it defaults to on.
+    expectExitSuccess(await run(createWorktreeOpEffect(params)))
+    expect(autoPullOf(0)).toMatchObject({ autoPull: true })
+
+    expectExitSuccess(await run(createWorktreeOpEffect({ ...params, autoPull: false })))
+    expect(autoPullOf(1)).toMatchObject({ autoPull: false })
+
+    // With the setting off, an explicit true still pulls.
+    testDb.db.setSetting(APP_SETTINGS_DB_KEY, JSON.stringify({ autoPullBeforeWorktree: false }))
+    expectExitSuccess(await run(createWorktreeOpEffect(params)))
+    expect(autoPullOf(2)).toMatchObject({ autoPull: false })
+
+    expectExitSuccess(await run(createWorktreeOpEffect({ ...params, autoPull: true })))
+    expect(autoPullOf(3)).toMatchObject({ autoPull: true })
   })
 
   test('deleteWorktreeOpEffect archives the worktree row', async () => {

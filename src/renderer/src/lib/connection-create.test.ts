@@ -250,6 +250,74 @@ describe('createConnectionFromProjects', () => {
     })
   })
 
+  describe('autoPull', () => {
+    const base = [
+      { projectId: 'project-1', projectPath: '/tmp/project-1', projectName: 'Project 1' },
+      { projectId: 'project-2', projectPath: '/tmp/project-2', projectName: 'Project 2' }
+    ]
+
+    it('sends no autoPull when the option is left out, so the setting decides', async () => {
+      await createConnectionFromProjects(projects)
+
+      expect(callsTo(request, 'worktreeOps.create')).toEqual(base)
+      for (const params of callsTo(request, 'worktreeOps.create')) {
+        expect(params).not.toHaveProperty('autoPull')
+      }
+    })
+
+    it.each([true, false])('passes autoPull: %s to every worktree create', async (autoPull) => {
+      const result = await createConnectionFromProjects(projects, { autoPull })
+
+      expect(result).toMatchObject({ ok: true })
+      expect(result).not.toHaveProperty('pullFailed')
+      expect(callsTo(request, 'worktreeOps.create')).toEqual(
+        base.map((params) => ({ ...params, autoPull }))
+      )
+    })
+
+    it('names the projects whose pull failed, and still creates the connection', async () => {
+      request.mockImplementation(async (method: string, params?: unknown) => {
+        if (method === 'worktreeOps.create') {
+          const { projectId } = params as { projectId: string }
+          return {
+            success: true,
+            worktree: worktreeFor(projectId),
+            pullInfo: { pulled: projectId !== 'project-2', updated: false }
+          }
+        }
+        return happyPath(method, params)
+      })
+
+      const result = await createConnectionFromProjects(projects, { autoPull: true })
+
+      expect(result).toMatchObject({
+        ok: true,
+        connectionId: 'connection-created',
+        pullFailed: ['Project 2']
+      })
+      expect(request).not.toHaveBeenCalledWith('worktreeOps.delete', expect.anything())
+    })
+
+    it('does not report a pull that was switched off as failed', async () => {
+      request.mockImplementation(async (method: string, params?: unknown) => {
+        if (method === 'worktreeOps.create') {
+          const { projectId } = params as { projectId: string }
+          return {
+            success: true,
+            worktree: worktreeFor(projectId),
+            pullInfo: { pulled: false, updated: false }
+          }
+        }
+        return happyPath(method, params)
+      })
+
+      const result = await createConnectionFromProjects(projects, { autoPull: false })
+
+      expect(result).toMatchObject({ ok: true })
+      expect(result).not.toHaveProperty('pullFailed')
+    })
+  })
+
   describe('success', () => {
     it('creates a worktree per project in order, then one connection, without selecting anything', async () => {
       const result = await createConnectionFromProjects(projects)

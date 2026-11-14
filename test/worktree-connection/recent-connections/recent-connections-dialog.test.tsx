@@ -220,7 +220,7 @@ describe('Recent Connections Dialog', () => {
       await new Promise((r) => setTimeout(r, 10))
     })
 
-    expect(quickCreateConnection).toHaveBeenCalledWith(entry.projects)
+    expect(quickCreateConnection).toHaveBeenCalledWith(entry.projects, { autoPull: true })
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 

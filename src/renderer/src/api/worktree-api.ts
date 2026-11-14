@@ -41,6 +41,11 @@ type WorktreeCreateParams = {
   projectName: string
 }
 
+type WorktreeCreateNewParams = WorktreeCreateParams & {
+  /** Overrides the "auto-pull before worktree" setting for this one creation. */
+  autoPull?: boolean
+}
+
 type WorktreeCreateFromBranchParams = WorktreeCreateParams & {
   branchName: string
   prNumber?: number
@@ -147,8 +152,13 @@ export const worktreeApi = {
       projectPath,
       branchName
     }),
-  create: async (params: WorktreeCreateParams): Promise<WorktreeOpsResult> =>
-    getRendererRpcClient().request<WorktreeOpsResult>('worktreeOps.create', params),
+  create: async (params: WorktreeCreateNewParams): Promise<WorktreeOpsResult> =>
+    getRendererRpcClient().request<WorktreeOpsResult>('worktreeOps.create', {
+      projectId: params.projectId,
+      projectPath: params.projectPath,
+      projectName: params.projectName,
+      ...(params.autoPull === undefined ? {} : { autoPull: params.autoPull })
+    }),
   createFromBranch: async (params: WorktreeCreateFromBranchParams): Promise<WorktreeOpsResult> =>
     getRendererRpcClient().request<WorktreeOpsResult>('worktreeOps.createFromBranch', {
       projectId: params.projectId,

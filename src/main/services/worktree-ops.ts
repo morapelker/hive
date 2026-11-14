@@ -25,6 +25,12 @@ export interface CreateWorktreeParams {
   projectId: string
   projectPath: string
   projectName: string
+  /**
+   * Overrides the user's auto-pull setting for this one creation. Auto-pull fast-forwards the
+   * branch the worktree is cut from (the project checkout's current branch) from origin first.
+   * The New Connection dialog passes its "pull latest" switch here.
+   */
+  autoPull?: boolean
 }
 
 export interface DeleteWorktreeParams {
@@ -235,7 +241,7 @@ export const createWorktreeOpEffect = (
       const gitService = createGitService(params.projectPath)
       const result = yield* Effect.tryPromise(() =>
         gitService.createWorktree(params.projectName, breedType, {
-          autoPull: autoPullEnabled,
+          autoPull: params.autoPull ?? autoPullEnabled,
           worktreeCreateScript: project?.worktree_create_script ?? null
         })
       )

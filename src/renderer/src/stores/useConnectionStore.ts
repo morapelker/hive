@@ -80,7 +80,14 @@ interface ConnectionState {
   updateConnectionMembers: (connectionId: string, desiredWorktreeIds: string[]) => Promise<boolean>
   quickCreateConnection: (
     projects: { id: string; path: string; name: string }[],
-    opts?: { savedProjectId?: string }
+    opts?: {
+      savedProjectId?: string
+      /**
+       * Pull each project's base branch from origin before its worktree is created; overrides
+       * the "auto-pull before worktree" setting for this one connection.
+       */
+      autoPull?: boolean
+    }
   ) => Promise<string | null>
   duplicateConnection: (connectionId: string) => Promise<string | null>
   saveConnectionAsProject: (connectionId: string) => Promise<string | null>
@@ -317,7 +324,7 @@ export const useConnectionStore = create<ConnectionState>()(
       // way. This action adds the dialog's UI: select the new connection and toast.
       quickCreateConnection: async (
         projects: { id: string; path: string; name: string }[],
-        opts?: { savedProjectId?: string }
+        opts?: { savedProjectId?: string; autoPull?: boolean }
       ) => {
         if (projects.length < 2) {
           return null
@@ -336,6 +343,14 @@ export const useConnectionStore = create<ConnectionState>()(
         clearWorktreeSelection()
         clearDataProjectSelection()
         toast.success(`Connection "${result.connectionName}" created`)
+        if (result.pullFailed?.length) {
+          // Longer than the default: this is the only sign the connection is not up to date.
+          toast.warning(
+            `Could not pull the latest changes for ${result.pullFailed.join(', ')}. ` +
+              `${result.pullFailed.length === 1 ? 'Its worktree was' : 'Their worktrees were'} created from the local branch.`,
+            { duration: 8000 }
+          )
+        }
         return result.connectionId
       },
 

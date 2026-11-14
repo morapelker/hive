@@ -13,6 +13,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
+import { Switch } from '@/components/ui/switch'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -49,6 +50,9 @@ export function RecentConnectionsDialog({
   const [filter, setFilter] = useState('')
   const [projectFilter, setProjectFilter] = useState('')
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set())
+  // Pull each project's base branch from origin before its worktree is cut. Always starts on;
+  // switching it off only affects the connection created from this open of the dialog.
+  const [autoPull, setAutoPull] = useState(true)
 
   // Inline note edit state
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null)
@@ -69,6 +73,7 @@ export function RecentConnectionsDialog({
     setFilter('')
     setProjectFilter('')
     setSelectedProjectIds(new Set())
+    setAutoPull(true)
     setEditingNoteId(null)
 
     connectionApi
@@ -225,14 +230,14 @@ export function RecentConnectionsDialog({
 
     setIsCreating(true)
     try {
-      const id = await quickCreateConnection(projects)
+      const id = await quickCreateConnection(projects, { autoPull })
       if (id) {
         onOpenChange(false)
       }
     } finally {
       setIsCreating(false)
     }
-  }, [entries, selectedId, selectedProjects, quickCreateConnection, onOpenChange])
+  }, [entries, selectedId, selectedProjects, autoPull, quickCreateConnection, onOpenChange])
 
   const persistNote = useCallback(async (entryId: string, raw: string | null) => {
     const normalized = raw && raw.trim() ? raw.trim() : null
@@ -563,7 +568,22 @@ export function RecentConnectionsDialog({
           </div>
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="items-center sm:justify-between">
+          <label
+            className="flex items-center gap-2 text-sm cursor-pointer"
+            title="Pull each project's base branch (usually main) from origin before creating its worktree, so the connection starts up to date"
+          >
+            <Switch
+              checked={autoPull}
+              onCheckedChange={setAutoPull}
+              disabled={isCreating}
+              data-testid="recent-connections-auto-pull-switch"
+            />
+            <span>Pull latest from origin</span>
+            <span className="text-xs text-muted-foreground">
+              Updates each project&apos;s base branch first
+            </span>
+          </label>
           <Button
             onClick={handleCreate}
             disabled={!selectedId || isCreating}
@@ -572,7 +592,7 @@ export function RecentConnectionsDialog({
             {isCreating ? (
               <>
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Creating...
+                {autoPull ? 'Pulling & creating...' : 'Creating...'}
               </>
             ) : (
               <>

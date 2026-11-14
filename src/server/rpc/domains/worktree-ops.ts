@@ -66,7 +66,8 @@ const createWorktreeParamsSchema = z
   .object({
     projectId: z.string().min(1),
     projectPath: z.string().min(1),
-    projectName: z.string().min(1)
+    projectName: z.string().min(1),
+    autoPull: z.boolean().optional()
   })
   .strict() satisfies z.ZodType<CreateWorktreeParams>
 const deleteWorktreeParamsSchema = z

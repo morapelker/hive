@@ -48,6 +48,22 @@ describe('worktreeApi', () => {
 
     await expect(worktreeApi.create(params)).resolves.toBe(result)
     expect(request).toHaveBeenCalledWith('worktreeOps.create', params)
+    expect(request.mock.calls[0][1]).not.toHaveProperty('autoPull')
+  })
+
+  it('forwards an autoPull override on create', async () => {
+    const request = vi.fn().mockResolvedValue({ success: true })
+    const params = {
+      projectId: 'project-1',
+      projectPath: '/tmp/hive',
+      projectName: 'Hive',
+      autoPull: false
+    }
+
+    setRendererRpcClient({ request, subscribe: vi.fn() })
+
+    await worktreeApi.create(params)
+    expect(request).toHaveBeenCalledWith('worktreeOps.create', params)
   })
 
   it('routes createFromBranch through the renderer RPC client', async () => {

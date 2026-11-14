@@ -51,7 +51,8 @@ import { toast } from '@/lib/toast'
 vi.mock('@/lib/toast', () => ({
   toast: {
     error: vi.fn(),
-    success: vi.fn()
+    success: vi.fn(),
+    warning: vi.fn()
   }
 }))
 
@@ -925,6 +926,71 @@ describe('useConnectionStore connection loading', () => {
       expect(worktreeStoreMocks.removeWorktreeFromProject).not.toHaveBeenCalled()
       expect(request).not.toHaveBeenCalledWith('worktreeOps.delete', expect.anything())
       expect(toast.error).not.toHaveBeenCalled()
+    })
+
+    it('passes the autoPull override to every worktree create and warns about a failed pull', async () => {
+      vi.mocked(toast.warning).mockClear()
+      request.mockImplementation(async (method: string, params?: unknown) => {
+        if (method === 'worktreeOps.create') {
+          const { projectId } = params as { projectId: string }
+          return {
+            success: true,
+            worktree: worktreeFor(projectId),
+            pullInfo: { pulled: projectId !== 'project-2', updated: false }
+          }
+        }
+        if (method === 'connectionOps.create') {
+          const { worktreeIds } = params as { worktreeIds: string[] }
+          return {
+            success: true,
+            connection: {
+              id: 'connection-created',
+              name: 'Created Connection',
+              custom_name: null,
+              status: 'active',
+              path: '/tmp/created-connection',
+              color: null,
+              pinned: 0,
+              created_at: '2026-05-28T00:00:00.000Z',
+              updated_at: '2026-05-28T00:00:00.000Z',
+              members: worktreeIds.map((worktreeId, index) => ({
+                id: `member-${index + 1}`,
+                connection_id: 'connection-created',
+                worktree_id: worktreeId
+              }))
+            }
+          }
+        }
+        return null
+      })
+
+      const result = await useConnectionStore
+        .getState()
+        .quickCreateConnection(projects, { autoPull: true })
+
+      // A failed pull never blocks the connection.
+      expect(result).toBe('connection-created')
+      expect(request).toHaveBeenCalledWith('worktreeOps.create', {
+        projectId: 'project-1',
+        projectPath: '/tmp/project-1',
+        projectName: 'Project 1',
+        autoPull: true
+      })
+      expect(request).toHaveBeenCalledWith('worktreeOps.create', {
+        projectId: 'project-2',
+        projectPath: '/tmp/project-2',
+        projectName: 'Project 2',
+        autoPull: true
+      })
+      expect(toast.warning).toHaveBeenCalledTimes(1)
+      expect(toast.warning).toHaveBeenCalledWith(
+        expect.stringContaining('Project 2'),
+        expect.anything()
+      )
+      expect(toast.warning).not.toHaveBeenCalledWith(
+        expect.stringContaining('Project 1'),
+        expect.anything()
+      )
     })
 
     it('rolls back already-created worktrees and skips connection creation when a create fails, without ever firing setup scripts', async () => {
