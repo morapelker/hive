@@ -508,7 +508,7 @@ export function KanbanBoard({ projectId, connectionId, isPinnedMode }: KanbanBoa
           <div className="flex-1 flex items-center justify-center text-muted-foreground">
             <div className="text-center">
               <Pin className="h-8 w-8 mx-auto mb-3 opacity-50" />
-              <p className="text-sm">Pin worktrees to see their projects here</p>
+              <p className="text-sm">Pin a project to see its tickets here.</p>
             </div>
           </div>
         ) : (

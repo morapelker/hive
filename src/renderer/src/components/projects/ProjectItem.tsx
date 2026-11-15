@@ -15,7 +15,9 @@ import {
   FolderHeart,
   Sparkles,
   FileText,
-  Workflow
+  Workflow,
+  Pin,
+  PinOff
 } from 'lucide-react'
 import type { ProjectShellCommand } from '@shared/lib/shell-commands'
 import { toast } from '@/lib/toast'
@@ -90,6 +92,7 @@ import { gitToast } from '@/lib/toast'
 import { projectApi } from '@/api/project-api'
 import { worktreeApi } from '@/api/worktree-api'
 import { useSidebarHoverHighlight } from '@/hooks'
+import { setProjectPinned, useIsProjectPinned } from '@/lib/project-pin'
 
 interface Project {
   id: string
@@ -189,6 +192,9 @@ export const ProjectItem = memo(function ProjectItem({
   const [isCreatingInstance, setIsCreatingInstance] = useState(false)
 
   const projectSpaceIds = projectSpaceMap[project.id] ?? []
+
+  // On the Pinned Board: true while any worktree (or instance) of the project is pinned
+  const isPinnedToBoard = useIsProjectPinned(project.id)
 
   const plusHint = useHintStore((s) => s.hintMap.get('plus:' + project.id))
   const hintMode = useHintStore((s) => s.mode)
@@ -656,6 +662,18 @@ export const ProjectItem = memo(function ProjectItem({
 
           {!connectionModeActive && (
             <ContextMenuContent className="w-52">
+              {/* The whole project on or off the Pinned Board (lib/project-pin) */}
+              <ContextMenuItem
+                data-testid="project-pin-to-board-menu-item"
+                onClick={() => void setProjectPinned(project, !isPinnedToBoard)}
+              >
+                {isPinnedToBoard ? (
+                  <PinOff className="h-4 w-4 mr-2" />
+                ) : (
+                  <Pin className="h-4 w-4 mr-2" />
+                )}
+                {isPinnedToBoard ? 'Unpin from board' : 'Pin to board'}
+              </ContextMenuItem>
               <ContextMenuItem onClick={handleStartEdit}>
                 <Pencil className="h-4 w-4 mr-2" />
                 Edit Name

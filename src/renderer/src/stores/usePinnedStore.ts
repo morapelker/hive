@@ -22,6 +22,43 @@ interface PinnedState {
   removeConnection: (id: string) => void
   isWorktreePinned: (id: string) => boolean
   isConnectionPinned: (id: string) => boolean
+  /**
+   * Pin or unpin several worktrees (git project) or instances (connection project) of ONE
+   * project as a single change: every id is persisted, then the store changes once. When an
+   * id fails, the ones already written are put back and the store is left as it was. Shows no
+   * toast: the caller reports. Use `setProjectPinned` (lib/project-pin) for the user action.
+   */
+  setProjectPins: (change: ProjectPinChange) => Promise<ProjectPinResult>
+}
+
+export interface ProjectPinChange {
+  /** The project whose board joins (pinned) or leaves (unpinned) the pinned board. */
+  projectId: string
+  kind: 'worktree' | 'connection'
+  /** Pinning: the ids to pin. Unpinning: EVERY pinned worktree / instance of the project. */
+  ids: string[]
+  pinned: boolean
+}
+
+export interface ProjectPinResult {
+  success: boolean
+  error?: string
+}
+
+async function persistPin(
+  kind: ProjectPinChange['kind'],
+  id: string,
+  pinned: boolean
+): Promise<ProjectPinResult> {
+  try {
+    const result =
+      kind === 'worktree'
+        ? await dbApi.worktree.setPinned(id, pinned)
+        : await connectionApi.setPinned(id, pinned)
+    return result?.success ? { success: true } : { success: false, error: result?.error }
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : String(error) }
+  }
 }
 
 /**
@@ -213,5 +250,35 @@ export const usePinnedStore = create<PinnedState>()((set, get) => ({
 
   isConnectionPinned: (id: string) => {
     return get().pinnedConnectionIds.has(id)
+  },
+
+  setProjectPins: async ({ projectId, kind, ids, pinned }: ProjectPinChange) => {
+    const written: string[] = []
+    for (const id of ids) {
+      const result = await persistPin(kind, id, pinned)
+      if (!result.success) {
+        // All or nothing: put back what was already written, best effort.
+        await Promise.all(written.map((done) => persistPin(kind, done, !pinned)))
+        return result
+      }
+      written.push(id)
+    }
+
+    set((state) => {
+      const nextIds = new Set(
+        kind === 'worktree' ? state.pinnedWorktreeIds : state.pinnedConnectionIds
+      )
+      for (const id of ids) {
+        if (pinned) nextIds.add(id)
+        else nextIds.delete(id)
+      }
+      const nextProjectIds = new Set(state.pinnedProjectIds)
+      if (pinned) nextProjectIds.add(projectId)
+      else nextProjectIds.delete(projectId)
+      return kind === 'worktree'
+        ? { pinnedWorktreeIds: nextIds, pinnedProjectIds: nextProjectIds }
+        : { pinnedConnectionIds: nextIds, pinnedProjectIds: nextProjectIds }
+    })
+    return { success: true }
   }
 }))
