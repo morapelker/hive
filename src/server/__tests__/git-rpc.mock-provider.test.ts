@@ -1738,6 +1738,46 @@ describe('git ops RPC mocked provider', () => {
     })
   })
 
+  it('routes gitOps.getUnreachableCommits to the injected provider service', async () => {
+    const result = {
+      success: true,
+      count: 1,
+      commits: [{ hash: 'abc1234', subject: 'stray commit' }]
+    }
+    const getUnreachableCommits = vi.fn(() => Effect.succeed(result))
+    const service = { getUnreachableCommits } as unknown as GitOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      gitOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'git-unreachable-commits-1',
+        method: 'gitOps.getUnreachableCommits',
+        params: { worktreePath: '/repo' }
+      })
+    )
+
+    expect(getUnreachableCommits).toHaveBeenCalledWith('/repo')
+    expect(response).toEqual({ id: 'git-unreachable-commits-1', ok: true, value: result })
+
+    const invalid = await Effect.runPromise(
+      router.handle({
+        id: 'git-unreachable-commits-invalid',
+        method: 'gitOps.getUnreachableCommits',
+        params: { worktreePath: '' }
+      })
+    )
+
+    expect(getUnreachableCommits).toHaveBeenCalledTimes(1)
+    expect(invalid).toMatchObject({
+      id: 'git-unreachable-commits-invalid',
+      ok: false,
+      error: { code: 'VALIDATION_FAILED' }
+    })
+  })
+
   it('routes gitOps.getDiffStat to the injected provider service', async () => {
     const result = {
       success: true,

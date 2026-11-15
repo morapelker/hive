@@ -1,6 +1,6 @@
 import { existsSync, statSync } from 'fs'
-import { homedir } from 'os'
-import { basename, join } from 'path'
+import { homedir, tmpdir } from 'os'
+import { basename, join, resolve } from 'path'
 import { Effect, Layer } from 'effect'
 
 import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
@@ -36,6 +36,7 @@ export interface CreateWorktreeParams {
 export interface DeleteWorktreeParams {
   worktreeId: string
   worktreePath: string
+  /** Empty for a detached-HEAD worktree: there is no branch, so archive only removes it. */
   branchName: string
   projectPath: string
   archive: boolean
@@ -140,6 +141,30 @@ export function getWorktreeImportRefusalReason(
     return 'path has no .git entry (not a linked worktree)'
   }
   return null
+}
+
+/**
+ * Where throwaway checkouts live: the OS temp directory and its usual aliases, each both as
+ * written and resolved (macOS links /tmp and /var into /private), so a path matches whether
+ * or not it still exists to be resolved.
+ */
+function getTempRoots(): string[] {
+  const candidates =
+    process.platform === 'win32' ? [tmpdir()] : [tmpdir(), '/tmp', '/var/tmp', '/private/tmp']
+  return [...new Set(candidates.flatMap((root) => [resolve(root), normalizeWorktreePath(root)]))]
+}
+
+/**
+ * True for a detached-HEAD worktree that lives in a temp directory. Those are scratch
+ * checkouts made outside the app (`git worktree add --detach /tmp/baseline <sha>`, typically
+ * by an agent comparing against a commit), not work anyone wants in the sidebar, so sync
+ * leaves them out. A detached worktree anywhere else was put there on purpose and still
+ * imports.
+ */
+export function isScratchDetachedWorktree(branch: string, worktreePath: string): boolean {
+  if (branch) return false
+  const path = normalizeWorktreePath(worktreePath)
+  return getTempRoots().some((root) => root !== path && isSameOrAncestorPath(root, path))
 }
 
 export function getBreedType(db: DatabaseService): BreedType {
@@ -319,11 +344,13 @@ export const deleteWorktreeOpEffect = (
       }
 
       const gitService = createGitService(params.projectPath)
-      const result = params.archive
-        ? yield* Effect.tryPromise(() =>
-            gitService.archiveWorktree(params.worktreePath, params.branchName)
-          )
-        : yield* Effect.tryPromise(() => gitService.removeWorktree(params.worktreePath))
+      // A detached-HEAD worktree has no branch: archiving it is just removing it.
+      const result =
+        params.archive && params.branchName
+          ? yield* Effect.tryPromise(() =>
+              gitService.archiveWorktree(params.worktreePath, params.branchName)
+            )
+          : yield* Effect.tryPromise(() => gitService.removeWorktree(params.worktreePath))
 
       if (!result.success) {
         return yield* Effect.fail(new Error(result.error || 'Git operation failed'))
@@ -397,6 +424,14 @@ export const syncWorktreesOpEffect = (
             projectId: params.projectId,
             path: gitWorktree.path,
             branch: gitWorktree.branch
+          })
+          continue
+        }
+
+        if (isScratchDetachedWorktree(gitWorktree.branch, gitWorktree.path)) {
+          log.info('Skipping detached scratch worktree in a temp directory during sync', {
+            projectId: params.projectId,
+            path: gitWorktree.path
           })
           continue
         }

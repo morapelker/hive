@@ -74,7 +74,8 @@ const deleteWorktreeParamsSchema = z
   .object({
     worktreeId: z.string().min(1),
     worktreePath: z.string().min(1),
-    branchName: z.string().min(1),
+    // Empty for a detached-HEAD worktree, which has no branch to keep or delete.
+    branchName: z.string(),
     projectPath: z.string().min(1),
     archive: z.boolean()
   })

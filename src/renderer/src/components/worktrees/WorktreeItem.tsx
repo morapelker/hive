@@ -67,6 +67,7 @@ import { useGhosttySuppression, useSidebarHoverHighlight } from '@/hooks'
 import { PulseAnimation } from './PulseAnimation'
 import { ModelIcon } from './ModelIcon'
 import { ArchiveConfirmDialog } from './ArchiveConfirmDialog'
+import { RemoveWorktreeConfirmDialog } from './RemoveWorktreeConfirmDialog'
 import { AddAttachmentDialog } from './AddAttachmentDialog'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { systemApi } from '@/api/system-api'
@@ -74,6 +75,12 @@ import { dbApi } from '@/api/db-api'
 import { worktreeApi } from '@/api/worktree-api'
 import { projectApi } from '@/api/project-api'
 import { gitApi } from '@/api/git-api'
+import {
+  getDetachedRemovalRisk,
+  getWorktreeDisplayName,
+  isDetachedWorktree
+} from '@/lib/detached-worktree'
+import type { DetachedRemovalRisk } from '@/lib/detached-worktree'
 import { mergeCustomCommands, replaceTemplateVariables } from '@/lib/custom-commands'
 import type { CustomProjectCommand } from '@/lib/custom-commands'
 import type { ProjectShellCommand } from '@shared/lib/shell-commands'
@@ -185,7 +192,9 @@ export const WorktreeItem = memo(function WorktreeItem({
   )
   const isRunProcessAlive = useScriptStore((s) => s.scriptStates[worktree.id]?.runRunning ?? false)
   const liveBranch = useGitStore((s) => s.branchInfoByWorktree.get(worktree.path))
-  const displayName = liveBranch?.name ?? worktree.name
+  // A detached worktree reads as the name it is known by plus a badge, not as "HEAD".
+  const isDetached = isDetachedWorktree(worktree, liveBranch?.name)
+  const displayName = getWorktreeDisplayName(worktree, liveBranch?.name)
   const isTeleported = Boolean(worktree.teleported_to)
 
   // Connection mode state
@@ -321,6 +330,9 @@ export const WorktreeItem = memo(function WorktreeItem({
   const [archiveConfirmFiles, setArchiveConfirmFiles] = useState<
     Array<{ path: string; additions: number; deletions: number; binary: boolean }>
   >([])
+
+  // Set while asking whether to remove a detached worktree that holds work found nowhere else
+  const [removeConfirmRisk, setRemoveConfirmRisk] = useState<DetachedRemovalRisk | null>(null)
 
   // Attachment state
   const [addAttachmentOpen, setAddAttachmentOpen] = useState(false)
@@ -533,7 +545,7 @@ export const WorktreeItem = memo(function WorktreeItem({
     setArchiveConfirmFiles([])
   }, [])
 
-  const handleUnbranch = useCallback(async (): Promise<void> => {
+  const doUnbranch = useCallback(async (): Promise<void> => {
     const result = await unbranchWorktree(
       worktree.id,
       worktree.path,
@@ -547,9 +559,35 @@ export const WorktreeItem = memo(function WorktreeItem({
         toast.success(`Worktree "${worktree.name}" removed`)
       }
     } else {
-      gitToast.operationFailed('unbranch worktree', result.error, handleUnbranch)
+      gitToast.operationFailed(
+        hasNamedBranch ? 'unbranch worktree' : 'remove worktree',
+        result.error,
+        doUnbranch
+      )
     }
   }, [hasNamedBranch, unbranchWorktree, worktree, projectPath])
+
+  const handleUnbranch = useCallback(async (): Promise<void> => {
+    // Unbranch keeps the branch, so its commits survive. A detached worktree has no branch:
+    // removing it takes its commits with it, so ask first when it holds any work.
+    if (!hasNamedBranch) {
+      const risk = await getDetachedRemovalRisk(worktree.path)
+      if (risk) {
+        setRemoveConfirmRisk(risk)
+        return
+      }
+    }
+    doUnbranch()
+  }, [hasNamedBranch, worktree.path, doUnbranch])
+
+  const handleRemoveConfirm = useCallback((): void => {
+    setRemoveConfirmRisk(null)
+    doUnbranch()
+  }, [doUnbranch])
+
+  const handleRemoveCancel = useCallback((): void => {
+    setRemoveConfirmRisk(null)
+  }, [])
 
   const handleDuplicate = useCallback(async (): Promise<void> => {
     if (!hasNamedBranch) {
@@ -687,6 +725,14 @@ export const WorktreeItem = memo(function WorktreeItem({
         data-worktree-primary-badge=""
       >
         primary
+      </span>
+    ) : isDetached ? (
+      <span
+        className={MICRO_BADGE_PRIMARY}
+        title="Detached HEAD: this worktree is not on a branch"
+        data-worktree-detached-badge=""
+      >
+        detached
       </span>
     ) : null
 
@@ -1052,6 +1098,13 @@ export const WorktreeItem = memo(function WorktreeItem({
         files={archiveConfirmFiles}
         onCancel={handleArchiveCancel}
         onConfirm={handleArchiveConfirm}
+      />
+
+      <RemoveWorktreeConfirmDialog
+        worktreeName={worktree.name}
+        risk={removeConfirmRisk}
+        onCancel={handleRemoveCancel}
+        onConfirm={handleRemoveConfirm}
       />
 
       {/* Context Menu (right-click) */}

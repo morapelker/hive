@@ -11113,6 +11113,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -11276,6 +11277,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -11443,6 +11445,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -11606,6 +11609,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -11773,6 +11777,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -11936,6 +11941,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -12103,6 +12109,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -12266,6 +12273,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -12433,6 +12441,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -12596,6 +12605,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -12763,6 +12773,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -12926,6 +12937,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -13093,6 +13105,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -13256,6 +13269,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -13423,6 +13437,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -13586,6 +13601,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -13753,6 +13769,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -13916,6 +13933,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -14083,6 +14101,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -14246,6 +14265,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -14413,6 +14433,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -14576,6 +14597,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -14745,6 +14767,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -14908,6 +14931,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -15075,6 +15099,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -15238,6 +15263,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -15405,6 +15431,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -15568,6 +15595,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -15891,6 +15919,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -16054,6 +16083,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -16221,6 +16251,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -16384,6 +16415,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -16551,6 +16583,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -16714,6 +16747,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -16881,6 +16915,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -17044,6 +17079,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -17211,6 +17247,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -17374,6 +17411,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -17541,6 +17579,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -17704,6 +17743,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -17870,6 +17910,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -18039,6 +18080,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -18337,6 +18379,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -18500,6 +18543,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -18662,6 +18706,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -18825,6 +18870,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -18987,6 +19033,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -19150,6 +19197,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -19484,6 +19532,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -19651,6 +19700,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -19817,6 +19867,7 @@ describe('rpc router', () => {
               files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
             }
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -19983,6 +20034,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -20547,6 +20599,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -20720,6 +20773,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -20883,6 +20937,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -21050,6 +21105,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -21213,6 +21269,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -21380,6 +21437,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -21543,6 +21601,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -21716,6 +21775,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -21879,6 +21939,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -22046,6 +22107,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -22225,6 +22287,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,
@@ -22391,6 +22454,7 @@ describe('rpc router', () => {
             success: true,
             files: [{ path: 'src/App.tsx', additions: 3, deletions: 1, binary: false }]
           }),
+        getUnreachableCommits: () => Effect.succeed({ success: true, count: 0, commits: [] }),
         getDiff: () =>
           Effect.succeed({
             success: true,

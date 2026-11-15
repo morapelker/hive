@@ -421,6 +421,23 @@ describe('gitApi', () => {
     })
   })
 
+  it('routes getUnreachableCommits through the renderer RPC client', async () => {
+    const result = {
+      success: true,
+      count: 1,
+      commits: [{ hash: 'abc1234', subject: 'stray commit' }]
+    }
+    const request = vi.fn().mockResolvedValue(result)
+    const subscribe = vi.fn()
+
+    setRendererRpcClient({ request, subscribe })
+
+    await expect(gitApi.getUnreachableCommits('/tmp/hive')).resolves.toBe(result)
+    expect(request).toHaveBeenCalledWith('gitOps.getUnreachableCommits', {
+      worktreePath: '/tmp/hive'
+    })
+  })
+
   it('routes getDiffStat through the renderer RPC client', async () => {
     const result = {
       success: true,

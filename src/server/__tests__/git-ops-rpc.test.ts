@@ -963,6 +963,59 @@ describe('git ops RPC domain', () => {
     })
   })
 
+  it('lists the commits only a detached worktree can reach', async () => {
+    const dir = makeTempDir()
+    git(dir, ['init', '-b', 'main'])
+    git(dir, ['config', 'user.email', 'hive@example.test'])
+    git(dir, ['config', 'user.name', 'Hive Test'])
+    writeFileSync(join(dir, 'tracked.txt'), 'one\n')
+    git(dir, ['add', 'tracked.txt'])
+    git(dir, ['commit', '-m', 'initial'])
+    const detached = join(makeTempDir(), 'detached')
+    git(dir, ['worktree', 'add', '--detach', detached])
+
+    const service = makeLiveGitOpsRpcService()
+
+    // Freshly detached at main's tip: everything is still on a branch.
+    await expect(Effect.runPromise(service.getUnreachableCommits(detached))).resolves.toEqual({
+      success: true,
+      count: 0,
+      commits: []
+    })
+
+    for (const subject of ['first stray commit', 'second stray commit']) {
+      writeFileSync(join(detached, 'tracked.txt'), `${subject}\n`)
+      git(detached, ['commit', '-am', subject])
+    }
+
+    await expect(Effect.runPromise(service.getUnreachableCommits(detached))).resolves.toEqual({
+      success: true,
+      count: 2,
+      commits: [
+        { hash: expect.stringMatching(/^[0-9a-f]{7,}$/), subject: 'second stray commit' },
+        { hash: expect.stringMatching(/^[0-9a-f]{7,}$/), subject: 'first stray commit' }
+      ]
+    })
+    // The same commits are safe once a branch points at them.
+    git(detached, ['branch', 'rescued'])
+    await expect(Effect.runPromise(service.getUnreachableCommits(detached))).resolves.toMatchObject(
+      { success: true, count: 0 }
+    )
+    // A worktree on a branch never has any.
+    await expect(Effect.runPromise(service.getUnreachableCommits(dir))).resolves.toMatchObject({
+      success: true,
+      count: 0
+    })
+  })
+
+  it('reports a failed unreachable-commit check instead of throwing', async () => {
+    const service = makeLiveGitOpsRpcService()
+
+    await expect(
+      Effect.runPromise(service.getUnreachableCommits(join(makeTempDir(), 'missing')))
+    ).resolves.toMatchObject({ success: false, error: expect.any(String) })
+  })
+
   it('returns diff stats for staged, unstaged, and untracked files', async () => {
     const dir = makeTempDir()
     git(dir, ['init'])

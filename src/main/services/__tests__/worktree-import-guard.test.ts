@@ -3,7 +3,11 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { getOrphanedWorktreeDirReason, getWorktreeImportRefusalReason } from '../worktree-ops'
+import {
+  getOrphanedWorktreeDirReason,
+  getWorktreeImportRefusalReason,
+  isScratchDetachedWorktree
+} from '../worktree-ops'
 
 describe('getWorktreeImportRefusalReason', () => {
   let homePath: string
@@ -106,5 +110,51 @@ describe('getOrphanedWorktreeDirReason', () => {
     const path = join(root, 'other-repo')
     mkdirSync(join(path, '.git'), { recursive: true })
     expect(getOrphanedWorktreeDirReason(path)).toContain('main working tree')
+  })
+})
+
+describe('isScratchDetachedWorktree', () => {
+  let root: string
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'hive-scratch-'))
+  })
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('flags a detached worktree under the OS temp directory', () => {
+    const path = join(root, 'baseline')
+    mkdirSync(path)
+    expect(isScratchDetachedWorktree('', path)).toBe(true)
+  })
+
+  it('flags one that is already gone from disk', () => {
+    expect(isScratchDetachedWorktree('', join(root, 'removed', 'baseline'))).toBe(true)
+  })
+
+  it.skipIf(process.platform === 'win32')('flags a detached worktree under /tmp', () => {
+    // What git reports on macOS, where /tmp is a link into /private.
+    expect(isScratchDetachedWorktree('', '/private/tmp/review-commit-41641')).toBe(true)
+    expect(isScratchDetachedWorktree('', '/tmp/b34-spec/integ')).toBe(true)
+  })
+
+  it('keeps a temp worktree that is on a branch', () => {
+    const path = join(root, 'feature')
+    mkdirSync(path)
+    expect(isScratchDetachedWorktree('feature', path)).toBe(false)
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'keeps a detached worktree someone placed outside the temp directories',
+    () => {
+      expect(isScratchDetachedWorktree('', '/Users/someone/dev/my-app-deploy')).toBe(false)
+      expect(isScratchDetachedWorktree('', '/Users/someone/tmp-notes/my-app')).toBe(false)
+    }
+  )
+
+  it('does not treat a temp directory itself as a scratch worktree', () => {
+    expect(isScratchDetachedWorktree('', tmpdir())).toBe(false)
   })
 })

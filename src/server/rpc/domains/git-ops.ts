@@ -162,6 +162,20 @@ export interface GitDiffStatResult {
   readonly error?: string
 }
 
+export interface GitUnreachableCommit {
+  readonly hash: string
+  readonly subject: string
+}
+
+export interface GitUnreachableCommitsResult {
+  readonly success: boolean
+  /** How many commits HEAD has that no branch, tag or remote ref can reach. */
+  readonly count?: number
+  /** The newest of them, capped for display. */
+  readonly commits?: GitUnreachableCommit[]
+  readonly error?: string
+}
+
 export interface GitBranchDiffFile {
   readonly relativePath: string
   readonly status: string
@@ -377,6 +391,13 @@ export interface GitOpsRpcService {
     remote?: string
   ) => Effect.Effect<GitRemoteUrlResult, unknown, never>
   readonly getDiffStat: (worktreePath: string) => Effect.Effect<GitDiffStatResult, unknown, never>
+  /**
+   * The commits that removing this worktree would orphan: reachable from its HEAD and from
+   * nothing else. Only a detached HEAD can have any.
+   */
+  readonly getUnreachableCommits: (
+    worktreePath: string
+  ) => Effect.Effect<GitUnreachableCommitsResult, unknown, never>
   readonly getBranchDiffFiles: (
     worktreePath: string,
     branch: string
@@ -565,6 +586,8 @@ const parseNumstat = (line: string): GitDiffStatFile | null => {
 }
 
 const invalidBranch = (branch: string): boolean => !branch || branch.startsWith('-')
+
+const MAX_UNREACHABLE_COMMITS_LISTED = 20
 
 const preserveRequestedProjectPath = (reportedPath: string, projectPath: string): string =>
   canonicalPath(reportedPath) === canonicalPath(projectPath) ? projectPath : reportedPath
@@ -1331,6 +1354,38 @@ export const makeLiveGitOpsRpcService = (
               })
             }
             return { success: true, files }
+          } catch (error) {
+            return {
+              success: false,
+              error: error instanceof Error ? error.message : 'Unknown error'
+            }
+          }
+        },
+        catch: (cause) => cause
+      }),
+    getUnreachableCommits: (worktreePath) =>
+      Effect.tryPromise({
+        try: async (): Promise<GitUnreachableCommitsResult> => {
+          try {
+            const git = simpleGit(worktreePath)
+            const range = ['HEAD', '--not', '--branches', '--tags', '--remotes']
+            const count =
+              parseInt((await git.raw(['rev-list', '--count', ...range])).trim(), 10) || 0
+            if (count === 0) return { success: true, count: 0, commits: [] }
+            const log = await git.raw([
+              'log',
+              `--max-count=${MAX_UNREACHABLE_COMMITS_LISTED}`,
+              '--format=%h%x09%s',
+              ...range
+            ])
+            const commits = log
+              .split('\n')
+              .filter(Boolean)
+              .map((line) => {
+                const [hash, ...subject] = line.split('\t')
+                return { hash, subject: subject.join('\t') }
+              })
+            return { success: true, count, commits }
           } catch (error) {
             return {
               success: false,
@@ -2350,6 +2405,17 @@ export const makeGitOpsRpcHandlers = (
             catch: (cause) => cause
           })
           return yield* service.getDiffStat(worktreePath)
+        })
+    ],
+    [
+      'gitOps.getUnreachableCommits',
+      (params) =>
+        Effect.gen(function* () {
+          const { worktreePath } = yield* Effect.try({
+            try: () => worktreePathParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          return yield* service.getUnreachableCommits(worktreePath)
         })
     ],
     [

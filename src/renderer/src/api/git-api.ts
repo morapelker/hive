@@ -192,6 +192,18 @@ type GitDiffStatResult = {
   error?: string
 }
 
+export type GitUnreachableCommit = {
+  hash: string
+  subject: string
+}
+
+type GitUnreachableCommitsResult = {
+  success: boolean
+  count?: number
+  commits?: GitUnreachableCommit[]
+  error?: string
+}
+
 type GitBranchDiffFile = {
   relativePath: string
   status: string
@@ -365,6 +377,11 @@ export const gitApi = {
     }),
   getDiffStat: async (worktreePath: string): Promise<GitDiffStatResult> =>
     getRendererRpcClient().request<GitDiffStatResult>('gitOps.getDiffStat', {
+      worktreePath
+    }),
+  /** Commits on this worktree's HEAD that no branch, tag or remote ref can reach. */
+  getUnreachableCommits: async (worktreePath: string): Promise<GitUnreachableCommitsResult> =>
+    getRendererRpcClient().request<GitUnreachableCommitsResult>('gitOps.getUnreachableCommits', {
       worktreePath
     }),
   getBranchDiffFiles: async (

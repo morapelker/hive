@@ -99,6 +99,13 @@ import {
 } from '@/components/sidebar'
 import { baseInstanceLabel, isBaseInstance } from '@/lib/connection-project'
 import { ArchiveConfirmDialog } from '@/components/worktrees/ArchiveConfirmDialog'
+import { RemoveWorktreeConfirmDialog } from '@/components/worktrees/RemoveWorktreeConfirmDialog'
+import {
+  getDetachedRemovalRisk,
+  getWorktreeDisplayName,
+  isDetachedWorktree
+} from '@/lib/detached-worktree'
+import type { DetachedRemovalRisk } from '@/lib/detached-worktree'
 import { AddAttachmentDialog } from '@/components/worktrees/AddAttachmentDialog'
 import { ManageConnectionWorktreesDialog } from '@/components/connections/ManageConnectionWorktreesDialog'
 import { useImplementDocumentEntry } from '@/components/connections/useImplementDocumentEntry'
@@ -290,6 +297,9 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
   const [archiveConfirmFiles, setArchiveConfirmFiles] = useState<
     Array<{ path: string; additions: number; deletions: number; binary: boolean }>
   >([])
+
+  // Set while asking whether to remove a detached worktree that holds work found nowhere else
+  const [removeConfirmRisk, setRemoveConfirmRisk] = useState<DetachedRemovalRisk | null>(null)
 
   // Attachment state
   const [addAttachmentOpen, setAddAttachmentOpen] = useState(false)
@@ -488,7 +498,7 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
     setArchiveConfirmFiles([])
   }, [])
 
-  const handleUnbranch = useCallback(async (): Promise<void> => {
+  const doUnbranch = useCallback(async (): Promise<void> => {
     if (!project || !worktree) return
     const result = await unbranchWorktree(
       worktree.id,
@@ -503,13 +513,42 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
         toast.success(`Worktree "${worktree.name}" removed`)
       }
     } else {
-      gitToast.operationFailed('unbranch worktree', result.error, handleUnbranch)
+      gitToast.operationFailed(
+        worktree.branch_name ? 'unbranch worktree' : 'remove worktree',
+        result.error,
+        doUnbranch
+      )
     }
   }, [unbranchWorktree, worktree, project])
 
+  const handleUnbranch = useCallback(async (): Promise<void> => {
+    if (!worktree) return
+    // Unbranch keeps the branch, so its commits survive. A detached worktree has no branch:
+    // removing it takes its commits with it, so ask first when it holds any work.
+    if (!worktree.branch_name) {
+      const risk = await getDetachedRemovalRisk(worktree.path)
+      if (risk) {
+        setRemoveConfirmRisk(risk)
+        return
+      }
+    }
+    doUnbranch()
+  }, [worktree, doUnbranch])
+
+  const handleRemoveConfirm = useCallback((): void => {
+    setRemoveConfirmRisk(null)
+    doUnbranch()
+  }, [doUnbranch])
+
+  const handleRemoveCancel = useCallback((): void => {
+    setRemoveConfirmRisk(null)
+  }, [])
+
   if (!worktree || !project) return null
 
-  const displayBranch = liveBranch?.name ?? worktree.name
+  // A detached worktree reads as the name it is known by plus a badge, not as "HEAD".
+  const isDetached = isDetachedWorktree(worktree, liveBranch?.name)
+  const displayBranch = getWorktreeDisplayName(worktree, liveBranch?.name)
   // Single-line identity "project › worktree"; the primary worktree shows its
   // real branch instead of the placeholder worktree name.
   const secondaryLabel = worktree.is_default
@@ -813,6 +852,15 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
                       {secondaryLabel}
                     </span>
                   )}
+                  {isDetached && !isRenamingBranch && (
+                    <span
+                      className={MICRO_BADGE_PRIMARY}
+                      title="Detached HEAD: this worktree is not on a branch"
+                      data-worktree-detached-badge=""
+                    >
+                      detached
+                    </span>
+                  )}
                 </div>
 
                 <div className={CARD_TITLE_ACTIONS}>
@@ -897,6 +945,13 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
         files={archiveConfirmFiles}
         onCancel={handleArchiveCancel}
         onConfirm={handleArchiveConfirm}
+      />
+
+      <RemoveWorktreeConfirmDialog
+        worktreeName={worktree.name}
+        risk={removeConfirmRisk}
+        onCancel={handleRemoveCancel}
+        onConfirm={handleRemoveConfirm}
       />
 
       {/* Context Menu (right-click) */}
