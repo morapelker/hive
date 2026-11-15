@@ -35,6 +35,13 @@ export interface ClaudeCliPtySpawnInput {
    * flags via claude's last-flag-wins semantics.
    */
   customProviderModels?: CustomProviderModel[] | null
+  /**
+   * Which of Claude Code's two renderers the session draws with. `fullscreen` (the default)
+   * forces the fullscreen one whatever the user saved; `inherit` adds nothing and leaves the
+   * choice to Claude Code and the user's own settings. Every session shown in the app's
+   * terminal is fullscreen; only the tmux launch on a remote server inherits.
+   */
+  renderer?: ClaudeCliRenderer
 }
 
 export interface ClaudeCliPtySpawn {
@@ -66,13 +73,66 @@ export function isUltracodeEffort(value: string | null | undefined): boolean {
   return typeof value === 'string' && value.toLowerCase() === ULTRACODE
 }
 
+export type ClaudeCliRenderer = 'fullscreen' | 'inherit'
+
 /**
- * Merge `{ ultracode: true }` into the existing claude `--settings` JSON,
- * preserving the hook config already in it. Falls back to a fresh object when
- * there is no prior settings string or it cannot be parsed, so a malformed blob
- * never breaks spawning.
+ * The environment that puts Claude Code in its fullscreen renderer (alternate screen, repaint
+ * in place) instead of the classic one, which writes the whole conversation into scrollback
+ * again on every terminal resize (claude-code issue 46834). A paired Mac resizing the session
+ * depends on the clean repaint, so the app always asks for fullscreen.
+ *
+ * `CLAUDE_CODE_NO_FLICKER=1` wins over the `tui` setting the user saved (`/tui default`), in
+ * any settings file, without that file being edited. `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN`
+ * wins over both when it is on, so it is turned off here in case the user's shell exports it.
+ * Checked against Claude Code 2.1.325.
  */
-function withUltracodeSetting(hookSettingsJson: string | null | undefined): string {
+export const CLAUDE_CLI_FULLSCREEN_ENV: Readonly<Record<string, string>> = Object.freeze({
+  CLAUDE_CODE_NO_FLICKER: '1',
+  CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: '0'
+})
+
+const CLAUDE_CLI_SCROLL_SPEED_ENV = 'CLAUDE_CODE_SCROLL_SPEED'
+
+/**
+ * How many lines one wheel step scrolls a fullscreen conversation. In fullscreen mode the
+ * wheel no longer moves the terminal's scrollback: xterm.js reports each step to Claude Code,
+ * which scrolls one line per report unless it knows the terminal sends one report per notch.
+ * It recognises xterm.js by its XTVERSION reply (or VS Code's TERM_PROGRAM) and then uses 3,
+ * but xterm.js 6 does not answer XTVERSION, so in the app's terminal it stays at 1: a wheel
+ * notch moves a single line and a trackpad swipe a handful. 3 is the value Claude Code picks
+ * for xterm.js itself and the one its docs give for such terminals.
+ */
+export const CLAUDE_CLI_DEFAULT_SCROLL_SPEED = '3'
+
+/**
+ * The scroll speed as a default only: nothing is set when the environment the app runs in
+ * already has one, the user's variables in Settings are applied after it, and it is kept out
+ * of the `--settings` JSON, so a `CLAUDE_CODE_SCROLL_SPEED` in the `env` block of one of the
+ * user's own settings files (where the docs say `/scroll-speed` saves it) still wins: Claude
+ * Code applies those blocks over the environment of the process.
+ */
+function claudeCliScrollSpeedDefault(): Record<string, string> {
+  if (process.env[CLAUDE_CLI_SCROLL_SPEED_ENV]?.trim()) return {}
+  return { [CLAUDE_CLI_SCROLL_SPEED_ENV]: CLAUDE_CLI_DEFAULT_SCROLL_SPEED }
+}
+
+/**
+ * The claude `--settings` JSON for a spawn: the hook config the caller built, plus what this
+ * launch adds to it. Falls back to a fresh object when there is no prior settings string or it
+ * cannot be parsed, so a malformed blob never breaks spawning. Null when there is nothing to
+ * pass.
+ *
+ * - `ultracode`: `{ ultracode: true }`, the standing dynamic-workflow orchestration.
+ * - `fullscreen`: the fullscreen variables again, as an `env` block. An `env` block in one of
+ *   the user's settings files is applied over the process environment, so a saved
+ *   `CLAUDE_CODE_NO_FLICKER=0` there would undo the variables of the spawn. `--settings` ranks
+ *   above the user, project and local files, and its block is the one that holds.
+ */
+function buildClaudeCliSettingsArg(
+  hookSettingsJson: string | null | undefined,
+  additions: { ultracode: boolean; fullscreen: boolean }
+): string | null {
+  if (!additions.ultracode && !additions.fullscreen) return hookSettingsJson || null
   let settings: Record<string, unknown> = {}
   if (hookSettingsJson) {
     try {
@@ -84,7 +144,14 @@ function withUltracodeSetting(hookSettingsJson: string | null | undefined): stri
       settings = {}
     }
   }
-  settings[ULTRACODE] = true
+  if (additions.ultracode) settings[ULTRACODE] = true
+  if (additions.fullscreen) {
+    const existingEnv =
+      settings.env && typeof settings.env === 'object' && !Array.isArray(settings.env)
+        ? (settings.env as Record<string, unknown>)
+        : {}
+    settings.env = { ...existingEnv, ...CLAUDE_CLI_FULLSCREEN_ENV }
+  }
   return JSON.stringify(settings)
 }
 
@@ -169,14 +236,13 @@ export function buildClaudeCliPtySpawn(input: ClaudeCliPtySpawnInput): ClaudeCli
     args.push('--resume', resumeSessionId)
   }
 
-  if (ultracode) {
-    // ultracode is enabled via the settings JSON (its effort rides as
-    // `--effort xhigh` above). Merge it into
-    // the hook settings (or a fresh object when there are none) so the flag is
-    // always present when selected.
-    args.push('--settings', withUltracodeSetting(input.hookSettingsJson))
-  } else if (input.hookSettingsJson) {
-    args.push('--settings', input.hookSettingsJson)
+  // ultracode is enabled via the settings JSON (its effort rides as `--effort xhigh` above),
+  // and the fullscreen renderer is pinned there too. Both are merged into the hook settings
+  // (or a fresh object when there are none), so each is always present when it applies.
+  const fullscreen = (input.renderer ?? 'fullscreen') === 'fullscreen'
+  const settingsArg = buildClaudeCliSettingsArg(input.hookSettingsJson, { ultracode, fullscreen })
+  if (settingsArg) {
+    args.push('--settings', settingsArg)
   }
 
   const prompt = input.pendingPrompt?.trim()
@@ -192,7 +258,14 @@ export function buildClaudeCliPtySpawn(input: ClaudeCliPtySpawnInput): ClaudeCli
   // proxy (and with it the real-time usage headers). A custom provider whose
   // command inlines its own ANTHROPIC_BASE_URL= still wins inside the shell —
   // those are not Anthropic subscription accounts.
-  const env = { ...getUserEnvironmentVariables(input.db ?? null), ...getClaudeApiProxyEnv() }
+  // The renderer variables go after the user's own: a CLAUDE_CODE_NO_FLICKER=0 saved in
+  // Settings must not put an app session back in the classic renderer.
+  const env = {
+    ...(fullscreen ? claudeCliScrollSpeedDefault() : {}),
+    ...getUserEnvironmentVariables(input.db ?? null),
+    ...(fullscreen ? CLAUDE_CLI_FULLSCREEN_ENV : {}),
+    ...getClaudeApiProxyEnv()
+  }
 
   if (customCommand) {
     return {

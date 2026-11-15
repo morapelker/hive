@@ -28,6 +28,15 @@ export interface TerminalOpts {
    */
   shiftEnterAsNewline?: boolean
   /**
+   * When true, the clear-screen shortcut (Cmd+K) and `clear()` ask the program to repaint
+   * itself (Ctrl+L, a form feed) while it is on the alternate screen, instead of wiping the
+   * terminal's buffer. A fullscreen TUI owns every cell it drew and never learns that the
+   * terminal erased them, so a wipe leaves a blank screen until its next full repaint. Claude
+   * Code in fullscreen mode redraws the conversation on Ctrl+L. On the normal screen the
+   * shortcut clears as before. xterm only.
+   */
+  redrawOnClear?: boolean
+  /**
    * Whether the terminal is visible at the moment of mount.
    *
    * Critical for Ghostty: the native NSView is positioned exclusively from JS

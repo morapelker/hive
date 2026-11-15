@@ -207,7 +207,11 @@ export async function launchClaudeCliInTmux(
       worktreePath,
       claudeBinary,
       hookSettingsJson,
-      db
+      db,
+      // A tmux pane on a remote server is not the app's own terminal: the renderer stays
+      // whatever Claude Code and that machine's settings choose, as before the app's local
+      // sessions were moved to fullscreen.
+      renderer: 'inherit'
     })
 
     // buildClaudeCliPtySpawn already puts --dangerously-skip-permissions first

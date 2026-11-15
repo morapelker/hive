@@ -1,11 +1,27 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Session } from '../../db/types'
+import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
 import {
+  CLAUDE_CLI_DEFAULT_SCROLL_SPEED,
+  CLAUDE_CLI_FULLSCREEN_ENV,
   buildClaudeCliPtySpawn,
   buildCustomProviderShellSpawn,
   isUltracodeEffort,
   normalizeClaudeCliModel
 } from '../claude-cli-spawner'
+
+/** The `--settings` JSON of a spawn that carries no hook settings: the fullscreen block alone. */
+const FULLSCREEN_SETTINGS = JSON.stringify({ env: CLAUDE_CLI_FULLSCREEN_ENV })
+
+/** The `--settings` JSON of a spawn whose caller passed `hookSettingsJson`. */
+function withFullscreen(hookSettingsJson: string): string {
+  return JSON.stringify({ ...JSON.parse(hookSettingsJson), env: CLAUDE_CLI_FULLSCREEN_ENV })
+}
+
+function settingsOf(args: string[]): Record<string, unknown> | null {
+  const index = args.indexOf('--settings')
+  return index === -1 ? null : JSON.parse(args[index + 1])
+}
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -61,6 +77,8 @@ describe('buildClaudeCliPtySpawn', () => {
       'high',
       '--resume',
       'claude-uuid-1',
+      '--settings',
+      FULLSCREEN_SETTINGS,
       'Implement this plan'
     ])
     expect(spawn.resumeSessionId).toBe('claude-uuid-1')
@@ -125,7 +143,9 @@ describe('buildClaudeCliPtySpawn', () => {
       '--model',
       'fable',
       '--effort',
-      'max'
+      'max',
+      '--settings',
+      FULLSCREEN_SETTINGS
     ])
   })
 
@@ -148,7 +168,9 @@ describe('buildClaudeCliPtySpawn', () => {
       '--model',
       'opus',
       '--effort',
-      'max'
+      'max',
+      '--settings',
+      FULLSCREEN_SETTINGS
     ])
   })
 
@@ -183,7 +205,7 @@ describe('buildClaudeCliPtySpawn', () => {
       claudeSessionId: null
     })
 
-    expect(spawn.args).toEqual(['--dangerously-skip-permissions'])
+    expect(spawn.args).toEqual(['--dangerously-skip-permissions', '--settings', FULLSCREEN_SETTINGS])
   })
 
   it('places hook settings immediately before the trailing prompt argument', () => {
@@ -205,12 +227,12 @@ describe('buildClaudeCliPtySpawn', () => {
       '--resume',
       'claude-uuid-1',
       '--settings',
-      hookSettingsJson,
+      withFullscreen(hookSettingsJson),
       'Implement this plan'
     ])
   })
 
-  it('omits the settings flag when hook settings are absent', () => {
+  it('passes the fullscreen settings alone when hook settings are absent', () => {
     const spawn = buildClaudeCliPtySpawn({
       session: makeSession(),
       worktreePath: '/repo/worktree',
@@ -218,8 +240,7 @@ describe('buildClaudeCliPtySpawn', () => {
       claudeBinary: 'claude'
     })
 
-    expect(spawn.args).not.toContain('--settings')
-    expect(spawn.args.at(-1)).toBe('Say hi')
+    expect(spawn.args.slice(-3)).toEqual(['--settings', FULLSCREEN_SETTINGS, 'Say hi'])
   })
 
   it('recognizes the ultracode effort case-insensitively', () => {
@@ -265,7 +286,10 @@ describe('buildClaudeCliPtySpawn', () => {
     expect(spawn.args[spawn.args.indexOf('--effort') + 1]).toBe('xhigh')
     const settingsIndex = spawn.args.indexOf('--settings')
     expect(settingsIndex).toBeGreaterThanOrEqual(0)
-    expect(JSON.parse(spawn.args[settingsIndex + 1])).toEqual({ ultracode: true })
+    expect(JSON.parse(spawn.args[settingsIndex + 1])).toEqual({
+      ultracode: true,
+      env: CLAUDE_CLI_FULLSCREEN_ENV
+    })
   })
 
   describe('custom provider commands', () => {
@@ -297,7 +321,7 @@ describe('buildClaudeCliPtySpawn', () => {
         '--resume',
         'claude-uuid-1',
         '--settings',
-        hookSettingsJson,
+        withFullscreen(hookSettingsJson),
         'Implement this plan'
       ])
       expect(spawn.cwd).toBe('/repo/worktree')
@@ -344,9 +368,11 @@ describe('buildClaudeCliPtySpawn', () => {
         customProviderCommand: 'claudex'
       })
 
+      // The hook settings pass through with the fullscreen block and nothing else: no
+      // `ultracode` key.
       const settingsIndex = spawn.args.indexOf('--settings')
       expect(settingsIndex).toBeGreaterThanOrEqual(0)
-      expect(spawn.args[settingsIndex + 1]).toBe(hookSettingsJson)
+      expect(spawn.args[settingsIndex + 1]).toBe(withFullscreen(hookSettingsJson))
       expect(spawn.args).not.toContain('--effort')
     })
 
@@ -489,7 +515,8 @@ describe('buildClaudeCliPtySpawn', () => {
       })
 
       expect(spawn.args).not.toContain('--effort')
-      expect(spawn.args).not.toContain('--settings')
+      // No ultracode setting either: the settings carry the fullscreen block alone.
+      expect(settingsOf(spawn.args)).toEqual({ env: CLAUDE_CLI_FULLSCREEN_ENV })
     })
 
     it('ignores declared models whose slug is blank', () => {
@@ -526,7 +553,7 @@ describe('buildClaudeCliPtySpawn', () => {
       })
 
       const settingsIndex = spawn.args.indexOf('--settings')
-      expect(spawn.args[settingsIndex + 1]).toBe(hookSettingsJson)
+      expect(spawn.args[settingsIndex + 1]).toBe(withFullscreen(hookSettingsJson))
       expect(spawn.args).not.toContain('--effort')
       // The declared model itself still rides along.
       expect(spawn.args).toContain('--model')
@@ -562,6 +589,218 @@ describe('buildClaudeCliPtySpawn', () => {
       })
 
       expect(spawn.command).toBe('/usr/local/bin/claude')
+    })
+  })
+
+  describe('fullscreen renderer', () => {
+    const originalScrollSpeed = process.env.CLAUDE_CODE_SCROLL_SPEED
+    const originalShell = process.env.SHELL
+
+    beforeEach(() => {
+      delete process.env.CLAUDE_CODE_SCROLL_SPEED
+    })
+
+    afterEach(() => {
+      if (originalScrollSpeed === undefined) delete process.env.CLAUDE_CODE_SCROLL_SPEED
+      else process.env.CLAUDE_CODE_SCROLL_SPEED = originalScrollSpeed
+      if (originalShell === undefined) delete process.env.SHELL
+      else process.env.SHELL = originalShell
+    })
+
+    /** A database whose Settings hold these environment variables. */
+    function dbWithEnvVars(vars: Record<string, string>): { getSetting(key: string): string | null } {
+      const environmentVariables = Object.entries(vars).map(([key, value]) => ({ key, value }))
+      return {
+        getSetting: (key) =>
+          key === APP_SETTINGS_DB_KEY ? JSON.stringify({ environmentVariables }) : null
+      }
+    }
+
+    it('asks for fullscreen with the variable that wins over a saved `tui` setting', () => {
+      // CLAUDE_CODE_NO_FLICKER=1 beats `tui: "default"` in any settings file, and
+      // CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN beats both when on, so it is turned off.
+      expect(CLAUDE_CLI_FULLSCREEN_ENV).toEqual({
+        CLAUDE_CODE_NO_FLICKER: '1',
+        CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: '0'
+      })
+    })
+
+    // Every interactive Claude session the app shows comes out of this builder: what differs
+    // between the ways of starting one is the session row and the prompt.
+    it.each([
+      ['a new session with a prompt (ticket launch, handoff)', {}, 'Implement the ticket'],
+      ['a new session without a prompt (session tab)', {}, null],
+      ['a plan-mode session', { mode: 'plan' as const }, 'Plan the ticket'],
+      ['a super-plan session', { mode: 'super-plan' as const }, 'Plan the ticket'],
+      ['a resumed session (restart, reopened ticket)', { claude_session_id: 'claude-uuid-1' }, null],
+      [
+        'a resumed session with a follow-up',
+        { claude_session_id: 'claude-uuid-1' },
+        'One more thing'
+      ],
+      ['an ultracode session', { model_id: 'opus', model_variant: 'ultracode' }, 'Go']
+    ])('starts %s in fullscreen', (_name, session, pendingPrompt) => {
+      const spawn = buildClaudeCliPtySpawn({
+        session: makeSession(session),
+        worktreePath: '/repo/worktree',
+        pendingPrompt,
+        claudeBinary: 'claude',
+        hookSettingsJson: '{"hooks":{"Stop":[{"id":1}]}}'
+      })
+
+      expect(spawn.env).toMatchObject(CLAUDE_CLI_FULLSCREEN_ENV)
+      const settings = settingsOf(spawn.args)
+      expect(settings?.env).toEqual(CLAUDE_CLI_FULLSCREEN_ENV)
+      // The hook config the app's ticket states depend on is still there.
+      expect(settings?.hooks).toEqual({ Stop: [{ id: 1 }] })
+      // The saved renderer is overridden for this process only: no `tui` key is passed, and
+      // nothing is written to a settings file.
+      expect(settings).not.toHaveProperty('tui')
+      if (pendingPrompt) expect(spawn.args.at(-1)).toBe(pendingPrompt)
+    })
+
+    it('starts a custom provider command in fullscreen', () => {
+      process.env.SHELL = '/bin/zsh'
+      const spawn = buildClaudeCliPtySpawn({
+        session: makeSession({ custom_provider_id: 'prov-1' }),
+        worktreePath: '/repo/worktree',
+        pendingPrompt: 'Go',
+        claudeBinary: null,
+        hookSettingsJson: '{"hooks":{}}',
+        customProviderCommand: 'claudex'
+      })
+
+      expect(spawn.command).toBe('/bin/zsh')
+      expect(spawn.env).toMatchObject(CLAUDE_CLI_FULLSCREEN_ENV)
+      expect(settingsOf(spawn.args)?.env).toEqual(CLAUDE_CLI_FULLSCREEN_ENV)
+    })
+
+    it("holds against the user's own environment variables from Settings", () => {
+      const spawn = buildClaudeCliPtySpawn({
+        session: makeSession(),
+        worktreePath: '/repo/worktree',
+        pendingPrompt: 'Go',
+        claudeBinary: 'claude',
+        db: dbWithEnvVars({
+          CLAUDE_CODE_NO_FLICKER: '0',
+          CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: '1',
+          MY_TOKEN: 'abc'
+        }) as never
+      })
+
+      expect(spawn.env.CLAUDE_CODE_NO_FLICKER).toBe('1')
+      expect(spawn.env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN).toBe('0')
+      // The rest of the user's variables are passed as before.
+      expect(spawn.env.MY_TOKEN).toBe('abc')
+    })
+
+    it('keeps the other variables of an env block the hook settings already carry', () => {
+      const spawn = buildClaudeCliPtySpawn({
+        session: makeSession(),
+        worktreePath: '/repo/worktree',
+        pendingPrompt: null,
+        claudeBinary: 'claude',
+        hookSettingsJson: '{"hooks":{},"env":{"KEEP_ME":"1","CLAUDE_CODE_NO_FLICKER":"0"}}'
+      })
+
+      expect(settingsOf(spawn.args)?.env).toEqual({ KEEP_ME: '1', ...CLAUDE_CLI_FULLSCREEN_ENV })
+    })
+
+    it('still asks for fullscreen when the hook settings cannot be parsed', () => {
+      const spawn = buildClaudeCliPtySpawn({
+        session: makeSession(),
+        worktreePath: '/repo/worktree',
+        pendingPrompt: null,
+        claudeBinary: 'claude',
+        hookSettingsJson: '{not json'
+      })
+
+      expect(settingsOf(spawn.args)).toEqual({ env: CLAUDE_CLI_FULLSCREEN_ENV })
+    })
+
+    it('leaves the renderer alone when asked to inherit it (the tmux launch on a remote server)', () => {
+      const hookSettingsJson = '{"hooks":{"Stop":[{"id":1}]}}'
+      const spawn = buildClaudeCliPtySpawn({
+        session: makeSession({ claude_session_id: 'claude-uuid-1' }),
+        worktreePath: '/repo/worktree',
+        claudeBinary: 'claude',
+        hookSettingsJson,
+        renderer: 'inherit'
+      })
+
+      expect(spawn.env).not.toHaveProperty('CLAUDE_CODE_NO_FLICKER')
+      expect(spawn.env).not.toHaveProperty('CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN')
+      expect(spawn.env).not.toHaveProperty('CLAUDE_CODE_SCROLL_SPEED')
+      // The hook settings go through untouched, byte for byte.
+      expect(spawn.args).toEqual([
+        '--dangerously-skip-permissions',
+        '--model',
+        'sonnet',
+        '--effort',
+        'high',
+        '--resume',
+        'claude-uuid-1',
+        '--settings',
+        hookSettingsJson
+      ])
+
+      const bare = buildClaudeCliPtySpawn({
+        session: makeSession(),
+        worktreePath: '/repo/worktree',
+        claudeBinary: 'claude',
+        renderer: 'inherit'
+      })
+      expect(bare.args).not.toContain('--settings')
+    })
+
+    describe('wheel scroll speed', () => {
+      it('defaults to the speed Claude Code uses for xterm.js', () => {
+        const spawn = buildClaudeCliPtySpawn({
+          session: makeSession(),
+          worktreePath: '/repo/worktree',
+          pendingPrompt: null,
+          claudeBinary: 'claude'
+        })
+
+        expect(CLAUDE_CLI_DEFAULT_SCROLL_SPEED).toBe('3')
+        expect(spawn.env.CLAUDE_CODE_SCROLL_SPEED).toBe('3')
+      })
+
+      it('stays out of the settings JSON, so a speed saved in a settings file wins', () => {
+        const spawn = buildClaudeCliPtySpawn({
+          session: makeSession(),
+          worktreePath: '/repo/worktree',
+          pendingPrompt: null,
+          claudeBinary: 'claude'
+        })
+
+        expect(settingsOf(spawn.args)?.env).not.toHaveProperty('CLAUDE_CODE_SCROLL_SPEED')
+      })
+
+      it("is not set over a speed in the app's own environment", () => {
+        process.env.CLAUDE_CODE_SCROLL_SPEED = '5'
+        const spawn = buildClaudeCliPtySpawn({
+          session: makeSession(),
+          worktreePath: '/repo/worktree',
+          pendingPrompt: null,
+          claudeBinary: 'claude'
+        })
+
+        // Absent from the spawn's overrides: the PTY inherits the 5 from the process.
+        expect(spawn.env).not.toHaveProperty('CLAUDE_CODE_SCROLL_SPEED')
+      })
+
+      it("gives way to a speed in the user's environment variables from Settings", () => {
+        const spawn = buildClaudeCliPtySpawn({
+          session: makeSession(),
+          worktreePath: '/repo/worktree',
+          pendingPrompt: null,
+          claudeBinary: 'claude',
+          db: dbWithEnvVars({ CLAUDE_CODE_SCROLL_SPEED: '1' }) as never
+        })
+
+        expect(spawn.env.CLAUDE_CODE_SCROLL_SPEED).toBe('1')
+      })
     })
   })
 })

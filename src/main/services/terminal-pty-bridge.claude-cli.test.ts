@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => {
     dataCallbacks,
     claudeSessionWatchCallbacks,
     hookSubscribers,
+    resolveCodexBinaryPath: vi.fn(() => '/usr/local/bin/codex'),
+    watchForCodexSessionId: vi.fn(() => ({ close: vi.fn() })),
     reassertSessionFolderTrust: vi.fn(async () => ({ wasMissing: true })),
     publishDesktopBackendEvent: vi.fn(),
     getDatabase: vi.fn(),
@@ -126,6 +128,17 @@ vi.mock('./claude-session-watcher', () => ({
   )
 }))
 
+// A codex row reaches the same entry point; its binary and its rollout watcher are stubbed so
+// that one can be started here without a codex install.
+vi.mock('./codex-binary-resolver', () => ({
+  resolveCodexBinaryPath: mocks.resolveCodexBinaryPath
+}))
+
+vi.mock('./codex-cli-rollout', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./codex-cli-rollout')>()),
+  watchForCodexSessionId: mocks.watchForCodexSessionId
+}))
+
 vi.mock('./claude-hook-server', () => ({
   getClaudeHookServer: mocks.getClaudeHookServer,
   buildClaudeCliHookSettings: mocks.buildClaudeCliHookSettings,
@@ -176,6 +189,14 @@ import { externalizeGoalHandoffPlan } from './claude-cli-plan-handoff'
 import { CLAUDE_CLI_LAUNCH_TIMEOUT_MS } from './claude-cli-launch-watch'
 import { reassertClaudeCliPromptSubmit } from './claude-cli-pty-prompt'
 import { __resetRuntimeRegistryForTests } from '../effect/_shared/runtime'
+import { CLAUDE_CLI_FULLSCREEN_ENV } from './claude-cli-spawner'
+
+/**
+ * The `--settings` JSON a Claude spawn carries for the hook settings the hook server built: the
+ * same object with the fullscreen renderer pinned in its `env` block.
+ */
+const spawnSettings = (hookSettingsJson: string): string =>
+  JSON.stringify({ ...JSON.parse(hookSettingsJson), env: CLAUDE_CLI_FULLSCREEN_ENV })
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -267,7 +288,7 @@ describe('Claude CLI terminal hook status wiring', () => {
       '--resume',
       'claude-session-1',
       '--settings',
-      '{"hooks":{"mock":true}}',
+      spawnSettings('{"hooks":{"mock":true}}'),
       'Implement the plan'
     ])
     expect(mocks.publishClaudeCliStatus).not.toHaveBeenCalled()
@@ -861,6 +882,150 @@ describe('Claude CLI terminal hook status wiring', () => {
     exitCallback?.(0)
 
     expect(mocks.publishClaudeCliStatus).not.toHaveBeenCalled()
+  })
+})
+
+describe('Claude CLI sessions start in fullscreen mode', () => {
+  const SESSION = 'hive-session-1'
+  const HOOK_SETTINGS = '{"hooks":{"mock":true}}'
+
+  beforeEach(() => {
+    mocks.exitCallbacks.clear()
+    mocks.dataCallbacks.clear()
+    mocks.claudeSessionWatchCallbacks.clear()
+    vi.clearAllMocks()
+    __resetRuntimeRegistryForTests()
+
+    mocks.ptyService.has.mockReturnValue(false)
+    mocks.getClaudeHookServer.mockResolvedValue({ port: 45678 })
+    mocks.buildClaudeCliHookSettings.mockReturnValue(HOOK_SETTINGS)
+    mocks.publishDesktopBackendEvent.mockResolvedValue(true)
+  })
+
+  afterEach(() => {
+    cleanupTerminals()
+  })
+
+  /** What the last PTY was created with. */
+  const lastSpawn = (): { command: string; args: string[]; env: Record<string, string> } => {
+    const [, options] = mocks.ptyService.create.mock.calls.at(-1)! as unknown as [
+      string,
+      { command: string; args: string[]; env: Record<string, string> }
+    ]
+    return options
+  }
+
+  const settingsOf = (args: string[]): Record<string, unknown> =>
+    JSON.parse(args[args.indexOf('--settings') + 1])
+
+  // Every way the app starts or resumes an interactive Claude CLI session ends in the same
+  // call, `terminalOps.createClaudeCli` (a paired Mac sends that same call over its link); what
+  // tells the ways apart is the session row and the prompt that comes with it.
+  // The last column is what tells the start apart on argv: the flags it must (`+`) or must not
+  // (`-`) carry.
+  it.each<[string, Partial<Session>, string | null | undefined, string[]]>([
+    [
+      'a new ticket (the ticket prompt on a session that never ran)',
+      { claude_session_id: null },
+      'Please implement the following ticket.',
+      ['-resume', '+dangerously-skip-permissions']
+    ],
+    ['a session tab opened without a prompt', { claude_session_id: null }, null, ['-resume']],
+    [
+      'a plan-mode ticket',
+      { claude_session_id: null, mode: 'plan' },
+      'Please plan the following ticket.',
+      ['-resume', '+permission-mode']
+    ],
+    [
+      'a restart, or reopening the ticket of a session that already ran',
+      {},
+      undefined,
+      ['+resume', '-fork-session']
+    ],
+    ['a follow-up that respawns an ended session', {}, 'One more thing', ['+resume']],
+    [
+      'a handoff (a new build session that carries the plan)',
+      { claude_session_id: null, mode: 'build' },
+      'Implement the following plan\n\n## Plan',
+      ['-resume', '+dangerously-skip-permissions']
+    ],
+    [
+      'a session whose id is still the SDK placeholder',
+      { claude_session_id: 'pending::0000' },
+      'Go',
+      ['-resume']
+    ],
+    [
+      'a session in a connection (no worktree)',
+      { claude_session_id: null, worktree_id: null, connection_id: 'connection-1' },
+      'Go',
+      ['-resume']
+    ]
+  ])('%s', async (_name, session, pendingPrompt, flags) => {
+    setupDb(makeSession(session))
+
+    const result = await createClaudeCliTerminal(
+      SESSION,
+      pendingPrompt === undefined ? undefined : { pendingPrompt }
+    )
+
+    expect(result).toEqual({ success: true, cols: 120, rows: 40 })
+    const spawn = lastSpawn()
+    expect(spawn.command).toBe('/usr/local/bin/claude')
+    // The case is the start it says it is.
+    for (const flag of flags) {
+      const present = spawn.args.includes(`--${flag.slice(1)}`)
+      expect({ flag, present }).toEqual({ flag, present: flag.startsWith('+') })
+    }
+    if (pendingPrompt) expect(spawn.args.at(-1)).toContain(pendingPrompt)
+    // The variables that put Claude Code in its fullscreen renderer whatever `tui` the user
+    // saved, in the environment of the process...
+    expect(spawn.env).toMatchObject(CLAUDE_CLI_FULLSCREEN_ENV)
+    // ...and again in --settings, above an `env` block of the user's own settings files.
+    const settings = settingsOf(spawn.args)
+    expect(settings.env).toEqual(CLAUDE_CLI_FULLSCREEN_ENV)
+    // The hooks that drive the ticket's working / question / plan-ready / completed states
+    // ride in the same settings, untouched.
+    expect(settings.hooks).toEqual({ mock: true })
+    // Nothing names the renderer as a setting: the user's saved `tui` is overridden for this
+    // process, never rewritten.
+    expect(settings).not.toHaveProperty('tui')
+  })
+
+  it('does not respawn, or touch, a session that is already running', async () => {
+    // A view mounting onto a live PTY (and a follow-up sent to one) reuses the process the app
+    // started earlier, in whatever renderer it started with.
+    setupDb()
+    mocks.ptyService.has.mockReturnValue(true)
+
+    await createClaudeCliTerminal(SESSION, { pendingPrompt: 'One more thing' })
+
+    // The follow-up is pasted into the running process: no key, no escape sequence and no
+    // command that would switch its renderer is written.
+    const written = mocks.ptyService.write.mock.calls.map(([, data]) => String(data)).join('')
+    expect(written).toContain('One more thing')
+    expect(written).not.toContain('/tui')
+    expect(written).not.toContain('\x1b[?1049')
+  })
+
+  it('leaves a Codex CLI session as it was', async () => {
+    setupDb(
+      makeSession({
+        agent_sdk: 'codex-cli',
+        claude_session_id: null,
+        model_provider_id: 'codex',
+        model_id: 'gpt-5.4'
+      })
+    )
+
+    await createClaudeCliTerminal(SESSION, { pendingPrompt: 'Go' })
+
+    const spawn = lastSpawn()
+    expect(spawn.command).toBe('/usr/local/bin/codex')
+    expect(Object.keys(spawn.env).filter((key) => key.startsWith('CLAUDE_CODE_'))).toEqual([])
+    expect(spawn.args).not.toContain('--settings')
+    expect(spawn.args.join(' ')).not.toContain('CLAUDE_CODE_NO_FLICKER')
   })
 })
 

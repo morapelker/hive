@@ -29,7 +29,7 @@ import {
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 import { extractPlanTitle, normalizeFilename } from '@shared/types/branch-utils'
-import { isAgentCli, supportsGoalMode } from '@shared/types/agent-sdk'
+import { isAgentCli, isClaudeCli, supportsGoalMode } from '@shared/types/agent-sdk'
 import '@xterm/xterm/css/xterm.css'
 import '@/styles/xterm.css'
 
@@ -601,6 +601,9 @@ export function ClaudeCliSessionView({
           showToolbar={false}
           backendTypeOverride="xterm"
           shiftEnterAsNewline
+          // Claude Code runs in its fullscreen renderer here (see CLAUDE_CLI_FULLSCREEN_ENV):
+          // Cmd+K has it repaint the conversation. Codex keeps the plain clear.
+          redrawOnClear={isClaudeCli(sessionRecord?.agent_sdk)}
           createTerminal={createClaudeTerminal}
           onStatusChange={handleStatusChange}
         />

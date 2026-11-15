@@ -6,7 +6,9 @@ import { SearchAddon } from '@xterm/addon-search'
 import type { TerminalBackend, TerminalOpts, TerminalBackendCallbacks } from './types'
 import { DEFAULT_XTERM_FONT_STACK } from './terminal-fonts'
 import { projectApi } from '@/api/project-api'
+import { systemApi } from '@/api/system-api'
 import { terminalApi } from '@/api/terminal-api'
+import { useSettingsStore } from '@/stores/useSettingsStore'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import type { GhosttyTerminalConfig } from '@shared/types/terminal'
@@ -132,6 +134,23 @@ function isAppShortcut(e: KeyboardEvent): boolean {
   return false
 }
 
+/** Ctrl+L: the form feed a fullscreen TUI takes as "repaint the whole screen". */
+const REDRAW_SCREEN = '\x0c'
+
+/**
+ * Open a link clicked in the terminal. A web address goes to the browser, the way every other
+ * link in the app does (`shell.openPath` only takes file paths and fails on a URL); anything
+ * else is opened with its default app.
+ */
+function openTerminalLink(uri: string): void {
+  if (/^https?:\/\//i.test(uri)) {
+    const customCommand = useSettingsStore.getState().customChromeCommand || undefined
+    systemApi.openInChrome(uri, customCommand).catch(console.error)
+    return
+  }
+  projectApi.openPath(uri).catch(console.error)
+}
+
 /**
  * xterm.js-based terminal backend. Cross-platform.
  * Uses node-pty on the main process side for shell I/O.
@@ -158,6 +177,7 @@ export class XtermBackend implements TerminalBackend {
   private replaySuppressionTimer: ReturnType<typeof setTimeout> | null = null
   private replayOscDisposable: { dispose: () => void } | null = null
   private shiftEnterAsNewline = false
+  private redrawOnClear = false
   private ghosttyConfig: GhosttyTerminalConfig = {}
 
   /** Callback for the host to wire Cmd+F search toggling */
@@ -168,6 +188,7 @@ export class XtermBackend implements TerminalBackend {
   mount(container: HTMLDivElement, opts: TerminalOpts, callbacks: TerminalBackendCallbacks): void {
     this.terminalId = opts.terminalId
     this.shiftEnterAsNewline = opts.shiftEnterAsNewline ?? false
+    this.redrawOnClear = opts.redrawOnClear ?? false
     this.container = container
     container.innerHTML = ''
 
@@ -215,7 +236,7 @@ export class XtermBackend implements TerminalBackend {
       }
 
       if (e.metaKey && e.key === 'k' && e.type === 'keydown') {
-        terminal.clear()
+        this.clear()
         this.onClearRequest?.()
         return false
       }
@@ -262,7 +283,7 @@ export class XtermBackend implements TerminalBackend {
     this.searchAddon = searchAddon
 
     const webLinksAddon = new WebLinksAddon((_event, uri) => {
-      projectApi.openPath(uri).catch(console.error)
+      openTerminalLink(uri)
     })
     terminal.loadAddon(webLinksAddon)
 
@@ -436,6 +457,10 @@ export class XtermBackend implements TerminalBackend {
     this.shiftEnterAsNewline = enabled
   }
 
+  setRedrawOnClear(enabled: boolean): void {
+    this.redrawOnClear = enabled
+  }
+
   write(data: string): void {
     this.terminal?.write(data)
   }
@@ -448,8 +473,19 @@ export class XtermBackend implements TerminalBackend {
     this.terminal?.focus()
   }
 
+  /**
+   * Clear the screen (Cmd+K, the toolbar). With `redrawOnClear`, a program on the alternate
+   * screen is asked to repaint instead: wiping the buffer under a fullscreen TUI erases what
+   * it drew without telling it, and the screen stays blank.
+   */
   clear(): void {
-    this.terminal?.clear()
+    const terminal = this.terminal
+    if (!terminal) return
+    if (this.redrawOnClear && terminal.buffer.active.type === 'alternate') {
+      terminalApi.write(this.terminalId, REDRAW_SCREEN)
+      return
+    }
+    terminal.clear()
   }
 
   updateTheme(): void {

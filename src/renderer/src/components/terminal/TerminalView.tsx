@@ -28,6 +28,8 @@ interface TerminalViewProps {
   showToolbar?: boolean
   backendTypeOverride?: TerminalBackendType
   shiftEnterAsNewline?: boolean
+  /** See `TerminalOpts.redrawOnClear`: Cmd+K repaints a fullscreen TUI instead of wiping it. */
+  redrawOnClear?: boolean
   createTerminal?: Parameters<ITerminalBackend['mount']>[1]['createTerminal']
   onStatusChange?: (status: 'creating' | 'running' | 'exited', exitCode?: number) => void
 }
@@ -57,6 +59,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
     showToolbar = true,
     backendTypeOverride,
     shiftEnterAsNewline,
+    redrawOnClear,
     createTerminal,
     onStatusChange
   },
@@ -129,6 +132,8 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
 
   const shiftEnterAsNewlineRef = useRef(shiftEnterAsNewline ?? false)
   shiftEnterAsNewlineRef.current = shiftEnterAsNewline ?? false
+  const redrawOnClearRef = useRef(redrawOnClear ?? false)
+  redrawOnClearRef.current = redrawOnClear ?? false
 
   // Expose imperative methods to parent via ref
   useImperativeHandle(
@@ -174,6 +179,14 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
       backend.setShiftEnterAsNewline(shiftEnterAsNewline ?? false)
     }
   }, [shiftEnterAsNewline])
+
+  // Same for the clear-screen behavior: the session's CLI may only be known after the mount.
+  useEffect(() => {
+    const backend = backendRef.current
+    if (backend instanceof XtermBackend) {
+      backend.setRedrawOnClear(redrawOnClear ?? false)
+    }
+  }, [redrawOnClear])
 
   // Re-fit and focus when becoming visible.
   // Note: GhosttyBackend.setVisible(true) already restores macOS first responder
@@ -381,6 +394,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
           shell: config.shell,
           createTerminal,
           shiftEnterAsNewline: shiftEnterAsNewlineRef.current,
+          redrawOnClear: redrawOnClearRef.current,
           // Seed visibility from the current UI state. Critical when the
           // backend is recreated (e.g. fontSize change, cwd change, StrictMode
           // double-mount) while the bottom panel is collapsed: defaulting to
