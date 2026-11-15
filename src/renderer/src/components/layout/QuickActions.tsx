@@ -12,9 +12,14 @@ import { projectApi } from '@/api/project-api'
 import { connectionApi } from '@/api/connection-api'
 import { settingsApi } from '@/api/settings-api'
 import cmuxIcon from '@/assets/cmux-icon.png'
+import rexIcon from '@/assets/rex-icon.png'
 
 function CmuxIcon({ className }: { className?: string }): React.JSX.Element {
   return <img src={cmuxIcon} className={className} alt="" />
+}
+
+function RexIcon({ className }: { className?: string }): React.JSX.Element {
+  return <img src={rexIcon} className={className} alt="" />
 }
 
 function CursorIcon({ className }: { className?: string }): React.JSX.Element {
@@ -296,6 +301,7 @@ const TERMINAL_LABELS: Record<TerminalOption, string> = {
   kitty: 'Kitty',
   ghostty: 'Ghostty',
   cmux: 'cmux',
+  rex: 'Rex',
   powershell: 'PowerShell',
   cmd: 'CMD',
   custom: 'Terminal'
@@ -313,6 +319,8 @@ function TerminalIcon({
       return <GhosttyIcon className={className} />
     case 'cmux':
       return <CmuxIcon className={className} />
+    case 'rex':
+      return <RexIcon className={className} />
     case 'warp':
       return <WarpIcon className={className} />
     default:

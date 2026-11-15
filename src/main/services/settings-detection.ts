@@ -142,6 +142,12 @@ export function detectTerminals(): DetectedApp[] {
             id: 'cmux',
             name: 'cmux',
             commands: ['/Applications/cmux.app']
+          },
+          {
+            id: 'rex',
+            name: 'Rex',
+            // The preview channel installs as "Rex Beta.app"; both share one bundle id.
+            commands: ['/Applications/Rex.app', '/Applications/Rex Beta.app']
           }
         ]
       : currentPlatform === 'win32'

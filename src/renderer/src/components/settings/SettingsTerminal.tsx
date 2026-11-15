@@ -27,6 +27,7 @@ const MAC_TERMINAL_OPTIONS: { id: TerminalOption; label: string }[] = [
   { id: 'kitty', label: 'kitty' },
   { id: 'ghostty', label: 'Ghostty' },
   { id: 'cmux', label: 'cmux' },
+  { id: 'rex', label: 'Rex' },
   { id: 'custom', label: 'Custom Command' }
 ]
 

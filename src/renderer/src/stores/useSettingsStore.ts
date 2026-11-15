@@ -49,6 +49,7 @@ export type TerminalOption =
   | 'kitty'
   | 'ghostty'
   | 'cmux'
+  | 'rex'
   | 'powershell'
   | 'cmd'
   | 'custom'

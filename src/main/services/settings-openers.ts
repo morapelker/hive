@@ -70,6 +70,11 @@ function launchTerminal(
       case 'cmux':
         spawnDetached('open', ['-a', 'cmux', targetPath], { detached: true })
         break
+      case 'rex':
+        // By bundle id, not name: the app is "Rex Beta" on the preview channel, so
+        // `open -a Rex` finds nothing. Rex opens a folder as a new tab in that folder.
+        spawnDetached('open', ['-b', 'com.superlogical.rex', targetPath], { detached: true })
+        break
       default:
         spawnDetached('open', ['-a', 'Terminal', targetPath], { detached: true })
     }
