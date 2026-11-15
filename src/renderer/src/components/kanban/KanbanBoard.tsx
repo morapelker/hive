@@ -13,6 +13,7 @@ import { KanbanColumn } from '@/components/kanban/KanbanColumn'
 import { KanbanTicketModal } from '@/components/kanban/KanbanTicketModal'
 import { BoardChatLauncher } from '@/components/kanban/BoardChatLauncher'
 import { BoardSearchBar } from '@/components/kanban/BoardSearchBar'
+import { BoardTopRow } from '@/components/kanban/BoardTopRow'
 import { FavoriteTicketsPane } from '@/components/kanban/FavoriteTicketsPane'
 import { MergeOnDoneDialog } from './MergeOnDoneDialog'
 import { RenameTicketDialog } from './RenameTicketModal'
@@ -493,14 +494,12 @@ export function KanbanBoard({ projectId, connectionId, isPinnedMode }: KanbanBoa
             </div>
           </>
         )}
-        {isPinnedMode && (
-          <div className="flex items-center gap-2 px-3 pt-3 pb-0">
-            <Pin className="h-4 w-4 text-muted-foreground" />
-            <h2 className="text-sm font-medium text-muted-foreground">
-              Pinned Projects ({pinnedProjectIdsArray.length})
-            </h2>
-          </div>
-        )}
+        <BoardTopRow
+          projectId={projectId}
+          connectionId={connectionId}
+          isPinnedMode={isPinnedMode}
+          pinnedProjectCount={pinnedProjectIdsArray.length}
+        />
         {boardSearch.open && <BoardSearchBar inputRef={searchInputRef} matchCount={matchCount} />}
         {/* Columns row + optional favorites pane */}
         <div className="flex flex-1 min-h-0">
