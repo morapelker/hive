@@ -108,21 +108,123 @@ export function mergeLaneOwner<T extends DocumentRunItem>(items: readonly T[]): 
   )
 }
 
+/** What merging an item now would do for the pending items of the run. */
+interface MergeGain {
+  /** Keys of the pending items it alone still holds back, in document order. */
+  releases: string[]
+  /** Pending items held back by it and by others that are all ready to merge as well. */
+  shared: number
+  /** Pending items waiting behind it at any distance: its dependents, and theirs in turn. */
+  behind: number
+}
+
+/**
+ * A dependency the orchestrator no longer works on: flagged (`needs_attention`), or cancelled
+ * with its run. Nothing the run does by itself will merge it. A ticket that asked the user a
+ * question (`needs_input`) is not held: its session is live, and goes on once answered.
+ */
+const HELD_ITEM_STATUSES: readonly DocumentRunItemStatus[] = ['needs_attention', 'cancelled']
+
+/**
+ * Rates the items of a run by what their merge would let start (see `MergeGain`), from the rows
+ * as they are now: the dependencies of a run made from board tickets change while it runs.
+ * Only a selected `pending` item waits, and only for the dependencies still holding it back
+ * (`isDependencySatisfied`). An item that also waits behind a held one (`HELD_ITEM_STATUSES`),
+ * or behind one that does, starts no sooner whatever merges now: it is left out of `behind`,
+ * with everything behind it. (It never counts in `releases` or `shared`: there a ready item is
+ * all that is waited for.)
+ */
+function mergeGains(items: readonly DocumentRunItem[]): (key: string) => MergeGain {
+  const byKey = new Map(items.map((item) => [item.key, item]))
+  /** Dependency key → the pending items it holds back, each with all it still waits for. */
+  const waiting = new Map<string, { key: string; unmet: Set<string> }[]>()
+  const pending = items
+    .filter((item) => item.selected && item.status === 'pending')
+    .sort((a, b) => a.position - b.position)
+  for (const item of pending) {
+    const unmet = new Set(item.depends_on.filter((key) => !isDependencySatisfied(byKey.get(key))))
+    for (const key of unmet) {
+      const waiters = waiting.get(key) ?? []
+      waiters.push({ key: item.key, unmet })
+      waiting.set(key, waiters)
+    }
+  }
+  /** The items waiting behind `roots` at any distance. Each is visited once, whatever the graph. */
+  const waitingBehind = (roots: readonly string[], except: ReadonlySet<string>): Set<string> => {
+    const found = new Set<string>()
+    const queue = [...roots]
+    for (let key = queue.pop(); key !== undefined; key = queue.pop()) {
+      for (const waiter of waiting.get(key) ?? []) {
+        if (found.has(waiter.key) || except.has(waiter.key)) continue
+        found.add(waiter.key)
+        queue.push(waiter.key)
+      }
+    }
+    return found
+  }
+  const held = items.filter((item) => HELD_ITEM_STATUSES.includes(item.status))
+  const stuck = waitingBehind(
+    held.map((item) => item.key),
+    new Set()
+  )
+  const isReady = (key: string): boolean => byKey.get(key)?.status === 'ready'
+  return (key) => {
+    const waiters = waiting.get(key) ?? []
+    return {
+      releases: waiters.filter((waiter) => waiter.unmet.size === 1).map((waiter) => waiter.key),
+      shared: waiters.filter((waiter) => waiter.unmet.size > 1 && [...waiter.unmet].every(isReady))
+        .length,
+      behind: waitingBehind([key], stuck).size
+    }
+  }
+}
+
+/**
+ * Keys of the pending items that wait for nothing but `item`, in document order: the ones that
+ * may launch as soon as it is merged (given a free slot).
+ */
+export function mergeReleases(
+  item: Pick<DocumentRunItem, 'key'>,
+  items: readonly DocumentRunItem[]
+): string[] {
+  return mergeGains(items)(item.key).releases
+}
+
 /**
  * The `ready` items that may merge now, best first, or none while a merge is in flight or the
  * lane is held by an item resolving its conflicts (it is the only candidate once it is ready
  * again). The orchestrator dry-runs them in this order and takes the first that merges clean;
- * only when every one conflicts is the first sent to resolve. Items that add migrations go
- * after those that do not (their numbering is regenerated against a later tip), otherwise
- * document order.
+ * only when every one conflicts is the first sent to resolve.
+ *
+ * Best is the item whose merge lets the most others start: the lane lands one item per turn, a
+ * turn can take minutes, and a pending item launches only once all it depends on is merged. So
+ * first comes the item the most pending ones wait for alone (they launch as soon as it is
+ * merged); then the one the most wait for together with other ready items (merged one after the
+ * other, these release them); then the one with the most waiting behind it at any distance (a
+ * longer chain gets going, and what also waits for an item still at work launches the moment
+ * that one lands). Among equals, items that add migrations go after those that do not (their
+ * numbering is regenerated against a later tip), otherwise document order: where nothing waits
+ * for a ready item, that is the whole order. What a ready item itself depends on plays no part:
+ * a dependency gates the launch, and that is behind it.
  */
 export function mergeCandidates<T extends DocumentRunItem>(items: readonly T[]): T[] {
   if (isMergeInFlight(items)) return []
   const owner = mergeLaneOwner(items)
   if (owner) return owner.status === 'ready' ? [owner] : []
-  return items
-    .filter((item) => item.selected && item.status === 'ready')
-    .sort((a, b) => Number(a.has_migration) - Number(b.has_migration) || a.position - b.position)
+  const ready = items.filter((item) => item.selected && item.status === 'ready')
+  if (ready.length < 2) return ready
+  const gainOf = mergeGains(items)
+  return ready
+    .map((item) => ({ item, gain: gainOf(item.key) }))
+    .sort(
+      (a, b) =>
+        b.gain.releases.length - a.gain.releases.length ||
+        b.gain.shared - a.gain.shared ||
+        b.gain.behind - a.gain.behind ||
+        Number(a.item.has_migration) - Number(b.item.has_migration) ||
+        a.item.position - b.item.position
+    )
+    .map(({ item }) => item)
 }
 
 /**

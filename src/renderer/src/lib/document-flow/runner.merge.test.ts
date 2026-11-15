@@ -564,6 +564,311 @@ describe('DocumentFlowRunner: merging', () => {
       ])
     })
 
+    it('merges the ticket the most others wait for first, and says so', async () => {
+      const world = createWorld({
+        items: [
+          readyItem('A'),
+          readyItem('B'),
+          readyItem('C'),
+          { key: 'D', depends_on: ['C'] },
+          { key: 'E', depends_on: ['C'] },
+          { key: 'F', depends_on: ['B'] }
+        ]
+      })
+      const first = deferred<DocumentMergeResult>()
+      world.api.merge.mockReturnValueOnce(first.promise)
+      start(world)
+
+      await advance(1000)
+
+      // C lets two tickets start, B one, A none. C merges clean, so no other branch is dry-run.
+      expect(world.api.merge.mock.calls.map(([, itemId]) => itemId)).toEqual(['item-C'])
+      expect(world.api.prepareMerge).toHaveBeenCalledTimes(1)
+      expect(world.statuses()).toEqual({
+        A: 'ready',
+        B: 'ready',
+        C: 'merging',
+        D: 'pending',
+        E: 'pending',
+        F: 'pending'
+      })
+
+      first.resolve({ success: true, mergeSha: 'merge-C' })
+      await advance(5000)
+
+      expect(world.api.merge.mock.calls.map(([, itemId]) => itemId)).toEqual([
+        'item-C',
+        'item-B',
+        'item-A'
+      ])
+      expect(world.launches.map((spec) => spec.ticketId)).toEqual([
+        'ticket-D',
+        'ticket-E',
+        'ticket-F'
+      ])
+      expect(world.events.filter((event) => event.type === 'merge_prioritized')).toEqual([
+        {
+          itemId: 'item-C',
+          type: 'merge_prioritized',
+          message: 'Merging C before B, A: D, E wait only for it'
+        },
+        {
+          itemId: 'item-B',
+          type: 'merge_prioritized',
+          message: 'Merging B before A: F waits only for it'
+        }
+      ])
+    })
+
+    it('goes by the dependencies as they are when the lane frees up', async () => {
+      const world = createWorld({
+        tickets: true,
+        items: [
+          readyItem('TD-1'),
+          readyItem('TD-2'),
+          readyItem('TD-3'),
+          { key: 'TD-4', depends_on: ['TD-2'] }
+        ]
+      })
+      const first = deferred<DocumentMergeResult>()
+      world.api.merge.mockReturnValueOnce(first.promise)
+      start(world)
+
+      await advance(1000)
+      expect(world.statuses()).toMatchObject({ 'TD-1': 'ready', 'TD-2': 'merging' })
+
+      // While TD-2 lands, TD-4 is made to start after TD-3 as well on the board.
+      world.setItem('TD-4', { depends_on: ['TD-2', 'TD-3'] })
+      first.resolve({ success: true, mergeSha: 'merge-TD-2' })
+      await advance(5000)
+
+      expect(world.api.merge.mock.calls.map(([, itemId]) => itemId)).toEqual([
+        'item-TD-2',
+        'item-TD-3',
+        'item-TD-1'
+      ])
+      expect(world.launches.map((spec) => spec.ticketId)).toEqual(['ticket-TD-4'])
+    })
+
+    it('still merges a clean ticket before a conflicting one that others wait for', async () => {
+      const world = createWorld({
+        items: [
+          readyItem('A'),
+          readyItem('B'),
+          { key: 'D', depends_on: ['B'] },
+          { key: 'E', depends_on: ['B'] }
+        ]
+      })
+      // B conflicts until A has landed.
+      let landed = 0
+      world.api.prepareMerge.mockImplementation(async (_runId, itemId) =>
+        itemId === 'item-B' && landed < 1 ? conflict('src/cart.ts') : cleanCheck
+      )
+      world.api.merge.mockImplementation(async (_runId, itemId) => {
+        landed += 1
+        return { success: true, mergeSha: `merge-${itemId}` }
+      })
+      start(world)
+
+      await advance(5000)
+
+      // B is looked at first, and passed over for A: no resolution while a clean branch can land.
+      expect(world.api.prepareMerge.mock.calls.map(([, itemId]) => itemId)).toEqual([
+        'item-B',
+        'item-A',
+        'item-B'
+      ])
+      expect(world.api.merge.mock.calls.map(([, itemId]) => itemId)).toEqual(['item-A', 'item-B'])
+      expect(world.followups).toHaveLength(0)
+      expect(world.launches.map((spec) => spec.ticketId)).toEqual(['ticket-D', 'ticket-E'])
+      expect(world.events.filter((event) => event.type === 'merged_first')).toEqual([
+        {
+          itemId: 'item-A',
+          type: 'merged_first',
+          message: `Merging A before B, which conflicts with ${INTEGRATION_BRANCH}`
+        }
+      ])
+      expect(world.events.some((event) => event.type === 'merge_prioritized')).toBe(false)
+    })
+
+    it('sends the ticket the most others wait for to resolve when every ready one conflicts', async () => {
+      const world = createWorld({
+        items: [readyItem('A'), readyItem('B'), { key: 'D', depends_on: ['B'] }]
+      })
+      world.api.prepareMerge.mockResolvedValue(conflict('src/cart.ts'))
+      start(world)
+
+      await advance(1000)
+
+      expect(world.statuses()).toEqual({ A: 'ready', B: 'resolving_conflicts', D: 'pending' })
+      expect(world.followups.map((followup) => followup.sessionId)).toEqual(['s-B'])
+      expect(world.item('A').status_detail).toBe('Waiting to merge: B is resolving conflicts')
+    })
+
+    it('names only the ready tickets it lets more start than', async () => {
+      const world = createWorld({
+        items: [
+          readyItem('A'),
+          readyItem('B'),
+          readyItem('C'),
+          { key: 'D', depends_on: ['A'] },
+          { key: 'E', depends_on: ['B'] }
+        ]
+      })
+      start(world)
+
+      await advance(5000)
+
+      // A goes before B by document order alone (E waits only for B just the same): that is
+      // not put down to D.
+      expect(world.api.merge.mock.calls.map(([, itemId]) => itemId)).toEqual([
+        'item-A',
+        'item-B',
+        'item-C'
+      ])
+      expect(world.events.filter((event) => event.type === 'merge_prioritized')).toEqual([
+        {
+          itemId: 'item-A',
+          type: 'merge_prioritized',
+          message: 'Merging A before C: D waits only for it'
+        },
+        {
+          itemId: 'item-B',
+          type: 'merge_prioritized',
+          message: 'Merging B before C: E waits only for it'
+        }
+      ])
+    })
+
+    it('says nothing of the order between tickets that let as many start', async () => {
+      const world = createWorld({
+        items: [
+          readyItem('A'),
+          readyItem('B'),
+          { key: 'D', depends_on: ['A'] },
+          { key: 'E', depends_on: ['B'] }
+        ]
+      })
+      start(world)
+
+      await advance(5000)
+
+      expect(world.api.merge.mock.calls.map(([, itemId]) => itemId)).toEqual(['item-A', 'item-B'])
+      expect(world.events.some((event) => event.type === 'merge_prioritized')).toBe(false)
+    })
+
+    it('says nothing of the order when the ticket that goes first releases none by itself', async () => {
+      const world = createWorld({
+        items: [readyItem('A'), readyItem('B'), { key: 'D', depends_on: ['A', 'B'] }]
+      })
+      start(world)
+
+      await advance(5000)
+
+      expect(world.api.merge.mock.calls.map(([, itemId]) => itemId)).toEqual(['item-A', 'item-B'])
+      expect(world.launches.map((spec) => spec.ticketId)).toEqual(['ticket-D'])
+      expect(world.events.some((event) => event.type === 'merge_prioritized')).toBe(false)
+    })
+
+    it('says nothing of a ticket whose branch turns out to have nothing to merge', async () => {
+      const world = createWorld({
+        items: [readyItem('A'), readyItem('B'), { key: 'D', depends_on: ['B'] }]
+      })
+      world.api.prepareMerge.mockImplementation(async (_runId, itemId) =>
+        itemId === 'item-B'
+          ? { state: 'no_changes', conflictedFiles: [], committed: false, commitsAhead: 0 }
+          : cleanCheck
+      )
+      start(world)
+
+      await advance(5000)
+
+      // B is looked at first (D waits only for it), and flagged: it is not merged before anything.
+      expect(world.api.prepareMerge.mock.calls.map(([, itemId]) => itemId)).toEqual([
+        'item-B',
+        'item-A'
+      ])
+      expect(world.statuses()).toEqual({ A: 'merged', B: 'needs_attention', D: 'pending' })
+      expect(world.events.some((event) => event.type === 'merge_prioritized')).toBe(false)
+    })
+
+    it('names only the tickets still in line behind the one that merges', async () => {
+      const world = createWorld({
+        items: [
+          readyItem('A'),
+          readyItem('B'),
+          readyItem('C'),
+          { key: 'D', depends_on: ['C'] },
+          { key: 'E', depends_on: ['C'] },
+          { key: 'F', depends_on: ['B'] }
+        ]
+      })
+      // C leads, but its session is at work again: it goes back to running, and B is next.
+      world.setSignal('s-C', { kind: 'working' })
+      const first = deferred<DocumentMergeResult>()
+      world.api.merge.mockReturnValueOnce(first.promise)
+      start(world)
+
+      await advance(1000)
+
+      expect(world.statuses()).toMatchObject({ A: 'ready', B: 'merging', C: 'running' })
+      expect(world.events.filter((event) => event.type === 'merge_prioritized')).toEqual([
+        {
+          itemId: 'item-B',
+          type: 'merge_prioritized',
+          message: 'Merging B before A: F waits only for it'
+        }
+      ])
+    })
+
+    it('says why a ticket goes first only once its merge goes ahead', async () => {
+      const world = createWorld({
+        items: [readyItem('A'), readyItem('B'), { key: 'D', depends_on: ['B'] }]
+      })
+      const check = deferred<DocumentMergeCheckResult>()
+      world.api.prepareMerge.mockReturnValueOnce(check.promise)
+      start(world)
+      await advance(500)
+
+      // The run is paused under B's dry run: nothing merges, and nothing is said of the pick.
+      world.setRun({ status: 'paused' })
+      check.resolve(cleanCheck)
+      await advance(30_000)
+
+      expect(world.api.merge).not.toHaveBeenCalled()
+      expect(world.events.filter((event) => event.type === 'merge_prioritized')).toEqual([])
+
+      world.setRun({ status: 'running' })
+      await advance(5000)
+
+      expect(world.api.merge.mock.calls.map(([, itemId]) => itemId)).toEqual(['item-B', 'item-A'])
+      expect(world.events.filter((event) => event.type === 'merge_prioritized')).toEqual([
+        {
+          itemId: 'item-B',
+          type: 'merge_prioritized',
+          message: 'Merging B before A: D waits only for it'
+        }
+      ])
+    })
+
+    it('says nothing of a clean ticket merged first when the run is paused under its dry run', async () => {
+      const world = createWorld({ items: [readyItem('A'), readyItem('B')] })
+      const check = deferred<DocumentMergeCheckResult>()
+      world.api.prepareMerge
+        .mockResolvedValueOnce(conflict('src/cart.ts'))
+        .mockReturnValueOnce(check.promise)
+      start(world)
+      await advance(500)
+
+      world.setRun({ status: 'paused' })
+      check.resolve(cleanCheck)
+      await advance(30_000)
+
+      expect(world.api.merge).not.toHaveBeenCalled()
+      expect(world.statuses()).toEqual({ A: 'ready', B: 'ready' })
+      expect(world.events.some((event) => event.type === 'merged_first')).toBe(false)
+    })
+
     it('asks for a resolution only once every ready ticket conflicts, against the final tip', async () => {
       const world = createWorld({ items: [readyItem('A'), readyItem('B')] })
       world.api.prepareMerge.mockImplementation(async (_runId, itemId) =>

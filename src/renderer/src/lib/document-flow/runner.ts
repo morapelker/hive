@@ -15,6 +15,7 @@ import {
   launchableItems,
   mergeCandidates,
   mergeLaneOwner,
+  mergeReleases,
   ticketBranchHint
 } from '@shared/document-flow/planning'
 import {
@@ -711,8 +712,9 @@ export class DocumentFlowRunner {
     }
 
     // The merge lane: one item at a time, from the dry run to the verified merge, including
-    // the resolution of its conflicts by its session. Of the ready items, the first that merges
-    // clean goes; the rest wait, and say what for.
+    // the resolution of its conflicts by its session. Of the ready items, taken in the order
+    // of what their merge lets start (`mergeCandidates`), the first that merges clean goes; the
+    // rest wait, and say what for.
     const candidates = state.merging
       ? []
       : mergeCandidates(items).filter((item) => this.canStep(item, now))
@@ -2160,11 +2162,15 @@ export class DocumentFlowRunner {
   // ── Merging ──────────────────────────────────────────────────────────────
 
   /**
-   * One turn of the merge lane. The candidates are dry-run in order, and the first whose
-   * branch does not conflict is taken: merged, or dealt with for what the dry run found. Only
-   * when every one conflicts is the first sent to resolve its conflicts; it then holds the
-   * lane (`mergeLaneOwner`) until it is merged or flagged, so what it resolves against is
-   * what it lands on. A conflicting branch is never resolved while a clean one could land.
+   * One turn of the merge lane. The candidates come best first (`mergeCandidates`: the one
+   * whose merge lets the most pending tickets start leads). They are dry-run in that order,
+   * and the first whose branch does not conflict is taken: merged, or dealt with for what the
+   * dry run found. Only when every one conflicts is the first sent to resolve its conflicts;
+   * it then holds the lane (`mergeLaneOwner`) until it is merged or flagged, so what it
+   * resolves against is what it lands on. A conflicting branch is never resolved while a
+   * clean one could land, however many tickets wait for it: its resolution holds the lane for
+   * as long as its session takes (and the user, when it stops for them), and is made once,
+   * against a tip the clean branches no longer move.
    */
   private async mergeNext(
     op: ItemOp,
@@ -2173,7 +2179,7 @@ export class DocumentFlowRunner {
   ): Promise<void> {
     let conflicted: { item: DocumentRunItem; check: DocumentMergeCheckResult } | null = null
     const passedOver: string[] = []
-    for (const item of candidates) {
+    for (const [index, item] of candidates.entries()) {
       op.item = item
       const run = this.requireActive(op)
       // Picked up in the middle (a reload, a crash): a recorded merge commit means the merge
@@ -2197,6 +2203,9 @@ export class DocumentFlowRunner {
         else conflicted = { item: op.item, check }
         continue
       }
+      // A run paused or taken over under the dry run merges nothing this turn: nothing is said
+      // of the pick either, or it would be said again when the turn is made anew.
+      this.requireActive(op)
       if (conflicted) {
         const waiting = [conflicted.item.key, ...passedOver]
         this.event(
@@ -2204,6 +2213,8 @@ export class DocumentFlowRunner {
           'merged_first',
           `Merging ${item.key} before ${waiting.join(', ')}, which conflict${waiting.length === 1 ? 's' : ''} with ${run.integration_branch ?? 'the integration branch'}`
         )
+      } else if (check.state === 'clean') {
+        this.explainPick(op, candidates.slice(index + 1))
       }
       take(item)
       return this.mergeChecked(op, run, check)
@@ -2212,6 +2223,24 @@ export class DocumentFlowRunner {
     op.item = conflicted.item
     take(op.item)
     return this.mergeChecked(op, this.requireActive(op), conflicted.check)
+  }
+
+  /**
+   * Say why the ticket about to merge goes before other ready ones, when the reason is what
+   * its merge lets start: more pending tickets wait for nothing but it than for nothing but
+   * them. Only those ready tickets are named. Ahead of one that releases as many, the order
+   * came down to the further keys of `mergeCandidates`, and nothing is said of it.
+   */
+  private explainPick(op: ItemOp, others: readonly DocumentRunItem[]): void {
+    const items = this.ports.getRun(op.runId)?.items ?? []
+    const released = mergeReleases(op.item, items)
+    const outranked = others.filter((other) => mergeReleases(other, items).length < released.length)
+    if (outranked.length === 0) return
+    this.event(
+      op,
+      'merge_prioritized',
+      `Merging ${op.item.key} before ${outranked.map((other) => other.key).join(', ')}: ${released.join(', ')} wait${released.length === 1 ? 's' : ''} only for it`
+    )
   }
 
   /** Act on the dry run of the item that holds the lane: merge, resolve, or flag. */

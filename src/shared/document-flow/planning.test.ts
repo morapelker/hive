@@ -30,6 +30,7 @@ import {
   launchableItems,
   mergeCandidates,
   mergeLaneOwner,
+  mergeReleases,
   sanitizeDependencies,
   summarizeItems,
   ticketBranchHint,
@@ -320,7 +321,7 @@ describe('countOccupiedSlots', () => {
 })
 
 describe('mergeCandidates', () => {
-  it('lists ready items in document order', () => {
+  it('lists ready items in document order when nothing waits for them', () => {
     const items = [item('A', 'running'), item('B', 'ready'), item('C', 'ready')]
     expect(mergeCandidates([items[2], items[1], items[0]]).map((it) => it.key)).toEqual(['B', 'C'])
   })
@@ -398,6 +399,268 @@ describe('mergeCandidates', () => {
   it('offers nothing when nothing is ready', () => {
     expect(mergeCandidates([])).toEqual([])
     expect(mergeCandidates([item('A', 'running'), item('B', 'merged')])).toEqual([])
+  })
+
+  describe('by what a merge lets start', () => {
+    const waitingFor = (key: string, ...dependsOn: string[]): DocumentRunItem =>
+      item(key, 'pending', { depends_on: dependsOn })
+
+    it('puts the ticket the most pending ones wait for alone first', () => {
+      const items = [
+        item('A', 'ready'),
+        item('B', 'ready'),
+        item('C', 'ready'),
+        waitingFor('D', 'C'),
+        waitingFor('E', 'C'),
+        waitingFor('F', 'C'),
+        waitingFor('G', 'C'),
+        waitingFor('H', 'C'),
+        waitingFor('I', 'B')
+      ]
+      expect(keys(mergeCandidates(items))).toEqual(['C', 'B', 'A'])
+      expect(keys(mergeCandidates([...items].reverse()))).toEqual(['C', 'B', 'A'])
+    })
+
+    it('counts a pending ticket only for the last ticket holding it back', () => {
+      // A has three dependents, but they wait for Z as well: merging A now starts nothing,
+      // merging B starts E.
+      const items = [
+        item('A', 'ready'),
+        item('B', 'ready'),
+        item('Z', 'running'),
+        waitingFor('D1', 'A', 'Z'),
+        waitingFor('D2', 'A', 'Z'),
+        waitingFor('D3', 'A', 'Z'),
+        waitingFor('E', 'B')
+      ]
+      expect(keys(mergeCandidates(items))).toEqual(['B', 'A'])
+    })
+
+    it('then prefers the tickets that release one between them', () => {
+      // D starts once A and B are both merged: they go one after the other, ahead of X.
+      const pair = [item('X', 'ready'), item('A', 'ready'), item('B', 'ready')]
+      expect(keys(mergeCandidates([...pair, waitingFor('D', 'A', 'B')]))).toEqual(['A', 'B', 'X'])
+
+      // More tickets are behind C, but all of them wait for R, which is still at work.
+      const items = [
+        item('C', 'ready'),
+        item('A', 'ready'),
+        item('B', 'ready'),
+        item('R', 'running'),
+        waitingFor('D', 'A', 'B'),
+        waitingFor('E', 'C', 'R'),
+        waitingFor('F', 'E'),
+        waitingFor('G', 'E')
+      ]
+      expect(keys(mergeCandidates(items))).toEqual(['A', 'B', 'C'])
+    })
+
+    it('then prefers the ticket with the most waiting behind it, at any distance', () => {
+      // Both release one ticket; three more are queued up behind B's.
+      const chains = [
+        item('A', 'ready'),
+        item('B', 'ready'),
+        waitingFor('A1', 'A'),
+        waitingFor('B1', 'B'),
+        waitingFor('B2', 'B1'),
+        waitingFor('B3', 'B2')
+      ]
+      expect(keys(mergeCandidates(chains))).toEqual(['B', 'A'])
+
+      // Nothing starts with either merge, but B's dependents start the moment R lands.
+      const items = [
+        item('A', 'ready'),
+        item('B', 'ready'),
+        item('R', 'running'),
+        waitingFor('D1', 'B', 'R'),
+        waitingFor('D2', 'B', 'R')
+      ]
+      expect(keys(mergeCandidates(items))).toEqual(['B', 'A'])
+    })
+
+    it('puts a ticket that releases one alone before those that release more between them', () => {
+      // E and F start only once B and C are both merged; D starts with A's merge alone.
+      const items = [
+        item('B', 'ready'),
+        item('C', 'ready'),
+        item('A', 'ready'),
+        waitingFor('E', 'B', 'C'),
+        waitingFor('F', 'B', 'C'),
+        waitingFor('D', 'A')
+      ]
+      expect(keys(mergeCandidates(items))).toEqual(['A', 'B', 'C'])
+    })
+
+    it.each(['needs_attention', 'cancelled'] as const)(
+      'counts nothing that waits behind a %s ticket, at any distance',
+      (status) => {
+        // Nothing the run does merges X: A1 does not start until the user deals with it, nor
+        // does anything behind A1. B1 only waits for R, which is at work.
+        const items = [
+          item('B', 'ready'),
+          item('A', 'ready'),
+          item('X', status),
+          item('R', 'running'),
+          waitingFor('A1', 'A', 'X'),
+          waitingFor('A2', 'A', 'A1'),
+          waitingFor('A3', 'A2'),
+          waitingFor('B1', 'B', 'R')
+        ]
+        expect(keys(mergeCandidates(items))).toEqual(['B', 'A'])
+        // With X merged, A is all that A1 waits for.
+        const unflagged = items.map((entry) =>
+          entry.key === 'X' ? { ...entry, status: 'merged' as const } : entry
+        )
+        expect(keys(mergeCandidates(unflagged))).toEqual(['A', 'B'])
+      }
+    )
+
+    it('still counts what waits behind a ticket that asked the user a question', () => {
+      // Q goes on by itself once it is answered: D1 and D2 are behind B all the same.
+      const items = [
+        item('A', 'ready'),
+        item('B', 'ready'),
+        item('Q', 'needs_input'),
+        waitingFor('D1', 'B', 'Q'),
+        waitingFor('D2', 'B', 'Q')
+      ]
+      expect(keys(mergeCandidates(items))).toEqual(['B', 'A'])
+    })
+
+    it('leaves out the dependencies that no longer hold a ticket back', () => {
+      const items = [
+        item('A', 'ready'),
+        item('B', 'ready'),
+        item('M', 'merged'),
+        item('S', 'skipped'),
+        item('U', 'running', { selected: false }),
+        waitingFor('D', 'B', 'M', 'S', 'U', 'gone')
+      ]
+      // B is all that D still waits for.
+      expect(keys(mergeCandidates(items))).toEqual(['B', 'A'])
+      expect(mergeReleases(items[1], items)).toEqual(['D'])
+    })
+
+    it('ranks by the dependencies still unmet, not by the ones listed', () => {
+      // Two tickets are behind A, but wait for R as well; D waits for B alone, M being merged.
+      const items = [
+        item('A', 'ready'),
+        item('B', 'ready'),
+        item('M', 'merged'),
+        item('R', 'running'),
+        waitingFor('D', 'B', 'M'),
+        waitingFor('E', 'A', 'R'),
+        waitingFor('F', 'A', 'R')
+      ]
+      expect(keys(mergeCandidates(items))).toEqual(['B', 'A'])
+    })
+
+    it('counts only the tickets that have yet to launch', () => {
+      const items = [
+        item('A', 'ready'),
+        item('B', 'ready'),
+        item('D1', 'pending', { depends_on: ['B'], selected: false }),
+        item('D2', 'running', { depends_on: ['B'] }),
+        item('D3', 'needs_attention', { depends_on: ['B'] }),
+        item('D4', 'merged', { depends_on: ['B'] }),
+        item('D5', 'ready', { depends_on: ['B'] })
+      ]
+      expect(keys(mergeCandidates(items))).toEqual(['A', 'B', 'D5'])
+    })
+
+    it('puts a migration others wait for first, and migrations last among equals', () => {
+      const items = [
+        item('A', 'ready'),
+        item('M', 'ready', { has_migration: true }),
+        item('N', 'ready', { has_migration: true }),
+        item('B', 'ready'),
+        waitingFor('D', 'N')
+      ]
+      expect(keys(mergeCandidates(items))).toEqual(['N', 'A', 'B', 'M'])
+    })
+
+    it('weighs all that waits for a migration before putting it last', () => {
+      // D starts once M and N are both merged: they go ahead of A, migrations or not.
+      const together = [
+        item('A', 'ready'),
+        item('M', 'ready', { has_migration: true }),
+        item('N', 'ready', { has_migration: true }),
+        waitingFor('D', 'M', 'N')
+      ]
+      expect(keys(mergeCandidates(together))).toEqual(['M', 'N', 'A'])
+      // D also waits for R, still at work: it is behind M all the same.
+      const behind = [
+        item('A', 'ready'),
+        item('M', 'ready', { has_migration: true }),
+        item('R', 'running'),
+        waitingFor('D', 'M', 'R')
+      ]
+      expect(keys(mergeCandidates(behind))).toEqual(['M', 'A'])
+    })
+
+    it('does not weigh what a ready ticket itself depends on', () => {
+      // An edge added on the board after the ticket launched.
+      const items = [item('A', 'ready', { depends_on: ['B'] }), item('B', 'ready')]
+      expect(keys(mergeCandidates(items))).toEqual(['A', 'B'])
+    })
+
+    it('ranks a graph with a cycle in it', () => {
+      const items = [
+        item('A', 'ready'),
+        item('B', 'ready'),
+        waitingFor('P', 'B', 'Q'),
+        waitingFor('Q', 'P')
+      ]
+      expect(keys(mergeCandidates(items))).toEqual(['B', 'A'])
+    })
+
+    it('still offers only the ticket holding the lane, whatever the others would release', () => {
+      const items = [
+        item('A', 'ready'),
+        item('B', 'ready', { conflict_attempts: 1 }),
+        waitingFor('D', 'A'),
+        waitingFor('E', 'A')
+      ]
+      expect(keys(mergeCandidates(items))).toEqual(['B'])
+    })
+
+    it('returns the items it was given, and leaves their list as it was', () => {
+      const items = [item('A', 'ready'), item('B', 'ready'), waitingFor('D', 'B')]
+      const before = [...items]
+      const candidates = mergeCandidates(items)
+      expect(candidates[0]).toBe(items[1])
+      expect(candidates[1]).toBe(items[0])
+      expect(items).toEqual(before)
+    })
+  })
+})
+
+describe('mergeReleases', () => {
+  it('names the pending tickets that wait for nothing else, in document order', () => {
+    const items = [
+      item('A', 'ready'),
+      item('R', 'running'),
+      item('D', 'pending', { depends_on: ['A'] }),
+      item('E', 'pending', { depends_on: ['A', 'R'] }),
+      item('F', 'pending', { depends_on: ['A'] })
+    ]
+    expect(mergeReleases(items[0], items)).toEqual(['D', 'F'])
+    expect(mergeReleases(items[0], [...items].reverse())).toEqual(['D', 'F'])
+    expect(mergeReleases(items[1], items)).toEqual([])
+  })
+
+  it('names a ticket once, however often it lists the dependency', () => {
+    const items = [item('A', 'ready'), item('D', 'pending', { depends_on: ['A', 'A'] })]
+    expect(mergeReleases(items[0], items)).toEqual(['D'])
+  })
+
+  it('names none that is not waiting to launch', () => {
+    const items = [
+      item('A', 'ready'),
+      item('D', 'pending', { depends_on: ['A'], selected: false }),
+      item('E', 'running', { depends_on: ['A'] })
+    ]
+    expect(mergeReleases(items[0], items)).toEqual([])
   })
 })
 
