@@ -6,7 +6,7 @@
  * created with.
  */
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { Loader2, Search, Settings2, FolderGit2 } from 'lucide-react'
+import { Loader2, Search, Settings2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
   Dialog,
@@ -21,6 +21,7 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { useProjectStore, useConnectionStore } from '@/stores'
 import { parseMemberProjectIds } from '@/lib/connection-project'
+import { LanguageIcon } from './LanguageIcon'
 
 interface EditConnectionProjectDialogProps {
   project: { id: string; name: string; member_project_ids?: string | null }
@@ -161,7 +162,12 @@ export function EditConnectionProjectDialog({
                     onCheckedChange={() => toggleProject(p.id)}
                     data-testid={`edit-connection-project-checkbox-${p.id}`}
                   />
-                  <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  {/* The member's own icon — the ones the connection's default icon is made of */}
+                  <LanguageIcon
+                    language={p.language}
+                    customIcon={p.custom_icon}
+                    detectedIcon={p.detected_icon}
+                  />
                   <div className="flex-1 min-w-0">
                     <span className="truncate block">{p.name}</span>
                     <span className="text-xs text-muted-foreground truncate block">{p.path}</span>

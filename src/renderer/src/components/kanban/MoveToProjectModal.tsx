@@ -3,7 +3,7 @@ import { Search, X } from 'lucide-react'
 import type { Project } from '@shared/types/project'
 import { useProjectStore } from '@/stores'
 import { subsequenceMatch } from '@/lib/subsequence-match'
-import { LanguageIcon } from '@/components/projects/LanguageIcon'
+import { ProjectIcon } from '@/components/projects/ConnectionProjectIcon'
 import { HighlightedText } from '@/components/projects/HighlightedText'
 import {
   Dialog,
@@ -112,11 +112,7 @@ export function MoveToProjectModal({
                   className="group flex w-full items-center gap-2 px-2 py-1.5 rounded-md text-left cursor-pointer transition-colors hover:bg-accent/50"
                   data-testid={`move-to-project-option-${project.id}`}
                 >
-                  <LanguageIcon
-                    language={project.language}
-                    customIcon={project.custom_icon}
-                    detectedIcon={project.detected_icon}
-                  />
+                  <ProjectIcon project={project} />
                   <div className="flex-1 min-w-0">
                     {nameMatch?.matched ? (
                       <HighlightedText

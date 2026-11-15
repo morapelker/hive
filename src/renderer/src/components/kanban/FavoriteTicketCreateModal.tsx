@@ -6,7 +6,7 @@ import { extractPlaceholderNames, substitutePlaceholders } from '@shared/lib/tic
 import { useProjectStore } from '@/stores'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { subsequenceMatch } from '@/lib/subsequence-match'
-import { LanguageIcon } from '@/components/projects/LanguageIcon'
+import { ProjectIcon } from '@/components/projects/ConnectionProjectIcon'
 import { HighlightedText } from '@/components/projects/HighlightedText'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
@@ -220,11 +220,7 @@ export function FavoriteTicketCreateModal({
                       className="group flex w-full items-center gap-2 px-2 py-1.5 rounded-md text-left cursor-pointer transition-colors hover:bg-accent/50 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
                       data-testid={`favorite-project-option-${project.id}`}
                     >
-                      <LanguageIcon
-                        language={project.language}
-                        customIcon={project.custom_icon}
-                        detectedIcon={project.detected_icon}
-                      />
+                      <ProjectIcon project={project} />
                       <div className="flex-1 min-w-0">
                         {nameMatch?.matched ? (
                           <HighlightedText

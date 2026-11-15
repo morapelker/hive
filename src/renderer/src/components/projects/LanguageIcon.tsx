@@ -23,7 +23,7 @@ interface LanguageIconProps {
   className?: string
 }
 
-interface LanguageConfig {
+export interface LanguageConfig {
   label: string
   bg: string
   text: string
@@ -101,6 +101,19 @@ function useCustomIcons(): Record<string, string> {
   return icons
 }
 
+// Icon file lookups in flight (cache key -> request). Icons that mount together — every ticket
+// card of a project, each tile of a connection project's icon — share one lookup per file.
+const iconRequests = new Map<string, Promise<string | null>>()
+
+function requestIconOnce(key: string, load: () => Promise<string | null>): Promise<string | null> {
+  let request = iconRequests.get(key)
+  if (!request) {
+    request = Promise.resolve(load()).finally(() => iconRequests.delete(key))
+    iconRequests.set(key, request)
+  }
+  return request
+}
+
 // Module-level cache for resolved project icon paths (filename -> data URL)
 const projectIconCache = new Map<string, string>()
 
@@ -128,13 +141,15 @@ export function useProjectIconUrl(customIcon: string | null | undefined): string
 
     // Resolve to data URL via main process
     let cancelled = false
-    projectApi
-      .getProjectIconPath(customIcon)
+    requestIconOnce(`custom:${customIcon}`, () => projectApi.getProjectIconPath(customIcon))
       .then((dataUrl) => {
         if (cancelled) return
         if (dataUrl) {
           projectIconCache.set(customIcon, dataUrl)
           setUrl(dataUrl)
+        } else {
+          // The file is gone: drop the image of the icon this one replaced
+          setUrl(null)
         }
       })
       .catch(() => {
@@ -172,13 +187,16 @@ function useDetectedIconUrl(detectedIcon: string | null | undefined): string | n
 
     // Resolve to data URL via main process
     let cancelled = false
-    projectApi
-      .getAbsoluteIconDataUrl(detectedIcon)
+    requestIconOnce(`detected:${detectedIcon}`, () =>
+      projectApi.getAbsoluteIconDataUrl(detectedIcon)
+    )
       .then((dataUrl) => {
         if (cancelled) return
         if (dataUrl) {
           detectedIconCache.set(detectedIcon, dataUrl)
           setUrl(dataUrl)
+        } else {
+          setUrl(null)
         }
       })
       .catch(() => {
@@ -193,86 +211,119 @@ function useDetectedIconUrl(detectedIcon: string | null | undefined): string | n
   return url
 }
 
+/** What a project's icon resolves to right now, following the LanguageIcon priority chain. */
+export type ResolvedProjectIcon =
+  | { kind: 'image'; src: string; source: 'custom' | 'detected' | 'language' }
+  | { kind: 'badge'; config: LanguageConfig }
+  | { kind: 'generic' }
+
+const hasOwn = (record: object, key: string): boolean =>
+  Object.prototype.hasOwnProperty.call(record, key)
+
+/**
+ * Resolve a project's icon: custom icon file → auto-detected favicon → user-override language
+ * icon → bundled language icon → colored language badge → generic glyph. Custom and favicon
+ * images load asynchronously; until they arrive (or when the file is missing) the result is
+ * whatever the language resolves to.
+ */
+export function useResolvedProjectIcon(
+  language: string | null | undefined,
+  customIcon?: string | null,
+  detectedIcon?: string | null
+): ResolvedProjectIcon {
+  const customIcons = useCustomIcons()
+  const projectIconUrl = useProjectIconUrl(customIcon)
+  const detectedIconUrl = useDetectedIconUrl(detectedIcon)
+
+  // Priority 1: Custom project icon (per-project image file)
+  if (customIcon && typeof projectIconUrl === 'string' && projectIconUrl) {
+    return { kind: 'image', src: projectIconUrl, source: 'custom' }
+  }
+
+  // Priority 2: Auto-detected favicon
+  if (
+    detectedIcon &&
+    detectedIcon !== 'none' &&
+    typeof detectedIconUrl === 'string' &&
+    detectedIconUrl
+  ) {
+    return { kind: 'image', src: detectedIconUrl, source: 'detected' }
+  }
+
+  if (!language) return { kind: 'generic' }
+
+  // Priority 3: User-override language icon (from DB language_icons setting)
+  const userOverrideUrl = hasOwn(customIcons, language) ? customIcons[language] : null
+  if (typeof userOverrideUrl === 'string' && userOverrideUrl) {
+    return { kind: 'image', src: userOverrideUrl, source: 'language' }
+  }
+
+  // Priority 4: Bundled language icon (shipped with the app)
+  if (hasOwn(BUNDLED_ICONS, language)) {
+    return { kind: 'image', src: BUNDLED_ICONS[language], source: 'language' }
+  }
+
+  // Priority 5: Colored badge fallback
+  if (hasOwn(LANGUAGE_MAP, language)) return { kind: 'badge', config: LANGUAGE_MAP[language] }
+
+  return { kind: 'generic' }
+}
+
 export function LanguageIcon({
   language,
   customIcon,
   detectedIcon,
   className
 }: LanguageIconProps): React.JSX.Element {
-  const customIcons = useCustomIcons()
-  const projectIconUrl = useProjectIconUrl(customIcon)
-  const detectedIconUrl = useDetectedIconUrl(detectedIcon)
+  const icon = useResolvedProjectIcon(language, customIcon, detectedIcon)
 
-  // Priority 1: Custom project icon (per-project image file)
-  if (customIcon && projectIconUrl) {
+  if (icon.kind === 'image') {
+    if (icon.source === 'custom') {
+      return (
+        <img
+          src={icon.src}
+          alt="project icon"
+          title="Custom project icon"
+          className={cn('h-4 w-4 shrink-0 object-contain rounded-sm', className)}
+        />
+      )
+    }
+    if (icon.source === 'detected') {
+      return (
+        <img
+          src={icon.src}
+          alt="project favicon"
+          title="Auto-detected favicon"
+          className={cn('h-4 w-4 shrink-0 object-contain rounded-sm', className)}
+        />
+      )
+    }
     return (
       <img
-        src={projectIconUrl}
-        alt="project icon"
-        title="Custom project icon"
-        className={cn('h-4 w-4 shrink-0 object-contain rounded-sm', className)}
-      />
-    )
-  }
-
-  // Priority 2: Auto-detected favicon
-  if (detectedIcon && detectedIcon !== 'none' && detectedIconUrl) {
-    return (
-      <img
-        src={detectedIconUrl}
-        alt="project favicon"
-        title="Auto-detected favicon"
-        className={cn('h-4 w-4 shrink-0 object-contain rounded-sm', className)}
-      />
-    )
-  }
-
-  if (!language) {
-    return <FolderGit2 className={className ?? 'h-4 w-4 text-muted-foreground shrink-0'} />
-  }
-
-  // Priority 2: User-override language icon (from DB language_icons setting)
-  const userOverrideUrl = customIcons[language]
-  if (userOverrideUrl) {
-    return (
-      <img
-        src={userOverrideUrl}
-        alt={language}
-        title={language}
+        src={icon.src}
+        alt={language ?? ''}
+        title={language ?? undefined}
         className={cn('h-4 w-4 shrink-0 object-contain', className)}
       />
     )
   }
 
-  // Priority 3: Bundled language icon (shipped with the app)
-  const bundledUrl = BUNDLED_ICONS[language]
-  if (bundledUrl) {
+  if (icon.kind === 'badge') {
     return (
-      <img
-        src={bundledUrl}
-        alt={language}
-        title={language}
-        className={cn('h-4 w-4 shrink-0 object-contain', className)}
-      />
+      <div
+        className={cn(
+          'h-4 w-4 shrink-0 rounded-sm flex items-center justify-center',
+          icon.config.bg,
+          className
+        )}
+        title={language ?? undefined}
+      >
+        <span className={cn('text-[8px] font-bold leading-none', icon.config.text)}>
+          {icon.config.label}
+        </span>
+      </div>
     )
   }
 
-  // Priority 4: Colored badge fallback
-  const config = LANGUAGE_MAP[language]
-  if (!config) {
-    return <FolderGit2 className={className ?? 'h-4 w-4 text-muted-foreground shrink-0'} />
-  }
-
-  return (
-    <div
-      className={cn(
-        'h-4 w-4 shrink-0 rounded-sm flex items-center justify-center',
-        config.bg,
-        className
-      )}
-      title={language}
-    >
-      <span className={cn('text-[8px] font-bold leading-none', config.text)}>{config.label}</span>
-    </div>
-  )
+  return <FolderGit2 className={className ?? 'h-4 w-4 text-muted-foreground shrink-0'} />
 }

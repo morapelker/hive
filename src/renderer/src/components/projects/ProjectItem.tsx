@@ -4,7 +4,6 @@ import {
   ChevronDown,
   Plus,
   Loader2,
-  Link,
   Pencil,
   Trash2,
   Copy,
@@ -65,7 +64,7 @@ import {
   runShellCommandFromMenu
 } from '@/components/shell-commands/ShellCommandMenuItems'
 import { getMemberProjects } from '@/lib/connection-project'
-import { LanguageIcon } from './LanguageIcon'
+import { ConnectionMembersTooltip, ProjectIcon } from './ConnectionProjectIcon'
 import { HighlightedText } from './HighlightedText'
 import {
   SECTION_HEADER_ACTIONS,
@@ -528,17 +527,12 @@ export const ProjectItem = memo(function ProjectItem({
 
               {/* Title surface: 16px icon box + 13px semibold label (+ count pill) */}
               <div className={SECTION_HEADER_TITLE_SURFACE}>
-                <div className={cn(SECTION_HEADER_ICON_BOX, SECTION_TONE_NEUTRAL)}>
-                  {isConnectionProject ? (
-                    <Link className="size-3.5 shrink-0 text-muted-foreground" />
-                  ) : (
-                    <LanguageIcon
-                      language={project.language}
-                      customIcon={project.custom_icon}
-                      detectedIcon={project.detected_icon}
-                    />
-                  )}
-                </div>
+                {/* A connection project's default icon is its members' icons; hovering names them */}
+                <ConnectionMembersTooltip projectId={project.id} align="start">
+                  <div className={cn(SECTION_HEADER_ICON_BOX, SECTION_TONE_NEUTRAL)}>
+                    <ProjectIcon project={project} />
+                  </div>
+                </ConnectionMembersTooltip>
 
                 {isEditing ? (
                   <Input

@@ -124,6 +124,7 @@ import { leaveBoardViews } from '@/lib/board-navigation'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useProjectIconUrl } from '@/components/projects/LanguageIcon'
+import { ConnectionProjectTicketTag } from './ConnectionProjectTicketTag'
 import { useScriptStore } from '@/stores/useScriptStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useShellCommandRunStore } from '@/stores/useShellCommandRunStore'
@@ -1542,6 +1543,10 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       [ticket.project_id]
     )
   )
+  // Pinned board: a connection project's tag shows its member projects' icons, unless the
+  // connection project was given a custom icon of its own (that one keeps winning).
+  const connectionProjectTag =
+    !!isPinnedMode && !connectionId && isConnectionProjectTicket && !projectTag?.iconUrl
 
   // ── Pin state for the project's BASE (default worktree / base instance) ──
   // Pinning any worktree of a project puts the whole project on the pinned
@@ -2150,7 +2155,14 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                 {showModelBadge && <TicketModelBadge ticket={ticket} />}
 
                 {/* Project tag (connection mode) or worktree name badge */}
-                {projectTag ? (
+                {projectTag && connectionProjectTag ? (
+                  // A connection project's default icon: its member projects' icons
+                  <ConnectionProjectTicketTag
+                    projectId={ticket.project_id}
+                    name={projectTag.name}
+                    color={projectTag.color}
+                  />
+                ) : projectTag ? (
                   <span className={ticketPillClass}>
                     {projectTag.iconUrl ? (
                       <img
