@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, Pin, Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { isMac } from '@/lib/platform'
 import { useGhosttySuppression } from '@/hooks/useGhosttySuppression'
 import { useProjectSwitcherStore } from '@/stores/useProjectSwitcherStore'
 import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
@@ -17,6 +18,7 @@ import {
   type SwitcherAgentState
 } from '@/lib/project-switcher'
 import { openSwitcherProject } from './open-switcher-project'
+import { setSwitcherProjectPinned, switcherPinLabel } from './pin-switcher-project'
 import { useSwitcherProjects, type SwitcherItem } from './useSwitcherProjects'
 
 // "Go to project": an overlay that reaches any project on this Mac by typing a few letters.
@@ -29,6 +31,11 @@ import { useSwitcherProjects, type SwitcherItem } from './useSwitcherProjects'
 // the app (shortcuts, vim mode, jump hints, a sidebar Escape): while the switcher is open,
 // plain keys only edit the query and Escape only closes the switcher. Keys with Cmd / Ctrl /
 // Alt pass through, so app shortcuts keep working.
+//
+// Cmd+Enter (Ctrl+Enter off macOS) and a row's pin button pin or unpin a project without
+// opening it: the switcher stays open, so several projects can be pinned in a row. The
+// highlight belongs to a project, not to a position: when a pin moves the project to another
+// group, the highlight goes with it.
 
 type GroupId = 'pinned' | 'recent' | 'all'
 
@@ -49,6 +56,24 @@ interface SwitcherRow {
 const NO_INDICES: number[] = []
 
 const KBD_CLASS = 'rounded-md border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[10px]'
+
+/** The key that pins the highlighted project, as the footer and the pin buttons show it. */
+const pinKeyLabel = (): string => (isMac() ? '⌘↵' : 'ctrl ↵')
+
+/** Cmd+Enter on macOS, Ctrl+Enter elsewhere, and no other modifier. */
+const isPinChord = (event: KeyboardEvent): boolean =>
+  (isMac() ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) &&
+  !event.altKey &&
+  !event.shiftKey
+
+interface Highlight {
+  /** The highlighted position, used while `key` is not in the list. */
+  index: number
+  /** The highlighted project. null: the position alone decides (first result, a new query). */
+  key: string | null
+}
+
+const FIRST_ROW: Highlight = { index: 0, key: null }
 
 function Highlighted({
   text,
@@ -112,6 +137,7 @@ interface SwitcherRowViewProps {
   age: string
   onHover: (index: number) => void
   onOpen: (item: SwitcherItem) => void
+  onTogglePin: (item: SwitcherItem, pinned: boolean) => void
 }
 
 const SwitcherRowView = memo(function SwitcherRowView({
@@ -124,10 +150,12 @@ const SwitcherRowView = memo(function SwitcherRowView({
   agentState,
   age,
   onHover,
-  onOpen
+  onOpen,
+  onTogglePin
 }: SwitcherRowViewProps): React.JSX.Element {
   const { item } = row
   const countNoun = item.kind === 'connection' ? 'connection' : 'worktree'
+  const pinLabel = switcherPinLabel(item, pinned)
   return (
     <div
       id={`project-switcher-option-${index}`}
@@ -141,7 +169,7 @@ const SwitcherRowView = memo(function SwitcherRowView({
       onMouseMove={() => onHover(index)}
       onClick={() => onOpen(item)}
       className={cn(
-        'flex h-8 cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-[13px]',
+        'group/row flex h-8 cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-[13px]',
         // Off-screen rows of a 400-project list skip layout and paint.
         '[contain-intrinsic-size:auto_2rem] [content-visibility:auto]',
         active && 'bg-accent'
@@ -194,16 +222,37 @@ const SwitcherRowView = memo(function SwitcherRowView({
           {age}
         </span>
       )}
-      <span className="flex w-3.5 shrink-0 items-center justify-center">
-        {pinned && (
+      {/* Pins or unpins without opening the project. A pinned row always shows it (filled:
+          the pinned marker); the others on the highlighted row and under the pointer. */}
+      <button
+        type="button"
+        // The field keeps the focus (the panel's onMouseDown); Tab never lands here.
+        tabIndex={-1}
+        data-testid="project-switcher-row-pin"
+        data-pinned={pinned ? 'true' : 'false'}
+        aria-label={`${pinLabel}: ${item.name}`}
+        title={`${pinLabel} (${pinKeyLabel()})`}
+        onClick={(event) => {
+          event.stopPropagation()
+          onTogglePin(item, !pinned)
+        }}
+        className={cn(
+          '-mr-1 flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground',
+          'hover:bg-foreground/10 hover:text-foreground',
+          !pinned && !active && 'opacity-0 group-hover/row:opacity-100'
+        )}
+      >
+        {pinned ? (
           <Pin
             data-testid="project-switcher-row-pinned"
             role="img"
             aria-label="Pinned"
-            className="size-3 text-muted-foreground"
+            className="size-3 fill-current"
           />
+        ) : (
+          <Pin aria-hidden="true" className="size-3" />
         )}
-      </span>
+      </button>
     </div>
   )
 })
@@ -214,7 +263,7 @@ function ProjectSwitcherPanel(): React.JSX.Element {
   const { items, pinnedKeys, worktreeCounts, agentStates } = useSwitcherProjects()
 
   const [query, setQuery] = useState('')
-  const [activeIndex, setActiveIndex] = useState(0)
+  const [highlight, setHighlight] = useState<Highlight>(FIRST_ROW)
   // One "now" for the whole time the overlay is open: ages do not tick while reading.
   const [now] = useState(() => Date.now())
   const inputRef = useRef<HTMLInputElement>(null)
@@ -242,8 +291,14 @@ function ProjectSwitcherPanel(): React.JSX.Element {
     )
   }, [items, pinnedKeys, query, searching])
 
-  // The list can shrink under the highlight (a project removed while the switcher is open).
-  const highlighted = Math.min(activeIndex, Math.max(0, rows.length - 1))
+  // The highlight stays on its project when the rows move (a pin changes the project's group).
+  // Without one, or when it left the list (removed while the switcher is open), the position
+  // decides, held inside the list.
+  const highlighted = useMemo(() => {
+    const byKey =
+      highlight.key === null ? -1 : rows.findIndex((row) => row.item.key === highlight.key)
+    return byKey !== -1 ? byKey : Math.min(highlight.index, Math.max(0, rows.length - 1))
+  }, [rows, highlight])
 
   // The sidebar loads every project's worktrees when it mounts. Opened with the sidebar
   // collapsed since launch, the counts and pinned order need the same one query.
@@ -276,12 +331,26 @@ function ProjectSwitcherPanel(): React.JSX.Element {
   )
 
   // Read through a ref so the window listener is attached once per open.
-  const latest = useRef({ rows, highlighted, open, close })
-  latest.current = { rows, highlighted, open, close }
+  const latest = useRef({ rows, highlighted, pinnedSet, open, close })
+  latest.current = { rows, highlighted, pinnedSet, open, close }
+
+  const highlightRow = useCallback((index: number): void => {
+    const row = latest.current.rows[index]
+    setHighlight(row ? { index, key: row.item.key } : FIRST_ROW)
+  }, [])
+
+  // Nothing is navigated and the switcher stays open. The row changes when the pin is stored
+  // (a failed pin leaves it as it was; the action shows the error toast).
+  const togglePin = useCallback((item: SwitcherItem, pinned: boolean): void => {
+    // The highlight goes with the project to the group it lands in.
+    const index = latest.current.rows.findIndex((row) => row.item.key === item.key)
+    setHighlight({ index: Math.max(0, index), key: item.key })
+    void setSwitcherProjectPinned(item, pinned)
+  }, [])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
-      const { rows, highlighted, open, close } = latest.current
+      const { rows, highlighted, pinnedSet, open, close } = latest.current
       const swallow = (): void => {
         event.preventDefault()
         event.stopImmediatePropagation()
@@ -299,15 +368,21 @@ function ProjectSwitcherPanel(): React.JSX.Element {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         swallow()
         const step = event.key === 'ArrowDown' ? 1 : -1
-        setActiveIndex(Math.max(0, Math.min(rows.length - 1, highlighted + step)))
+        highlightRow(Math.max(0, Math.min(rows.length - 1, highlighted + step)))
         return
       }
       if (event.key === 'Enter') {
         swallow()
-        // Plain Enter opens. With a modifier it does nothing here.
-        if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return
         const row = rows[highlighted]
-        if (row) open(row.item)
+        if (!row) return
+        // Cmd+Enter pins or unpins. A held key does not flip the pin back and forth.
+        if (isPinChord(event)) {
+          if (!event.repeat) togglePin(row.item, !pinnedSet.has(row.item.key))
+          return
+        }
+        // Plain Enter opens. With any other modifier it does nothing here.
+        if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return
+        open(row.item)
         return
       }
       if (event.key === 'Tab') {
@@ -324,12 +399,14 @@ function ProjectSwitcherPanel(): React.JSX.Element {
     }
     window.addEventListener('keydown', onKeyDown, true)
     return () => window.removeEventListener('keydown', onKeyDown, true)
-  }, [])
+  }, [highlightRow, togglePin])
+
+  const highlightedRow = rows[highlighted] as SwitcherRow | undefined
 
   const handleQueryChange = (event: React.ChangeEvent<HTMLInputElement>): void => {
     setQuery(event.target.value)
     // The first result is highlighted after every keystroke.
-    setActiveIndex(0)
+    setHighlight(FIRST_ROW)
   }
 
   return (
@@ -429,8 +506,9 @@ function ProjectSwitcherPanel(): React.JSX.Element {
                   worktreeCount={worktreeCounts.get(row.item.key) ?? 0}
                   agentState={agentStates.get(row.item.key)}
                   age={formatOpenedAge(row.item.lastOpenedAt, now)}
-                  onHover={setActiveIndex}
+                  onHover={highlightRow}
                   onOpen={open}
+                  onTogglePin={togglePin}
                 />
               </div>
             ))}
@@ -443,6 +521,12 @@ function ProjectSwitcherPanel(): React.JSX.Element {
             <span>
               <kbd className={KBD_CLASS}>↵</kbd> open
             </span>
+            {highlightedRow && (
+              <span data-testid="project-switcher-pin-hint">
+                <kbd className={KBD_CLASS}>{pinKeyLabel()}</kbd>{' '}
+                {pinnedSet.has(highlightedRow.item.key) ? 'unpin' : 'pin'}
+              </span>
+            )}
             <span>
               <kbd className={KBD_CLASS}>esc</kbd> close
             </span>

@@ -1,6 +1,7 @@
 // The "Go to project" switcher: what it lists, how the keys and the mouse work, and what
 // opening a project does. The ranking and grouping rules have their own tests
 // (lib/project-switcher.test.ts); here they are checked through the rendered overlay.
+// Pinning from the switcher is in ProjectSwitcher.pin.test.tsx.
 
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -443,12 +444,15 @@ describe('keys and mouse', () => {
     expect(activeRowName()).toBe('seller-ios')
   })
 
-  it('does nothing on Enter with a modifier or with no result', () => {
+  // Cmd+Enter pins instead of opening: ProjectSwitcher.pin.test.tsx.
+  it('opens nothing on Enter with a modifier or with no result', () => {
     render(<ProjectSwitcher />)
     const input = openSwitcher()
-    press(input, 'Enter', { metaKey: true })
-    expect(useProjectStore.getState().selectedProjectId).toBeNull()
-    expect(screen.getByTestId('project-switcher')).toBeInTheDocument()
+    for (const modifier of ['metaKey', 'ctrlKey', 'altKey', 'shiftKey'] as const) {
+      press(input, 'Enter', { [modifier]: true })
+      expect(useProjectStore.getState().selectedProjectId).toBeNull()
+      expect(screen.getByTestId('project-switcher')).toBeInTheDocument()
+    }
 
     type(input, 'zzqq')
     press(input, 'Enter')
@@ -500,6 +504,8 @@ describe('keys and mouse', () => {
     const dialog = screen.getByTestId('project-switcher')
     expect(dialog.textContent).toContain('↑↓ navigate')
     expect(dialog.textContent).toContain('↵ open')
+    // The highlighted row, orders-web, is pinned.
+    expect(dialog.textContent).toContain('⌘↵ unpin')
     expect(dialog.textContent).toContain('esc close')
   })
 
