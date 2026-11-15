@@ -41,6 +41,7 @@ export {
   type DiffCommentUpdate
 } from './useDiffCommentStore'
 export { useFileSearchStore } from './useFileSearchStore'
+export { useProjectSwitcherStore } from './useProjectSwitcherStore'
 export { useQuestionStore } from './useQuestionStore'
 export { usePermissionStore } from './usePermissionStore'
 export { useCommandApprovalStore, type CommandApprovalRequest } from './useCommandApprovalStore'

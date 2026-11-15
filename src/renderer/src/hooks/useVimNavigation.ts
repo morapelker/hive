@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useVimModeStore } from '@/stores/useVimModeStore'
 import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
+import { useProjectSwitcherStore } from '@/stores/useProjectSwitcherStore'
 import { useLayoutStore } from '@/stores/useLayoutStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { useHintStore } from '@/stores/useHintStore'
@@ -33,6 +34,8 @@ function isInsideRadixOverlay(el: Element | null): boolean {
   if (!el) return false
   if (el.closest('[data-radix-dialog-content]')) return true
   if (el.closest('[cmdk-root]')) return true
+  // The "Go to project" switcher is an overlay of the same kind (its field is a plain input).
+  if (el.closest('[data-testid="project-switcher"]')) return true
   return false
 }
 
@@ -108,6 +111,9 @@ export function useVimNavigation(): void {
       if (vim.mode === 'insert' && event.key !== 'Escape') return
       if (document.querySelector('[data-radix-dialog-content]')) return
       if (commandPaletteOpen) return
+      // The switcher takes its own keys (and stops them before they get here); this covers
+      // a key pressed in the instant it opens or closes.
+      if (useProjectSwitcherStore.getState().isOpen) return
 
       if (event.key === 'Escape') {
         if (hint.mode === 'pending') {

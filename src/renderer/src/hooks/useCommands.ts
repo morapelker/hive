@@ -16,6 +16,7 @@ import { BOARD_TAB_ID } from '@/stores/useSessionStore'
 import { useGitStore } from '@/stores/useGitStore'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { useShortcutStore } from '@/stores/useShortcutStore'
+import { useProjectSwitcherStore } from '@/stores/useProjectSwitcherStore'
 import { leaveDataProjectThen, useDataProjectStore } from '@/stores/useDataProjectStore'
 import { describeDataProjectTarget } from '@/components/data-projects/data-project-ui'
 import { useCommandPaletteStore, type Command } from '@/stores/useCommandPaletteStore'
@@ -39,7 +40,7 @@ import {
  */
 export function useCommands() {
   // Get store state and actions
-  const { projects, selectedProjectId, selectProject, toggleProjectExpanded } = useProjectStore()
+  const { projects, selectedProjectId } = useProjectStore()
   const { worktreesByProject, selectWorktree, getWorktreesForProject } = useWorktreeStore()
   const {
     activeWorktreeId: storeWorktreeId,
@@ -132,55 +133,19 @@ export function useCommands() {
         }
       },
       {
+        // Opens the "Go to project" switcher (every project on this Mac, ranked as you type)
+        // instead of a nested list, so it also works with the sidebar collapsed.
         id: 'nav:switch-project',
         label: 'Switch to Project',
-        description: 'Navigate to a different project',
+        description: 'Go to any project by name',
         category: 'navigation',
         icon: 'Folder',
-        keywords: ['project', 'switch', 'change'],
-        hasChildren: true,
-        getChildren: () =>
-          projects.map((project) => ({
-            id: `nav:project:${project.id}`,
-            label: project.name,
-            description: project.path,
-            category: 'navigation' as const,
-            icon: 'Folder',
-            action: () => {
-              // Replaces an open data project: its staged table edits ask first.
-              leaveDataProjectThen(() => {
-                selectProject(project.id)
-                toggleProjectExpanded(project.id)
-                toast.success(`Switched to ${project.name}`)
-              })
-              closeCommandPalette()
-            }
-          })),
+        keywords: ['project', 'switch', 'change', 'go to', 'open', 'find'],
         action: () => {
-          const children =
-            projects.map((project) => ({
-              id: `nav:project:${project.id}`,
-              label: project.name,
-              description: project.path,
-              category: 'navigation' as const,
-              icon: 'Folder',
-              action: () => {
-                leaveDataProjectThen(() => {
-                  selectProject(project.id)
-                  toggleProjectExpanded(project.id)
-                  toast.success(`Switched to ${project.name}`)
-                })
-                closeCommandPalette()
-              }
-            })) || []
-          pushCommandLevel(children, {
-            id: 'nav:switch-project',
-            label: 'Switch to Project',
-            category: 'navigation',
-            action: () => {}
-          })
+          closeCommandPalette()
+          useProjectSwitcherStore.getState().toggle()
         },
-        isVisible: () => projects.length > 0
+        isVisible: () => projects.length + dataProjects.length > 0
       },
       {
         id: 'nav:switch-worktree',
@@ -847,8 +812,6 @@ export function useCommands() {
     selectedProjectId,
     selectedConnectionId,
     connections,
-    selectProject,
-    toggleProjectExpanded,
     selectWorktree,
     getWorktreesForProject,
     activeWorktreeId,

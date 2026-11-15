@@ -5,11 +5,12 @@ import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { useShortcutStore } from '@/stores/useShortcutStore'
+import { useProjectSwitcherStore } from '@/stores/useProjectSwitcherStore'
 import { leaveDataProjectThen, useDataProjectStore } from '@/stores/useDataProjectStore'
 import { useInProgressSessionCount } from '@/hooks/useInProgressSessionCount'
 import { formatBinding, getShortcutDefinition } from '@/lib/keyboard-shortcuts'
 import { ResizeHandle } from './ResizeHandle'
-import { KanbanSquare, Link, Loader2 } from 'lucide-react'
+import { FolderSearch, KanbanSquare, Link, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
@@ -57,7 +58,8 @@ function SidebarNavRow({
   active,
   onClick,
   testId,
-  shortcut
+  shortcut,
+  keepFocus
 }: {
   icon: typeof KanbanSquare
   label: string
@@ -65,11 +67,14 @@ function SidebarNavRow({
   onClick: () => void
   testId: string
   shortcut?: string
+  /** The click leaves the keyboard focus where it is (a row that opens an overlay). */
+  keepFocus?: boolean
 }): React.JSX.Element {
   return (
     <button
       type="button"
       onClick={onClick}
+      onMouseDown={keepFocus ? (e) => e.preventDefault() : undefined}
       aria-current={active ? 'page' : undefined}
       className={cn(NAV_ROW, active ? NAV_ROW_ACTIVE_PRIMARY : NAV_ROW_INACTIVE)}
       data-testid={testId}
@@ -138,6 +143,8 @@ export function LeftSidebar(): React.JSX.Element {
     useShortcutStore((s) => s.customBindings['nav:toggle-pinned-board']) ??
     getShortcutDefinition('nav:toggle-pinned-board')?.defaultBinding
   const pinnedBoardShortcut = pinnedBoardBinding ? formatBinding(pinnedBoardBinding) : undefined
+
+  const toggleProjectSwitcher = useProjectSwitcherStore((s) => s.toggle)
 
   const handlePinnedBoardClick = useCallback((): void => {
     // The board replaces an open data project: its staged table edits ask before anything
@@ -252,6 +259,16 @@ export function LeftSidebar(): React.JSX.Element {
             onClick={handlePinnedBoardClick}
             testId="sidebar-nav-pinned-board"
             shortcut={pinnedBoardShortcut}
+          />
+          {/* Opens the switcher over the window. The focus stays where it was, so closing
+              the switcher hands it back (a chat input keeps its caret). */}
+          <SidebarNavRow
+            icon={FolderSearch}
+            label="Go to project"
+            active={false}
+            onClick={toggleProjectSwitcher}
+            testId="sidebar-nav-go-to-project"
+            keepFocus
           />
           {projectCount > 1 && <ProjectFilter value={filterQuery} onChange={setFilterQuery} />}
           {activeLanguages.length > 0 && (

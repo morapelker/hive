@@ -15,6 +15,7 @@ import {
 } from '@/stores'
 import { useGitStore } from '@/stores/useGitStore'
 import { useShortcutStore } from '@/stores/useShortcutStore'
+import { useProjectSwitcherStore } from '@/stores/useProjectSwitcherStore'
 import { useWorktreeStore, getOrderedProjectWorktrees } from '@/stores/useWorktreeStore'
 import { useScriptStore, fireRunScript, killRunScript } from '@/stores/useScriptStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
@@ -460,6 +461,12 @@ function tryCloseOpenModal(): boolean {
   // File search dialog
   if (useFileSearchStore.getState().isOpen) {
     useFileSearchStore.getState().close()
+    return true
+  }
+
+  // "Go to project" switcher
+  if (useProjectSwitcherStore.getState().isOpen) {
+    useProjectSwitcherStore.getState().close()
     return true
   }
 

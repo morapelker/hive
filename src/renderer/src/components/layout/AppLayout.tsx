@@ -13,6 +13,7 @@ import { SettingsModal } from '@/components/settings'
 import { AgentSetupGuard } from '@/components/setup'
 import { HelpOverlay } from '@/components/ui/HelpOverlay'
 import { FileSearchDialog } from '@/components/file-search'
+import { ProjectSwitcher } from '@/components/project-switcher'
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
 import { useVimNavigation } from '@/hooks/useVimNavigation'
 import { useOpenCodeGlobalListener } from '@/hooks/useOpenCodeGlobalListener'
@@ -331,6 +332,10 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
           </ErrorBoundary>
           <ErrorBoundary componentName="FileSearchDialog" fallback={null}>
             <FileSearchDialog />
+          </ErrorBoundary>
+          {/* "Go to project": the sidebar row and the palette's "Switch to Project" open it. */}
+          <ErrorBoundary componentName="ProjectSwitcher" fallback={null}>
+            <ProjectSwitcher />
           </ErrorBoundary>
           <GlobalProjectSettings />
           {createPRWorktreeId && createPRWorktreePath && (
