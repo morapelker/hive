@@ -3,6 +3,7 @@
  * Spec: design/redesign/inventory/ORCA-SIDEBAR-SPEC.md
  */
 export * from './orca-sidebar'
+export { SIDEBAR_SECTIONS, type SidebarSection } from './sidebar-sections'
 export { agentStateLabel, type AgentDotState } from './agent-state'
 export { AgentStateDot } from './AgentStateDot'
 export { SidebarCountPill } from './SidebarCountPill'

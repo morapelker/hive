@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useCallback } from 'react'
-import { Loader2, FolderPlus } from 'lucide-react'
+import { Loader2, FolderPlus, Folders } from 'lucide-react'
 import {
   useProjectStore,
   useSpaceStore,
@@ -11,6 +11,7 @@ import {
   useConnectionStore
 } from '@/stores'
 import { ProjectItem } from './ProjectItem'
+import { SECTION_HEADER_ICON, SidebarSectionHeader } from '@/components/sidebar'
 import {
   filterProjects,
   mergeSidebarEntries,
@@ -340,14 +341,12 @@ export function ProjectList({
     )
   }
 
-  // Space has no assigned projects
-  if (
+  // Space has no assigned projects: its message takes the list's place under the heading
+  const emptySpace =
     activeSpaceId !== null &&
     filteredEntries.length === 0 &&
     !filterQuery.trim() &&
-    activeLanguages.length === 0
-  ) {
-    return (
+    activeLanguages.length === 0 ? (
       <div
         className="flex flex-col items-center justify-center py-8 px-2 text-center"
         data-testid="empty-space-state"
@@ -355,18 +354,15 @@ export function ProjectList({
         <p className="text-sm text-muted-foreground">No projects in this space.</p>
         <p className="text-xs text-muted-foreground mt-1">Right-click a project to assign it.</p>
       </div>
-    )
-  }
+    ) : null
 
   const isDraggable = !filterQuery.trim() && activeLanguages.length === 0
 
   // Project list
-  return (
-    // Orca virtual-row rhythm: ROW_GAP (6px) between group rows; the first
-    // header in the whole sidebar has no top spacer, so the list only adds the
-    // 4px header spacer when another section (Pinned/Recent/Connections)
-    // renders above it. Non-first groups add their own pt-1 (ProjectItem).
-    <div data-testid="project-list" className="flex flex-col gap-1.5 [&:not(:first-child)]:pt-1">
+  const projectRows = (
+    // Orca virtual-row rhythm: ROW_GAP (6px) between group rows; non-first groups
+    // add their own pt-1 (ProjectItem).
+    <div data-testid="project-list" className="flex flex-col gap-1.5">
       {filteredEntries.map((item, index) => {
         const entry: SidebarEntry<(typeof projects)[number], DataProject> = item.project.entry
         const nameMatchIndices = item.nameMatch?.matched ? item.nameMatch.indices : undefined
@@ -410,6 +406,31 @@ export function ProjectList({
           No matching projects
         </div>
       )}
+    </div>
+  )
+
+  const listedCount = filteredEntries.length
+
+  return (
+    // Orca virtual-row rhythm: the first header in the whole sidebar has no top spacer, so
+    // the section only adds the 4px header spacer when another section
+    // (Pinned/Recent/Connections) renders above it; ROW_GAP (6px) under the heading.
+    <div
+      data-testid="all-projects-section"
+      className="flex flex-col gap-1.5 [&:not(:first-child)]:pt-1"
+    >
+      {/* Not sticky: the heading scrolls away with the list and the project rows are what
+          pin to the top. The count is the number of rows listed, so it follows the Space
+          and the filter. */}
+      <div data-testid="all-projects-header">
+        <SidebarSectionHeader
+          icon={<Folders className={SECTION_HEADER_ICON} />}
+          label="All projects"
+          count={listedCount}
+          countLabel={`${listedCount} project${listedCount === 1 ? '' : 's'}`}
+        />
+      </div>
+      {emptySpace ?? projectRows}
     </div>
   )
 }

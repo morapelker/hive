@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react'
+import { Fragment, useCallback, useEffect } from 'react'
 import { useLayoutStore } from '@/stores/useLayoutStore'
 import { useProjectStore, useConnectionStore, useFilterStore, useSpaceStore } from '@/stores'
 import { useSettingsStore } from '@/stores/useSettingsStore'
@@ -44,7 +44,9 @@ import {
   SIDEBAR_HEADER_ACTION_ICON_STROKE,
   SIDEBAR_HEADER_LABEL,
   SIDEBAR_HEADER_LEFT,
-  SIDEBAR_SHELL
+  SIDEBAR_SECTIONS,
+  SIDEBAR_SHELL,
+  type SidebarSection
 } from '@/components/sidebar'
 
 /** Orca SidebarNav row (SidebarNav.tsx:104-123): 13px medium row, size-4 icon,
@@ -208,6 +210,25 @@ export function LeftSidebar(): React.JSX.Element {
     return <div data-testid="left-sidebar-collapsed" />
   }
 
+  const renderSection = (section: SidebarSection): React.ReactNode => {
+    switch (section) {
+      case 'pinned':
+        return <PinnedList />
+      case 'recent':
+        return <RecentList />
+      case 'connections':
+        return <ConnectionList />
+      case 'all-projects':
+        return (
+          <ProjectList
+            onAddProject={handleAddProject}
+            filterQuery={debouncedFilterQuery}
+            activeLanguages={activeLanguages}
+          />
+        )
+    }
+  }
+
   return (
     <div className="flex flex-shrink-0" data-testid="left-sidebar-container">
       {/* Orca sidebar/index.tsx:110 shell — nav, header, list viewport, footer */}
@@ -308,14 +329,9 @@ export function LeftSidebar(): React.JSX.Element {
             style={{ overflowAnchor: 'none' }}
             data-testid="sidebar-scroll-container"
           >
-            <PinnedList />
-            <RecentList />
-            <ConnectionList />
-            <ProjectList
-              onAddProject={handleAddProject}
-              filterQuery={debouncedFilterQuery}
-              activeLanguages={activeLanguages}
-            />
+            {SIDEBAR_SECTIONS.map((section) => (
+              <Fragment key={section}>{renderSection(section)}</Fragment>
+            ))}
           </div>
         </div>
 

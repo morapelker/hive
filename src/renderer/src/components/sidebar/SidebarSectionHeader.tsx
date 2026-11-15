@@ -33,6 +33,8 @@ export type SidebarSectionHeaderProps = {
   label: React.ReactNode
   /** Renders the orca count pill after the label. */
   count?: number
+  /** What the count pill is read out as; the pill's own default counts "workspaces". */
+  countLabel?: string
   /** Pins the header (orca: 'sticky z-20 bg-worktree-sidebar -top-px'). */
   sticky?: boolean
   /** Project-group depth; paddingLeft = 10 + min(depth, 6) * 10 (orca indentation.ts). */
@@ -51,6 +53,7 @@ export function SidebarSectionHeader({
   icon,
   label,
   count,
+  countLabel,
   sticky = false,
   depth = 0,
   actions,
@@ -94,7 +97,9 @@ export function SidebarSectionHeader({
           <div className={SECTION_HEADER_LABEL_WRAP}>
             <div className={SECTION_HEADER_LABEL_ROW}>
               <div className={SECTION_HEADER_LABEL}>{label}</div>
-              {typeof count === 'number' ? <SidebarCountPill count={count} /> : null}
+              {typeof count === 'number' ? (
+                <SidebarCountPill count={count} aria-label={countLabel} />
+              ) : null}
             </div>
           </div>
         </div>
