@@ -4,7 +4,9 @@ import {
   type KeyBinding,
   DEFAULT_SHORTCUTS,
   detectConflicts,
-  formatBinding
+  formatBinding,
+  resolveEffectiveBinding,
+  withoutRemovedShortcuts
 } from '@/lib/keyboard-shortcuts'
 import { dbApi } from '@/api/db-api'
 
@@ -21,7 +23,9 @@ interface ShortcutState {
   ) => { success: boolean; conflicts?: string[] }
   removeCustomBinding: (shortcutId: string) => void
   resetToDefaults: () => void
+  /** `null` when the action has no key: the user gave its default key to another action. */
   getEffectiveBinding: (shortcutId: string) => KeyBinding | null
+  /** Every action that has a key. Actions without one are left out. */
   getAllEffectiveBindings: () => Map<string, KeyBinding>
   getConflicts: (shortcutId: string, binding: KeyBinding) => string[]
   getDisplayString: (shortcutId: string) => string
@@ -65,20 +69,16 @@ export const useShortcutStore = create<ShortcutState>()(
         saveToDatabase({})
       },
 
-      getEffectiveBinding: (shortcutId: string) => {
-        const custom = get().customBindings[shortcutId]
-        if (custom) return custom
-
-        const defaultShortcut = DEFAULT_SHORTCUTS.find((s) => s.id === shortcutId)
-        return defaultShortcut?.defaultBinding ?? null
-      },
+      getEffectiveBinding: (shortcutId: string) =>
+        resolveEffectiveBinding(shortcutId, get().customBindings),
 
       getAllEffectiveBindings: () => {
         const bindings = new Map<string, KeyBinding>()
         const custom = get().customBindings
 
         for (const shortcut of DEFAULT_SHORTCUTS) {
-          bindings.set(shortcut.id, custom[shortcut.id] ?? shortcut.defaultBinding)
+          const binding = resolveEffectiveBinding(shortcut.id, custom)
+          if (binding) bindings.set(shortcut.id, binding)
         }
 
         return bindings
@@ -101,7 +101,11 @@ export const useShortcutStore = create<ShortcutState>()(
             const value = await dbApi.setting.get(SHORTCUTS_SETTING_KEY)
             if (value) {
               const parsed = JSON.parse(value) as Record<string, KeyBinding>
-              set({ customBindings: parsed })
+              // A key saved for an action that is no longer a shortcut is dropped, here and
+              // in the database.
+              const bindings = withoutRemovedShortcuts(parsed)
+              set({ customBindings: bindings })
+              if (bindings !== parsed) saveToDatabase(bindings)
             }
           }
         } catch (error) {
@@ -112,6 +116,14 @@ export const useShortcutStore = create<ShortcutState>()(
     {
       name: 'hive-shortcuts',
       storage: createJSONStorage(() => localStorage),
+      // Version 1: "Filter Projects" (nav:filter-projects) is no longer a shortcut. A key
+      // saved for it is dropped from the stored copy too.
+      version: 1,
+      migrate: (persisted) => {
+        const stored = (persisted as { customBindings?: Record<string, KeyBinding> } | null)
+          ?.customBindings
+        return { customBindings: withoutRemovedShortcuts(stored ?? {}) }
+      },
       partialize: (state) => ({
         customBindings: state.customBindings
       })

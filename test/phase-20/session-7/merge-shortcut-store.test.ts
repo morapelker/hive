@@ -44,16 +44,19 @@ describe('Session 7: Merge Shortcut Store + Definition', () => {
     expect(useGitStore.getState().selectedMergeBranch.size).toBe(0)
   })
 
-  test('filter-projects shortcut is defined in DEFAULT_SHORTCUTS', () => {
-    const shortcut = DEFAULT_SHORTCUTS.find((s) => s.id === 'nav:filter-projects')
-    expect(shortcut).toBeDefined()
-    expect(shortcut!.category).toBe('navigation')
-    expect(shortcut!.label).toBe('Filter Projects')
-    expect(shortcut!.defaultBinding).toEqual({ key: 'g', modifiers: ['meta'] })
+  // Cmd+G was "Filter Projects" (nav:filter-projects) until the Go to project switcher took
+  // it: the filter field is click-to-type and is not a shortcut any more.
+  test('filter-projects shortcut is no longer defined in DEFAULT_SHORTCUTS', () => {
+    expect(DEFAULT_SHORTCUTS.find((s) => s.id === 'nav:filter-projects')).toBeUndefined()
+    expect(DEFAULT_SHORTCUTS.find((s) => s.label === 'Filter Projects')).toBeUndefined()
   })
 
-  test('filter-projects shortcut has a description', () => {
-    const shortcut = DEFAULT_SHORTCUTS.find((s) => s.id === 'nav:filter-projects')
-    expect(shortcut!.description).toBe('Focus the project filter input')
+  test('go-to-project shortcut is defined in DEFAULT_SHORTCUTS on Cmd+G', () => {
+    const shortcut = DEFAULT_SHORTCUTS.find((s) => s.id === 'nav:go-to-project')
+    expect(shortcut).toBeDefined()
+    expect(shortcut!.category).toBe('navigation')
+    expect(shortcut!.label).toBe('Go to Project')
+    expect(shortcut!.defaultBinding).toEqual({ key: 'g', modifiers: ['meta'] })
+    expect(shortcut!.description).toBeTruthy()
   })
 })

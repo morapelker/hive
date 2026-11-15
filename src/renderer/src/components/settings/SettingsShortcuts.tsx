@@ -202,7 +202,8 @@ function ShortcutCategorySection({
                   )}
                   data-testid={`shortcut-binding-${shortcut.id}`}
                 >
-                  {isRecording ? 'Press keys...' : displayString}
+                  {/* No key: the user gave this action's default key to another action. */}
+                  {isRecording ? 'Press keys...' : displayString || 'Not set'}
                 </button>
               </div>
             </div>

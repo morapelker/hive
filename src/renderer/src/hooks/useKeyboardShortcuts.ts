@@ -444,6 +444,20 @@ function cycleProject(direction: 1 | -1): void {
 }
 
 /**
+ * Go to Project: opens the switcher, or closes it when it is open.
+ */
+function toggleProjectSwitcher(): void {
+  const switcher = useProjectSwitcherStore.getState()
+  if (!switcher.isOpen) {
+    // One overlay at a time: opened over the command palette or the file search, it
+    // replaces them (as they replace it when they open over it).
+    if (useCommandPaletteStore.getState().isOpen) useCommandPaletteStore.getState().close()
+    if (useFileSearchStore.getState().isOpen) useFileSearchStore.getState().close()
+  }
+  switcher.toggle()
+}
+
+/**
  * Checks whether any modal/dialog is currently open and closes it.
  * Returns `true` if a modal was closed, `false` otherwise.
  *
@@ -876,23 +890,12 @@ function getShortcutHandlers(
       }
     },
     {
-      id: 'nav:filter-projects',
-      binding: getEffectiveBinding('nav:filter-projects'),
+      // Works while typing (chat input, the sidebar's filter field) and with the sidebar
+      // collapsed, which stays collapsed.
+      id: 'nav:go-to-project',
+      binding: getEffectiveBinding('nav:go-to-project'),
       allowInInput: true,
-      handler: () => {
-        // Open left sidebar if collapsed
-        const { leftSidebarCollapsed, setLeftSidebarCollapsed } = useLayoutStore.getState()
-        if (leftSidebarCollapsed) {
-          setLeftSidebarCollapsed(false)
-        }
-        // Dispatch focus event (allow a tick for sidebar to render)
-        setTimeout(
-          () => {
-            window.dispatchEvent(new CustomEvent('hive:focus-project-filter'))
-          },
-          leftSidebarCollapsed ? 100 : 0
-        )
-      }
+      handler: toggleProjectSwitcher
     },
 
     {

@@ -7,14 +7,7 @@ import { parseFilterInput } from '@/lib/colon-command-parser'
 import { ColonCommandPopover, type ColonCommandItem } from './ColonCommandPopover'
 import { LanguageIcon } from './LanguageIcon'
 import { cn } from '@/lib/utils'
-import {
-  SEARCH_FIELD,
-  SEARCH_FIELD_ICON,
-  SEARCH_FIELD_ICON_STROKE,
-  SEARCH_FIELD_KEYCAP,
-  SEARCH_FIELD_KEYCAPS,
-  SEARCH_FIELD_KEYCOMBO
-} from '@/components/sidebar'
+import { SEARCH_FIELD, SEARCH_FIELD_ICON, SEARCH_FIELD_ICON_STROKE } from '@/components/sidebar'
 
 interface ProjectFilterProps {
   value: string
@@ -146,17 +139,6 @@ export function ProjectFilter({ value, onChange }: ProjectFilterProps): React.JS
     setActiveCommand(null)
   }, [])
 
-  useEffect(() => {
-    const handleFocus = (): void => {
-      inputRef.current?.focus()
-      inputRef.current?.select()
-    }
-    window.addEventListener('hive:focus-project-filter', handleFocus)
-    return () => {
-      window.removeEventListener('hive:focus-project-filter', handleFocus)
-    }
-  }, [])
-
   const handleKeyDown = (e: React.KeyboardEvent): void => {
     // When popover is open, let the popover handle keyboard nav
     // Escape layering: first close popover, second clear + blur
@@ -242,8 +224,9 @@ export function ProjectFilter({ value, onChange }: ProjectFilterProps): React.JS
 
   return (
     // Orca SidebarNav search field (SidebarNav.tsx:264-292) rendered as a live
-    // input: h-7 hairline sidebar border, 5% foreground wash, 12px medium text,
-    // keycap cluster revealed on hover/focus.
+    // input: h-7 hairline sidebar border, 5% foreground wash, 12px medium text.
+    // Click-to-type: no shortcut focuses it, so it shows no key hint (Cmd+G is
+    // "Go to Project", shown on the nav row above).
     <div className="group relative flex items-center">
       <Search className={SEARCH_FIELD_ICON} strokeWidth={SEARCH_FIELD_ICON_STROKE} />
       <input
@@ -262,7 +245,7 @@ export function ProjectFilter({ value, onChange }: ProjectFilterProps): React.JS
         )}
         data-testid="project-filter-input"
       />
-      {value ? (
+      {value && (
         <button
           onClick={() => {
             handleChange('')
@@ -273,13 +256,6 @@ export function ProjectFilter({ value, onChange }: ProjectFilterProps): React.JS
         >
           <X className="size-3" />
         </button>
-      ) : (
-        <span className={cn(SEARCH_FIELD_KEYCAPS, 'absolute right-1.5 ml-0')}>
-          <span className={SEARCH_FIELD_KEYCOMBO}>
-            <kbd className={SEARCH_FIELD_KEYCAP}>⌘</kbd>
-            <kbd className={SEARCH_FIELD_KEYCAP}>G</kbd>
-          </span>
-        </span>
       )}
       <ColonCommandPopover
         visible={popoverMode !== null}

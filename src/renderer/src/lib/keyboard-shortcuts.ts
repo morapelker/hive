@@ -142,6 +142,13 @@ export const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
     defaultBinding: { key: 'p', modifiers: ['meta'] }
   },
   {
+    id: 'nav:go-to-project',
+    label: 'Go to Project',
+    description: 'Open the project switcher: find any project by name',
+    category: 'navigation',
+    defaultBinding: { key: 'g', modifiers: ['meta'] }
+  },
+  {
     id: 'nav:session-history',
     label: 'Open Session History',
     description: 'Open the session history panel',
@@ -177,13 +184,6 @@ export const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
     description: 'Pull commits from the remote repository',
     category: 'git',
     defaultBinding: { key: 'l', modifiers: ['meta', 'shift'] }
-  },
-  {
-    id: 'nav:filter-projects',
-    label: 'Filter Projects',
-    description: 'Focus the project filter input',
-    category: 'navigation',
-    defaultBinding: { key: 'g', modifiers: ['meta'] }
   },
 
   // Sidebar shortcuts
@@ -234,6 +234,14 @@ export const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
     defaultBinding: { key: ',', modifiers: ['meta'] }
   }
 ]
+
+/**
+ * Actions that used to be shortcuts and no longer are. A key saved for one of them is dropped
+ * when the saved shortcuts are loaded.
+ * - `nav:filter-projects` ("Filter Projects", Cmd+G): the sidebar's filter field is
+ *   click-to-type; Cmd+G is `nav:go-to-project`.
+ */
+export const REMOVED_SHORTCUT_IDS: ReadonlySet<string> = new Set(['nav:filter-projects'])
 
 // Build a map for fast lookup
 const shortcutMap = new Map<string, ShortcutDefinition>()
@@ -385,6 +393,59 @@ export function getAllShortcutDefinitions(): ShortcutDefinition[] {
  */
 export function getShortcutsByCategory(category: ShortcutCategory): ShortcutDefinition[] {
   return DEFAULT_SHORTCUTS.filter((s) => s.category === category)
+}
+
+/**
+ * Whether two bindings fire on the same key press. Ctrl and Meta count as one "command"
+ * modifier, as in `eventMatchesBinding`.
+ */
+export function bindingsOverlap(a: KeyBinding, b: KeyBinding): boolean {
+  if (a.key.toLowerCase() !== b.key.toLowerCase()) return false
+  const normalize = (binding: KeyBinding): string =>
+    [...new Set(binding.modifiers.map((mod) => (mod === 'ctrl' ? 'meta' : mod)))].sort().join('+')
+  return normalize(a) === normalize(b)
+}
+
+/**
+ * The key an action answers to: the user's own key for it, otherwise its default.
+ *
+ * A default gives way to a key the user chose for another action: that action keeps the key
+ * and this one has none (`null`) until the user picks one for it in Settings. Without this, a
+ * default added or moved in an update (Go to Project took Cmd+G) would silently take over a
+ * key the user had already put on something else.
+ */
+export function resolveEffectiveBinding(
+  shortcutId: string,
+  customBindings: Record<string, KeyBinding>
+): KeyBinding | null {
+  // Not an action (any more): a key saved for it does nothing.
+  const definition = shortcutMap.get(shortcutId)
+  if (!definition) return null
+
+  const custom = customBindings[shortcutId]
+  if (custom) return custom
+
+  for (const [otherId, binding] of Object.entries(customBindings)) {
+    // Keys saved for actions that do not exist (any more) take nothing.
+    if (otherId === shortcutId || !shortcutMap.has(otherId)) continue
+    if (bindingsOverlap(binding, definition.defaultBinding)) return null
+  }
+  return definition.defaultBinding
+}
+
+/**
+ * The saved shortcuts without the keys of removed actions. Returns the same object when
+ * there is nothing to drop.
+ */
+export function withoutRemovedShortcuts(
+  customBindings: Record<string, KeyBinding>
+): Record<string, KeyBinding> {
+  if (!Object.keys(customBindings).some((id) => REMOVED_SHORTCUT_IDS.has(id))) {
+    return customBindings
+  }
+  return Object.fromEntries(
+    Object.entries(customBindings).filter(([id]) => !REMOVED_SHORTCUT_IDS.has(id))
+  )
 }
 
 /**

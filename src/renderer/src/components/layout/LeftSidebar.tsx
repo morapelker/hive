@@ -144,6 +144,9 @@ export function LeftSidebar(): React.JSX.Element {
   const pinnedBoardShortcut = pinnedBoardBinding ? formatBinding(pinnedBoardBinding) : undefined
 
   const toggleProjectSwitcher = useProjectSwitcherStore((s) => s.toggle)
+  // The key that opens the switcher, shown on its nav row. Follows a rebind; empty when the
+  // action has no key (the user gave its default to another action).
+  const goToProjectShortcut = useShortcutStore((s) => s.getDisplayString('nav:go-to-project'))
 
   const handlePinnedBoardClick = useCallback((): void => {
     // The board replaces an open data project: its staged table edits ask before anything
@@ -267,6 +270,7 @@ export function LeftSidebar(): React.JSX.Element {
             active={false}
             onClick={toggleProjectSwitcher}
             testId="sidebar-nav-go-to-project"
+            shortcut={goToProjectShortcut || undefined}
             keepFocus
           />
           {projectCount > 1 && <ProjectFilter value={filterQuery} onChange={setFilterQuery} />}

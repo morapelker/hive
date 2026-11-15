@@ -140,6 +140,7 @@ export function useCommands() {
         description: 'Go to any project by name',
         category: 'navigation',
         icon: 'Folder',
+        shortcut: getDisplayString('nav:go-to-project'),
         keywords: ['project', 'switch', 'change', 'go to', 'open', 'find'],
         action: () => {
           closeCommandPalette()
