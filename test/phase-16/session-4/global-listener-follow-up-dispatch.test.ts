@@ -81,8 +81,6 @@ vi.mock('@/lib/hive-enterprise-telemetry', () => ({
 const setSessionStatusSpy = vi.fn()
 const clearSessionStatusSpy = vi.fn()
 const setLastMessageTimeSpy = vi.fn()
-const addWorktreeToRecentSpy = vi.fn()
-const addConnectionToRecentSpy = vi.fn()
 const fetchUsageForProviderSpy = vi.fn().mockResolvedValue(undefined)
 const fetchUsageSpy = vi.fn().mockResolvedValue(undefined)
 const removeQuestionSpy = vi.fn()
@@ -172,15 +170,6 @@ vi.mock('@/stores/useWorktreeStatusStore', () => ({
       setLastMessageTime: setLastMessageTimeSpy,
       clearSessionStatus: clearSessionStatusSpy,
       sessionStatuses: {}
-    })
-  }
-}))
-
-vi.mock('@/stores/useRecentStore', () => ({
-  useRecentStore: {
-    getState: () => ({
-      addWorktreeToRecent: addWorktreeToRecentSpy,
-      addConnectionToRecent: addConnectionToRecentSpy
     })
   }
 }))

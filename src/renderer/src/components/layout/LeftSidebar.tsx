@@ -17,7 +17,6 @@ import {
   ProjectList,
   AddProjectButton,
   SortProjectsButton,
-  RecentToggleButton,
   FilterChips
 } from '@/components/projects'
 import { ConnectionList, ConnectionsButton } from '@/components/connections'
@@ -330,7 +329,6 @@ export function LeftSidebar(): React.JSX.Element {
             </div>
             <div className={SIDEBAR_HEADER_ACTIONS}>
               <ConnectionsButton />
-              <RecentToggleButton />
               <SortProjectsButton />
               <AddProjectButton />
             </div>

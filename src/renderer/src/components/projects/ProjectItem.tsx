@@ -67,6 +67,7 @@ import {
 } from '@/components/shell-commands/ShellCommandMenuItems'
 import { getMemberProjects } from '@/lib/connection-project'
 import { ConnectionMembersTooltip, ProjectIcon } from './ConnectionProjectIcon'
+import { RecentGitProjectRow } from './RecentProjectRow'
 import { HighlightedText } from './HighlightedText'
 import {
   SECTION_HEADER_ACTIONS,
@@ -119,6 +120,13 @@ interface Project {
 
 interface ProjectItemProps {
   project: Project
+  /**
+   * 'list' (default) is the project's group in the project list: the header row and, when
+   * expanded, its worktrees. 'recent' is its one-line row in the sidebar's Recent section: the
+   * same right-click menu and dialogs, a click that selects without collapsing, and no
+   * worktrees, drag handle or hints.
+   */
+  variant?: 'list' | 'recent'
   nameMatchIndices?: number[]
   pathMatchIndices?: number[]
   /** First group in the list gets no top spacer (orca: firstHeaderIndex has no pt-1). */
@@ -139,6 +147,7 @@ interface ProjectItemProps {
 
 export const ProjectItem = memo(function ProjectItem({
   project,
+  variant = 'list',
   nameMatchIndices,
   pathMatchIndices,
   isFirst,
@@ -151,6 +160,7 @@ export const ProjectItem = memo(function ProjectItem({
   onDrop,
   onDragEnd
 }: ProjectItemProps): React.JSX.Element {
+  const isRecentRow = variant === 'recent'
   const sidebarHover = useSidebarHoverHighlight('project', project.id)
   // Narrow selectors (primitives/booleans) so this item only re-renders when its
   // own slice of state changes — not on every project/worktree store mutation.
@@ -162,7 +172,15 @@ export const ProjectItem = memo(function ProjectItem({
   const refreshLanguage = useProjectStore((s) => s.refreshLanguage)
   const isSelected = useProjectStore((s) => s.selectedProjectId === project.id)
   const isExpandedInStore = useProjectStore((s) => s.expandedProjectIds.has(project.id))
-  const isEditing = useProjectStore((s) => s.editingProjectId === project.id)
+  const isEditingInList = useProjectStore((s) => s.editingProjectId === project.id)
+  // A rename started from the Recent row is edited in that row: the project's row in the list
+  // may be far below, or hidden by the active Space.
+  const [isEditingRecentRow, setIsEditingRecentRow] = useState(false)
+  const isEditing = isRecentRow ? isEditingRecentRow : isEditingInList
+  const setEditing = (editing: boolean): void => {
+    if (isRecentRow) setIsEditingRecentRow(editing)
+    else setEditingProject(editing ? project.id : null)
+  }
 
   const createWorktree = useWorktreeStore((s) => s.createWorktree)
   const isCreatingWorktree = useWorktreeStore((s) => s.creatingForProjectId === project.id)
@@ -241,7 +259,8 @@ export const ProjectItem = memo(function ProjectItem({
 
   const handleClick = (): void => {
     selectProject(project.id)
-    toggleProjectExpanded(project.id)
+    // The Recent row opens the project like its row in the list, but never collapses it.
+    if (!isRecentRow || !isExpandedInStore) toggleProjectExpanded(project.id)
     if (isConnectionProject) {
       // Board-first entity: clear worktree/connection selection so the
       // project's own kanban board becomes the main-pane content.
@@ -257,7 +276,7 @@ export const ProjectItem = memo(function ProjectItem({
 
   const handleStartEdit = (): void => {
     setEditName(project.name)
-    setEditingProject(project.id)
+    setEditing(true)
   }
 
   const handleSaveEdit = async (): Promise<void> => {
@@ -270,12 +289,12 @@ export const ProjectItem = memo(function ProjectItem({
         toast.error('Failed to rename project')
       }
     }
-    setEditingProject(null)
+    setEditing(false)
   }
 
   const handleCancelEdit = (): void => {
     setEditName(project.name)
-    setEditingProject(null)
+    setEditing(false)
   }
 
   const handleKeyDown = (e: React.KeyboardEvent): void => {
@@ -414,13 +433,16 @@ export const ProjectItem = memo(function ProjectItem({
   )
 
   useEffect(() => {
+    // The "+" hint belongs to the project's row in the list. A Recent row of the same project
+    // listening too would create two worktrees.
+    if (isRecentRow) return
     const handler = (e: Event): void => {
       const ce = e as CustomEvent<{ projectId: string }>
       if (ce.detail.projectId === project.id) doCreateWorktree()
     }
     window.addEventListener('hive:hint-plus', handler)
     return () => window.removeEventListener('hive:hint-plus', handler)
-  }, [project.id, doCreateWorktree])
+  }, [isRecentRow, project.id, doCreateWorktree])
 
   const handleBranchSelect = useCallback(
     async (branchName: string, prNumber?: number): Promise<void> => {
@@ -485,179 +507,209 @@ export const ProjectItem = memo(function ProjectItem({
   // visible while a hint badge targets the plus button or a worktree is being created.
   const forceActionsVisible = showPlusHint || isCreatingWorktree || isCreatingInstance
 
+  const renameInput = (
+    <Input
+      ref={inputRef}
+      autoFocus
+      value={editName}
+      onChange={(e) => setEditName(e.target.value)}
+      onBlur={handleSaveEdit}
+      onKeyDown={handleKeyDown}
+      className={cn(
+        'h-6 px-1 py-0 text-[13px]',
+        isRecentRow ? 'min-w-0 flex-1 font-medium' : 'font-semibold'
+      )}
+      onClick={(e) => e.stopPropagation()}
+    />
+  )
+
   return (
     // Orca group section (virtual-rows.ts): every non-first header carries the
     // 4px 'pt-1' top spacer; the header itself pins to the top of the scroll
     // container on the sidebar fill; ROW_GAP (6px) between header and cards.
     <div
-      className={cn('flex flex-col gap-1.5', !isFirst && SECTION_HEADER_WRAPPER_TOP_SPACING)}
-      data-project-group={project.id}
+      className={
+        isRecentRow
+          ? undefined
+          : cn('flex flex-col gap-1.5', !isFirst && SECTION_HEADER_WRAPPER_TOP_SPACING)
+      }
+      data-project-group={isRecentRow ? undefined : project.id}
     >
-      <div className={cn(SECTION_HEADER_WRAPPER_STICKY, SECTION_HEADER_WRAPPER_STICKY_TOP)}>
+      <div
+        className={
+          isRecentRow
+            ? undefined
+            : cn(SECTION_HEADER_WRAPPER_STICKY, SECTION_HEADER_WRAPPER_STICKY_TOP)
+        }
+      >
         <ContextMenu>
           <ContextMenuTrigger asChild>
-            <div
-              className={cn(
-                // orca SectionHeader.tsx:227 — h-7 row, gap-1.5, 10px left / 8px right inset
-                SECTION_HEADER_ROW,
-                SECTION_HEADER_ROW_CLICKABLE,
-                isSelected &&
-                  'rounded-md bg-worktree-sidebar-accent text-worktree-sidebar-accent-foreground',
-                isDragging && 'opacity-50',
-                isDragOver && 'border-t border-ring'
-              )}
-              style={{ paddingLeft: getProjectGroupHeaderPaddingLeft(0) }}
-              draggable={!!isDraggable && !isEditing && !connectionModeActive}
-              onDragStart={
-                connectionModeActive || !onDragStart ? undefined : (e) => onDragStart(e, project.id)
-              }
-              onDragOver={
-                connectionModeActive || !onDragOver ? undefined : (e) => onDragOver(e, project.id)
-              }
-              onDrop={connectionModeActive || !onDrop ? undefined : (e) => onDrop(e, project.id)}
-              onDragEnd={connectionModeActive ? undefined : onDragEnd}
-              onClick={handleClick}
-              onMouseEnter={sidebarHover.onMouseEnter}
-              onMouseLeave={sidebarHover.onMouseLeave}
-              data-testid={`project-item-${project.id}`}
-            >
-              {/* Project Hint Badge (visible in vim normal mode, leading the title) */}
-              {showProjectHint && projectHint && (
-                <HintBadge
-                  code={projectHint}
-                  mode={hintMode}
-                  pendingChar={hintPendingChar}
-                  actionMode={hintActionMode}
-                />
-              )}
-
-              {/* Title surface: 16px icon box + 13px semibold label (+ count pill) */}
-              <div className={SECTION_HEADER_TITLE_SURFACE}>
-                {/* A connection project's default icon is its members' icons; hovering names them */}
-                <ConnectionMembersTooltip projectId={project.id} align="start">
-                  <div className={cn(SECTION_HEADER_ICON_BOX, SECTION_TONE_NEUTRAL)}>
-                    <ProjectIcon project={project} />
-                  </div>
-                </ConnectionMembersTooltip>
-
-                {isEditing ? (
-                  <Input
-                    ref={inputRef}
-                    autoFocus
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                    onBlur={handleSaveEdit}
-                    onKeyDown={handleKeyDown}
-                    className="h-6 px-1 py-0 text-[13px] font-semibold"
-                    onClick={(e) => e.stopPropagation()}
+            {isRecentRow ? (
+              <RecentGitProjectRow
+                project={project}
+                selected={isSelected}
+                nameEditor={isEditing ? renameInput : undefined}
+                onClick={handleClick}
+                onMouseEnter={sidebarHover.onMouseEnter}
+                onMouseLeave={sidebarHover.onMouseLeave}
+              />
+            ) : (
+              <div
+                className={cn(
+                  // orca SectionHeader.tsx:227 — h-7 row, gap-1.5, 10px left / 8px right inset
+                  SECTION_HEADER_ROW,
+                  SECTION_HEADER_ROW_CLICKABLE,
+                  isSelected &&
+                    'rounded-md bg-worktree-sidebar-accent text-worktree-sidebar-accent-foreground',
+                  isDragging && 'opacity-50',
+                  isDragOver && 'border-t border-ring'
+                )}
+                style={{ paddingLeft: getProjectGroupHeaderPaddingLeft(0) }}
+                draggable={!!isDraggable && !isEditing && !connectionModeActive}
+                onDragStart={
+                  connectionModeActive || !onDragStart
+                    ? undefined
+                    : (e) => onDragStart(e, project.id)
+                }
+                onDragOver={
+                  connectionModeActive || !onDragOver ? undefined : (e) => onDragOver(e, project.id)
+                }
+                onDrop={connectionModeActive || !onDrop ? undefined : (e) => onDrop(e, project.id)}
+                onDragEnd={connectionModeActive ? undefined : onDragEnd}
+                onClick={handleClick}
+                onMouseEnter={sidebarHover.onMouseEnter}
+                onMouseLeave={sidebarHover.onMouseLeave}
+                data-testid={`project-item-${project.id}`}
+              >
+                {/* Project Hint Badge (visible in vim normal mode, leading the title) */}
+                {showProjectHint && projectHint && (
+                  <HintBadge
+                    code={projectHint}
+                    mode={hintMode}
+                    pendingChar={hintPendingChar}
+                    actionMode={hintActionMode}
                   />
-                ) : (
-                  <div className={SECTION_HEADER_LABEL_WRAP}>
-                    <div className={SECTION_HEADER_LABEL_ROW}>
-                      {nameMatchIndices ? (
+                )}
+
+                {/* Title surface: 16px icon box + 13px semibold label (+ count pill) */}
+                <div className={SECTION_HEADER_TITLE_SURFACE}>
+                  {/* A connection project's default icon is its members' icons; hovering names them */}
+                  <ConnectionMembersTooltip projectId={project.id} align="start">
+                    <div className={cn(SECTION_HEADER_ICON_BOX, SECTION_TONE_NEUTRAL)}>
+                      <ProjectIcon project={project} />
+                    </div>
+                  </ConnectionMembersTooltip>
+
+                  {isEditing ? (
+                    renameInput
+                  ) : (
+                    <div className={SECTION_HEADER_LABEL_WRAP}>
+                      <div className={SECTION_HEADER_LABEL_ROW}>
+                        {nameMatchIndices ? (
+                          <HighlightedText
+                            text={project.name}
+                            indices={nameMatchIndices}
+                            className={SECTION_HEADER_LABEL}
+                          />
+                        ) : (
+                          <span className={SECTION_HEADER_LABEL} title={project.path}>
+                            {project.name}
+                          </span>
+                        )}
+                        {(isConnectionProject ? instanceCount : worktreeCount) > 0 && (
+                          <SidebarCountPill
+                            count={isConnectionProject ? instanceCount : worktreeCount}
+                            className="tabular-nums"
+                            aria-label={
+                              isConnectionProject
+                                ? `${instanceCount} ${instanceCount === 1 ? 'connection' : 'connections'}`
+                                : `${worktreeCount} ${worktreeCount === 1 ? 'worktree' : 'worktrees'}`
+                            }
+                            data-testid={`project-worktree-count-${project.id}`}
+                          />
+                        )}
+                      </div>
+                      {pathMatchIndices && (
                         <HighlightedText
-                          text={project.name}
-                          indices={nameMatchIndices}
-                          className={SECTION_HEADER_LABEL}
-                        />
-                      ) : (
-                        <span className={SECTION_HEADER_LABEL} title={project.path}>
-                          {project.name}
-                        </span>
-                      )}
-                      {(isConnectionProject ? instanceCount : worktreeCount) > 0 && (
-                        <SidebarCountPill
-                          count={isConnectionProject ? instanceCount : worktreeCount}
-                          className="tabular-nums"
-                          aria-label={
-                            isConnectionProject
-                              ? `${instanceCount} ${instanceCount === 1 ? 'connection' : 'connections'}`
-                              : `${worktreeCount} ${worktreeCount === 1 ? 'worktree' : 'worktrees'}`
-                          }
-                          data-testid={`project-worktree-count-${project.id}`}
+                          text={project.path}
+                          indices={pathMatchIndices}
+                          className="mt-1 block truncate text-[10px] leading-none text-muted-foreground"
                         />
                       )}
                     </div>
-                    {pathMatchIndices && (
-                      <HighlightedText
-                        text={project.path}
-                        indices={pathMatchIndices}
-                        className="mt-1 block truncate text-[10px] leading-none text-muted-foreground"
+                  )}
+                </div>
+
+                {/* Header actions — orca ProjectHeaderActions: hover-revealed overlay on the
+                    right edge (chevron + create), painted on the header fill so it can
+                    cover a long title without reserving width. */}
+                {!isEditing && (
+                  <div
+                    data-project-header-actions=""
+                    className={cn(
+                      SECTION_HEADER_ACTIONS,
+                      isSelected && 'can-hover:bg-worktree-sidebar-accent',
+                      forceActionsVisible && 'can-hover:pointer-events-auto can-hover:opacity-100'
+                    )}
+                  >
+                    {/* Plus Hint Badge (filter mode with the search field focused, or vim normal) */}
+                    {showPlusHint && plusHint && (
+                      <HintBadge
+                        code={plusHint}
+                        mode={hintMode}
+                        pendingChar={hintPendingChar}
+                        actionMode={hintActionMode}
                       />
                     )}
+
+                    {/* Expand/Collapse affordance (orca SectionHeader.tsx:337) */}
+                    <button
+                      type="button"
+                      className={SECTION_HEADER_CHEVRON_BOX}
+                      aria-label={isExpanded ? 'Collapse project' : 'Expand project'}
+                      aria-expanded={isExpanded}
+                      onClick={handleToggleExpand}
+                    >
+                      <ChevronDown
+                        className={cn(
+                          SECTION_HEADER_CHEVRON,
+                          !isExpanded && SECTION_HEADER_CHEVRON_COLLAPSED
+                        )}
+                      />
+                    </button>
+
+                    {/* Create Worktree Button (orca RepoHeaderCreateWorkspaceButton) */}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-xs"
+                      className={cn(
+                        SECTION_HEADER_ACTION_BUTTON,
+                        forceActionsVisible && 'ml-0 max-w-5 opacity-100'
+                      )}
+                      aria-label={
+                        isConnectionProject
+                          ? `New connection in ${project.name}`
+                          : `New worktree in ${project.name}`
+                      }
+                      onClick={handleCreateWorktree}
+                      onContextMenu={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        if (!isConnectionProject) setBranchPickerOpen(true)
+                      }}
+                      disabled={isCreatingWorktree || isCreatingInstance}
+                    >
+                      {isCreatingWorktree || isCreatingInstance ? (
+                        <Loader2 className="size-3 animate-spin" />
+                      ) : (
+                        <Plus className="size-3" />
+                      )}
+                    </Button>
                   </div>
                 )}
               </div>
-
-              {/* Header actions — orca ProjectHeaderActions: hover-revealed overlay on the
-                  right edge (chevron + create), painted on the header fill so it can
-                  cover a long title without reserving width. */}
-              {!isEditing && (
-                <div
-                  data-project-header-actions=""
-                  className={cn(
-                    SECTION_HEADER_ACTIONS,
-                    isSelected && 'can-hover:bg-worktree-sidebar-accent',
-                    forceActionsVisible && 'can-hover:pointer-events-auto can-hover:opacity-100'
-                  )}
-                >
-                  {/* Plus Hint Badge (filter mode with the search field focused, or vim normal) */}
-                  {showPlusHint && plusHint && (
-                    <HintBadge
-                      code={plusHint}
-                      mode={hintMode}
-                      pendingChar={hintPendingChar}
-                      actionMode={hintActionMode}
-                    />
-                  )}
-
-                  {/* Expand/Collapse affordance (orca SectionHeader.tsx:337) */}
-                  <button
-                    type="button"
-                    className={SECTION_HEADER_CHEVRON_BOX}
-                    aria-label={isExpanded ? 'Collapse project' : 'Expand project'}
-                    aria-expanded={isExpanded}
-                    onClick={handleToggleExpand}
-                  >
-                    <ChevronDown
-                      className={cn(
-                        SECTION_HEADER_CHEVRON,
-                        !isExpanded && SECTION_HEADER_CHEVRON_COLLAPSED
-                      )}
-                    />
-                  </button>
-
-                  {/* Create Worktree Button (orca RepoHeaderCreateWorkspaceButton) */}
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-xs"
-                    className={cn(
-                      SECTION_HEADER_ACTION_BUTTON,
-                      forceActionsVisible && 'ml-0 max-w-5 opacity-100'
-                    )}
-                    aria-label={
-                      isConnectionProject
-                        ? `New connection in ${project.name}`
-                        : `New worktree in ${project.name}`
-                    }
-                    onClick={handleCreateWorktree}
-                    onContextMenu={(e) => {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      if (!isConnectionProject) setBranchPickerOpen(true)
-                    }}
-                    disabled={isCreatingWorktree || isCreatingInstance}
-                  >
-                    {isCreatingWorktree || isCreatingInstance ? (
-                      <Loader2 className="size-3 animate-spin" />
-                    ) : (
-                      <Plus className="size-3" />
-                    )}
-                  </Button>
-                </div>
-              )}
-            </div>
+            )}
           </ContextMenuTrigger>
 
           {!connectionModeActive && (
@@ -805,6 +857,7 @@ export const ProjectItem = memo(function ProjectItem({
           the 6px header→card gap comes from the group's flex gap.
           Connection projects list their live connection instances instead. */}
       {isExpanded &&
+        !isRecentRow &&
         (isConnectionProject ? (
           <ConnectionInstanceList projectId={project.id} />
         ) : (

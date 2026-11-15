@@ -24,7 +24,6 @@ vi.mock('@/components/projects', () => ({
   ),
   AddProjectButton: () => <button data-testid="add-project-button" type="button" />,
   SortProjectsButton: () => <button data-testid="sort-projects-button" type="button" />,
-  RecentToggleButton: () => <button data-testid="recent-toggle-button" type="button" />,
   FilterChips: ({ languages }: { languages: string[] }) => (
     <div data-testid="filter-chips">{languages.join(',')}</div>
   )

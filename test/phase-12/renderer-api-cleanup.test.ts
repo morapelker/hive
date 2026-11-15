@@ -19709,20 +19709,24 @@ describe('renderer API cleanup', () => {
     expect(serverFunctionSource).not.toContain('showSaveDialog')
   })
 
-  it('routes recent worktree lookup through dbApi', () => {
-    const source = fs.readFileSync(
-      path.resolve(__dirname, '../../src/renderer/src/stores/useRecentStore.ts'),
-      'utf-8'
-    )
+  it('reads the Recent section from the stores, with no recent-worktree lookup of its own', () => {
+    // Recent lists recently opened projects (already in the project stores). The store that
+    // looked up recently active worktrees is gone, and nothing replaces it with a direct
+    // window.db call.
+    expect(
+      fs.existsSync(path.resolve(__dirname, '../../src/renderer/src/stores/useRecentStore.ts'))
+    ).toBe(false)
 
-    expect(source).toContain("import { dbApi } from '@/api/db-api'")
-    expect(source).toContain(
-      'const recentWorktrees = await dbApi.worktree.getRecentlyActive(cutoff)'
-    )
-    expect(source).not.toContain(
-      'const recentWorktrees = await db.worktree.getRecentlyActive(cutoff)'
-    )
-    expect(source).not.toContain('unwrapEnvelopeApi(() => window.db)')
+    for (const file of [
+      'src/renderer/src/components/layout/RecentList.tsx',
+      'src/renderer/src/components/projects/RecentProjectRow.tsx',
+      'src/renderer/src/lib/recent-projects.ts'
+    ]) {
+      const source = fs.readFileSync(path.resolve(__dirname, '../..', file), 'utf-8')
+      expect(source).not.toContain('window.db')
+      expect(source).not.toContain('getRecentlyActive')
+      expect(source).not.toContain('unwrapEnvelopeApi')
+    }
   })
 
   it('routes Telegram handoff worktree lookup through dbApi', () => {

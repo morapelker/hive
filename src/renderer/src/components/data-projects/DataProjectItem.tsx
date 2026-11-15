@@ -4,6 +4,7 @@
 //   chevron: a data project has no worktrees, a click opens its database client in the main
 //   pane (in front of the Pinned Board when that is on). Production gets a red inset edge.
 // - PinnedDataProjectItem: the card in the sidebar's Pinned list.
+// - RecentDataProjectItem: the one-line row in the sidebar's Recent section.
 // - DataProjectHeaderLabel: the title-bar label while a data project is open.
 // - DataProjectMenuItems: the context menu shared by the row and the pinned card (Open, Edit
 //   connection, Change icon, Safe mode ▸, Environment ▸, Pin, Duplicate, Copy URL, Disconnect,
@@ -52,6 +53,7 @@ import {
   ContextMenuTrigger
 } from '@/components/ui/context-menu'
 import { HighlightedText } from '@/components/projects/HighlightedText'
+import { RecentProjectRow } from '@/components/projects/RecentProjectRow'
 import {
   CARD_CONTENT_COLUMN,
   CARD_PARENT_ROW,
@@ -660,6 +662,78 @@ export function PinnedDataProjectItem({ project }: { project: DataProject }): Re
               </div>
             </div>
           </WorkspaceCardSurface>
+        </ContextMenuTrigger>
+        <ContextMenuContent className="w-56">
+          <DataProjectMenuItems
+            project={project}
+            connectionState={connectionState}
+            onRequestSafeMode={safeMode.request}
+            onRemove={() => setRemoveOpen(true)}
+          />
+        </ContextMenuContent>
+      </ContextMenu>
+      <RemoveDataProjectDialog project={project} open={removeOpen} onOpenChange={setRemoveOpen} />
+      {safeMode.dialog}
+    </>
+  )
+}
+
+// ---------------------------------------------------------------------------------------------
+// Recent row
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * A database in the sidebar's Recent section: a click opens its client, a right-click shows the
+ * row's own menu, and the pin button is the database's existing Pin (which moves it to the
+ * Pinned section and so out of Recent).
+ */
+export function RecentDataProjectItem({ project }: { project: DataProject }): React.JSX.Element {
+  const isSelected = useDataProjectStore((s) => s.selectedDataProjectId === project.id)
+  const connectionState = useDataProjectStore(
+    (s) => s.statuses[project.id]?.state ?? 'disconnected'
+  )
+  // While worktrees are being picked for a connection, a database row is not a choice.
+  const connectionModeActive = useConnectionStore((s) => s.connectionModeActive)
+  const [removeOpen, setRemoveOpen] = useState(false)
+  const [pinning, setPinning] = useState(false)
+  const safeMode = useSafeModeChange(project)
+
+  const handlePin = (): void => {
+    if (pinning) return
+    setPinning(true)
+    void useDataProjectStore
+      .getState()
+      .setPinned(project.id, true)
+      .then((ok) => ok && toast.success(`Pinned ${project.name}`))
+      .finally(() => setPinning(false))
+  }
+
+  return (
+    <>
+      <ContextMenu>
+        <ContextMenuTrigger asChild disabled={connectionModeActive}>
+          <RecentProjectRow
+            rowId={project.id}
+            name={project.name}
+            tooltip={describeDataProjectTooltip(project)}
+            icon={
+              <DataProjectIcon
+                engine={project.engine}
+                icon={project.icon}
+                iconColor={project.iconColor}
+                environment={project.environment}
+                environmentColorOverride={project.color}
+              />
+            }
+            openedAt={Date.parse(project.lastAccessedAt) || 0}
+            selected={isSelected}
+            agentState={null}
+            onPin={connectionModeActive ? undefined : handlePin}
+            pinning={pinning}
+            className={connectionModeActive ? 'pointer-events-none opacity-50' : undefined}
+            aria-disabled={connectionModeActive || undefined}
+            onClick={() => useDataProjectStore.getState().select(project.id)}
+          />
         </ContextMenuTrigger>
         <ContextMenuContent className="w-56">
           <DataProjectMenuItems

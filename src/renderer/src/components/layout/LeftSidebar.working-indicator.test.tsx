@@ -6,7 +6,6 @@ vi.mock('@/components/projects', () => ({
   ProjectList: () => <div data-testid="project-list" />,
   AddProjectButton: () => null,
   SortProjectsButton: () => null,
-  RecentToggleButton: () => null,
   FilterChips: () => null
 }))
 vi.mock('@/components/projects/ProjectFilter', () => ({ ProjectFilter: () => null }))
