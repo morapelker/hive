@@ -76,6 +76,9 @@ scripts/*
 !scripts/generate-corgi-digits.py
 !scripts/build-uv-pool-waker.mjs
 !scripts/install.sh
+!scripts/finish-build.mjs
+!scripts/package-contents.mjs
+!scripts/package-contents.test.mjs
 
 .playwright-cli
 

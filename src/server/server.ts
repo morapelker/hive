@@ -9,7 +9,7 @@ import { makeRpcRouter } from './rpc/router'
 import { makeLiveDataAssistantRpcService } from './rpc/domains/data-assistant'
 import { makeLiveDataProjectsRpcService } from './rpc/domains/data-projects'
 import { attachWebSocketRpcServer } from './rpc/ws-server'
-import { resolveStaticFile, serveStaticFile } from './static'
+import { resolveStaticFile, serveStaticFile, sharedAssetsDirFor } from './static'
 import { isDesktopBackendEventMessage } from '../shared/desktop-command'
 import { perfLog } from '../main/services/perf-logging/perf-logger'
 import {
@@ -233,7 +233,11 @@ export const startHiveServer = (
               config.staticDir &&
               !url.pathname.startsWith('/api/')
             ) {
-              const resolved = resolveStaticFile(url.pathname, config.staticDir)
+              const resolved = resolveStaticFile(
+                url.pathname,
+                config.staticDir,
+                sharedAssetsDirFor(config.staticDir)
+              )
               if (resolved) {
                 serveStaticFile(resolved, response, makeCorsHeaders(corsOrigin))
               } else {

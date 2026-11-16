@@ -13,6 +13,30 @@ files:
   - '!**/node_modules/sherpa-onnx-linux-*/**'
   - '!**/node_modules/sherpa-onnx-win-*/**'
   - '**/node_modules/sherpa-onnx-${platform}-${arch}/**'
+  # The Claude Agent SDK's bundled Claude Code program, one ~200 MB package per platform. It
+  # does not ship: the app runs the `claude` installed on the machine
+  # (src/main/services/claude-binary-resolver.ts), and the SDK's own copy cannot start from a
+  # packaged app anyway, its path is inside app.asar (`spawn ENOTDIR`). The pattern needs the
+  # trailing dash, so the SDK itself (`claude-agent-sdk/`) stays.
+  - '!**/node_modules/@anthropic-ai/claude-agent-sdk-*/**'
+  # Nothing loads these from a packaged app: source maps, TypeScript sources and typings,
+  # and the docs that libraries publish next to their code.
+  - '!**/node_modules/**/*.map'
+  - '!**/node_modules/**/*.{ts,mts,cts,tsx}'
+  - '!**/node_modules/**/*.{md,markdown}'
+
+# Only the libraries the main process, the preload and the backend load at runtime are packed
+# (package.json `dependencies`). Everything the renderer uses is compiled into out/renderer by
+# Vite and listed under `devDependencies`; scripts/finish-build.mjs fails the build when the
+# main, preload or backend output imports a library that is not a dependency.
+
+# The app's interface is English only. Without this, Electron ships a language pack for every
+# locale Chromium knows (about 220 folders, 46 MB installed). Spelled `en-US` on purpose:
+# electron-builder keeps a pack whose name equals this or is its language prefix, so `en-US`
+# keeps macOS's `en.lproj` and the `en-US.pak` of Windows and Linux, while `en` would keep
+# the first and delete the second, the one pack Chromium cannot start without.
+electronLanguages:
+  - en-US
 
 # hive:// deep links (account share links etc.)
 protocols:
@@ -36,6 +60,14 @@ asarUnpack:
   - '**/sherpa-onnx-win-x64/**'
   - '**/sherpa-onnx-win-ia32/**'
   - 'out/main/voice-engine-worker.js'
+  # Pictures and animations of the renderer (pet atlases, icons): tens of MB that almost never
+  # change. Inside app.asar they are part of one file that is new on every release, so every
+  # update fetches them again; unpacked, each one is its own file in the update zip and the
+  # updater's block map skips the ones it already has. Electron reads an unpacked file through
+  # its app.asar path, so the renderer's URLs do not change. The same files serve the renderer
+  # and the browser Web UI (whose own copies scripts/finish-build.mjs drops, see
+  # src/server/static.ts).
+  - 'out/renderer/assets/*.{webp,png,jpg,jpeg,gif,lottie}'
 
 # ── macOS ──────────────────────────────────────────────
 mac:

@@ -39,11 +39,46 @@ const isFile = (filePath: string): boolean => {
   }
 }
 
+/** The URL folder Vite emits every hashed asset into, flat. */
+const ASSETS_PREFIX = 'assets/'
+
+/**
+ * File kinds the shared assets directory never serves: the desktop renderer's own code,
+ * styles and pages. The web build always has its own of these.
+ */
+const SHARED_ASSET_EXCLUDED_EXTENSIONS = new Set(['.js', '.mjs', '.css', '.html', '.map'])
+
+/**
+ * The desktop renderer's asset directory, a sibling of the web build
+ * (`out/renderer-web` next to `out/renderer/assets`).
+ *
+ * The web build and the desktop renderer build emit the same pictures, animations and fonts
+ * under the same content-hashed names (the pet atlases alone are tens
+ * of MB). A packaged app keeps one copy: `scripts/finish-build.mjs` drops from
+ * the web build every asset the desktop build already holds, and a request for one of them
+ * is answered from here.
+ */
+export const sharedAssetsDirFor = (staticDir: string): string =>
+  resolve(staticDir, '..', 'renderer', 'assets')
+
+const resolveSharedAsset = (relative: string, sharedAssetsDir: string): string | null => {
+  if (!relative.startsWith(ASSETS_PREFIX)) return null
+  const name = relative.slice(ASSETS_PREFIX.length)
+  if (SHARED_ASSET_EXCLUDED_EXTENSIONS.has(extname(name).toLowerCase())) return null
+
+  const root = resolve(sharedAssetsDir)
+  const candidate = resolve(root, normalize(name))
+  if (!candidate.startsWith(root + sep)) return null
+  return isFile(candidate) ? candidate : null
+}
+
 /**
  * Resolve a request pathname to a static file under `staticDir`.
  *
  * - `/` maps to `index.html`.
  * - Existing files are served with a content type inferred from their extension.
+ * - A missing `/assets/<file>` that is not code is looked up in `sharedAssetsDir`, when one
+ *   is given (see `sharedAssetsDirFor`).
  * - Extensionless paths that do not resolve to a file fall back to `index.html`
  *   (the renderer is state-routed, so this handles `/` and browser refreshes).
  * - Paths that escape `staticDir` (traversal) or missing files with an
@@ -51,7 +86,8 @@ const isFile = (filePath: string): boolean => {
  */
 export const resolveStaticFile = (
   pathname: string,
-  staticDir: string
+  staticDir: string,
+  sharedAssetsDir: string | null = null
 ): ResolvedStaticFile | null => {
   const root = resolve(staticDir)
   const indexPath = join(root, 'index.html')
@@ -73,6 +109,11 @@ export const resolveStaticFile = (
 
   if (isFile(candidate)) {
     return { filePath: candidate, contentType: contentTypeFor(candidate) }
+  }
+
+  if (sharedAssetsDir) {
+    const shared = resolveSharedAsset(relative, sharedAssetsDir)
+    if (shared) return { filePath: shared, contentType: contentTypeFor(shared) }
   }
 
   // SPA fallback: extensionless route that does not map to a real file.
