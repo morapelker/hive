@@ -15,7 +15,7 @@
     "frames": 128,
     "columns": 16,
     "rows": 8,
-    "cycleMs": 1920,
+    "cycleMs": 960,
     "cellHeight": 256,
     "shadow": false,
     "variants": [
@@ -607,7 +607,7 @@
     },
     "working": {
       "type": "loop",
-      "durationMs": 1920,
+      "durationMs": 960,
       "transform": "none",
       "overlay": {
         "kind": "none"

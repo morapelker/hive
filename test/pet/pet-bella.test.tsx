@@ -198,7 +198,7 @@ describe('Bella the Tennis Player canvas-atlas pet', () => {
       frames: 128,
       columns: 16,
       rows: 8,
-      cycleMs: 1920,
+      cycleMs: 960,
       cellHeight: 256,
       shadow: false
     })
@@ -246,12 +246,12 @@ describe('Bella the Tennis Player canvas-atlas pet', () => {
 
   it('walks the clock in fractional frames and wraps the last frame into the first', () => {
     const atlas = getPet('bella').workingAtlas!
-    // 1,920 ms over 128 frames is exactly 15 ms per frame.
+    // 960 ms over 128 frames is exactly 7.5 ms per frame.
     expect(atlasFrameAt(atlas, 0)).toEqual({ index: 0, next: 1, mix: 0 })
-    expect(atlasFrameAt(atlas, 15)).toEqual({ index: 1, next: 2, mix: 0 })
-    expect(atlasFrameAt(atlas, 1912.5)).toEqual({ index: 127, next: 0, mix: 0.5 })
-    expect(atlasFrameAt(atlas, 1920)).toEqual({ index: 0, next: 1, mix: 0 })
-    expect(atlasFrameAt(atlas, -7.5)).toEqual({ index: 127, next: 0, mix: 0.5 })
+    expect(atlasFrameAt(atlas, 7.5)).toEqual({ index: 1, next: 2, mix: 0 })
+    expect(atlasFrameAt(atlas, 956.25)).toEqual({ index: 127, next: 0, mix: 0.5 })
+    expect(atlasFrameAt(atlas, 960)).toEqual({ index: 0, next: 1, mix: 0 })
+    expect(atlasFrameAt(atlas, -3.75)).toEqual({ index: 127, next: 0, mix: 0.5 })
 
     expect(
       counterAnchorAt(
@@ -281,7 +281,7 @@ describe('Bella the Tennis Player canvas-atlas pet', () => {
     const context = fakeContext(canvas)
 
     // Halfway between frames 17 (column 1, row 1) and 18 (column 2, row 1).
-    draw(canvas, image, atlas.variants[2], 4, 17 * 15 + 7.5)
+    draw(canvas, image, atlas.variants[2], 4, 17 * 7.5 + 3.75)
 
     const [stage] = call(context, 'drawImage')
     const scratch = fakeContext(stage[0] as HTMLCanvasElement)

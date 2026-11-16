@@ -3,7 +3,7 @@
 Milla is a cocker spaniel with long curly ears, drawn from a photo of a real dog in Bella's plush
 style. She is a canvas-atlas pet like [Bella](../bella/README.md): the same renderer
 (`CanvasAtlasSprite` and `createAtlasRenderer()`), the same atlas layout (128 frames, 16 columns ×
-8 rows, 256 px cells), the same 1,920 ms loop and Bella's own run cycle, pose for pose. Where Bella
+8 rows, 256 px cells), the same 960 ms loop and Bella's own run cycle, pose for pose. Where Bella
 collects a tennis kit as sessions grow, Milla collects a pink swim kit.
 
 ## Progression

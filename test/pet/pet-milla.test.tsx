@@ -176,10 +176,15 @@ describe('Milla the Swimmer canvas-atlas pet', () => {
       frames: 128,
       columns: 16,
       rows: 8,
-      cycleMs: 1920,
+      cycleMs: 960,
       cellHeight: 256,
       shadow: false
     })
+    // She runs Bella's cycle, frame for frame, at Bella's pace.
+    const bella = getPet('bella').workingAtlas!
+    expect(atlas.frames).toBe(bella.frames)
+    expect(atlas.cycleMs).toBe(bella.cycleMs)
+    expect(pet.animations?.working?.durationMs).toBe(atlas.cycleMs)
     // Run, goggles, swimsuit, cap, then the gold medal with the splash pool.
     expect(atlas.variants.map((variant) => variant.minSessions)).toEqual([1, 2, 4, 6, 10])
     expect(atlas.variants.every((variant) => variant.cellWidth === 256)).toBe(true)

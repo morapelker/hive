@@ -4,15 +4,15 @@ Bella is the first canvas-atlas pet: a female mixed-breed dog whose run cycle is
 `CanvasAtlasSprite` from WebP atlases with fractional-frame blending, rather than by
 `SpriteSheetSprite`'s stepped CSS transforms. Her idle portrait is a PNG and every working style is
 a 128-frame atlas (16 columns × 8 rows, 256 px cells; the flame stage uses 352 × 256 cells) looping
-once every 1,920 ms at normal speed.
+once every 960 ms at normal speed.
 
 The artwork and the animation metadata come from the approved "Bella the Tennis Player" package
-(its `animation.json` is `manifest.json`'s `workingAtlas`: sheet dimensions, timing and the
-per-frame counter anchors, verbatim; the session thresholds were later lowered, so the atlas file
-names still carry the package's original thresholds, and the counter typography was later enlarged
-and outlined so the number reads at desktop sizes). The manifest is the
-source of truth in the repo; the other fields are the collection's usual idle, bubble and size
-settings.
+(its `animation.json` is `manifest.json`'s `workingAtlas`: sheet dimensions and the per-frame
+counter anchors, verbatim; the session thresholds were later lowered, so the atlas file names still
+carry the package's original thresholds, the counter typography was later enlarged and outlined so
+the number reads at desktop sizes, and the loop was later halved from the package's 1,920 ms so she
+runs twice as fast). The manifest is the source of truth in the repo; the other fields are the
+collection's usual idle, bubble and size settings.
 
 The atlases ship as lossy WebP (quality 90, alpha 95): 13.1 MB in all, against 27.9 MB for the
 package's lossless ones, with no visible difference at the desktop sizes. A new atlas from the
