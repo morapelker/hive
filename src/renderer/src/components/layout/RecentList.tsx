@@ -16,8 +16,9 @@ const LEGACY_TOGGLE_STORAGE_KEY = 'hive-recent-visible'
  * when it has no rows and while a sidebar filter is active.
  *
  * A row is one line (RecentProjectRow). Git and connection projects render through ProjectItem
- * so that a right-click shows the very menu of the project's row in the list; a database
- * renders its own row with its own menu.
+ * so that a right-click shows the very menu of the project's row in the list, and a click opens
+ * the project on its base (the "(no-worktree)" worktree; a connection project's base instance);
+ * a database renders its own row with its own menu.
  */
 export function RecentList(): React.JSX.Element | null {
   const projects = useProjectStore((s) => s.projects)

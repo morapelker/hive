@@ -70,6 +70,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  rpcRequest.mockImplementation(async () => undefined)
   api.touch.mockResolvedValue(undefined)
   api.reorderSidebar.mockResolvedValue(undefined)
   setRendererRpcClient({
@@ -150,6 +151,136 @@ describe('opening a git project from the switcher over a database', () => {
     await answer(true)
     expect(useProjectStore.getState().selectedProjectId).toBe('ledger-worker')
     expect(selectedDatabase()).toBeNull()
+  })
+})
+
+describe('what a project opened from the switcher shows', () => {
+  const worktree = (id: string, projectId: string, isDefault = false) =>
+    ({
+      id,
+      project_id: projectId,
+      name: isDefault ? '(no-worktree)' : id,
+      branch_name: isDefault ? 'main' : id,
+      path: `/repo/${projectId}/${id}`,
+      status: 'active',
+      is_default: isDefault,
+      created_at: '2026-03-01T00:00:00.000Z',
+      last_accessed_at: '2026-03-01T00:00:00.000Z'
+    }) as never
+  const withStack = (): void => {
+    useProjectStore.setState({
+      projects: [
+        sampleGitProject('ledger-worker', 2),
+        sampleGitProject('stack', 3, { kind: 'connection' })
+      ] as never
+    })
+  }
+  const settle = (): Promise<void> => new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+  it('opens a git project on its base branch, as a click on its "(no-worktree)" row does', () => {
+    useWorktreeStore.setState({
+      worktreesByProject: new Map([
+        [
+          'ledger-worker',
+          [worktree('wt-feature', 'ledger-worker'), worktree('wt-main', 'ledger-worker', true)]
+        ]
+      ]),
+      loadedProjectIds: new Set(['ledger-worker']),
+      selectedWorktreeId: 'wt-other'
+    })
+    useConnectionStore.setState({ selectedConnectionId: 'conn-1' })
+    useKanbanStore.setState({ isPinnedBoardActive: true })
+
+    openSwitcherProject({ kind: 'git', id: 'ledger-worker' })
+
+    expect(useProjectStore.getState().selectedProjectId).toBe('ledger-worker')
+    expect(useWorktreeStore.getState().selectedWorktreeId).toBe('wt-main')
+    expect(useConnectionStore.getState().selectedConnectionId).toBeNull()
+    expect(useKanbanStore.getState().isPinnedBoardActive).toBe(false)
+    expect(rpcRequest).toHaveBeenCalledWith('db.worktree.touch', { id: 'wt-main' })
+  })
+
+  it('reads the worktrees of a project that was never expanded, then selects its base branch', async () => {
+    rpcRequest.mockImplementation((async (method: string) =>
+      method === 'db.worktree.getActiveByProject'
+        ? [worktree('wt-main', 'ledger-worker', true)]
+        : undefined) as never)
+    useWorktreeStore.setState({ selectedWorktreeId: 'wt-other' })
+
+    openSwitcherProject({ kind: 'git', id: 'ledger-worker' })
+    await settle()
+
+    expect(useProjectStore.getState().selectedProjectId).toBe('ledger-worker')
+    expect(useWorktreeStore.getState().selectedWorktreeId).toBe('wt-main')
+  })
+
+  it('expands the project in the sidebar, and leaves the others as they are', () => {
+    useProjectStore.setState({ expandedProjectIds: new Set(['other']) })
+
+    openSwitcherProject({ kind: 'git', id: 'ledger-worker' })
+
+    expect([...useProjectStore.getState().expandedProjectIds].sort()).toEqual([
+      'ledger-worker',
+      'other'
+    ])
+  })
+
+  it('never collapses a project that is already expanded', () => {
+    useProjectStore.setState({ expandedProjectIds: new Set(['ledger-worker']) })
+
+    openSwitcherProject({ kind: 'git', id: 'ledger-worker' })
+    openSwitcherProject({ kind: 'git', id: 'ledger-worker' })
+
+    expect(useProjectStore.getState().expandedProjectIds.has('ledger-worker')).toBe(true)
+  })
+
+  it('expands a connection project too', () => {
+    withStack()
+
+    openSwitcherProject({ kind: 'connection', id: 'stack' })
+
+    expect(useProjectStore.getState().expandedProjectIds.has('stack')).toBe(true)
+  })
+
+  it('expands no project for a database', () => {
+    const expandedBefore = useProjectStore.getState().expandedProjectIds
+
+    openSwitcherProject({ kind: 'data', id: 'db-a' })
+
+    expect(useProjectStore.getState().expandedProjectIds).toBe(expandedBefore)
+  })
+
+  it('opens a connection project on its base instance', () => {
+    withStack()
+    useConnectionStore.setState({
+      connections: [
+        { id: 'conn-feature', saved_project_id: 'stack', is_base: 0, members: [] },
+        { id: 'conn-base', saved_project_id: 'stack', is_base: 1, members: [] }
+      ] as never,
+      selectedConnectionId: 'conn-feature'
+    })
+    useWorktreeStore.setState({ selectedWorktreeId: 'wt-other' })
+
+    openSwitcherProject({ kind: 'connection', id: 'stack' })
+
+    expect(useProjectStore.getState().selectedProjectId).toBe('stack')
+    expect(useConnectionStore.getState().selectedConnectionId).toBe('conn-base')
+    expect(useWorktreeStore.getState().selectedWorktreeId).toBeNull()
+  })
+
+  it('opens a connection project with no base instance on its own board', async () => {
+    withStack()
+    rpcRequest.mockImplementation((async (method: string) =>
+      method === 'connectionOps.getAll' ? { success: true, connections: [] } : undefined) as never)
+    useConnectionStore.setState({ selectedConnectionId: 'conn-1' })
+    useWorktreeStore.setState({ selectedWorktreeId: 'wt-other' })
+
+    openSwitcherProject({ kind: 'connection', id: 'stack' })
+    await settle()
+
+    expect(useProjectStore.getState().selectedProjectId).toBe('stack')
+    expect(useConnectionStore.getState().selectedConnectionId).toBeNull()
+    expect(useWorktreeStore.getState().selectedWorktreeId).toBeNull()
   })
 })
 

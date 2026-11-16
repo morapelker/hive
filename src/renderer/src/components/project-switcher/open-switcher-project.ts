@@ -1,10 +1,10 @@
 import { useProjectStore } from '@/stores/useProjectStore'
-import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { leaveDataProjectThen, useDataProjectStore } from '@/stores/useDataProjectStore'
 import { mergeSidebarEntries, moveSidebarEntryToTop } from '@/lib/project-filter'
 import { revealProjectInSidebar } from '@/lib/sidebar-reveal'
+import { openProjectOnBase } from '@/lib/project-base-worktree'
 import type { SwitcherProject } from '@/lib/project-switcher'
 
 type SwitcherTarget = Pick<SwitcherProject, 'kind' | 'id'>
@@ -62,16 +62,15 @@ function showInSidebar(project: SwitcherTarget): void {
 /**
  * Opens a project from the "Go to project" switcher.
  *
- * The project becomes the selected one and the main pane shows what it shows after a click on
- * the project's row in the sidebar (ProjectItem / DataProjectItem), with three differences:
- * - the row click toggles the project's worktree list; this never expands or collapses
- *   anything;
- * - the row click keeps the Pinned Board in front when the project is pinned; this always
- *   leaves it, so the user ends up looking at the project (Cmd+P brings the board back);
- * - a connection that holds the main pane is deselected, for the same reason.
+ * The project becomes the selected one, opened on its base as a click on its row in the
+ * sidebar's Recent section opens it (`openProjectOnBase`): a git project on its "(no-worktree)"
+ * worktree, a connection project on its base instance. One difference from that row: the
+ * Pinned Board is always left, so the user ends up looking at the project (Cmd+P brings the
+ * board back), and so is a connection that holds the main pane.
  *
- * The sidebar follows the project: it moves to the top of "All projects", it leads the Recent
- * section (a pinned project stays in Pinned instead), and the list scrolls to it.
+ * The sidebar follows the project: it is expanded when it was collapsed (never collapsed), it
+ * moves to the top of "All projects", it leads the Recent section (a pinned project stays in
+ * Pinned instead), and the list scrolls to it.
  *
  * Selecting updates the project's last-opened time (the stores' own `touch`). A database opens
  * its client. When another database has unsaved table edits, `leaveDataProjectThen` asks
@@ -89,15 +88,17 @@ export function openSwitcherProject(project: SwitcherTarget): void {
     return
   }
   leaveDataProjectThen(() => {
-    useProjectStore.getState().selectProject(project.id)
+    // Left at once: the base may still have to be read, or may not be there to select.
     if (useConnectionStore.getState().selectedConnectionId) {
       useConnectionStore.getState().selectConnection(null)
     }
-    if (project.kind === 'connection') {
-      // Board-first, like its row: with no worktree selected its own board is the main pane.
-      useWorktreeStore.getState().selectWorktreeOnly(null)
-    }
+    void openProjectOnBase({
+      id: project.id,
+      kind: project.kind === 'connection' ? 'connection' : 'git'
+    })
     useKanbanStore.getState().closePinnedBoard()
+    const projects = useProjectStore.getState()
+    if (!projects.expandedProjectIds.has(project.id)) projects.toggleProjectExpanded(project.id)
     showInSidebar(project)
   })
 }

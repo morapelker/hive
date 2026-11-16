@@ -568,7 +568,7 @@ describe('vim mode', () => {
 })
 
 describe('opening a project', () => {
-  it('selects it without collapsing or expanding anything in the sidebar', async () => {
+  it('selects it and expands it in the sidebar, collapsing nothing', async () => {
     useProjectStore.setState({ expandedProjectIds: new Set(['ledger-worker', 'ads-api']) })
     render(<ProjectSwitcher />)
 
@@ -582,14 +582,15 @@ describe('opening a project', () => {
       'ledger-worker'
     ])
 
-    // A collapsed one is not expanded either.
+    // A collapsed one is expanded; the others stay as they are.
     input = openSwitcher()
     type(input, 'pricing')
     press(input, 'Enter')
     expect(useProjectStore.getState().selectedProjectId).toBe('pricing-api')
     expect([...useProjectStore.getState().expandedProjectIds].sort()).toEqual([
       'ads-api',
-      'ledger-worker'
+      'ledger-worker',
+      'pricing-api'
     ])
   })
 

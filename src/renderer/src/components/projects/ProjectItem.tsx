@@ -66,6 +66,7 @@ import {
   runShellCommandFromMenu
 } from '@/components/shell-commands/ShellCommandMenuItems'
 import { getMemberProjects } from '@/lib/connection-project'
+import { openProjectOnBase } from '@/lib/project-base-worktree'
 import { ConnectionMembersTooltip, ProjectIcon } from './ConnectionProjectIcon'
 import { RecentGitProjectRow } from './RecentProjectRow'
 import { HighlightedText } from './HighlightedText'
@@ -123,8 +124,9 @@ interface ProjectItemProps {
   /**
    * 'list' (default) is the project's group in the project list: the header row and, when
    * expanded, its worktrees. 'recent' is its one-line row in the sidebar's Recent section: the
-   * same right-click menu and dialogs, a click that selects without collapsing, and no
-   * worktrees, drag handle or hints.
+   * same right-click menu and dialogs, a click that selects without collapsing and opens the
+   * project on its base (the "(no-worktree)" worktree; a connection project's base instance),
+   * and no worktrees, drag handle or hints.
    */
   variant?: 'list' | 'recent'
   nameMatchIndices?: number[]
@@ -258,15 +260,22 @@ export const ProjectItem = memo(function ProjectItem({
   }, [isEditing])
 
   const handleClick = (): void => {
-    selectProject(project.id)
+    if (isRecentRow) {
+      // A one-line row is not followed by the project's worktrees to pick from, so it opens the
+      // project on its base: the "(no-worktree)" worktree, or a connection project's base
+      // instance, selected as a click on the base's own row selects it.
+      void openProjectOnBase(project)
+    } else {
+      selectProject(project.id)
+      if (isConnectionProject) {
+        // Board-first entity: clear worktree/connection selection so the
+        // project's own kanban board becomes the main-pane content.
+        useConnectionStore.getState().selectConnection(null)
+        useWorktreeStore.getState().selectWorktreeOnly(null)
+      }
+    }
     // The Recent row opens the project like its row in the list, but never collapses it.
     if (!isRecentRow || !isExpandedInStore) toggleProjectExpanded(project.id)
-    if (isConnectionProject) {
-      // Board-first entity: clear worktree/connection selection so the
-      // project's own kanban board becomes the main-pane content.
-      useConnectionStore.getState().selectConnection(null)
-      useWorktreeStore.getState().selectWorktreeOnly(null)
-    }
   }
 
   const handleToggleExpand = (e: React.MouseEvent): void => {

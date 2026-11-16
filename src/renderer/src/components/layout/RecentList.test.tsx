@@ -134,11 +134,16 @@ beforeEach(() => {
     worktreesByProject: new Map(),
     loadedProjectIds: new Set(),
     worktreeOrderByProject: new Map(),
-    archivingWorktreeIds: new Set()
+    archivingWorktreeIds: new Set(),
+    selectedWorktreeId: null
   })
   useWorktreeStatusStore.setState({ sessionStatuses: {} })
   useSessionStore.setState({ sessionsByWorktree: new Map(), sessionsByConnection: new Map() })
-  useConnectionStore.setState({ connections: [], connectionModeActive: false })
+  useConnectionStore.setState({
+    connections: [],
+    connectionModeActive: false,
+    selectedConnectionId: null
+  })
   useFilterStore.setState({ filterQuery: '', debouncedFilterQuery: '', activeLanguages: [] })
   useSpaceStore.setState({ activeSpaceId: null, projectSpaceMap: {} })
   useKanbanStore.setState({ isPinnedBoardActive: false })
@@ -388,6 +393,187 @@ describe('Recent section: a row', () => {
     expect(rpcCalls).toContainEqual({ method: 'db.project.touch', params: { id: 'p-30' } })
     expect(rowIds()).toEqual(['p-30', 'p-10', 'p-20', 'p-40', 'p-50'])
     expect(screen.getByTestId('recent-project-p-30')).toHaveAttribute('aria-current', 'page')
+  })
+
+  it('opens a git project on its base branch, as a click on its "(no-worktree)" row does', async () => {
+    useWorktreeStore.setState({
+      worktreesByProject: new Map([
+        ['p-10', [worktree('wt-10-main', 'p-10', true)]],
+        ['p-30', [worktree('wt-30-feature', 'p-30'), worktree('wt-30-main', 'p-30', true)]]
+      ]),
+      loadedProjectIds: new Set(['p-10', 'p-30']),
+      selectedWorktreeId: 'wt-10-main'
+    })
+    useProjectStore.setState({ selectedProjectId: 'p-10' })
+    useConnectionStore.setState({ selectedConnectionId: 'conn-1' } as never)
+    useKanbanStore.setState({ isPinnedBoardActive: true })
+    const clearUnread = vi.spyOn(useWorktreeStatusStore.getState(), 'clearWorktreeUnread')
+    await renderList()
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('recent-project-p-30'))
+    })
+
+    expect(useProjectStore.getState().selectedProjectId).toBe('p-30')
+    expect(useWorktreeStore.getState().selectedWorktreeId).toBe('wt-30-main')
+    // What selecting a worktree does: it takes the main pane and is recorded as opened.
+    expect(useConnectionStore.getState().selectedConnectionId).toBeNull()
+    expect(useKanbanStore.getState().isPinnedBoardActive).toBe(false)
+    expect(rpcCalls).toContainEqual({ method: 'db.worktree.touch', params: { id: 'wt-30-main' } })
+    expect(clearUnread).toHaveBeenCalledWith('wt-30-main')
+    // The worktrees were in the store: nothing was read for them.
+    expect(rpcCalls.map((call) => call.method)).not.toContain('db.worktree.getActiveByProject')
+  })
+
+  it('reads the worktrees of a project that was never expanded, then selects its base branch', async () => {
+    rpcHandlers['db.worktree.getActiveByProject'] = (params) => {
+      const { projectId } = params as { projectId: string }
+      return [worktree('wt-feature', projectId), worktree('wt-main', projectId, true)]
+    }
+    useWorktreeStore.setState({ selectedWorktreeId: 'wt-other' })
+    await renderList()
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('recent-project-p-30'))
+    })
+
+    expect(rpcCalls).toContainEqual({
+      method: 'db.worktree.getActiveByProject',
+      params: { projectId: 'p-30' }
+    })
+    expect(useProjectStore.getState().selectedProjectId).toBe('p-30')
+    expect(useWorktreeStore.getState().selectedWorktreeId).toBe('wt-main')
+  })
+
+  it('leaves a selection made while the worktrees were being read', async () => {
+    let answer: (rows: unknown[]) => void = () => {}
+    rpcHandlers['db.worktree.getActiveByProject'] = () =>
+      new Promise<unknown[]>((resolve) => {
+        answer = resolve
+      })
+    useWorktreeStore.setState({
+      worktreesByProject: new Map([['p-10', [worktree('wt-10-main', 'p-10', true)]]]),
+      loadedProjectIds: new Set(['p-10'])
+    })
+    await renderList()
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('recent-project-p-30'))
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('recent-project-p-10'))
+    })
+    expect(useWorktreeStore.getState().selectedWorktreeId).toBe('wt-10-main')
+
+    await act(async () => {
+      answer([worktree('wt-30-main', 'p-30', true)])
+    })
+
+    expect(useProjectStore.getState().selectedProjectId).toBe('p-10')
+    expect(useWorktreeStore.getState().selectedWorktreeId).toBe('wt-10-main')
+  })
+
+  it('keeps to the project while a connection is being put together', async () => {
+    useWorktreeStore.setState({
+      worktreesByProject: new Map([['p-30', [worktree('wt-30-main', 'p-30', true)]]]),
+      loadedProjectIds: new Set(['p-30']),
+      selectedWorktreeId: 'wt-other'
+    })
+    useConnectionStore.setState({ connectionModeActive: true })
+    await renderList()
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('recent-project-p-30'))
+    })
+
+    expect(useProjectStore.getState().selectedProjectId).toBe('p-30')
+    expect(useWorktreeStore.getState().selectedWorktreeId).toBe('wt-other')
+  })
+
+  it('opens a connection project on its base instance, as a click on that instance does', async () => {
+    useProjectStore.setState({
+      projects: [...SEVEN, gitProject('stack', 5, { kind: 'connection' })]
+    })
+    useConnectionStore.setState({
+      connections: [
+        { id: 'conn-feature', saved_project_id: 'stack', is_base: 0, members: [] },
+        { id: 'conn-base', saved_project_id: 'stack', is_base: 1, members: [] },
+        { id: 'conn-other-base', saved_project_id: 'other-stack', is_base: 1, members: [] }
+      ] as never
+    })
+    useWorktreeStore.setState({ selectedWorktreeId: 'wt-other' })
+    useKanbanStore.setState({ isPinnedBoardActive: true })
+    await renderList()
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('recent-project-stack'))
+    })
+
+    expect(useProjectStore.getState().selectedProjectId).toBe('stack')
+    expect(useConnectionStore.getState().selectedConnectionId).toBe('conn-base')
+    expect(useWorktreeStore.getState().selectedWorktreeId).toBeNull()
+    expect(useKanbanStore.getState().isPinnedBoardActive).toBe(false)
+    // The instances were in the store: nothing was read for them.
+    expect(rpcCalls.map((call) => call.method)).not.toContain('connectionOps.getAll')
+  })
+
+  it('reads the connections when the base instance is not in the store, then selects it', async () => {
+    rpcHandlers['connectionOps.getAll'] = () => ({
+      success: true,
+      connections: [{ id: 'conn-base', saved_project_id: 'stack', is_base: 1, members: [] }]
+    })
+    useProjectStore.setState({
+      projects: [...SEVEN, gitProject('stack', 5, { kind: 'connection' })]
+    })
+    useWorktreeStore.setState({ selectedWorktreeId: 'wt-other' })
+    await renderList()
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('recent-project-stack'))
+    })
+
+    expect(useProjectStore.getState().selectedProjectId).toBe('stack')
+    expect(useConnectionStore.getState().selectedConnectionId).toBe('conn-base')
+    expect(useWorktreeStore.getState().selectedWorktreeId).toBeNull()
+  })
+
+  it('opens a connection project with no base instance on its own board', async () => {
+    rpcHandlers['connectionOps.getAll'] = () => ({ success: true, connections: [] })
+    useProjectStore.setState({
+      projects: [...SEVEN, gitProject('stack', 5, { kind: 'connection' })]
+    })
+    useWorktreeStore.setState({ selectedWorktreeId: 'wt-other' })
+    useConnectionStore.setState({ selectedConnectionId: 'conn-elsewhere' } as never)
+    await renderList()
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('recent-project-stack'))
+    })
+
+    expect(useProjectStore.getState().selectedProjectId).toBe('stack')
+    expect(useWorktreeStore.getState().selectedWorktreeId).toBeNull()
+    expect(useConnectionStore.getState().selectedConnectionId).toBeNull()
+    expect(rpcCalls.map((call) => call.method)).not.toContain('db.worktree.getActiveByProject')
+  })
+
+  it('keeps a connection project to its own board while a connection is being put together', async () => {
+    useProjectStore.setState({
+      projects: [...SEVEN, gitProject('stack', 5, { kind: 'connection' })]
+    })
+    useConnectionStore.setState({
+      connections: [
+        { id: 'conn-base', saved_project_id: 'stack', is_base: 1, members: [] }
+      ] as never,
+      connectionModeActive: true
+    })
+    await renderList()
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('recent-project-stack'))
+    })
+
+    expect(useProjectStore.getState().selectedProjectId).toBe('stack')
+    expect(useConnectionStore.getState().selectedConnectionId).toBeNull()
   })
 
   it('never collapses a project that is already expanded', async () => {
