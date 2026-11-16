@@ -319,7 +319,8 @@ export function TicketCreateModal({
     <Dialog open={open} onOpenChange={handleDialogOpenChange}>
       <DialogContent
         data-testid="ticket-create-modal"
-        className={cn('sm:max-w-lg', isDragOver && 'ring-[3px] ring-ring/50 border-ring')}
+        // The same width as the Edit Ticket modal this ticket opens in afterwards
+        className={cn('sm:max-w-2xl', isDragOver && 'ring-[3px] ring-ring/50 border-ring')}
         onKeyDown={handleKeyDown}
         onPaste={handlePaste}
         onDragOver={handleDragOver}

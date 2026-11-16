@@ -164,7 +164,9 @@ type ResolvedModalWorktree = Pick<Worktree, 'id' | 'path' | 'branch_name' | 'pro
 
 /** Standard (non-dual-pane) DialogContent className per modal mode */
 const MODE_DIALOG_CLASS: Record<ModalMode, string> = {
-  edit: 'sm:max-w-lg',
+  // Wide enough for the footer of a To Do ticket (delete, Cancel, Run on cloud…, Save & Send,
+  // Save) to stay on one line
+  edit: 'sm:max-w-2xl',
   plan_review: 'sm:max-w-2xl max-h-[80vh] flex flex-col overflow-hidden',
   review: 'sm:max-w-2xl max-h-[80vh] flex flex-col overflow-hidden',
   error: 'sm:max-w-lg',
