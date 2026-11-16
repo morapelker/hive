@@ -45,7 +45,8 @@ export interface PetManifest {
    */
   workingSpriteSheet?: PetSpriteSheet
   /**
-   * Working run cycle drawn on a canvas from lossless atlases with fractional-frame blending.
+   * Working run cycle drawn on a canvas from WebP atlases (lossy, quality 90 and alpha 95)
+   * with fractional-frame blending.
    * Styles are chosen by session count with the same rules as `workingLottieVariants`.
    */
   workingAtlas?: PetCanvasAtlas
@@ -128,7 +129,7 @@ export interface PetSpriteSheet {
 }
 
 /**
- * A lossless run-cycle atlas per style, drawn on a canvas: neighbouring frames are blended by
+ * A run-cycle atlas per style, drawn on a canvas: neighbouring frames are blended by
  * the fractional frame (the last frame into the first), and the live session count is printed
  * on the outfit at a per-frame anchor.
  */

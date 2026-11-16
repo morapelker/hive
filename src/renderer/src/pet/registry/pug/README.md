@@ -14,6 +14,10 @@ The second command opens `src/renderer/pug-preview.html` through Vite with the r
 `SpriteSheetSprite` and `PetSprite` renderers, a 0–20 slider, an exact-count input
 and the speed controls. It is a development preview, not a production route.
 
+The atlases ship as lossy WebP (quality 90, alpha 95), about a third of the lossless bytes with no
+visible difference at the desktop sizes. The extract command writes them lossless, so run
+`pnpm -C apps/hive compress:pets` after it (it skips an atlas that is already lossy).
+
 ## Progression
 
 Milestones follow the corgi: 1, 2, 3, 4, 5, 10, 15 and 20 active sessions. Each

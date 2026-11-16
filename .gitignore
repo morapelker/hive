@@ -71,6 +71,7 @@ scripts/*
 !scripts/probe-effect-logger.ts
 !scripts/crop-lottie.mjs
 !scripts/extract-udi-assets.mjs
+!scripts/compress-pet-atlases.mjs
 !scripts/generate-corgi-variants.mjs
 !scripts/generate-corgi-digits.py
 !scripts/build-uv-pool-waker.mjs

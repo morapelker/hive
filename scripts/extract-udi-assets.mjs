@@ -4,6 +4,8 @@
 //   - the "Smooth · 64 fps" atlases (8x8, 64 frames, 352 px cells, lossless WebP) for the
 //     levels the manifest references. Level 2 reuses level 1 and level 5 reuses level 4.
 // Badge anchors and the level copy live in the manifest and are not extracted.
+// The registry ships the atlases as lossy WebP: run `pnpm -C apps/hive compress:pets`
+// after this (scripts/compress-pet-atlases.mjs).
 //
 //   pnpm extract:udi
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'

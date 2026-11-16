@@ -1,7 +1,7 @@
 # Udi the German Shepherd
 
 Udi is the second sprite-sheet pet, built the same way as the pug. His idle portrait is a PNG and
-every working style is a lossless WebP atlas of 64 run-cycle poses (8 columns × 8 rows, 352 px
+every working style is a WebP atlas of 64 run-cycle poses (8 columns × 8 rows, 352 px
 cells, exact for the pet on a 2x display; one 1.0 second loop at 64 fps, one frame per 60 Hz refresh, a touch
 slower than the pug and the frenchie's 0.8 s so his bigger stride reads calmly). The artwork was approved in
 `docs/udi-preview.html` ("Smooth · 64 fps") and is extracted from that file verbatim:
@@ -14,6 +14,10 @@ pnpm preview:udi
 The second command opens `src/renderer/udi-preview.html` through Vite with the real
 `SpriteSheetSprite` and `PetSprite` renderers, a 0–20 slider, an exact-count input and the speed
 controls. It is a development preview, not a production route.
+
+The atlases ship as lossy WebP (quality 90, alpha 95), about a third of the lossless bytes with no
+visible difference at the desktop sizes. The extract command writes them lossless, so run
+`pnpm -C apps/hive compress:pets` after it (it skips an atlas that is already lossy).
 
 ## Progression
 
