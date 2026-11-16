@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useLayoutEffect } from 'react'
+import { useState, useCallback, useEffect, useRef, useLayoutEffect } from 'react'
 import { motion } from 'motion/react'
 import { AlertTriangle, ArrowDownWideNarrow, ChevronRight, ChevronDown, FileText, LayoutGrid, Plus, Zap, Archive, Workflow } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -12,6 +12,8 @@ import { documentRunTicketDropRefusal } from '@/components/document-flow/documen
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { documentFlowApi } from '@/api/document-flow-api'
 import { TicketCreateModal } from '@/components/kanban/TicketCreateModal'
+import { registerBoardNewTicket } from '@/lib/board-new-ticket'
+import { useShortcutStore } from '@/stores/useShortcutStore'
 import { WorktreePickerModal } from '@/components/kanban/WorktreePickerModal'
 import {
   AlertDialog,
@@ -334,6 +336,13 @@ export function KanbanColumn({
   const searchActive = useKanbanStore(
     (s) => s.boardSearch.open && s.boardSearch.query.trim().length > 0
   )
+
+  // New Ticket shortcut (Cmd+N): this board's To Do column opens the creation modal
+  const newTicketShortcut = useShortcutStore((s) => s.getDisplayString('board:new-ticket'))
+  useEffect(() => {
+    if (!isTodoColumn || searchActive) return
+    return registerBoardNewTicket(() => setIsCreateModalOpen(true))
+  }, [isTodoColumn, searchActive])
 
   // ── Measure header and pick title fit mode (In Progress column only) ─────
   useLayoutEffect(() => {
@@ -1276,6 +1285,7 @@ export function KanbanColumn({
                   <button
                     data-testid="kanban-column-add-ticket-btn"
                     onClick={() => setIsCreateModalOpen(true)}
+                    title={newTicketShortcut ? `New ticket (${newTicketShortcut})` : undefined}
                     className="flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-border px-1.5 text-[11px] font-medium text-muted-foreground hover:border-muted-foreground/35 hover:bg-secondary/40 hover:text-foreground transition-colors cursor-pointer"
                   >
                     <Plus className="h-3.5 w-3.5" />

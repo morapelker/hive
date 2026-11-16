@@ -162,6 +162,13 @@ export const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
     category: 'navigation',
     defaultBinding: { key: 'n', modifiers: ['meta', 'shift'] }
   },
+  {
+    id: 'board:new-ticket',
+    label: 'New Ticket',
+    description: 'Start a new ticket on the board on screen',
+    category: 'navigation',
+    defaultBinding: { key: 'n', modifiers: ['meta'] }
+  },
 
   // Git shortcuts
   {

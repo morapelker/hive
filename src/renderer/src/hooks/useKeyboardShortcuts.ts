@@ -24,6 +24,7 @@ import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useTerminalTabStore } from '@/stores/useTerminalTabStore'
 import { useTerminalStore } from '@/stores/useTerminalStore'
 import { eventMatchesBinding, type KeyBinding } from '@/lib/keyboard-shortcuts'
+import { canOpenBoardNewTicket, openBoardNewTicket } from '@/lib/board-new-ticket'
 import { isForceBoardMode } from '@/api/hive-enterprise/client'
 import { toast } from '@/lib/toast'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
@@ -216,6 +217,17 @@ function togglePinnedBoard(): void {
     fileStore.closeContextEditor()
   }
   kanban.togglePinnedBoard()
+}
+
+/**
+ * New Ticket (Cmd+N) only acts on a board: one is on screen and offers "New ticket", nothing
+ * is open over it (a ticket, a dialog, the ticket being written), and the terminal does not
+ * have the focus (Ctrl+N is its next-history key).
+ */
+function canStartNewTicket(): boolean {
+  if (!canOpenBoardNewTicket()) return false
+  if (isTerminalFocused()) return false
+  return document.querySelector('[role="dialog"], [role="alertdialog"]') === null
 }
 
 /**
@@ -580,7 +592,7 @@ export function useKeyboardShortcuts(): void {
         return
       }
 
-      for (const { id, binding, handler, allowInInput } of shortcuts) {
+      for (const { id, binding, handler, allowInInput, isAvailable } of shortcuts) {
         if (!binding) continue
         if (inDataClient && !DATA_CLIENT_GLOBAL_SHORTCUTS.has(id)) continue
         if (dataProjectOpen && SESSION_SCOPED_SHORTCUTS.has(id)) continue
@@ -594,6 +606,7 @@ export function useKeyboardShortcuts(): void {
           continue
 
         if (eventMatchesBinding(event, binding)) {
+          if (isAvailable && !isAvailable()) continue
           event.preventDefault()
           event.stopPropagation()
           handler()
@@ -709,6 +722,8 @@ interface ShortcutHandler {
   binding: KeyBinding | null
   handler: () => void
   allowInInput: boolean
+  /** When it returns false the shortcut is off: its key is left to the page, not swallowed. */
+  isAvailable?: () => boolean
 }
 
 /**
@@ -888,6 +903,13 @@ function getShortcutHandlers(
       handler: () => {
         toast.info('Use the + button in the sidebar to create a new worktree')
       }
+    },
+    {
+      id: 'board:new-ticket',
+      binding: getEffectiveBinding('board:new-ticket'),
+      allowInInput: true,
+      isAvailable: canStartNewTicket,
+      handler: openBoardNewTicket
     },
     {
       // Works while typing (chat input, the sidebar's filter field) and with the sidebar

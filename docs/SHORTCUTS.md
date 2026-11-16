@@ -41,11 +41,18 @@ These shortcuts work anywhere in the application:
 | `Cmd+R` | Refresh | Refresh current view |
 | `Cmd+Shift+R` | Refresh All | Refresh all projects and worktrees |
 
+## Board
+
+| Shortcut | Action | Description |
+|----------|--------|-------------|
+| `Cmd+N` | New Ticket | Start a new ticket on the board on screen |
+| `Cmd+F` | Search Board | Search the tickets of the board on screen |
+
 ## Worktree Operations
 
 | Shortcut | Action | Description |
 |----------|--------|-------------|
-| `Cmd+N` | New Worktree | Create new worktree for current project |
+| `Cmd+Shift+N` | New Worktree | Create new worktree for current project |
 | `Cmd+Option+N` | New Worktree with Branch | Create worktree with new branch |
 | `Cmd+Option+A` | Archive Worktree | Archive current worktree |
 | `Cmd+Option+Delete` | Delete Worktree | Permanently delete worktree |
