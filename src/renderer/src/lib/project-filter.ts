@@ -184,3 +184,17 @@ export function moveSidebarEntry<E extends { id: string }>(
   next.splice(from < to ? to - 1 : to, 0, moved)
   return next
 }
+
+/**
+ * The merged sidebar order with one entry moved to the top and every other entry in its
+ * place. Null when the entry is unknown or already first (nothing to store).
+ */
+export function moveSidebarEntryToTop<E extends { kind: 'project' | 'data'; id: string }>(
+  entries: readonly E[],
+  kind: E['kind'],
+  id: string
+): E[] | null {
+  const from = entries.findIndex((e) => e.kind === kind && e.id === id)
+  if (from <= 0) return null
+  return [entries[from], ...entries.slice(0, from), ...entries.slice(from + 1)]
+}

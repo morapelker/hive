@@ -3,6 +3,7 @@ import {
   filterProjects,
   filterSidebarEntries,
   mergeSidebarEntries,
+  moveSidebarEntryToTop,
   reorderGitEntries,
   type ProjectFilterCriteria
 } from '../project-filter'
@@ -108,5 +109,35 @@ describe('reorderGitEntries', () => {
       'D2',
       'Pc'
     ])
+  })
+})
+
+describe('moveSidebarEntryToTop', () => {
+  const entries = [
+    { kind: 'data' as const, id: 'D1' },
+    { kind: 'project' as const, id: 'Pa' },
+    { kind: 'project' as const, id: 'Pb' },
+    { kind: 'data' as const, id: 'D2' }
+  ]
+
+  it('puts the entry first and keeps the others in their order', () => {
+    expect(moveSidebarEntryToTop(entries, 'project', 'Pb')?.map((e) => e.id)).toEqual([
+      'Pb',
+      'D1',
+      'Pa',
+      'D2'
+    ])
+    expect(moveSidebarEntryToTop(entries, 'data', 'D2')?.map((e) => e.id)).toEqual([
+      'D2',
+      'D1',
+      'Pa',
+      'Pb'
+    ])
+  })
+
+  it('is null when the entry is first already, unknown, or of the other kind', () => {
+    expect(moveSidebarEntryToTop(entries, 'data', 'D1')).toBeNull()
+    expect(moveSidebarEntryToTop(entries, 'project', 'gone')).toBeNull()
+    expect(moveSidebarEntryToTop(entries, 'data', 'Pa')).toBeNull()
   })
 })

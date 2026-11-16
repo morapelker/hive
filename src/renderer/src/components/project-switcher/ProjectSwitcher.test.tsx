@@ -582,7 +582,7 @@ describe('opening a project', () => {
       'ledger-worker'
     ])
 
-    // A collapsed one is not expanded either: the sidebar does not move.
+    // A collapsed one is not expanded either.
     input = openSwitcher()
     type(input, 'pricing')
     press(input, 'Enter')
@@ -608,6 +608,17 @@ describe('opening a project', () => {
     const recentHeading = screen.getByTestId('project-switcher-group-recent')
     const firstRecent = recentHeading.parentElement!
     expect(within(firstRecent).getByTestId('project-switcher-row-name').textContent).toBe('ads-api')
+  })
+
+  it('moves it to the top of the sidebar list, above every other project', () => {
+    const sidebarOrder = (): string[] => useProjectStore.getState().projects.map((p) => p.id)
+    expect(sidebarOrder()[0]).toBe('ads-api')
+    render(<ProjectSwitcher />)
+    const input = openSwitcher()
+    type(input, 'pricing')
+    press(input, 'Enter')
+    expect(sidebarOrder().slice(0, 3)).toEqual(['pricing-api', 'ads-api', 'checkout-api'])
+    expect(sidebarOrder()).toHaveLength(11)
   })
 
   it('leaves the Pinned Board, also for a pinned project', async () => {
