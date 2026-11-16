@@ -13,7 +13,8 @@ import {
   useAccountScheduleStore,
   getActiveUsagePercent,
   getAutoSwitchUsagePercent,
-  computeSweepExclusions
+  computeSweepExclusions,
+  AUTO_SWITCH_SWEEP_MAX_AGE_MS
 } from '@/stores/useAccountScheduleStore'
 import {
   createPredictorState,
@@ -49,12 +50,6 @@ const IMMINENT_THRESHOLD_REFRESH_MS = 60_000
 // next scheduled fetch, pull a real sample early (floored at
 // EARLY_USAGE_REFRESH_FLOOR_MS so this can never hammer the endpoint).
 const PREDICTOR_BAND_PERCENT = 15
-
-// Auto-switch pre-warm: within the near-threshold margin, keep every viable
-// candidate account's usage cache at most this old (the sweep skips rows
-// fresher than this server-side), so the trigger-time sweep is a DB read
-// instead of a serial network fetch right when the switch is urgent.
-const PREWARM_MAX_AGE_MS = 150_000
 
 /** Threshold of the armed usage-based switch (auto-switch or usage schedule), if any. */
 function armedUsageThresholdPercent(provider: UsageProvider): number | null {
@@ -163,6 +158,10 @@ let tallyInFlight = false
 let lastAnchoredUsage: unknown = null
 let lastSeenSwitchedAt: number | null = null
 
+// When the last auto-switch pre-warm sweep settled, per provider — the
+// pre-warm doesn't run again until AUTO_SWITCH_SWEEP_MAX_AGE_MS has passed.
+const lastPrewarmAt: Partial<Record<UsageProvider, number>> = {}
+
 /** Test hook: predictor + attempt bookkeeping live at module scope. */
 export function __resetAccountScheduleRunnerForTests(): void {
   resetPredictorState(predictor)
@@ -171,6 +170,8 @@ export function __resetAccountScheduleRunnerForTests(): void {
   lastSeenSwitchedAt = null
   delete lastAttemptAt.anthropic
   delete lastAttemptAt.openai
+  delete lastPrewarmAt.anthropic
+  delete lastPrewarmAt.openai
 }
 
 async function maintainBurnRatePredictor(): Promise<void> {
@@ -290,9 +291,11 @@ async function maintainBurnRatePredictor(): Promise<void> {
 
 /**
  * While auto-switch is armed and utilization sits inside the near-threshold
- * margin, keep candidate accounts' cached usage fresh in the background so
- * the trigger-time sweep (which skips rows younger than its maxAge) doesn't
+ * margin, refresh candidate accounts' cached usage in the background so the
+ * trigger-time sweep (which skips rows younger than its maxAge) doesn't
  * spend the critical post-threshold seconds serially fetching every account.
+ * At most one sweep per AUTO_SWITCH_SWEEP_MAX_AGE_MS, however long usage
+ * stays inside the margin.
  */
 function prewarmAutoSwitchCandidates(): void {
   const running = providersWithRunningSessions()
@@ -307,6 +310,10 @@ function prewarmAutoSwitchCandidates(): void {
     // trigger-time sweep owns the provider, and a pre-warm started in the
     // same tick would mark it refreshing and make that sweep skip its round.
     if (percent >= auto.thresholdPercent) continue
+    const lastPrewarm = lastPrewarmAt[provider]
+    if (lastPrewarm !== undefined && Date.now() - lastPrewarm < AUTO_SWITCH_SWEEP_MAX_AGE_MS) {
+      continue
+    }
     const usageStore = useUsageStore.getState()
     if (usageStore.refreshingProviders[provider]) continue
     if (!usageStore.savedAccountsLoaded[provider]) continue
@@ -315,18 +322,32 @@ function prewarmAutoSwitchCandidates(): void {
     const activeEmail =
       provider === 'anthropic' ? accountState.anthropicEmail : accountState.openaiEmail
     const exclusions = computeSweepExclusions(provider, auto.thresholdPercent, activeEmail)
-    // Fresh rows are skipped server-side, so ticking this every 30s costs a
-    // round-trip when everything is warm and only re-fetches candidates
-    // whose cache aged past the pre-warm window. Re-evaluate schedules once
-    // the sweep settles: a usage update crossing the threshold MID-sweep
-    // finds the provider refreshing and skips its round, and nothing else
-    // subscribes to the refreshing→idle transition — without this the due
-    // switch would wait out the rest of the tick interval.
+    // The throttle is stamped when the sweep SETTLES (not when it starts), so
+    // every row it fetched has aged past the window by the next pre-warm and
+    // is fetched again rather than fresh-skipped for a second window. A
+    // failed sweep is stamped too: it may have fetched accounts before
+    // failing, and must not turn into a retry on every tick. The same maxAge
+    // goes to the server so rows refreshed by anything else inside the window
+    // (the trigger-time sweep, a pre-warm from before a reload) are relied on
+    // as well. Re-evaluate schedules once the sweep settles: a usage update
+    // crossing the threshold MID-sweep finds the provider refreshing and
+    // skips its round, and nothing else subscribes to the refreshing→idle
+    // transition — without this the due switch would wait out the rest of
+    // the tick interval.
     void usageStore
-      .refreshAllForProvider(provider, exclusions, { maxAgeMs: PREWARM_MAX_AGE_MS })
-      .catch(() => {}) // a failed sweep still cleared the refreshing flag —
-      // the recheck below must run on BOTH outcomes, or a threshold crossing
-      // that landed mid-sweep waits out the rest of the tick interval.
+      .refreshAllForProvider(provider, exclusions, { maxAgeMs: AUTO_SWITCH_SWEEP_MAX_AGE_MS })
+      .then(
+        (results) => {
+          // null: another sweep was already running — this call fetched nothing.
+          if (results !== null) lastPrewarmAt[provider] = Date.now()
+        },
+        () => {
+          lastPrewarmAt[provider] = Date.now()
+        }
+      )
+      // A failed sweep still cleared the refreshing flag — the recheck must
+      // run on BOTH outcomes, or a threshold crossing that landed mid-sweep
+      // waits out the rest of the tick interval.
       .then(() => useAccountScheduleStore.getState().checkSchedules())
       .catch(() => {})
   }

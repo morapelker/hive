@@ -376,7 +376,7 @@ describe('useAccountScheduleStore auto-switch', () => {
     expect(refreshAllCalls()[1][1]).toEqual({
       provider: 'anthropic',
       excludeAccountIds: ['acc-1', 'acc-2', 'acc-3'],
-      maxAgeMs: 180_000
+      maxAgeMs: 600_000
     })
     expect(toast.error).toHaveBeenCalledTimes(2)
     expect(useAccountScheduleStore.getState().autoSwitch.anthropic?.notBefore).toBe(
@@ -413,7 +413,7 @@ describe('useAccountScheduleStore auto-switch', () => {
     expect(refreshAllCalls()[0][1]).toEqual({
       provider: 'anthropic',
       excludeAccountIds: ['acc-1'],
-      maxAgeMs: 180_000
+      maxAgeMs: 600_000
     })
     expect(switchCalls()).toHaveLength(1)
     expect(switchCalls()[0][1]).toEqual({ accountId: 'acc-2' })
@@ -488,7 +488,7 @@ describe('useAccountScheduleStore auto-switch', () => {
     expect(refreshAllCalls()[0][1]).toEqual({
       provider: 'anthropic',
       excludeAccountIds: ['acc-1', 'acc-3'],
-      maxAgeMs: 180_000
+      maxAgeMs: 600_000
     })
     expect(switchCalls()).toHaveLength(1)
     expect(switchCalls()[0][1]).toEqual({ accountId: 'acc-2' })
@@ -522,7 +522,7 @@ describe('useAccountScheduleStore auto-switch', () => {
     expect(refreshAllCalls()[0][1]).toEqual({
       provider: 'anthropic',
       excludeAccountIds: ['acc-1', 'acc-2'],
-      maxAgeMs: 180_000
+      maxAgeMs: 600_000
     })
     expect(switchCalls()).toHaveLength(1)
     expect(switchCalls()[0][1]).toEqual({ accountId: 'acc-9' })
@@ -540,7 +540,7 @@ describe('useAccountScheduleStore auto-switch', () => {
     await useAccountScheduleStore.getState().checkSchedules()
 
     expect(refreshAllCalls()).toHaveLength(1)
-    expect(refreshAllCalls()[0][1]).toEqual({ provider: 'anthropic', maxAgeMs: 180_000 })
+    expect(refreshAllCalls()[0][1]).toEqual({ provider: 'anthropic', maxAgeMs: 600_000 })
     expect(switchCalls()).toHaveLength(1)
     expect(switchCalls()[0][1]).toEqual({ accountId: 'acc-2' })
   })

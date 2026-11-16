@@ -627,13 +627,73 @@ describe('useAccountScheduleRunner usage refresh cadence', () => {
 
     await advance(30_000)
     expect(refreshAllForProvider).toHaveBeenCalledWith('anthropic', ['acc-1'], {
-      maxAgeMs: 150_000
+      maxAgeMs: 600_000
     })
     // Each settled pre-warm re-evaluates schedules (on top of the per-tick
     // call), so a threshold crossing that landed mid-sweep — when the
     // refreshing flag made checkSchedules skip its round — is caught as
     // soon as the sweep ends instead of a full tick later.
     expect(checkSchedules.mock.calls.length).toBe(2 + refreshAllForProvider.mock.calls.length)
+  })
+
+  const armNearThresholdPrewarm = (refreshAllForProvider: ReturnType<typeof vi.fn>): void => {
+    useAccountStore.setState({ anthropicEmail: 'current@x.com' } as Partial<
+      ReturnType<typeof useAccountStore.getState>
+    >)
+    useUsageStore.setState({
+      refreshAllForProvider,
+      savedAccountsLoaded: { anthropic: true, openai: false },
+      savedAccounts: {
+        anthropic: [
+          savedAccount('acc-1', 'current@x.com', 85),
+          savedAccount('acc-2', 'other@x.com', 10)
+        ],
+        openai: []
+      }
+    })
+    useAccountScheduleStore.setState({
+      autoSwitch: {
+        anthropic: { provider: 'anthropic', thresholdPercent: 90, createdAt: Date.now() }
+      }
+    })
+  }
+
+  it('pre-warms at most once every 10 minutes while usage stays inside the margin', async () => {
+    const refreshAllForProvider = vi.fn().mockResolvedValue([])
+    armNearThresholdPrewarm(refreshAllForProvider)
+    renderHook(() => useAccountScheduleRunner())
+
+    // 19 further ticks inside the margin: the first sweep's data is relied on.
+    await advance(9 * 60_000 + 30_000)
+    expect(refreshAllForProvider).toHaveBeenCalledTimes(1)
+
+    await advance(30_000)
+    expect(refreshAllForProvider).toHaveBeenCalledTimes(2)
+
+    await advance(9 * 60_000 + 30_000)
+    expect(refreshAllForProvider).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not retry a failed pre-warm sweep before the 10 minutes are up', async () => {
+    const refreshAllForProvider = vi.fn().mockRejectedValue(new Error('ipc down'))
+    armNearThresholdPrewarm(refreshAllForProvider)
+    renderHook(() => useAccountScheduleRunner())
+
+    await advance(9 * 60_000 + 30_000)
+    expect(refreshAllForProvider).toHaveBeenCalledTimes(1)
+
+    await advance(30_000)
+    expect(refreshAllForProvider).toHaveBeenCalledTimes(2)
+  })
+
+  it('pre-warms again on the next tick when another sweep was already running', async () => {
+    // null = the store found a sweep in flight and fetched nothing itself.
+    const refreshAllForProvider = vi.fn().mockResolvedValue(null)
+    armNearThresholdPrewarm(refreshAllForProvider)
+    renderHook(() => useAccountScheduleRunner())
+
+    await advance(30_000)
+    expect(refreshAllForProvider).toHaveBeenCalledTimes(2)
   })
 
   it('does not pre-warm at/above the threshold — the due switch owns the sweep', async () => {

@@ -207,11 +207,14 @@ export function computeSweepExclusions(
     .map((account) => account.id)
 }
 
-// Cached rows at least this fresh count as already-refreshed during the
-// trigger-time candidate sweep (the runner pre-warms them while usage sits
-// near the threshold), collapsing the sweep to a DB read instead of a serial
-// fetch of every account right when the switch is urgent.
-export const TRIGGER_SWEEP_MAX_AGE_MS = 180_000
+// How long a candidate account's cached usage is relied on once it has been
+// refreshed. It bounds both auto-switch sweeps: the runner's near-threshold
+// pre-warm runs at most once per window, and the trigger-time sweep counts
+// rows this fresh as already-refreshed (the server skips their fetch) — so
+// sitting just under the threshold for a long time costs one refresh of every
+// account per window instead of one every couple of minutes, and the sweep at
+// the moment the switch is urgent is a DB read rather than a serial fetch.
+export const AUTO_SWITCH_SWEEP_MAX_AGE_MS = 10 * 60_000
 
 // A due schedule whose switch attempt failed is retried, but not more often
 // than this — a persistently failing switch shouldn't toast every tick.
@@ -372,9 +375,11 @@ export const useAccountScheduleStore = create<AccountScheduleState>()(
                 continue
               }
 
-              // Refresh saved accounts so the pick is based on live numbers —
-              // but only the ones with a chance of being viable. A usage
-              // window only accrues until its (known, future) reset time, so
+              // Refresh saved accounts so the pick is based on current numbers
+              // — but only the ones with a chance of being viable, and only
+              // those not already refreshed within the sweep window (the
+              // pre-warm's data is relied on rather than fetched again). A
+              // usage window only accrues until its (known, future) reset time, so
               // an account whose cached utilization is already at/over the
               // threshold provably stays there: refreshing it is a wasted
               // request. Anything short of that proof — unknown usage, a
@@ -398,7 +403,7 @@ export const useAccountScheduleStore = create<AccountScheduleState>()(
                 results = await useUsageStore
                   .getState()
                   .refreshAllForProvider(provider, excludeAccountIds, {
-                    maxAgeMs: TRIGGER_SWEEP_MAX_AGE_MS
+                    maxAgeMs: AUTO_SWITCH_SWEEP_MAX_AGE_MS
                   })
               } catch {
                 sweepFailed = true
