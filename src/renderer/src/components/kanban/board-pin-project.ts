@@ -5,6 +5,9 @@
  * the connection project's instances is selected, since that shows the project's own board). The
  * Pinned Board, the board of a connection that was not saved as a project, and a board whose
  * project is not in the list have none. Databases have no board at all.
+ *
+ * The same boards, and no others, show their project's name in the middle of the top row
+ * (SyncStatusBar): it is this project's name.
  */
 import { useShallow } from 'zustand/react/shallow'
 import type { PinnableProject } from '@/lib/project-pin'

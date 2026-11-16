@@ -1,8 +1,13 @@
 /**
- * The board's top row. At the left: the pinned board's label. At the right, on the board of one
- * project: its "Pin to board" button (BoardPinButton). A board with neither (a connection that
- * was not saved as a project) has no row at all. It sits above the column scroller, so it stays
- * put while the columns scroll sideways.
+ * The board's top row, in three parts. At the left: the pinned board's label. In the middle, on
+ * the board of one project: the project's name. At the right, on the same board: its "Pin to
+ * board" button (BoardPinButton). A board with none of these (a connection that was not saved as
+ * a project) has no row at all. It sits above the column scroller, so it stays put while the
+ * columns scroll sideways.
+ *
+ * The left and the right part share what the name leaves, half each, so the name is centred in
+ * the row and not in the room between its neighbours. Neither part goes below its own controls:
+ * on a row too narrow for both halves the name moves right, and it is the first to be cut short.
  *
  * The row is a size container: the pin button loses its label below 260px.
  *
@@ -85,15 +90,30 @@ export function BoardTopRow({
       data-tab-navigates
       className="@container/board flex h-8 shrink-0 items-center gap-2 px-4 pt-1.5"
     >
-      {isPinnedMode && (
-        <div className="flex shrink-0 items-center gap-2">
-          <Pin className="h-4 w-4 text-muted-foreground" />
-          <h2 className="whitespace-nowrap text-sm font-medium text-muted-foreground">
-            Pinned Projects ({pinnedProjectCount})
+      <div data-testid="board-row-start" className="flex flex-1 basis-0 items-center gap-2">
+        {isPinnedMode && (
+          <div className="flex shrink-0 items-center gap-2">
+            <Pin className="h-4 w-4 text-muted-foreground" />
+            <h2 className="whitespace-nowrap text-sm font-medium text-muted-foreground">
+              Pinned Projects ({pinnedProjectCount})
+            </h2>
+          </div>
+        )}
+      </div>
+      {pinProject && (
+        <>
+          <h2
+            data-testid="board-project-name"
+            title={pinProject.name}
+            className="min-w-0 truncate px-2 text-sm font-medium text-muted-foreground"
+          >
+            {pinProject.name}
           </h2>
-        </div>
+          <div data-testid="board-row-end" className="flex flex-1 basis-0 justify-end">
+            <BoardPinButton project={pinProject} />
+          </div>
+        </>
       )}
-      {pinProject && <BoardPinButton project={pinProject} className="ml-auto" />}
     </div>
   )
 }

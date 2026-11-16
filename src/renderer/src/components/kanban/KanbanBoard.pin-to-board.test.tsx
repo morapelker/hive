@@ -277,8 +277,11 @@ describe('where it sits', () => {
   it('ends the row at the right', () => {
     renderBoard({ projectId: 'alpha' })
 
-    expect(row()?.lastElementChild).toBe(pinButton())
-    expect(pinButton()).toHaveClass('ml-auto', 'shrink-0')
+    const end = screen.getByTestId('board-row-end')
+    expect(row()?.lastElementChild).toBe(end)
+    expect(end).toHaveClass('justify-end')
+    expect(end.lastElementChild).toBe(pinButton())
+    expect(pinButton()).toHaveClass('shrink-0')
   })
 
   it('leaves the board assistant button and the search bar where they were', () => {
