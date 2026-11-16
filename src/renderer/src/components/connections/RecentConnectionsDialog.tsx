@@ -1,5 +1,15 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { Loader2, Link, Search, StickyNote, Trash2, X } from 'lucide-react'
+import {
+  CheckCircle2,
+  Circle,
+  Link,
+  Loader2,
+  Search,
+  StickyNote,
+  Trash2,
+  X,
+  XCircle
+} from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { subsequenceMatch } from '@/lib/subsequence-match'
 import {
@@ -24,6 +34,7 @@ import { useConnectionStore, useProjectStore } from '@/stores'
 import { connectionApi } from '@/api/connection-api'
 import { toast } from '@/lib/toast'
 import { formatRelativeTime } from '@/lib/format-utils'
+import type { ConnectionCreateProgress, ConnectionCreateStep } from '@/lib/connection-create'
 import type { RecentConnectionEntry, RecentConnectionProject } from '@shared/types/connection'
 
 interface RecentConnectionsDialogProps {
@@ -34,6 +45,42 @@ interface RecentConnectionsDialogProps {
 // Row id for the pinned "create from selected projects" row, which has no
 // backing recent-connection entry.
 const SELECTED_COMBO_ID = '__selected-projects__'
+
+/** One line of the checklist shown while a connection is being created. */
+interface CreateTask {
+  projectId: string
+  projectName: string
+  step: ConnectionCreateStep
+  status: 'pending' | ConnectionCreateProgress['status']
+}
+
+/**
+ * What creating a connection over `projects` will do, in the order it is done: every pull
+ * first (when asked to pull), then every worktree.
+ */
+function planCreateTasks(projects: RecentConnectionProject[], autoPull: boolean): CreateTask[] {
+  const tasksFor = (step: ConnectionCreateStep): CreateTask[] =>
+    projects.map((project) => ({
+      projectId: project.id,
+      projectName: project.name,
+      step,
+      status: 'pending'
+    }))
+  return [...(autoPull ? tasksFor('pull') : []), ...tasksFor('worktree')]
+}
+
+function CreateTaskIcon({ status }: { status: CreateTask['status'] }): React.JSX.Element {
+  switch (status) {
+    case 'running':
+      return <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
+    case 'done':
+      return <CheckCircle2 className="h-4 w-4 shrink-0 text-green-500" />
+    case 'failed':
+      return <XCircle className="h-4 w-4 shrink-0 text-destructive" />
+    default:
+      return <Circle className="h-4 w-4 shrink-0 text-muted-foreground/50" />
+  }
+}
 
 export function RecentConnectionsDialog({
   open,
@@ -46,6 +93,10 @@ export function RecentConnectionsDialog({
   const [isLoading, setIsLoading] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [isCreating, setIsCreating] = useState(false)
+  // The checklist of the creation under way; null whenever the picker is showing.
+  const [createTasks, setCreateTasks] = useState<CreateTask[] | null>(null)
+  // Why the last Create made nothing, shown over the picker it returned to.
+  const [createError, setCreateError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [filter, setFilter] = useState('')
   const [projectFilter, setProjectFilter] = useState('')
@@ -67,6 +118,8 @@ export function RecentConnectionsDialog({
 
     setSelectedId(null)
     setIsCreating(false)
+    setCreateTasks(null)
+    setCreateError(null)
     setError(null)
     setEntries([])
     setIsLoading(true)
@@ -229,13 +282,27 @@ export function RecentConnectionsDialog({
     if (!projects || projects.length === 0) return
 
     setIsCreating(true)
+    setCreateError(null)
+    setCreateTasks(planCreateTasks(projects, autoPull))
     try {
-      const id = await quickCreateConnection(projects, { autoPull })
+      const id = await quickCreateConnection(projects, {
+        autoPull,
+        onProgress: ({ projectId, step, status }) =>
+          setCreateTasks(
+            (tasks) =>
+              tasks?.map((task) =>
+                task.projectId === projectId && task.step === step ? { ...task, status } : task
+              ) ?? null
+          ),
+        onError: setCreateError
+      })
       if (id) {
         onOpenChange(false)
       }
     } finally {
       setIsCreating(false)
+      // Back to the picker: closed by now on success, with the error over it otherwise.
+      setCreateTasks(null)
     }
   }, [entries, selectedId, selectedProjects, autoPull, quickCreateConnection, onOpenChange])
 
@@ -345,7 +412,34 @@ export function RecentConnectionsDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {selectedProjects.length > 0 && (
+        {createTasks && (
+          <div
+            className="h-[384px] overflow-y-auto border rounded-md"
+            data-testid="recent-connections-create-progress"
+          >
+            <ul className="py-1" aria-live="polite">
+              {createTasks.map((task) => (
+                <li
+                  key={`${task.step}-${task.projectId}`}
+                  className="flex items-center gap-2.5 px-3 py-2 text-sm"
+                  data-testid={`recent-connections-create-task-${task.step}-${task.projectId}`}
+                  data-status={task.status}
+                >
+                  <CreateTaskIcon status={task.status} />
+                  <span
+                    className={cn('truncate', task.status === 'pending' && 'text-muted-foreground')}
+                  >
+                    {task.step === 'pull'
+                      ? `Pull ${task.projectName} from origin`
+                      : `Create worktree in ${task.projectName}`}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {!createTasks && selectedProjects.length > 0 && (
           <div
             className="flex flex-wrap items-center gap-1.5"
             data-testid="recent-connections-selected-projects"
@@ -376,8 +470,12 @@ export function RecentConnectionsDialog({
         )}
 
         {/* min-w-0: as a grid item of DialogContent this row would otherwise
-            size to its content's min-width and overflow the dialog */}
-        <div className="flex min-w-0 gap-3">
+            size to its content's min-width and overflow the dialog.
+            The checklist takes its place while a connection is being created. */}
+        <div
+          className={cn('min-w-0 gap-3', createTasks ? 'hidden' : 'flex')}
+          hidden={!!createTasks}
+        >
           {/* Project filter panel */}
           <div className="flex w-56 shrink-0 flex-col gap-2">
             <div className="relative">
@@ -567,6 +665,17 @@ export function RecentConnectionsDialog({
             </div>
           </div>
         </div>
+
+        {createError && !createTasks && (
+          <div
+            role="alert"
+            className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            data-testid="recent-connections-create-error"
+          >
+            <div className="font-medium">Connection not created</div>
+            <div className="whitespace-pre-wrap break-words">{createError}</div>
+          </div>
+        )}
 
         <DialogFooter className="items-center sm:justify-between">
           <label

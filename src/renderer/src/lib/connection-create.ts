@@ -1,7 +1,8 @@
 /**
  * "New connection from projects" — what the New Connection dialog does, as one UI-neutral
  * function: a fresh worktree in every project, their setup scripts, then one connection over
- * those worktrees, with best-effort rollback of the worktrees when any step fails.
+ * those worktrees, with best-effort rollback of the worktrees when any step fails. Asked to
+ * pull, it first brings every project's base branch up to date and only then cuts a worktree.
  *
  * Shared by useConnectionStore.quickCreateConnection (the dialog, Duplicate, a connection
  * project's "new instance"), the Tedooo agent's `create_connection` plan step and the phone's
@@ -10,6 +11,7 @@
  */
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { connectionApi } from '@/api/connection-api'
+import { gitApi } from '@/api/git-api'
 import { worktreeApi } from '@/api/worktree-api'
 import type { ConnectionWithMembers } from '@shared/types/connection'
 
@@ -32,11 +34,33 @@ export interface CreateConnectionFromProjectsOptions {
    */
   saveAsProject?: boolean
   /**
-   * Pull each project's base branch (the branch its new worktree is cut from) from origin
-   * before the worktree is created. Overrides the "auto-pull before worktree" setting for this
-   * one connection; left out, the setting decides. The New Connection dialog passes its switch.
+   * Whether to pull each project's base branch (the branch its new worktree is cut from) from
+   * origin first. The New Connection dialog passes its switch.
+   *
+   * - `true`: every project is pulled (fast-forward only, in parallel) before the first
+   *   worktree is created. A pull that fails stops everything there: nothing is created, and
+   *   the result names each project and why.
+   * - `false`: no pull; the worktrees are cut from the local branches as they are.
+   * - left out: the "auto-pull before worktree" setting decides, per worktree and best effort
+   *   (a failed pull falls back to the local branch without a word).
    */
   autoPull?: boolean
+  /**
+   * Told about every step as it starts and ends, so a caller can show what is being done:
+   * with `autoPull: true` one `pull` step per project, then one `worktree` step per project.
+   */
+  onProgress?: (progress: ConnectionCreateProgress) => void
+}
+
+/** `pull`: the project's base branch from origin. `worktree`: its new worktree. */
+export type ConnectionCreateStep = 'pull' | 'worktree'
+
+export interface ConnectionCreateProgress {
+  projectId: string
+  step: ConnectionCreateStep
+  status: 'running' | 'done' | 'failed'
+  /** With `failed`: why. */
+  error?: string
 }
 
 export type CreateConnectionFromProjectsResult =
@@ -53,12 +77,6 @@ export type CreateConnectionFromProjectsResult =
        * project). Never a reason to create it again.
        */
       warning?: string
-      /**
-       * Names of the projects whose base branch could not be pulled although `autoPull: true`
-       * asked for it (offline, diverged from origin, ...). Their worktrees were cut from the
-       * local branch as it was. Absent when every pull went through.
-       */
-      pullFailed?: string[]
     }
   | { ok: false; error: string }
 
@@ -104,6 +122,58 @@ export function connectableProjects<T extends ConnectionProjectInput>(projects: 
   return out
 }
 
+/**
+ * Why a fast-forward of `branch` from origin did not happen, in a line a person can act on.
+ * The two cases git answers at length (the branch has commits origin lacks, or the incoming
+ * commits touch files with uncommitted edits) are named; anything else is git's own
+ * `fatal:` / `error:` line.
+ */
+export function describePullFailure(branch: string, gitError: string | undefined): string {
+  const text = gitError ?? ''
+  if (/not possible to fast-forward|diverg|non-fast-forward/i.test(text)) {
+    return `local ${branch} has commits that origin/${branch} does not, so it cannot be fast-forwarded`
+  }
+  if (/would be overwritten/i.test(text)) {
+    return `uncommitted changes on ${branch} conflict with the incoming commits`
+  }
+  if (/unmerged files|unresolved conflict|not concluded your merge/i.test(text)) {
+    return `${branch} has a merge with unresolved conflicts`
+  }
+  if (/block timeout/i.test(text)) {
+    return 'origin stopped responding'
+  }
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+  const line = lines.find((l) => /^(fatal|error):/i.test(l)) ?? lines[0]
+  return line ? line.replace(/^(fatal|error):\s*/i, '') : 'git pull failed'
+}
+
+/**
+ * Fast-forward the branch a new worktree of `project` would be cut from (the project
+ * checkout's current branch) from origin. A project with nothing to pull (no origin, a branch
+ * that was never pushed, a detached HEAD) counts as pulled.
+ */
+async function pullProjectBaseBranch(
+  project: ConnectionProjectInput
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const info = await gitApi.getBranchInfo(project.path)
+    if (!info.success || !info.branch) {
+      return { ok: false, error: info.error || 'could not read the current branch' }
+    }
+    const branch = info.branch.name
+    if (!branch || branch === 'HEAD') return { ok: true }
+    const pulled = await gitApi.syncBranchWithOrigin(project.path, branch)
+    return pulled.success
+      ? { ok: true }
+      : { ok: false, error: describePullFailure(branch, pulled.error) }
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
 export async function createConnectionFromProjects(
   input: ConnectionProjectInput[],
   opts: CreateConnectionFromProjectsOptions = {}
@@ -141,21 +211,54 @@ export async function createConnectionFromProjects(
     }
   }
 
-  const pullFailed: string[] = []
+  const report = (
+    project: ConnectionProjectInput,
+    step: ConnectionCreateStep,
+    status: ConnectionCreateProgress['status'],
+    error?: string
+  ): void => {
+    opts.onProgress?.({ projectId: project.id, step, status, ...(error ? { error } : {}) })
+  }
+
+  // Every pull before the first worktree: a branch that cannot be brought up to date is found
+  // out while there is still nothing to roll back. The projects are separate repositories, so
+  // they pull side by side, and each one is waited for even after another has failed, so that
+  // the caller hears about all of them at once.
+  if (opts.autoPull === true) {
+    const pulls = await Promise.all(
+      projects.map(async (project) => {
+        report(project, 'pull', 'running')
+        const pulled = await pullProjectBaseBranch(project)
+        if (pulled.ok) report(project, 'pull', 'done')
+        else report(project, 'pull', 'failed', pulled.error)
+        return { project, pulled }
+      })
+    )
+    const failures = pulls.flatMap(({ project, pulled }) =>
+      pulled.ok ? [] : [`Could not pull "${project.name}": ${pulled.error}`]
+    )
+    if (failures.length > 0) {
+      return { ok: false, error: failures.join('\n') }
+    }
+  }
 
   for (const project of projects) {
+    report(project, 'worktree', 'running')
     let result: Awaited<ReturnType<typeof worktreeApi.create>>
     try {
       result = await worktreeApi.create({
         projectId: project.id,
         projectPath: project.path,
         projectName: project.name,
-        ...(opts.autoPull === undefined ? {} : { autoPull: opts.autoPull })
+        // An explicit answer was acted on above (pulled, or told not to), so the create itself
+        // never pulls; left out, the setting decides inside it.
+        ...(opts.autoPull === undefined ? {} : { autoPull: false })
       })
     } catch (error) {
       result = { success: false, error: error instanceof Error ? error.message : String(error) }
     }
     if (!result.success || !result.worktree) {
+      report(project, 'worktree', 'failed', result.error ?? 'Unknown error')
       await rollback()
       return {
         ok: false,
@@ -166,11 +269,7 @@ export async function createConnectionFromProjects(
     // the new worktree and closes open file tabs.
     useWorktreeStore.getState().addWorktreeToProject(project.id, result.worktree)
     created.push({ project, worktree: result.worktree })
-    // A failed pull never fails the creation (the worktree is cut from the local branch), so
-    // it is only visible here.
-    if (opts.autoPull === true && result.pullInfo?.pulled === false) {
-      pullFailed.push(project.name)
-    }
+    report(project, 'worktree', 'done')
   }
 
   // Only fire setup scripts once every worktree has been created successfully — the
@@ -246,7 +345,6 @@ export async function createConnectionFromProjects(
     connectionName: connection.custom_name || connection.name,
     connectionPath: connection.path,
     savedProjectId,
-    ...(warning ? { warning } : {}),
-    ...(pullFailed.length > 0 ? { pullFailed } : {})
+    ...(warning ? { warning } : {})
   }
 }

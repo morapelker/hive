@@ -22,10 +22,23 @@ import { normalizeBranchDisplayName } from '@shared/git-output'
 const execFileAsync = promisify(execFile)
 type GitOperation = 'merge' | 'rebase' | 'cherry-pick' | 'apply'
 
-/** Outcome of aligning a local base branch with origin. */
-type BaseBranchSyncResult = { success: boolean; updated: boolean }
+/** Outcome of aligning a local base branch with origin; `error` is git's answer when it failed. */
+type BaseBranchSyncResult = { success: boolean; updated: boolean; error?: string }
 
 const log = createLogger({ component: 'GitWorktreeOps' })
+
+/**
+ * Why git refused a sync with origin, for a person to read. The excerpt on a `GitError` is the
+ * start of git's output, which `--progress` fills with transfer counters before the refusal is
+ * ever reached; this is the output from git's first `error:` / `fatal:` line on.
+ */
+const branchSyncFailureReason = (error: GitError): string => {
+  const output = error.cause instanceof Error ? error.cause.message : ''
+  const lines = output.split(/\r?\n/).map((line) => line.trimEnd())
+  const refusal = lines.findIndex((line) => /^(error|fatal):/i.test(line))
+  if (refusal === -1) return error.stderrExcerpt ?? error._tag
+  return lines.slice(refusal).join('\n').trim().slice(0, 500)
+}
 
 /**
  * How long a sync with origin may go without any output from git before it is killed: it holds
@@ -684,8 +697,9 @@ const make = Effect.gen(function* () {
    * A branch with no remote-tracking ref (never pushed or fetched) is left
    * alone and reported as in sync. Anything else that blocks the fast-forward
    * (offline, a stalled remote, a diverged local branch, a dirty checkout
-   * conflicting with the incoming commits) reports `success: false`; the caller
-   * goes on with the local branch and the UI warns.
+   * conflicting with the incoming commits) reports `success: false` with git's
+   * answer as `error`; the caller decides whether to go on with the local
+   * branch and warn, or to stop.
    *
    * This runs on the user's checkout without them asking, so their git config
    * must not change what it does: `merge.autoStash` (or `pull.rebase` with
@@ -739,7 +753,11 @@ const make = Effect.gen(function* () {
           branchName,
           error: error.stderrExcerpt ?? error._tag
         })
-        return Effect.succeed({ success: false, updated: false })
+        return Effect.succeed({
+          success: false,
+          updated: false,
+          error: branchSyncFailureReason(error)
+        })
       })
     )
 

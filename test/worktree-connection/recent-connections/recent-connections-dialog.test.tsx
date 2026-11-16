@@ -84,7 +84,10 @@ describe('Recent Connections Dialog', () => {
   })
 
   test('shows a loading spinner while fetching, taking precedence over the empty state', async () => {
-    let resolveFetch: (value: { success: true; entries: RecentConnectionEntry[] }) => void = () => {}
+    let resolveFetch: (value: {
+      success: true
+      entries: RecentConnectionEntry[]
+    }) => void = () => {}
     const pending = new Promise<{ success: true; entries: RecentConnectionEntry[] }>((resolve) => {
       resolveFetch = resolve
     })
@@ -118,7 +121,10 @@ describe('Recent Connections Dialog', () => {
     // Close, then hold the next fetch open so we can inspect state mid-flight on reopen.
     rerender(<RecentConnectionsDialog open={false} onOpenChange={vi.fn()} />)
 
-    let resolveFetch: (value: { success: true; entries: RecentConnectionEntry[] }) => void = () => {}
+    let resolveFetch: (value: {
+      success: true
+      entries: RecentConnectionEntry[]
+    }) => void = () => {}
     const pending = new Promise<{ success: true; entries: RecentConnectionEntry[] }>((resolve) => {
       resolveFetch = resolve
     })
@@ -220,7 +226,10 @@ describe('Recent Connections Dialog', () => {
       await new Promise((r) => setTimeout(r, 10))
     })
 
-    expect(quickCreateConnection).toHaveBeenCalledWith(entry.projects, { autoPull: true })
+    expect(quickCreateConnection).toHaveBeenCalledWith(
+      entry.projects,
+      expect.objectContaining({ autoPull: true })
+    )
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 

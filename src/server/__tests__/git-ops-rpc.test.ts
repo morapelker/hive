@@ -516,7 +516,11 @@ describe('git ops RPC domain', () => {
         makeLiveGitOpsRpcService().syncBranchWithOrigin(dir, 'main')
       )
 
-      expect(result).toEqual({ success: false, updated: false })
+      expect(result).toEqual({
+        success: false,
+        updated: false,
+        error: expect.stringMatching(/not possible to fast-forward/i)
+      })
       expect(revParse(dir, 'main')).toBe(localHead)
       expect(existsSync(join(dir, '.git', 'MERGE_HEAD'))).toBe(false)
       expect(readFileSync(join(dir, 'tracked.txt'), 'utf8')).toBe('merged locally, not pushed\n')
@@ -543,7 +547,11 @@ describe('git ops RPC domain', () => {
           makeLiveGitOpsRpcService().syncBranchWithOrigin(dir, 'main')
         )
 
-        expect(result).toEqual({ success: false, updated: false })
+        expect(result).toEqual({
+          success: false,
+          updated: false,
+          error: expect.stringMatching(/would be overwritten/i)
+        })
         expect(revParse(dir, 'main')).toBe(localHead)
         expect(readFileSync(join(dir, 'tracked.txt'), 'utf8')).toBe('edited, not committed\n')
         const statusOf = (args: string[]): string =>

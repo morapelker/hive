@@ -9,8 +9,25 @@ import {
 } from './store-coordination'
 import { useKanbanStore } from './useKanbanStore'
 import { connectionApi } from '@/api/connection-api'
+// Type only: the module itself imports this store, so it is loaded lazily where it is called.
+import type { CreateConnectionFromProjectsOptions } from '@/lib/connection-create'
 
 export type ConnectionGitView = 'connection' | 'base'
+
+/**
+ * `autoPull` and `onProgress` are the helper's: a pull of every project's base branch before
+ * the first worktree is cut (a failed pull creates nothing), and word of each step as it runs.
+ */
+export type QuickCreateConnectionOptions = Pick<
+  CreateConnectionFromProjectsOptions,
+  'savedProjectId' | 'autoPull' | 'onProgress'
+> & {
+  /**
+   * Handed the reason when the connection is not created, in place of the error toast: for a
+   * caller that shows it where the user is looking.
+   */
+  onError?: (error: string) => void
+}
 
 // Connection types matching the database schema
 export interface ConnectionMemberEnriched {
@@ -80,14 +97,7 @@ interface ConnectionState {
   updateConnectionMembers: (connectionId: string, desiredWorktreeIds: string[]) => Promise<boolean>
   quickCreateConnection: (
     projects: { id: string; path: string; name: string }[],
-    opts?: {
-      savedProjectId?: string
-      /**
-       * Pull each project's base branch from origin before its worktree is created; overrides
-       * the "auto-pull before worktree" setting for this one connection.
-       */
-      autoPull?: boolean
-    }
+    opts?: QuickCreateConnectionOptions
   ) => Promise<string | null>
   duplicateConnection: (connectionId: string) => Promise<string | null>
   saveConnectionAsProject: (connectionId: string) => Promise<string | null>
@@ -324,17 +334,19 @@ export const useConnectionStore = create<ConnectionState>()(
       // way. This action adds the dialog's UI: select the new connection and toast.
       quickCreateConnection: async (
         projects: { id: string; path: string; name: string }[],
-        opts?: { savedProjectId?: string; autoPull?: boolean }
+        opts?: QuickCreateConnectionOptions
       ) => {
         if (projects.length < 2) {
           return null
         }
 
+        const { onError, ...createOptions } = opts ?? {}
         // Dynamic import avoids a store cycle (the helper imports this store).
         const { createConnectionFromProjects } = await import('@/lib/connection-create')
-        const result = await createConnectionFromProjects(projects, opts)
+        const result = await createConnectionFromProjects(projects, createOptions)
         if (!result.ok) {
-          toast.error(result.error)
+          if (onError) onError(result.error)
+          else toast.error(result.error)
           return null
         }
 
@@ -343,14 +355,6 @@ export const useConnectionStore = create<ConnectionState>()(
         clearWorktreeSelection()
         clearDataProjectSelection()
         toast.success(`Connection "${result.connectionName}" created`)
-        if (result.pullFailed?.length) {
-          // Longer than the default: this is the only sign the connection is not up to date.
-          toast.warning(
-            `Could not pull the latest changes for ${result.pullFailed.join(', ')}. ` +
-              `${result.pullFailed.length === 1 ? 'Its worktree was' : 'Their worktrees were'} created from the local branch.`,
-            { duration: 8000 }
-          )
-        }
         return result.connectionId
       },
 

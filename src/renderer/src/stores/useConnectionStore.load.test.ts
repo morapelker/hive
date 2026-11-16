@@ -531,7 +531,9 @@ describe('useConnectionStore connection loading', () => {
     })
 
     await expect(
-      useConnectionStore.getState().updateConnectionMembers('connection-1', ['worktree-1', 'worktree-2'])
+      useConnectionStore
+        .getState()
+        .updateConnectionMembers('connection-1', ['worktree-1', 'worktree-2'])
     ).resolves.toBe(true)
 
     // Exactly one batched RPC call — no per-member add/remove or reload round-trips.
@@ -733,7 +735,9 @@ describe('useConnectionStore connection loading', () => {
     })
 
     await expect(
-      useConnectionStore.getState().updateConnectionMembers('connection-1', ['worktree-1', 'worktree-2'])
+      useConnectionStore
+        .getState()
+        .updateConnectionMembers('connection-1', ['worktree-1', 'worktree-2'])
     ).resolves.toBe(false)
 
     expect(request).toHaveBeenCalledWith('connectionOps.updateMembers', {
@@ -753,9 +757,7 @@ describe('useConnectionStore connection loading', () => {
         ]
       })
     ])
-    expect(toast.error).toHaveBeenCalledWith(
-      expect.stringContaining('Failed to update connection')
-    )
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('Failed to update connection'))
     expect(toast.success).not.toHaveBeenCalled()
   })
 
@@ -822,9 +824,7 @@ describe('useConnectionStore connection loading', () => {
     })
 
     it('returns null without creating anything when fewer than two projects are given', async () => {
-      const result = await useConnectionStore
-        .getState()
-        .quickCreateConnection([projects[0]])
+      const result = await useConnectionStore.getState().quickCreateConnection([projects[0]])
 
       expect(result).toBeNull()
       expect(request).not.toHaveBeenCalledWith('worktreeOps.create', expect.anything())
@@ -928,69 +928,125 @@ describe('useConnectionStore connection loading', () => {
       expect(toast.error).not.toHaveBeenCalled()
     })
 
-    it('passes the autoPull override to every worktree create and warns about a failed pull', async () => {
-      vi.mocked(toast.warning).mockClear()
-      request.mockImplementation(async (method: string, params?: unknown) => {
-        if (method === 'worktreeOps.create') {
-          const { projectId } = params as { projectId: string }
-          return {
-            success: true,
-            worktree: worktreeFor(projectId),
-            pullInfo: { pulled: projectId !== 'project-2', updated: false }
-          }
-        }
-        if (method === 'connectionOps.create') {
-          const { worktreeIds } = params as { worktreeIds: string[] }
-          return {
-            success: true,
-            connection: {
-              id: 'connection-created',
-              name: 'Created Connection',
-              custom_name: null,
-              status: 'active',
-              path: '/tmp/created-connection',
-              color: null,
-              pinned: 0,
-              created_at: '2026-05-28T00:00:00.000Z',
-              updated_at: '2026-05-28T00:00:00.000Z',
-              members: worktreeIds.map((worktreeId, index) => ({
-                id: `member-${index + 1}`,
-                connection_id: 'connection-created',
-                worktree_id: worktreeId
-              }))
-            }
-          }
-        }
-        return null
+    describe('with autoPull: true', () => {
+      const connectionOver = (worktreeIds: string[]): Record<string, unknown> => ({
+        id: 'connection-created',
+        name: 'Created Connection',
+        custom_name: null,
+        status: 'active',
+        path: '/tmp/created-connection',
+        color: null,
+        pinned: 0,
+        created_at: '2026-05-28T00:00:00.000Z',
+        updated_at: '2026-05-28T00:00:00.000Z',
+        members: worktreeIds.map((worktreeId, index) => ({
+          id: `member-${index + 1}`,
+          connection_id: 'connection-created',
+          worktree_id: worktreeId
+        }))
       })
 
-      const result = await useConnectionStore
-        .getState()
-        .quickCreateConnection(projects, { autoPull: true })
+      /** Project 2's pull answers `project2Pull`; everything else goes through. */
+      const respond =
+        (project2Pull: Record<string, unknown>) =>
+        async (method: string, params?: unknown): Promise<unknown> => {
+          if (method === 'gitOps.getBranchInfo') {
+            return { success: true, branch: { name: 'main', tracking: null, ahead: 0, behind: 0 } }
+          }
+          if (method === 'gitOps.syncBranchWithOrigin') {
+            const { worktreePath } = params as { worktreePath: string }
+            return worktreePath === '/tmp/project-2'
+              ? project2Pull
+              : { success: true, updated: false }
+          }
+          if (method === 'worktreeOps.create') {
+            const { projectId } = params as { projectId: string }
+            return { success: true, worktree: worktreeFor(projectId) }
+          }
+          if (method === 'connectionOps.create') {
+            const { worktreeIds } = params as { worktreeIds: string[] }
+            return { success: true, connection: connectionOver(worktreeIds) }
+          }
+          return null
+        }
 
-      // A failed pull never blocks the connection.
-      expect(result).toBe('connection-created')
-      expect(request).toHaveBeenCalledWith('worktreeOps.create', {
-        projectId: 'project-1',
-        projectPath: '/tmp/project-1',
-        projectName: 'Project 1',
-        autoPull: true
+      it('pulls every project, then creates the worktrees without a second pull, passing progress on', async () => {
+        request.mockImplementation(respond({ success: true, updated: true }))
+        const onProgress = vi.fn()
+
+        const result = await useConnectionStore
+          .getState()
+          .quickCreateConnection(projects, { autoPull: true, onProgress })
+
+        expect(result).toBe('connection-created')
+        expect(request).toHaveBeenCalledWith('gitOps.syncBranchWithOrigin', {
+          worktreePath: '/tmp/project-1',
+          branch: 'main'
+        })
+        expect(request).toHaveBeenCalledWith('gitOps.syncBranchWithOrigin', {
+          worktreePath: '/tmp/project-2',
+          branch: 'main'
+        })
+        expect(request).toHaveBeenCalledWith('worktreeOps.create', {
+          projectId: 'project-1',
+          projectPath: '/tmp/project-1',
+          projectName: 'Project 1',
+          autoPull: false
+        })
+        expect(request).toHaveBeenCalledWith('worktreeOps.create', {
+          projectId: 'project-2',
+          projectPath: '/tmp/project-2',
+          projectName: 'Project 2',
+          autoPull: false
+        })
+        expect(onProgress).toHaveBeenCalledWith({
+          projectId: 'project-2',
+          step: 'pull',
+          status: 'done'
+        })
+        expect(onProgress).toHaveBeenLastCalledWith({
+          projectId: 'project-2',
+          step: 'worktree',
+          status: 'done'
+        })
+        expect(toast.error).not.toHaveBeenCalled()
       })
-      expect(request).toHaveBeenCalledWith('worktreeOps.create', {
-        projectId: 'project-2',
-        projectPath: '/tmp/project-2',
-        projectName: 'Project 2',
-        autoPull: true
+
+      it('creates nothing and toasts the reason when a pull fails', async () => {
+        request.mockImplementation(
+          respond({ success: false, updated: false, error: 'fatal: Not possible to fast-forward' })
+        )
+        useConnectionStore.setState({ selectedConnectionId: 'connection-other' })
+
+        const result = await useConnectionStore
+          .getState()
+          .quickCreateConnection(projects, { autoPull: true })
+
+        expect(result).toBeNull()
+        expect(request).not.toHaveBeenCalledWith('worktreeOps.create', expect.anything())
+        expect(request).not.toHaveBeenCalledWith('connectionOps.create', expect.anything())
+        expect(toast.error).toHaveBeenCalledTimes(1)
+        expect(toast.error).toHaveBeenCalledWith(
+          expect.stringMatching(/^Could not pull "Project 2": .*cannot be fast-forwarded$/)
+        )
+        expect(useConnectionStore.getState().selectedConnectionId).toBe('connection-other')
       })
-      expect(toast.warning).toHaveBeenCalledTimes(1)
-      expect(toast.warning).toHaveBeenCalledWith(
-        expect.stringContaining('Project 2'),
-        expect.anything()
-      )
-      expect(toast.warning).not.toHaveBeenCalledWith(
-        expect.stringContaining('Project 1'),
-        expect.anything()
-      )
+
+      it('hands the reason to onError in place of the toast', async () => {
+        request.mockImplementation(
+          respond({ success: false, updated: false, error: 'fatal: Not possible to fast-forward' })
+        )
+        const onError = vi.fn()
+
+        const result = await useConnectionStore
+          .getState()
+          .quickCreateConnection(projects, { autoPull: true, onError })
+
+        expect(result).toBeNull()
+        expect(onError).toHaveBeenCalledTimes(1)
+        expect(onError).toHaveBeenCalledWith(expect.stringContaining('Could not pull "Project 2"'))
+        expect(toast.error).not.toHaveBeenCalled()
+      })
     })
 
     it('rolls back already-created worktrees and skips connection creation when a create fails, without ever firing setup scripts', async () => {
@@ -1023,9 +1079,7 @@ describe('useConnectionStore connection loading', () => {
         'project-1',
         'worktree-project-1'
       )
-      expect(toast.error).toHaveBeenCalledWith(
-        expect.stringContaining('Project 2')
-      )
+      expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('Project 2'))
       expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('disk full'))
       // No connection is created when a worktree create fails.
       expect(request).not.toHaveBeenCalledWith('connectionOps.create', expect.anything())

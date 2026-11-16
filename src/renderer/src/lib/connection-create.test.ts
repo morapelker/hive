@@ -56,6 +56,7 @@ import {
   CONNECTION_MAX_PROJECTS,
   connectableProjects,
   createConnectionFromProjects,
+  describePullFailure,
   insertConnectionLocally
 } from './connection-create'
 
@@ -256,65 +257,296 @@ describe('createConnectionFromProjects', () => {
       { projectId: 'project-2', projectPath: '/tmp/project-2', projectName: 'Project 2' }
     ]
 
-    it('sends no autoPull when the option is left out, so the setting decides', async () => {
+    /** Every project's checkout is on main and its pull goes through, unless `overrides` says otherwise. */
+    const withGit =
+      (overrides: (method: string, params: Record<string, unknown>) => unknown = () => undefined) =>
+      async (method: string, params?: unknown): Promise<unknown> => {
+        const answer = overrides(method, (params ?? {}) as Record<string, unknown>)
+        if (answer !== undefined) return answer
+        if (method === 'gitOps.getBranchInfo') {
+          return { success: true, branch: { name: 'main', tracking: null, ahead: 0, behind: 0 } }
+        }
+        if (method === 'gitOps.syncBranchWithOrigin') {
+          return { success: true, updated: true }
+        }
+        return happyPath(method, params)
+      }
+
+    const methodsCalled = (): string[] => request.mock.calls.map(([method]) => method as string)
+
+    it('sends no autoPull and pulls nothing itself when the option is left out, so the setting decides', async () => {
       await createConnectionFromProjects(projects)
 
       expect(callsTo(request, 'worktreeOps.create')).toEqual(base)
       for (const params of callsTo(request, 'worktreeOps.create')) {
         expect(params).not.toHaveProperty('autoPull')
       }
+      expect(callsTo(request, 'gitOps.syncBranchWithOrigin')).toEqual([])
     })
 
-    it.each([true, false])('passes autoPull: %s to every worktree create', async (autoPull) => {
-      const result = await createConnectionFromProjects(projects, { autoPull })
-
-      expect(result).toMatchObject({ ok: true })
-      expect(result).not.toHaveProperty('pullFailed')
-      expect(callsTo(request, 'worktreeOps.create')).toEqual(
-        base.map((params) => ({ ...params, autoPull }))
-      )
-    })
-
-    it('names the projects whose pull failed, and still creates the connection', async () => {
-      request.mockImplementation(async (method: string, params?: unknown) => {
-        if (method === 'worktreeOps.create') {
-          const { projectId } = params as { projectId: string }
-          return {
-            success: true,
-            worktree: worktreeFor(projectId),
-            pullInfo: { pulled: projectId !== 'project-2', updated: false }
-          }
-        }
-        return happyPath(method, params)
-      })
-
-      const result = await createConnectionFromProjects(projects, { autoPull: true })
-
-      expect(result).toMatchObject({
-        ok: true,
-        connectionId: 'connection-created',
-        pullFailed: ['Project 2']
-      })
-      expect(request).not.toHaveBeenCalledWith('worktreeOps.delete', expect.anything())
-    })
-
-    it('does not report a pull that was switched off as failed', async () => {
-      request.mockImplementation(async (method: string, params?: unknown) => {
-        if (method === 'worktreeOps.create') {
-          const { projectId } = params as { projectId: string }
-          return {
-            success: true,
-            worktree: worktreeFor(projectId),
-            pullInfo: { pulled: false, updated: false }
-          }
-        }
-        return happyPath(method, params)
-      })
-
+    it('with autoPull: false, pulls nothing and tells every worktree create not to either', async () => {
       const result = await createConnectionFromProjects(projects, { autoPull: false })
 
       expect(result).toMatchObject({ ok: true })
-      expect(result).not.toHaveProperty('pullFailed')
+      expect(callsTo(request, 'gitOps.getBranchInfo')).toEqual([])
+      expect(callsTo(request, 'gitOps.syncBranchWithOrigin')).toEqual([])
+      expect(callsTo(request, 'worktreeOps.create')).toEqual(
+        base.map((params) => ({ ...params, autoPull: false }))
+      )
+    })
+
+    it("with autoPull: true, pulls every project's current branch before the first worktree is created", async () => {
+      request.mockImplementation(
+        withGit((method, params) =>
+          method === 'gitOps.getBranchInfo' && params.worktreePath === '/tmp/project-2'
+            ? { success: true, branch: { name: 'develop', tracking: null, ahead: 0, behind: 0 } }
+            : undefined
+        )
+      )
+
+      const result = await createConnectionFromProjects(projects, { autoPull: true })
+
+      expect(result).toMatchObject({ ok: true, connectionId: 'connection-created' })
+      expect(callsTo(request, 'gitOps.syncBranchWithOrigin')).toEqual([
+        { worktreePath: '/tmp/project-1', branch: 'main' },
+        { worktreePath: '/tmp/project-2', branch: 'develop' }
+      ])
+      const methods = methodsCalled()
+      expect(methods.lastIndexOf('gitOps.syncBranchWithOrigin')).toBeLessThan(
+        methods.indexOf('worktreeOps.create')
+      )
+      // Already pulled: the create must not pull a second time
+      expect(callsTo(request, 'worktreeOps.create')).toEqual(
+        base.map((params) => ({ ...params, autoPull: false }))
+      )
+    })
+
+    it('waits for the slowest pull before creating any worktree', async () => {
+      let finishSlowPull: (value: unknown) => void = () => {}
+      request.mockImplementation(
+        withGit((method, params) =>
+          method === 'gitOps.syncBranchWithOrigin' && params.worktreePath === '/tmp/project-1'
+            ? new Promise((resolve) => {
+                finishSlowPull = resolve
+              })
+            : undefined
+        )
+      )
+
+      const creating = createConnectionFromProjects(projects, { autoPull: true })
+      await vi.waitFor(() =>
+        expect(callsTo(request, 'gitOps.syncBranchWithOrigin')).toHaveLength(2)
+      )
+      // Project 2 is pulled, project 1 is not yet: nothing may be created
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(callsTo(request, 'worktreeOps.create')).toEqual([])
+
+      finishSlowPull({ success: true, updated: false })
+
+      expect(await creating).toMatchObject({ ok: true })
+      expect(callsTo(request, 'worktreeOps.create')).toHaveLength(2)
+    })
+
+    it('creates nothing when a pull fails, and says which project and why', async () => {
+      request.mockImplementation(
+        withGit((method, params) =>
+          method === 'gitOps.syncBranchWithOrigin' && params.worktreePath === '/tmp/project-2'
+            ? {
+                success: false,
+                updated: false,
+                error:
+                  "hint: Diverging branches can't be fast-forwarded\nfatal: Not possible to fast-forward, aborting."
+              }
+            : undefined
+        )
+      )
+
+      const result = await createConnectionFromProjects(projects, { autoPull: true })
+
+      expect(result).toEqual({
+        ok: false,
+        error:
+          'Could not pull "Project 2": local main has commits that origin/main does not, so it cannot be fast-forwarded'
+      })
+      expect(callsTo(request, 'worktreeOps.create')).toEqual([])
+      expect(callsTo(request, 'connectionOps.create')).toEqual([])
+      expect(worktreeStoreMocks.addWorktreeToProject).not.toHaveBeenCalled()
+      expect(useConnectionStore.getState().connections).toEqual([])
+    })
+
+    it('names every project whose pull failed, one per line', async () => {
+      request.mockImplementation(
+        withGit((method, params) => {
+          if (method !== 'gitOps.syncBranchWithOrigin') return undefined
+          return params.worktreePath === '/tmp/project-1'
+            ? {
+                success: false,
+                updated: false,
+                error: "fatal: unable to access 'https://x/': Could not resolve host: x"
+              }
+            : { success: false, updated: false }
+        })
+      )
+
+      const result = await createConnectionFromProjects(projects, { autoPull: true })
+
+      expect(result).toEqual({
+        ok: false,
+        error:
+          'Could not pull "Project 1": unable to access \'https://x/\': Could not resolve host: x\n' +
+          'Could not pull "Project 2": git pull failed'
+      })
+      expect(callsTo(request, 'worktreeOps.create')).toEqual([])
+    })
+
+    it('fails the pull of a project whose current branch cannot be read or whose pull throws', async () => {
+      request.mockImplementation(
+        withGit((method, params) => {
+          if (method === 'gitOps.getBranchInfo' && params.worktreePath === '/tmp/project-1') {
+            return { success: false, error: 'not a git repository' }
+          }
+          if (method === 'gitOps.syncBranchWithOrigin') throw new Error('RPC connection lost')
+          return undefined
+        })
+      )
+
+      const result = await createConnectionFromProjects(projects, { autoPull: true })
+
+      expect(result).toEqual({
+        ok: false,
+        error:
+          'Could not pull "Project 1": not a git repository\n' +
+          'Could not pull "Project 2": RPC connection lost'
+      })
+      expect(callsTo(request, 'worktreeOps.create')).toEqual([])
+    })
+
+    it('has nothing to pull on a detached HEAD and goes on to create the worktrees', async () => {
+      request.mockImplementation(
+        withGit((method) =>
+          method === 'gitOps.getBranchInfo'
+            ? { success: true, branch: { name: 'HEAD', tracking: null, ahead: 0, behind: 0 } }
+            : undefined
+        )
+      )
+
+      const result = await createConnectionFromProjects(projects, { autoPull: true })
+
+      expect(result).toMatchObject({ ok: true })
+      expect(callsTo(request, 'gitOps.syncBranchWithOrigin')).toEqual([])
+      expect(callsTo(request, 'worktreeOps.create')).toHaveLength(2)
+    })
+
+    describe('onProgress', () => {
+      const progressOf = async (
+        opts: Parameters<typeof createConnectionFromProjects>[1]
+      ): Promise<string[]> => {
+        const seen: string[] = []
+        await createConnectionFromProjects(projects, {
+          ...opts,
+          onProgress: ({ projectId, step, status, error }) =>
+            seen.push(`${step} ${projectId} ${status}${error ? `: ${error}` : ''}`)
+        })
+        return seen
+      }
+
+      it('reports every pull, then every worktree', async () => {
+        request.mockImplementation(withGit())
+
+        const seen = await progressOf({ autoPull: true })
+
+        expect(seen.slice().sort()).toEqual(
+          [
+            'pull project-1 running',
+            'pull project-1 done',
+            'pull project-2 running',
+            'pull project-2 done',
+            'worktree project-1 running',
+            'worktree project-1 done',
+            'worktree project-2 running',
+            'worktree project-2 done'
+          ].sort()
+        )
+        // No worktree step before the last pull has ended; worktrees one at a time, in order
+        expect(seen.slice(0, 4).every((line) => line.startsWith('pull '))).toBe(true)
+        expect(seen.slice(4)).toEqual([
+          'worktree project-1 running',
+          'worktree project-1 done',
+          'worktree project-2 running',
+          'worktree project-2 done'
+        ])
+      })
+
+      it('reports only the worktrees when there is no pull', async () => {
+        expect(await progressOf({ autoPull: false })).toEqual([
+          'worktree project-1 running',
+          'worktree project-1 done',
+          'worktree project-2 running',
+          'worktree project-2 done'
+        ])
+      })
+
+      it('reports the pull that failed with its reason, and no worktree step after it', async () => {
+        request.mockImplementation(
+          withGit((method, params) =>
+            method === 'gitOps.syncBranchWithOrigin' && params.worktreePath === '/tmp/project-2'
+              ? { success: false, updated: false, error: 'fatal: boom' }
+              : undefined
+          )
+        )
+
+        const seen = await progressOf({ autoPull: true })
+
+        expect(seen).toContain('pull project-1 done')
+        expect(seen).toContain('pull project-2 failed: boom')
+        expect(seen.some((line) => line.startsWith('worktree '))).toBe(false)
+      })
+
+      it('reports the worktree that could not be created', async () => {
+        request.mockImplementation(async (method: string, params?: unknown) => {
+          if (
+            method === 'worktreeOps.create' &&
+            (params as { projectId: string }).projectId === 'project-2'
+          ) {
+            return { success: false, error: 'disk full' }
+          }
+          return happyPath(method, params)
+        })
+
+        expect(await progressOf({ autoPull: false })).toEqual([
+          'worktree project-1 running',
+          'worktree project-1 done',
+          'worktree project-2 running',
+          'worktree project-2 failed: disk full'
+        ])
+      })
+    })
+  })
+
+  describe('describePullFailure', () => {
+    it.each([
+      [
+        "hint: Diverging branches can't be fast-forwarded, you need to either:\nfatal: Not possible to fast-forward, aborting.",
+        'local main has commits that origin/main does not, so it cannot be fast-forwarded'
+      ],
+      [
+        'error: Your local changes to the following files would be overwritten by merge:\n\ttracked.txt\nPlease commit your changes or stash them before you merge.\nAborting',
+        'uncommitted changes on main conflict with the incoming commits'
+      ],
+      [
+        'error: Pulling is not possible because you have unmerged files.\nhint: Fix them up in the work tree',
+        'main has a merge with unresolved conflicts'
+      ],
+      ['block timeout reached', 'origin stopped responding'],
+      [
+        "From github.com:acme/web\nfatal: couldn't find remote ref main",
+        "couldn't find remote ref main"
+      ],
+      ['GitNetworkError', 'GitNetworkError'],
+      [undefined, 'git pull failed'],
+      ['', 'git pull failed']
+    ])('%j', (gitError, expected) => {
+      expect(describePullFailure('main', gitError)).toBe(expected)
     })
   })
 

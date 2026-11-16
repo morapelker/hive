@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { RecentConnectionsDialog } from '../RecentConnectionsDialog'
@@ -205,7 +205,10 @@ describe('RecentConnectionsDialog all-projects panel', () => {
     await userEvent.click(screen.getByTestId('recent-connections-create-button'))
 
     await waitFor(() =>
-      expect(quickCreateConnection).toHaveBeenCalledWith([delta, epsilon], { autoPull: true })
+      expect(quickCreateConnection).toHaveBeenCalledWith(
+        [delta, epsilon],
+        expect.objectContaining({ autoPull: true })
+      )
     )
   })
 
@@ -271,7 +274,10 @@ describe('RecentConnectionsDialog pinned selection row', () => {
     await userEvent.click(screen.getByTestId('recent-connections-create-button'))
 
     await waitFor(() =>
-      expect(quickCreateConnection).toHaveBeenCalledWith([alpha, beta, gamma], { autoPull: true })
+      expect(quickCreateConnection).toHaveBeenCalledWith(
+        [alpha, beta, gamma],
+        expect.objectContaining({ autoPull: true })
+      )
     )
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
@@ -331,7 +337,10 @@ describe('RecentConnectionsDialog auto-pull switch', () => {
     await userEvent.click(screen.getByTestId('recent-connections-create-button'))
 
     await waitFor(() =>
-      expect(quickCreateConnection).toHaveBeenCalledWith([alpha, beta], { autoPull: true })
+      expect(quickCreateConnection).toHaveBeenCalledWith(
+        [alpha, beta],
+        expect.objectContaining({ autoPull: true })
+      )
     )
   })
 
@@ -347,7 +356,10 @@ describe('RecentConnectionsDialog auto-pull switch', () => {
     await userEvent.click(screen.getByTestId('recent-connections-create-button'))
 
     await waitFor(() =>
-      expect(quickCreateConnection).toHaveBeenCalledWith([alpha, beta], { autoPull: false })
+      expect(quickCreateConnection).toHaveBeenCalledWith(
+        [alpha, beta],
+        expect.objectContaining({ autoPull: false })
+      )
     )
   })
 
@@ -367,5 +379,176 @@ describe('RecentConnectionsDialog auto-pull switch', () => {
     await waitFor(() =>
       expect(screen.getByTestId('recent-connections-auto-pull-switch')).toBeChecked()
     )
+  })
+})
+
+describe('RecentConnectionsDialog create progress', () => {
+  type Progress = { projectId: string; step: 'pull' | 'worktree'; status: string; error?: string }
+  type CreateOptions = {
+    autoPull: boolean
+    onProgress: (progress: Progress) => void
+    onError: (error: string) => void
+  }
+
+  /** A quickCreateConnection the test drives step by step: `finish` ends it with a result. */
+  function controlledCreate(): {
+    quickCreateConnection: ReturnType<typeof vi.fn>
+    options: () => CreateOptions
+    finish: (connectionId: string | null) => void
+  } {
+    let finish: (connectionId: string | null) => void = () => {}
+    const quickCreateConnection = vi.fn(
+      (_projects: unknown, _options: CreateOptions) =>
+        new Promise<string | null>((resolve) => {
+          finish = resolve
+        })
+    )
+    useConnectionStore.setState({ quickCreateConnection } as never)
+    return {
+      quickCreateConnection,
+      options: () => quickCreateConnection.mock.calls[0][1],
+      finish: (connectionId) => finish(connectionId)
+    }
+  }
+
+  const task = (step: 'pull' | 'worktree', projectId: string): HTMLElement =>
+    screen.getByTestId(`recent-connections-create-task-${step}-${projectId}`)
+
+  const startCreate = async (): Promise<void> => {
+    await userEvent.click(screen.getByTestId('recent-connection-row-e1'))
+    await userEvent.click(screen.getByTestId('recent-connections-create-button'))
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setStoreProjects([])
+  })
+
+  it('shows no checklist before Create is pressed', async () => {
+    await renderDialog()
+
+    expect(screen.queryByTestId('recent-connections-create-progress')).not.toBeInTheDocument()
+  })
+
+  it('lists a pull and a worktree task per project, pulls first, once Create is pressed', async () => {
+    const create = controlledCreate()
+    await renderDialog()
+
+    await startCreate()
+
+    const tasks = within(screen.getByTestId('recent-connections-create-progress')).getAllByRole(
+      'listitem'
+    )
+    expect(tasks.map((item) => item.textContent)).toEqual([
+      'Pull alpha-service from origin',
+      'Pull beta-web from origin',
+      'Create worktree in alpha-service',
+      'Create worktree in beta-web'
+    ])
+    for (const item of tasks) expect(item).toHaveAttribute('data-status', 'pending')
+    // The picker gives way to the checklist while it runs
+    expect(screen.getByTestId('recent-connections-filter')).not.toBeVisible()
+
+    await act(async () => create.finish('conn-1'))
+  })
+
+  it('lists one task per project when the pull is switched off', async () => {
+    const create = controlledCreate()
+    await renderDialog()
+    await userEvent.click(screen.getByTestId('recent-connections-auto-pull-switch'))
+
+    await startCreate()
+
+    const tasks = within(screen.getByTestId('recent-connections-create-progress')).getAllByRole(
+      'listitem'
+    )
+    expect(tasks.map((item) => item.textContent)).toEqual([
+      'Create worktree in alpha-service',
+      'Create worktree in beta-web'
+    ])
+
+    await act(async () => create.finish('conn-1'))
+  })
+
+  it('marks each task as it runs and as it is done', async () => {
+    const create = controlledCreate()
+    const onOpenChange = vi.fn()
+    vi.mocked(connectionApi.getRecentConnections).mockResolvedValue({ success: true, entries })
+    render(<RecentConnectionsDialog open onOpenChange={onOpenChange} />)
+    await waitFor(() =>
+      expect(screen.queryByTestId('recent-connections-loading')).not.toBeInTheDocument()
+    )
+    await startCreate()
+
+    act(() => create.options().onProgress({ projectId: 'proj-a', step: 'pull', status: 'running' }))
+    expect(task('pull', 'proj-a')).toHaveAttribute('data-status', 'running')
+    expect(task('pull', 'proj-b')).toHaveAttribute('data-status', 'pending')
+
+    act(() => {
+      create.options().onProgress({ projectId: 'proj-a', step: 'pull', status: 'done' })
+      create.options().onProgress({ projectId: 'proj-b', step: 'pull', status: 'done' })
+      create.options().onProgress({ projectId: 'proj-a', step: 'worktree', status: 'running' })
+    })
+    expect(task('pull', 'proj-a')).toHaveAttribute('data-status', 'done')
+    expect(task('pull', 'proj-b')).toHaveAttribute('data-status', 'done')
+    expect(task('worktree', 'proj-a')).toHaveAttribute('data-status', 'running')
+    expect(task('worktree', 'proj-b')).toHaveAttribute('data-status', 'pending')
+
+    await act(async () => create.finish('conn-1'))
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it('returns to the picker with the error when a pull fails, selection kept', async () => {
+    const create = controlledCreate()
+    const onOpenChange = vi.fn()
+    vi.mocked(connectionApi.getRecentConnections).mockResolvedValue({ success: true, entries })
+    render(<RecentConnectionsDialog open onOpenChange={onOpenChange} />)
+    await waitFor(() =>
+      expect(screen.queryByTestId('recent-connections-loading')).not.toBeInTheDocument()
+    )
+    await startCreate()
+
+    act(() =>
+      create.options().onProgress({
+        projectId: 'proj-b',
+        step: 'pull',
+        status: 'failed',
+        error: 'diverged'
+      })
+    )
+    expect(task('pull', 'proj-b')).toHaveAttribute('data-status', 'failed')
+
+    await act(async () => {
+      create.options().onError('Could not pull "beta-web": diverged')
+      create.finish(null)
+    })
+
+    expect(screen.queryByTestId('recent-connections-create-progress')).not.toBeInTheDocument()
+    expect(screen.getByTestId('recent-connections-create-error')).toHaveTextContent(
+      'Could not pull "beta-web": diverged'
+    )
+    expect(screen.getByTestId('recent-connections-filter')).toBeVisible()
+    expect(onOpenChange).not.toHaveBeenCalled()
+    // Still on the same row, ready to try again
+    expect(screen.getByTestId('recent-connections-create-button')).toBeEnabled()
+  })
+
+  it('clears the error when Create is pressed again', async () => {
+    const create = controlledCreate()
+    await renderDialog()
+    await startCreate()
+    await act(async () => {
+      create.options().onError('Could not pull "beta-web": diverged')
+      create.finish(null)
+    })
+    expect(screen.getByTestId('recent-connections-create-error')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('recent-connections-create-button'))
+
+    expect(screen.queryByTestId('recent-connections-create-error')).not.toBeInTheDocument()
+    expect(screen.getByTestId('recent-connections-create-progress')).toBeInTheDocument()
+    expect(create.quickCreateConnection).toHaveBeenCalledTimes(2)
+
+    await act(async () => create.finish('conn-1'))
   })
 })
