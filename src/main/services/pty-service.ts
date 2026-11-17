@@ -48,6 +48,12 @@ export interface PtyCreateOpts {
   args?: string[]
   shell?: string
   env?: Record<string, string>
+  /**
+   * Names of variables the spawned process must not have at all: neither the
+   * app's own value nor one supplied in `env` (removal wins). The only way to
+   * drop an inherited variable, since `env` can add or override but not remove.
+   */
+  unsetEnv?: readonly string[]
   cols?: number
   rows?: number
   backend?: TerminalBackend
@@ -82,6 +88,25 @@ function buildEnvSnapshot(env: Record<string, string>): Record<string, string | 
     snapshot.claudeCodeKeys = claudeCodeKeys.join(',')
   }
   return snapshot
+}
+
+/**
+ * Deletes the named variables from a spawn env, in place. An empty value is
+ * still a set variable, and node-pty passes `undefined` on as the text
+ * "undefined", so absence means deleting the key.
+ */
+function removeEnvVars(env: Record<string, string>, names: readonly string[]): void {
+  if (names.length === 0) return
+  if (process.platform !== 'win32') {
+    for (const name of names) delete env[name]
+    return
+  }
+  // Windows names are case-insensitive, but the copied env is a plain object
+  // that keeps each name's original casing (`Path`): drop every casing.
+  const lowered = new Set(names.map((name) => name.toLowerCase()))
+  for (const key of Object.keys(env)) {
+    if (lowered.has(key.toLowerCase())) delete env[key]
+  }
 }
 
 /** Grace period between the polite SIGHUP and the SIGKILL escalation probe. */
@@ -150,6 +175,8 @@ class PtyService {
     delete env.COLUMNS
     delete env.LINES
     Object.assign(env, opts.env ?? {})
+    // Last, so a name listed for removal is absent even when `opts.env` sets it.
+    removeEnvVars(env, opts.unsetEnv ?? [])
 
     log.info('Creating PTY', {
       id,

@@ -88,6 +88,116 @@ describe('ptyService.create spawn environment', () => {
   })
 })
 
+describe('ptyService.create unsetEnv', () => {
+  const INHERITED = 'HIVE_TEST_INHERITED'
+  const OTHER = 'HIVE_TEST_OTHER'
+  const MIXED_CASE = 'Hive_Test_Mixed'
+  const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')
+  let nextId = 0
+
+  beforeEach(() => {
+    process.env[INHERITED] = 'from-app'
+    process.env[OTHER] = 'kept'
+    nodePtyMocks.spawn.mockImplementation(() => makeFakePty())
+  })
+
+  afterEach(() => {
+    for (const key of [INHERITED, OTHER, MIXED_CASE]) delete process.env[key]
+    if (platformDescriptor) Object.defineProperty(process, 'platform', platformDescriptor)
+    vi.clearAllMocks()
+  })
+
+  function create(opts: Record<string, unknown> = {}): void {
+    ptyService.create(`pty-unset-env-test-${nextId++}`, { cwd: '/tmp', ...opts })
+  }
+
+  function setPlatform(platform: NodeJS.Platform): void {
+    Object.defineProperty(process, 'platform', { value: platform, configurable: true })
+  }
+
+  /** The spawn env as it was built before `unsetEnv` existed. */
+  function envWithoutRemoval(callerEnv: Record<string, string> = {}): Record<string, string> {
+    const env = {
+      ...process.env,
+      TERM: 'xterm-256color',
+      COLORTERM: 'truecolor'
+    } as Record<string, string>
+    delete env.COLUMNS
+    delete env.LINES
+    return { ...env, ...callerEnv }
+  }
+
+  it('removes a named variable the app itself has, leaving the app env alone', () => {
+    create({ unsetEnv: [INHERITED] })
+
+    expect(spawnedEnv()).not.toHaveProperty(INHERITED)
+    expect(spawnedEnv()[OTHER]).toBe('kept')
+    expect(process.env[INHERITED]).toBe('from-app')
+  })
+
+  it('removes a named variable the caller also supplies: removal wins', () => {
+    create({ env: { [INHERITED]: 'from-caller', [OTHER]: 'overridden' }, unsetEnv: [INHERITED] })
+
+    expect(spawnedEnv()).not.toHaveProperty(INHERITED)
+    expect(spawnedEnv()[OTHER]).toBe('overridden')
+  })
+
+  it('removes a variable only the caller supplies', () => {
+    create({
+      env: { HIVE_TEST_CALLER_ONLY: 'yes' },
+      unsetEnv: ['HIVE_TEST_CALLER_ONLY']
+    })
+
+    expect(spawnedEnv()).not.toHaveProperty('HIVE_TEST_CALLER_ONLY')
+  })
+
+  it('removes every named variable and ignores a name that is not set', () => {
+    create({ unsetEnv: [INHERITED, 'HIVE_TEST_NEVER_SET', OTHER] })
+
+    expect(spawnedEnv()).toStrictEqual(
+      Object.fromEntries(
+        Object.entries(envWithoutRemoval()).filter(([key]) => key !== INHERITED && key !== OTHER)
+      )
+    )
+  })
+
+  it('spawns with the same env as before when nothing is named', () => {
+    const callerEnv = { [OTHER]: 'overridden', HIVE_TEST_VAR: 'yes' }
+
+    create({ env: callerEnv })
+    expect(spawnedEnv()).toStrictEqual(envWithoutRemoval(callerEnv))
+
+    create({ env: callerEnv, unsetEnv: [] })
+    expect(spawnedEnv()).toStrictEqual(envWithoutRemoval(callerEnv))
+
+    create()
+    expect(spawnedEnv()).toStrictEqual(envWithoutRemoval())
+  })
+
+  it('matches names exactly where variable names are case-sensitive', () => {
+    setPlatform('linux')
+    process.env[MIXED_CASE] = 'kept'
+
+    create({ unsetEnv: [MIXED_CASE.toUpperCase()] })
+
+    expect(spawnedEnv()[MIXED_CASE]).toBe('kept')
+  })
+
+  it('removes every casing of a name on Windows, where names are case-insensitive', () => {
+    setPlatform('win32')
+    process.env[MIXED_CASE] = 'from-app'
+
+    create({
+      env: { [MIXED_CASE.toLowerCase()]: 'from-caller' },
+      unsetEnv: [MIXED_CASE.toUpperCase()]
+    })
+
+    expect(spawnedEnv()).not.toHaveProperty(MIXED_CASE)
+    expect(spawnedEnv()).not.toHaveProperty(MIXED_CASE.toLowerCase())
+    expect(spawnedEnv()[OTHER]).toBe('kept')
+  })
+})
+
 type KillFn = (pid: number, signal?: string | number) => true
 
 describe('ptyService.destroy kill escalation', () => {
