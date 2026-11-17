@@ -8,6 +8,15 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { toast } from '@/lib/toast'
 
+// Settings › Advanced › "Live usage in Code Mode sessions" (CODE_MODE_TASKS.html T09; PRD FR-5,
+// FR-41, SEC-10). The description has to say two things in plain words: what the user will see
+// while it is on (the CLI's "Debug mode enabled" line, and a small log the app deletes), and
+// that off leaves Code Mode working with usage updated less often. The main process reads the
+// value through isClaudeDebugUsageEnabled (claude-debug-usage-setting.ts).
+export const CODE_MODE_LIVE_USAGE_LABEL = 'Live usage in Code Mode sessions'
+export const CODE_MODE_LIVE_USAGE_DESCRIPTION =
+  'Keep the usage bars up to date while a Claude session runs in Code Mode. Those sessions show a "Debug mode enabled" line and write a small diagnostic log, which Hive deletes when the session ends. Turn this off and Code Mode keeps working, with usage updated less often.'
+
 const POSIX_KEY_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/
 
 function validateKey(key: string, allKeys: string[], currentIndex: number): string | null {
@@ -28,6 +37,7 @@ export function SettingsAdvanced(): React.JSX.Element {
     environmentVariables: rawEnvVars,
     perfDiagnosticsEnabled,
     claudeCliAutoResumeAfterApiError,
+    claudeCodeModeLiveUsage,
     codexJsonlLoggingEnabled,
     codexJsonlResetPerSession,
     sessionProfilerEnabled,
@@ -278,6 +288,37 @@ export function SettingsAdvanced(): React.JSX.Element {
             className={cn(
               'pointer-events-none block h-4 w-4 rounded-full bg-background ring-0 transition-transform',
               claudeCliAutoResumeAfterApiError ? 'translate-x-4' : 'translate-x-0'
+            )}
+          />
+        </button>
+      </div>
+
+      {/* Live usage in Code Mode sessions */}
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <label className="text-sm font-medium">{CODE_MODE_LIVE_USAGE_LABEL}</label>
+          <p
+            className="text-xs text-muted-foreground mt-0.5"
+            data-testid="code-mode-live-usage-description"
+          >
+            {CODE_MODE_LIVE_USAGE_DESCRIPTION}
+          </p>
+        </div>
+        <button
+          role="switch"
+          aria-checked={claudeCodeModeLiveUsage}
+          aria-label={CODE_MODE_LIVE_USAGE_LABEL}
+          data-testid="code-mode-live-usage-toggle"
+          onClick={() => updateSetting('claudeCodeModeLiveUsage', !claudeCodeModeLiveUsage)}
+          className={cn(
+            'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors',
+            claudeCodeModeLiveUsage ? 'bg-primary' : 'bg-muted'
+          )}
+        >
+          <span
+            className={cn(
+              'pointer-events-none block h-4 w-4 rounded-full bg-background ring-0 transition-transform',
+              claudeCodeModeLiveUsage ? 'translate-x-4' : 'translate-x-0'
             )}
           />
         </button>

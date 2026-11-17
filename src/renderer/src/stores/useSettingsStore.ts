@@ -308,6 +308,12 @@ export interface AppSettings {
   perfDiagnosticsEnabled: boolean
   /** Re-prompt a Claude CLI session whose turn died of a transient API error once the API answers again. */
   claudeCliAutoResumeAfterApiError: boolean
+  /**
+   * Settings › Advanced › "Live usage in Code Mode sessions". The main process reads it through
+   * isClaudeDebugUsageEnabled (src/main/services/claude-api-proxy/claude-debug-usage-setting.ts),
+   * where the HIVE_DISABLE_CLAUDE_DEBUG_USAGE kill switch overrides it.
+   */
+  claudeCodeModeLiveUsage: boolean
   codexJsonlLoggingEnabled: boolean
   codexJsonlResetPerSession: boolean
   /**
@@ -426,6 +432,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   customProjectCommands: [],
   perfDiagnosticsEnabled: false,
   claudeCliAutoResumeAfterApiError: true,
+  claudeCodeModeLiveUsage: true,
   codexJsonlLoggingEnabled: false,
   codexJsonlResetPerSession: true,
   sessionProfilerEnabled: false,
@@ -648,6 +655,7 @@ function extractSettings(state: SettingsState): AppSettings {
     customProjectCommands: state.customProjectCommands,
     perfDiagnosticsEnabled: state.perfDiagnosticsEnabled,
         claudeCliAutoResumeAfterApiError: state.claudeCliAutoResumeAfterApiError,
+    claudeCodeModeLiveUsage: state.claudeCodeModeLiveUsage,
     codexJsonlLoggingEnabled: state.codexJsonlLoggingEnabled,
     codexJsonlResetPerSession: state.codexJsonlResetPerSession,
     sessionProfilerEnabled: state.sessionProfilerEnabled,
@@ -1072,6 +1080,7 @@ export const useSettingsStore = create<SettingsState>()(
         customProjectCommands: state.customProjectCommands,
         perfDiagnosticsEnabled: state.perfDiagnosticsEnabled,
         claudeCliAutoResumeAfterApiError: state.claudeCliAutoResumeAfterApiError,
+        claudeCodeModeLiveUsage: state.claudeCodeModeLiveUsage,
         codexJsonlLoggingEnabled: state.codexJsonlLoggingEnabled,
         codexJsonlResetPerSession: state.codexJsonlResetPerSession,
         sessionProfilerEnabled: state.sessionProfilerEnabled,
