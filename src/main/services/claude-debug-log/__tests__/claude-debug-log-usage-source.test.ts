@@ -17,8 +17,12 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
+  statSync,
   symlinkSync,
+  truncateSync,
+  unlinkSync,
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -33,6 +37,12 @@ import {
   type ClaudeUsageObservation
 } from '../../claude-api-proxy/claude-usage-live-updater'
 import type { DebugLogFollowerFs } from '../../claude-debug-log-follower'
+import {
+  ClaudeDebugLogUsagePerfCounters,
+  type ClaudeDebugLogPerfEvent,
+  type ClaudeDebugLogPerfWindow,
+  type ClaudeDebugLogUsagePerf
+} from '../claude-debug-log-usage-perf'
 import {
   ClaudeDebugLogUsageSource,
   DEBUG_LOG_ACTIVE_CHECK_INTERVAL_MS,
@@ -1397,6 +1407,605 @@ describe('ClaudeDebugLogUsageSource', () => {
       expect(logged.at(-1)).toContain('"health":"unparsed-responses"')
     })
   })
+
+  describe('performance counters (T20)', () => {
+    /** A session id that would stand out in a record. */
+    const SESSION = 'session-in-code-mode'
+    /** A second one. */
+    const OTHER = 'another-session-in-code-mode'
+    /** The SDK's one-line report of a successful response: no headers, no entry. */
+    const STATUS_LINE = NOT_ENTRIES[2]
+    /** A response entry the parser does not know. */
+    const RENAMED_ENTRY = STREAMING.replace('response start', 'response begin')
+    /** A response entry cut off inside its headers: it starts like one and cannot be read. */
+    const CUT_OFF = STREAMING.slice(0, 700)
+    const HARD_CAP = 8 * 1024
+
+    const WINDOW_KEYS = [
+      'bytesRead',
+      'checkMaxMs',
+      'checkTotalMs',
+      'checks',
+      'degraded',
+      'entriesParsed',
+      'parseFailures',
+      'passMaxMs',
+      'passTotalMs',
+      'passes',
+      'rotations',
+      'sessions'
+    ]
+    const CAUSES = ['own', 'replaced', 'removed', 'truncated']
+    const REASONS = ['log-empty', 'unparsed-responses', 'hard-cap', 'unsafe-file']
+    const DETAILS = ['symlink', 'not-regular-file', 'foreign-owner']
+
+    /** Whether performance logging is on; a test switches it. */
+    let logging: boolean
+    /** Times the counters' clock was read. Every reading moves it by half a millisecond. */
+    let clockReads: number
+    /** The records handed to the performance log, in order. */
+    let records: Array<{ kind: string; data: ClaudeDebugLogPerfEvent }>
+    /** Every value of the gauge a test read. */
+    let windows: ClaudeDebugLogPerfWindow[]
+
+    beforeEach(() => {
+      logging = true
+      clockReads = 0
+      records = []
+      windows = []
+    })
+
+    afterEach(() => {
+      expectNumbersAndReasonsOnly()
+    })
+
+    /**
+     * Verification 3 of the ticket, for whatever a test produced: a gauge value is twelve
+     * numbers, a record is an event with a code or two, and nothing of a log line, of a path,
+     * of an organization or of a session's name is in either.
+     */
+    function expectNumbersAndReasonsOnly(): void {
+      for (const window of windows) {
+        expect(Object.keys(window).sort()).toEqual(WINDOW_KEYS)
+        for (const value of Object.values(window)) {
+          expect(typeof value).toBe('number')
+          expect(Number.isFinite(value) && value >= 0).toBe(true)
+        }
+      }
+      for (const { kind, data } of records) {
+        expect(kind).toBe('claude-debug-log')
+        const { event, ...rest } = data as Record<string, unknown>
+        if (event === 'rotated') {
+          expect(Object.keys(rest)).toEqual(['cause'])
+          expect(CAUSES).toContain(rest.cause)
+        } else {
+          expect(event).toBe('degraded')
+          expect(REASONS).toContain(rest.reason)
+          if (rest.reason === 'unsafe-file') {
+            expect(Object.keys(rest).sort()).toEqual(['detail', 'reason'])
+            expect(DETAILS).toContain(rest.detail)
+          } else {
+            expect(Object.keys(rest)).toEqual(['reason'])
+          }
+        }
+      }
+      const output = JSON.stringify({ records, windows })
+      const found = written.flatMap(rawPieces).filter((piece) => output.includes(piece))
+      // Counted, not shown: a failure must not print the piece either.
+      expect(found.length).toBe(0)
+      for (const secret of [dir, ORG_A, ORG_B, SESSION, OTHER, 'usage.log']) {
+        expect(output.includes(secret)).toBe(false)
+      }
+    }
+
+    /** A source with the real counters, on a clock that moves 0.5 ms each time it is read. */
+    function counted(deps: Partial<ClaudeDebugLogUsageSourceDeps> = {}): {
+      source: ClaudeDebugLogUsageSource
+      /** Read the gauge, as the performance logger does for a sample. */
+      take: () => ClaudeDebugLogPerfWindow
+    } {
+      const counters = new ClaudeDebugLogUsagePerfCounters({
+        isEnabled: () => logging,
+        record: (kind, data) => records.push({ kind, data }),
+        now: () => {
+          clockReads += 1
+          return clockReads * 0.5
+        }
+      })
+      const source = makeSource({ perf: counters, ...deps })
+      return {
+        source,
+        take: () => {
+          const window = counters.takeWindow(source.stats().sessions)
+          windows.push(window)
+          return window
+        }
+      }
+    }
+
+    const nothing = (sessions: number): ClaudeDebugLogPerfWindow => ({
+      sessions,
+      passes: 0,
+      checks: 0,
+      bytesRead: 0,
+      entriesParsed: 0,
+      parseFailures: 0,
+      checkTotalMs: 0,
+      checkMaxMs: 0,
+      passTotalMs: 0,
+      passMaxMs: 0,
+      rotations: 0,
+      degraded: 0
+    })
+
+    const bytesOf = (...lines: string[]): number =>
+      lines.reduce((sum, line) => sum + Buffer.byteLength(line) + 1, 0)
+
+    /** One turn of a session: the prompt is submitted, `during` happens, the Stop hook fires. */
+    function turn(source: ClaudeDebugLogUsageSource, session: string, during?: () => void): void {
+      source.setTurnInProgress(session, true)
+      during?.()
+      clock.advance(3_000)
+      source.setTurnInProgress(session, false)
+      source.turnCompleted(session)
+    }
+
+    describe('while performance logging is on', () => {
+      it('counts what a session that makes requests costs and finds: sessions, passes, checks, bytes, entries, parse failures and how long it took', () => {
+        const { source, take } = counted()
+        register(source, SESSION)
+
+        // A request, its response, a response cut off inside its headers, another response.
+        append(SESSION, NOT_ENTRIES[0], STREAMING, CUT_OFF, FABLE)
+        clock.advance(ACTIVE)
+        // And a pass that finds nothing new.
+        clock.advance(ACTIVE)
+
+        expect(take()).toEqual({
+          sessions: 1,
+          passes: 2,
+          checks: 2,
+          bytesRead: statSync(logPath(SESSION)).size,
+          entriesParsed: 2,
+          parseFailures: 1,
+          // Half a millisecond per reading of the clock: a check is one step long, and a pass
+          // with one check in it three.
+          checkTotalMs: 1,
+          checkMaxMs: 0.5,
+          passTotalMs: 3,
+          passMaxMs: 1.5,
+          rotations: 0,
+          degraded: 0
+        })
+        // The same numbers the source keeps for itself.
+        expect(source.stats()).toMatchObject({ sessions: 1, passes: 2, checks: 2 })
+        expect(source.facts(SESSION)).toMatchObject({
+          bytesRead: bytesOf(NOT_ENTRIES[0], STREAMING, CUT_OFF, FABLE),
+          entriesParsed: 2,
+          parseFailures: 1
+        })
+        expect(submitted.length).toBe(2)
+        expect(records).toEqual([])
+      })
+
+      it('gives each sample the time since the one before, and the sessions registered now', () => {
+        const { source, take } = counted()
+        register(source, SESSION)
+        append(SESSION, STREAMING)
+        clock.advance(ACTIVE)
+        expect(take()).toMatchObject({ sessions: 1, passes: 1, checks: 1, entriesParsed: 1 })
+
+        register(source, OTHER)
+        append(SESSION, FABLE)
+        clock.advance(2 * ACTIVE)
+
+        expect(take()).toMatchObject({
+          sessions: 2,
+          passes: 2,
+          checks: 4,
+          bytesRead: bytesOf(FABLE),
+          entriesParsed: 1,
+          parseFailures: 0
+        })
+        expect(take()).toEqual(nothing(2))
+      })
+
+      it('times a pass over several sessions as a whole, and each of its checks', () => {
+        const { source, take } = counted()
+        for (const session of [SESSION, OTHER, 'a-third-session-in-code-mode']) {
+          register(source, session)
+        }
+
+        clock.advance(ACTIVE)
+
+        // Eight readings of the clock: around the pass, and around each of its three checks.
+        expect(clockReads).toBe(8)
+        expect(take()).toMatchObject({
+          sessions: 3,
+          passes: 1,
+          checks: 3,
+          checkTotalMs: 1.5,
+          checkMaxMs: 0.5,
+          passTotalMs: 3.5,
+          passMaxMs: 3.5
+        })
+      })
+
+      it('counts the checks made outside a pass: when a turn ends, when it completes, on request, and the final read of a session that ends', () => {
+        const { source, take } = counted()
+        register(source, SESSION)
+        register(source, OTHER)
+
+        source.setTurnInProgress(SESSION, true)
+        append(SESSION, STREAMING)
+        source.setTurnInProgress(SESSION, false)
+        source.turnCompleted(SESSION)
+        source.checkNow()
+        source.checkNow(OTHER)
+        append(SESSION, FABLE, CUT_OFF)
+        source.unregister(SESSION)
+
+        expect(take()).toEqual({
+          sessions: 1,
+          passes: 0,
+          checks: 6,
+          bytesRead: bytesOf(STREAMING, FABLE, CUT_OFF),
+          entriesParsed: 2,
+          parseFailures: 1,
+          checkTotalMs: 3,
+          checkMaxMs: 0.5,
+          passTotalMs: 0,
+          passMaxMs: 0,
+          rotations: 0,
+          degraded: 0
+        })
+        expect(source.stats().checks).toBe(6)
+      })
+
+      describe('rotations', () => {
+        const rotations: Array<{
+          cause: string
+          deps?: Partial<ClaudeDebugLogUsageSourceDeps>
+          rotate: () => void
+        }> = [
+          {
+            // The follower retires a log it has read to its end once it is past this size:
+            // the first read does it.
+            cause: 'own',
+            deps: { follower: { rotateBytes: 256 } },
+            rotate: () => undefined
+          },
+          {
+            // The CLI's own rotation: the log is moved aside and written anew.
+            cause: 'replaced',
+            rotate: () => {
+              renameSync(logPath(SESSION), logPath(SESSION) + '.1')
+              append(SESSION, FABLE)
+            }
+          },
+          { cause: 'removed', rotate: () => unlinkSync(logPath(SESSION)) },
+          {
+            cause: 'truncated',
+            rotate: () => {
+              truncateSync(logPath(SESSION), 0)
+              append(SESSION, NOT_ENTRIES[0])
+            }
+          }
+        ]
+
+        for (const { cause, deps, rotate } of rotations) {
+          it(`writes a record when a log is rotated (${cause}), and counts it`, () => {
+            const { source, take } = counted(deps)
+            register(source, SESSION)
+            append(SESSION, STREAMING)
+            clock.advance(ACTIVE)
+
+            rotate()
+            clock.advance(ACTIVE)
+
+            expect(records).toEqual([
+              { kind: 'claude-debug-log', data: { event: 'rotated', cause } }
+            ])
+            expect(source.facts(SESSION)!.follower.rotations).toBe(1)
+            expect(take()).toMatchObject({ rotations: 1, degraded: 0 })
+          })
+        }
+      })
+
+      describe('degraded events', () => {
+        it('writes a record when a turn completes and the log never appeared (log-empty)', () => {
+          const { source, take } = counted()
+          register(source, SESSION)
+
+          turn(source, SESSION)
+
+          expect(records).toEqual([
+            { kind: 'claude-debug-log', data: { event: 'degraded', reason: 'log-empty' } }
+          ])
+          expect(take()).toMatchObject({ degraded: 1, rotations: 0, bytesRead: 0 })
+        })
+
+        it('writes a record when responses were logged and none could be read (unparsed-responses)', () => {
+          const { source, take } = counted()
+          register(source, SESSION)
+
+          turn(source, SESSION, () => append(SESSION, STATUS_LINE, RENAMED_ENTRY, CUT_OFF))
+
+          expect(records).toEqual([
+            { kind: 'claude-debug-log', data: { event: 'degraded', reason: 'unparsed-responses' } }
+          ])
+          expect(take()).toMatchObject({ degraded: 1, entriesParsed: 0, parseFailures: 1 })
+        })
+
+        it('writes a record when the follower deletes a log past the hard cap (hard-cap)', () => {
+          const { source, take } = counted({ follower: { hardCapBytes: HARD_CAP } })
+          register(source, SESSION)
+          append(SESSION, STREAMING)
+          clock.advance(ACTIVE)
+
+          append(SESSION, ...Array.from({ length: 6 }, () => NOT_ENTRIES[0]))
+          clock.advance(ACTIVE)
+
+          expect(records).toEqual([
+            { kind: 'claude-debug-log', data: { event: 'degraded', reason: 'hard-cap' } }
+          ])
+          expect(take()).toMatchObject({ degraded: 1, entriesParsed: 1 })
+        })
+
+        posixOnly(
+          'writes a record when the follower refuses an unsafe file, with what was wrong with it (unsafe-file)',
+          () => {
+            const { source, take } = counted()
+            mkdirSync(join(dir, SESSION))
+            writeFileSync(join(dir, 'elsewhere.log'), '')
+            symlinkSync(join(dir, 'elsewhere.log'), logPath(SESSION))
+            register(source, SESSION)
+
+            clock.advance(1_000)
+
+            expect(records).toEqual([
+              {
+                kind: 'claude-debug-log',
+                data: { event: 'degraded', reason: 'unsafe-file', detail: 'symlink' }
+              }
+            ])
+            expect(take()).toMatchObject({ degraded: 1, passes: 4 })
+          }
+        )
+
+        it('records a signal of the follower for a session that is degraded already', () => {
+          const { source, take } = counted({ follower: { hardCapBytes: HARD_CAP } })
+          register(source, SESSION)
+          turn(source, SESSION)
+
+          mkdirSync(join(dir, SESSION), { recursive: true })
+          writeFileSync(logPath(SESSION), '')
+          truncateSync(logPath(SESSION), HARD_CAP + 1)
+          clock.advance(IDLE)
+
+          expect(records.map((record) => record.data)).toEqual([
+            { event: 'degraded', reason: 'log-empty' },
+            { event: 'degraded', reason: 'hard-cap' }
+          ])
+          // Two events, one degraded session.
+          expect(source.facts(SESSION)).toMatchObject({
+            timesDegraded: 1,
+            health: { reason: 'log-empty' }
+          })
+          expect(take()).toMatchObject({ degraded: 2 })
+        })
+
+        it('records a session once for as long as it stays degraded, nothing when it recovers, and again when it is degraded again', () => {
+          const { source, take } = counted()
+          register(source, SESSION)
+          turn(source, SESSION)
+          turn(source, SESSION)
+          expect(records.length).toBe(1)
+
+          append(SESSION, STREAMING)
+          clock.advance(IDLE)
+          expect(source.facts(SESSION)!.health).toBeNull()
+          expect(records.length).toBe(1)
+
+          // Everything it ever read is forgotten with a new log for the same session.
+          source.register({ sessionId: SESSION, logPath: logPath(OTHER) })
+          turn(source, SESSION)
+          expect(records.map((record) => record.data)).toEqual([
+            { event: 'degraded', reason: 'log-empty' },
+            { event: 'degraded', reason: 'log-empty' }
+          ])
+          expect(take()).toMatchObject({ degraded: 2, entriesParsed: 1 })
+        })
+
+        it('says nothing about what shutting down finds', () => {
+          const { source, take } = counted({ follower: { hardCapBytes: HARD_CAP } })
+          register(source, SESSION)
+          append(SESSION, ...Array.from({ length: 6 }, () => NOT_ENTRIES[0]))
+
+          source.dispose()
+
+          expect(records).toEqual([])
+          expect(take()).toEqual(nothing(0))
+        })
+      })
+
+      it('records numbers and reasons only: no header value, no organization, no path, no session and nothing else of a line', () => {
+        // A cap the lines of this test stay under, until the log is blown up past it.
+        const cap = 64 * 1024
+        const { source, take } = counted({ follower: { hardCapBytes: cap } })
+        register(source, SESSION)
+        register(source, OTHER)
+        append(
+          SESSION,
+          NOT_ENTRIES[0],
+          STREAMING,
+          FABLE,
+          PLAN_LIMIT,
+          NOT_FOUND,
+          CUT_OFF,
+          STATUS_LINE
+        )
+        clock.advance(ACTIVE)
+        renameSync(logPath(SESSION), logPath(SESSION) + '.1')
+        append(SESSION, RENAMED_ENTRY)
+        clock.advance(ACTIVE)
+        turn(source, OTHER, () => append(OTHER, STATUS_LINE, RENAMED_ENTRY))
+        truncateSync(logPath(SESSION), cap + 1)
+        clock.advance(ACTIVE)
+        source.unregister(SESSION)
+
+        const window = take()
+        expect(window).toMatchObject({ sessions: 1, entriesParsed: 4, parseFailures: 1 })
+        expect(window.bytesRead).toBeGreaterThan(0)
+        expect(window.rotations).toBeGreaterThan(0)
+        expect(records.map((record) => record.data)).toEqual(
+          expect.arrayContaining([
+            { event: 'rotated', cause: 'replaced' },
+            { event: 'degraded', reason: 'unparsed-responses' },
+            { event: 'degraded', reason: 'hard-cap' }
+          ])
+        )
+        // The readings went where they belong, organization and all: only not to the counters.
+        expect(submitted.map((observation) => observation.organizationUuid)).toEqual([
+          ORG_A,
+          ORG_B,
+          ORG_A
+        ])
+        expectNumbersAndReasonsOnly()
+      })
+    })
+
+    describe('while performance logging is off', () => {
+      /** Everything the counters hear about while logging is on: requests, a rotation, both kinds of degraded event. */
+      function eventful(source: ClaudeDebugLogUsageSource, session: string) {
+        register(source, session)
+        append(session, NOT_ENTRIES[0], STREAMING, CUT_OFF)
+        clock.advance(ACTIVE)
+        source.setTurnInProgress(session, true)
+        renameSync(logPath(session), logPath(session) + '.1')
+        append(session, STATUS_LINE)
+        clock.advance(ACTIVE)
+        source.setTurnInProgress(session, false)
+        source.turnCompleted(session)
+        source.checkNow()
+        truncateSync(logPath(session), HARD_CAP + 1)
+        clock.advance(ACTIVE)
+        append(session, FABLE)
+        const facts = source.unregister(session)!
+        // It all happened.
+        expect(facts).toMatchObject({
+          entriesParsed: 2,
+          parseFailures: 1,
+          degradedSignals: 1,
+          timesDegraded: 1
+        })
+        expect(facts.follower.rotations).toBeGreaterThan(0)
+        return facts
+      }
+
+      it('asks whether it is on and does nothing else: no clock is read, nothing is counted, nothing is written', () => {
+        const calls: string[] = []
+        const note = (name: string) => (): void => {
+          calls.push(name)
+        }
+        const perf: ClaudeDebugLogUsagePerf = {
+          isEnabled: () => {
+            calls.push('isEnabled')
+            return false
+          },
+          now: () => {
+            calls.push('now')
+            return 0
+          },
+          pass: note('pass'),
+          check: note('check'),
+          rotated: note('rotated'),
+          degraded: note('degraded')
+        }
+        const source = makeSource({ perf, follower: { hardCapBytes: HARD_CAP } })
+
+        eventful(source, SESSION)
+        source.dispose()
+
+        expect(calls.length).toBeGreaterThan(0)
+        expect([...new Set(calls)]).toEqual(['isEnabled'])
+      })
+
+      it('leaves the counters empty and the performance log untouched', () => {
+        logging = false
+        const { source, take } = counted({ follower: { hardCapBytes: HARD_CAP } })
+
+        eventful(source, SESSION)
+
+        expect(clockReads).toBe(0)
+        expect(records).toEqual([])
+        expect(take()).toEqual(nothing(0))
+      })
+
+      it('costs not one fs call more than a source without counters, and reads the same', () => {
+        logging = false
+        const plain = countingFs()
+        const withCounters = countingFs()
+
+        const factsPlain = eventful(
+          makeSource({ follower: { fs: plain.fs, hardCapBytes: HARD_CAP } }),
+          SESSION
+        )
+        const factsWithCounters = eventful(
+          counted({ follower: { fs: withCounters.fs, hardCapBytes: HARD_CAP } }).source,
+          OTHER
+        )
+
+        expect(plain.total()).toBeGreaterThan(0)
+        for (const name of FS_CALLS) expect(withCounters.of(name)).toBe(plain.of(name))
+        expect(factsWithCounters.follower).toEqual(factsPlain.follower)
+        expect(clockReads).toBe(0)
+      })
+
+      it('counts from the moment it is switched on, and not what happened before', () => {
+        logging = false
+        const { source, take } = counted()
+        register(source, SESSION)
+        append(SESSION, STREAMING, CUT_OFF)
+        clock.advance(2 * ACTIVE)
+
+        logging = true
+        append(SESSION, FABLE)
+        clock.advance(ACTIVE)
+
+        expect(take()).toEqual({
+          sessions: 1,
+          passes: 1,
+          checks: 1,
+          bytesRead: bytesOf(FABLE),
+          entriesParsed: 1,
+          parseFailures: 0,
+          checkTotalMs: 0.5,
+          checkMaxMs: 0.5,
+          passTotalMs: 1.5,
+          passMaxMs: 1.5,
+          rotations: 0,
+          degraded: 0
+        })
+        expect(source.stats()).toMatchObject({ passes: 3, checks: 3 })
+      })
+
+      it('drops what no sample took when it is switched off, so that it is not reported later as new', () => {
+        const { source, take } = counted()
+        register(source, SESSION)
+        append(SESSION, STREAMING)
+        clock.advance(ACTIVE)
+
+        logging = false
+        clock.advance(ACTIVE)
+        logging = true
+
+        expect(take()).toEqual(nothing(1))
+        clock.advance(ACTIVE)
+        expect(take()).toMatchObject({ passes: 1, checks: 1, bytesRead: 0 })
+      })
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -1516,74 +2125,105 @@ describe('ClaudeDebugLogUsageSource, measured', () => {
     }
   }, 60_000)
 
-  it('checks 50 registered sessions in under 2 ms when nothing changed and under 10 ms when every file changed', () => {
-    const SESSIONS = 50
-    // The pass is driven by hand, so that it can be timed on its own.
-    let fire: (() => void) | null = null
-    let observations = 0
-    const source = new ClaudeDebugLogUsageSource({
-      submit: () => {
-        observations += 1
-      },
-      setTimer: (fn) => {
-        fire = fn
-        return fn
-      },
-      clearTimer: () => {
-        fire = null
-      }
-    })
-    const pass = (): number => {
-      const run = fire
-      if (run === null) throw new Error('no timer is armed')
-      const started = performance.now()
-      run()
-      return performance.now() - started
-    }
-    const paths = Array.from({ length: SESSIONS }, (_, index) => {
-      const sessionDir = join(dir, `session-${index}`)
-      mkdirSync(sessionDir)
-      return join(sessionDir, 'usage.log')
-    })
-
-    try {
-      paths.forEach((path, index) => {
-        source.register({ sessionId: `session-${index}`, logPath: path })
-        // A turn in progress everywhere: every pass checks all 50.
-        source.setTurnInProgress(`session-${index}`, true)
+  // PF-4 is a budget for the main thread: it holds with the performance counters measuring too (T20).
+  for (const counting of [false, true]) {
+    it(`checks 50 registered sessions in under 2 ms when nothing changed and under 10 ms when every file changed${counting ? ', with performance logging on' : ''}`, () => {
+      const SESSIONS = 50
+      const perf = counting
+        ? new ClaudeDebugLogUsagePerfCounters({ isEnabled: () => true, record: () => undefined })
+        : undefined
+      // The pass is driven by hand, so that it can be timed on its own.
+      let fire: (() => void) | null = null
+      let observations = 0
+      const source = new ClaudeDebugLogUsageSource({
+        submit: () => {
+          observations += 1
+        },
+        perf,
+        setTimer: (fn) => {
+          fire = fn
+          return fn
+        },
+        clearTimer: () => {
+          fire = null
+        }
       })
-      const grow = (): void => {
-        for (const path of paths) appendFileSync(path, ONE_REQUEST)
+      const pass = (): number => {
+        const run = fire
+        if (run === null) throw new Error('no timer is armed')
+        const started = performance.now()
+        run()
+        return performance.now() - started
       }
+      const paths = Array.from({ length: SESSIONS }, (_, index) => {
+        const sessionDir = join(dir, `session-${index}`)
+        mkdirSync(sessionDir)
+        return join(sessionDir, 'usage.log')
+      })
 
-      // Warm up: files opened, code compiled.
-      for (let round = 0; round < 30; round += 1) {
-        grow()
-        pass()
-        pass()
+      try {
+        paths.forEach((path, index) => {
+          source.register({ sessionId: `session-${index}`, logPath: path })
+          // A turn in progress everywhere: every pass checks all 50.
+          source.setTurnInProgress(`session-${index}`, true)
+        })
+        const grow = (): void => {
+          for (const path of paths) appendFileSync(path, ONE_REQUEST)
+        }
+
+        // Warm up: files opened, code compiled.
+        for (let round = 0; round < 30; round += 1) {
+          grow()
+          pass()
+          pass()
+        }
+        const checksBefore = source.stats().checks
+        const observationsBefore = observations
+        perf?.takeWindow(SESSIONS)
+
+        const unchanged: number[] = []
+        for (let round = 0; round < 300; round += 1) unchanged.push(pass())
+        expect(source.stats().checks - checksBefore).toBe(300 * SESSIONS)
+        expect(observations).toBe(observationsBefore)
+
+        const changed: number[] = []
+        for (let round = 0; round < 60; round += 1) {
+          grow()
+          changed.push(pass())
+        }
+        // Every pass read one request from each of the 50 files.
+        expect(observations - observationsBefore).toBe(60 * SESSIONS)
+
+        const quiet = report('pass over 50 sessions, nothing changed', unchanged)
+        const busy = report('pass over 50 sessions, every file changed', changed)
+        expect(quiet.p95).toBeLessThan(2)
+        expect(busy.p95).toBeLessThan(10)
+
+        if (perf) {
+          // The counters saw the same passes from the inside.
+          const window = perf.takeWindow(source.stats().sessions)
+          expect(window).toMatchObject({
+            sessions: SESSIONS,
+            passes: 360,
+            checks: 360 * SESSIONS,
+            bytesRead: 60 * SESSIONS * Buffer.byteLength(ONE_REQUEST),
+            entriesParsed: 60 * SESSIONS,
+            parseFailures: 0,
+            rotations: 0,
+            degraded: 0
+          })
+          const outside = [...unchanged, ...changed]
+          const total = outside.reduce((sum, ms) => sum + ms, 0)
+          expect(window.checkTotalMs).toBeGreaterThan(0)
+          expect(window.checkTotalMs).toBeLessThanOrEqual(window.passTotalMs)
+          // To the rounding of a microsecond.
+          expect(window.passTotalMs).toBeLessThanOrEqual(total + 0.001)
+          expect(window.passMaxMs).toBeLessThanOrEqual(Math.max(...outside) + 0.001)
+          expect(window.checkMaxMs).toBeLessThanOrEqual(window.passMaxMs)
+        }
+      } finally {
+        source.dispose()
       }
-      const checksBefore = source.stats().checks
-      const observationsBefore = observations
-
-      const unchanged: number[] = []
-      for (let round = 0; round < 300; round += 1) unchanged.push(pass())
-      expect(source.stats().checks - checksBefore).toBe(300 * SESSIONS)
-      expect(observations).toBe(observationsBefore)
-
-      const changed: number[] = []
-      for (let round = 0; round < 60; round += 1) {
-        grow()
-        changed.push(pass())
-      }
-      // Every pass read one request from each of the 50 files.
-      expect(observations - observationsBefore).toBe(60 * SESSIONS)
-
-      const quiet = report('pass over 50 sessions, nothing changed', unchanged)
-      const busy = report('pass over 50 sessions, every file changed', changed)
-      expect(quiet.p95).toBeLessThan(2)
-      expect(busy.p95).toBeLessThan(10)
-    } finally {
-      source.dispose()
-    }
-  }, 60_000)
+    }, 60_000)
+  }
 })

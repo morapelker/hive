@@ -61,6 +61,12 @@
  * dropped; what leaves this module is the usage snapshot, the organization id
  * and the line's time. A line that cannot be read is counted, never recorded,
  * and nothing here logs anything read from a file.
+ *
+ * Performance counters (Code Mode T20; PF-6). While the app's performance
+ * logging is on, every pass and every check is timed and what it found is
+ * counted (`claude-debug-log-usage-perf.ts`), and each rotation and each
+ * degraded event is reported as it happens: numbers and reason codes, nothing
+ * else. While it is off, asking whether it is on is all that is done.
  */
 import { isAbsolute } from 'node:path'
 import type { ClaudeLiveUsageDegradedReason } from '@shared/types/claude-live-usage'
@@ -80,6 +86,7 @@ import {
   isClaudeDebugLogSuccessStatusLine,
   parseClaudeDebugLogLine
 } from './claude-debug-log-entry-parser'
+import type { ClaudeDebugLogUsagePerf } from './claude-debug-log-usage-perf'
 
 /** Time between two checks of a busy session (PF-2). */
 export const DEBUG_LOG_ACTIVE_CHECK_INTERVAL_MS = 250
@@ -221,6 +228,11 @@ export interface ClaudeDebugLogUsageSourceDeps {
   idleIntervalMs?: number
   /** Defaults to `DEBUG_LOG_ACTIVITY_HOLD_MS`. */
   activityHoldMs?: number
+  /**
+   * The performance counters (T20). Asked whether performance logging is on
+   * before anything is measured, and told nothing while it is off.
+   */
+  perf?: ClaudeDebugLogUsagePerf
   /** Passed on to every follower; injectable for tests. */
   follower?: Omit<DebugLogFollowerOptions, 'path' | 'onLine' | 'onEvent'>
   now?: () => number
@@ -357,7 +369,7 @@ export class ClaudeDebugLogUsageSource {
     if (!session) return null
     this.sessions.delete(sessionId)
     this.checks += 1
-    session.follower.close()
+    this.look(session, this.measuring(), true)
     session.lastCheckAt = this.now()
     const facts = this.factsOf(session)
     this.deps.log?.info('Stopped following the debug log of a Claude CLI session', {
@@ -389,7 +401,7 @@ export class ClaudeDebugLogUsageSource {
     if (!inProgress) {
       const now = this.now()
       session.busyUntil = Math.max(session.busyUntil, now + this.activityHoldMs)
-      this.check(session, now)
+      this.check(session, now, this.measuring())
     }
     this.arm()
     return true
@@ -407,7 +419,7 @@ export class ClaudeDebugLogUsageSource {
     const session = this.sessions.get(sessionId)
     if (!session) return false
     const now = this.now()
-    this.check(session, now)
+    this.check(session, now, this.measuring())
     session.turnsCompleted += 1
     if (session.health === null) {
       if (session.follower.stats().bytesRead === 0) {
@@ -440,11 +452,12 @@ export class ClaudeDebugLogUsageSource {
    */
   checkNow(sessionId?: string): void {
     const now = this.now()
+    const perf = this.measuring()
     if (sessionId === undefined) {
-      for (const session of this.sessions.values()) this.check(session, now)
+      for (const session of this.sessions.values()) this.check(session, now, perf)
     } else {
       const session = this.sessions.get(sessionId)
-      if (session) this.check(session, now)
+      if (session) this.check(session, now, perf)
     }
     this.arm()
   }
@@ -488,6 +501,15 @@ export class ClaudeDebugLogUsageSource {
     return this.deps.now ? this.deps.now() : Date.now()
   }
 
+  /**
+   * The performance counters when performance logging is on, null when it is
+   * off (or there are none): the one question asked before measuring anything.
+   */
+  private measuring(): ClaudeDebugLogUsagePerf | null {
+    const perf = this.deps.perf
+    return perf !== undefined && perf.isEnabled() ? perf : null
+  }
+
   private isBusy(session: Session, now: number): boolean {
     return session.turnInProgress || now < session.busyUntil
   }
@@ -503,6 +525,9 @@ export class ClaudeDebugLogUsageSource {
   private pass(): void {
     this.timer = null
     this.passes += 1
+    // Asked once: a pass is measured from its start to its end, or not at all.
+    const perf = this.measuring()
+    const startedAt = perf === null ? 0 : perf.now()
     const now = this.now()
     // With nobody busy this is the idle wake-up, and everyone shares it.
     const everyone = !this.anyBusy(now)
@@ -518,22 +543,48 @@ export class ClaudeDebugLogUsageSource {
           now - last >= idleDueAfter ||
           // The clock went back: do not wait for it to catch up.
           now < last
-        if (due) this.check(session, now)
+        if (due) this.check(session, now, perf)
       }
     } finally {
       this.arm()
+      if (perf !== null) perf.pass(perf.now() - startedAt)
     }
   }
 
-  private check(session: Session, now: number): void {
+  private check(session: Session, now: number, perf: ClaudeDebugLogUsagePerf | null): void {
     this.checks += 1
-    session.follower.check()
+    this.look(session, perf, false)
     session.lastCheckAt = now
     const bytesRead = session.follower.stats().bytesRead
     if (bytesRead !== session.bytesRead) {
       session.bytesRead = bytesRead
       session.busyUntil = Math.max(session.busyUntil, now + this.activityHoldMs)
     }
+  }
+
+  /**
+   * Have the follower look at the session's log, or (`final`) read it to its
+   * end and let go of it. With performance counters: timed, and what the look
+   * added to the session's counts is reported.
+   */
+  private look(session: Session, perf: ClaudeDebugLogUsagePerf | null, final: boolean): void {
+    if (perf === null) {
+      if (final) session.follower.close()
+      else session.follower.check()
+      return
+    }
+    const startedAt = perf.now()
+    const bytesRead = session.follower.stats().bytesRead
+    const entriesParsed = session.entriesParsed
+    const parseFailures = session.parseFailures
+    if (final) session.follower.close()
+    else session.follower.check()
+    perf.check(
+      perf.now() - startedAt,
+      session.follower.stats().bytesRead - bytesRead,
+      session.entriesParsed - entriesParsed,
+      session.parseFailures - parseFailures
+    )
   }
 
   /**
@@ -621,12 +672,19 @@ export class ClaudeDebugLogUsageSource {
   }
 
   private onFollowerEvent(session: Session, event: DebugLogFollowerEvent): void {
-    if (event.type !== 'degraded') return
+    if (event.type !== 'degraded') {
+      // A rotation changes nothing for the session: it is only counted (T20).
+      if (!session.muted) this.measuring()?.rotated(event.cause)
+      return
+    }
     session.degradedSignals += 1
     const detail = event.reason === 'unsafe-file' ? event.detail : null
     session.degraded = { reason: event.reason, detail, at: this.now() }
     // What a closing read finds at shutdown changes nothing for anybody.
-    if (session.health === null && !session.muted) this.degrade(session, event.reason, detail)
+    if (session.muted) return
+    if (session.health === null) this.degrade(session, event.reason, detail)
+    // Already degraded: nothing changes for the session, and the signal is an event all the same.
+    else this.measuring()?.degraded(event.reason, detail)
   }
 
   private degrade(
@@ -636,6 +694,7 @@ export class ClaudeDebugLogUsageSource {
   ): void {
     session.health = { reason, detail, at: this.now() }
     session.timesDegraded += 1
+    this.measuring()?.degraded(reason, detail)
     this.tellHealth(session)
   }
 

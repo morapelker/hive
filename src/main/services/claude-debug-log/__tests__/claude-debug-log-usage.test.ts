@@ -89,7 +89,15 @@ vi.mock('../../../db', async () => {
 vi.mock('../../account-store-claude', () => storeMocks)
 vi.mock('../../../desktop/backend-event-publisher', () => publisherMocks)
 
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -104,6 +112,7 @@ import {
   __resetClaudeUsageLiveUpdaterForTests
 } from '../../claude-api-proxy/claude-usage-live'
 import { getLogDir } from '../../logger'
+import { getPerfLogger, perfLog, type PerfLogger } from '../../perf-logging/perf-logger'
 import {
   disposeClaudeDebugLogUsageSource,
   getClaudeDebugLogUsageSource,
@@ -403,6 +412,197 @@ describe('debug-log usage through the app source and the live updater', () => {
     expect(source.stats()).toMatchObject({ sessions: 0, timerArmed: false })
     // The log check of this file needs a line from the source: a session that ends normally.
     source.register({ sessionId: 'session-2', logPath: logPath('session-2') })
+    source.unregister('session-2')
+  })
+})
+
+describe('performance counters of the app source (T20)', () => {
+  const GAUGE_KEYS = [
+    'bytesRead',
+    'checkMaxMs',
+    'checkTotalMs',
+    'checks',
+    'degraded',
+    'entriesParsed',
+    'parseFailures',
+    'passMaxMs',
+    'passTotalMs',
+    'passes',
+    'rotations',
+    'sessions'
+  ]
+
+  let perfDir: string
+  let logger: PerfLogger
+
+  beforeEach(() => {
+    perfDir = mkdtempSync(join(tmpdir(), 'debug-log-usage-perf-'))
+    // The process's own performance logger, the one the app source reports to, writing where
+    // this test can read it and nowhere else.
+    logger = getPerfLogger()
+    ;(logger as unknown as { logDir: string }).logDir = perfDir
+  })
+
+  afterEach(() => {
+    logger.stop()
+    rmSync(perfDir, { recursive: true, force: true })
+  })
+
+  /** Everything in the performance log, as text. */
+  function perfLogText(): string {
+    logger.flush()
+    return readdirSync(perfDir)
+      .map((name) => readFileSync(join(perfDir, name), 'utf8'))
+      .join('\n')
+  }
+
+  function perfRecords(): Array<Record<string, unknown>> {
+    return perfLogText()
+      .split('\n')
+      .filter((line) => line !== '')
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+  }
+
+  const gaugeOf = (sample: Record<string, unknown>): Record<string, number> =>
+    (sample.gauges as Record<string, Record<string, number>>).claudeDebugLog
+
+  /**
+   * Two sessions. The first makes requests (two responses that can be read, one that cannot)
+   * and has its log rotated by the CLI in between; the second completes a turn without a log.
+   * Then the source's own timer makes a pass.
+   */
+  async function sessionsAtWork(): Promise<ReturnType<typeof getClaudeDebugLogUsageSource>> {
+    seed(ME, ORG_A)
+    const source = getClaudeDebugLogUsageSource()
+    source.register({ sessionId: 'session-1', logPath: logPath('session-1') })
+    source.register({ sessionId: 'session-2', logPath: logPath('session-2') })
+
+    append('session-1', NOT_ENTRIES[0], STREAMING, STREAMING.slice(0, 700), NOT_ENTRIES[2])
+    source.checkNow('session-1')
+    renameSync(logPath('session-1'), logPath('session-1') + '.1')
+    append('session-1', NOT_ENTRIES[0], at(STREAMING, STREAMING_AT + 60_000))
+    source.checkNow('session-1')
+    source.turnCompleted('session-2')
+
+    const passes = source.stats().passes
+    await vi.waitFor(() => expect(source.stats().passes).toBeGreaterThan(passes), {
+      timeout: 5_000,
+      interval: 20
+    })
+    await settled()
+    return source
+  }
+
+  it('writes the counters of sessions that make requests to the performance log while performance logging is on, and a record for each rotation and degraded event', async () => {
+    logger.start()
+
+    const source = await sessionsAtWork()
+    logger.sample()
+    const { passes, checks } = source.stats()
+    const records = perfRecords()
+
+    // Every counter of the ticket, in the sample the logger takes of all its gauges.
+    const samples = records.filter((record) => record.kind === 'sample')
+    expect(samples).toHaveLength(1)
+    const gauge = gaugeOf(samples[0])
+    expect(Object.keys(gauge).sort()).toEqual(GAUGE_KEYS)
+    expect(gauge).toMatchObject({
+      sessions: 2,
+      passes,
+      checks,
+      bytesRead: written.reduce((sum, line) => sum + Buffer.byteLength(line) + 1, 0),
+      entriesParsed: 2,
+      parseFailures: 1,
+      rotations: 1,
+      degraded: 1
+    })
+    expect(gauge.passes).toBeGreaterThanOrEqual(1)
+    expect(gauge.checks).toBeGreaterThanOrEqual(5)
+    expect(gauge.checkTotalMs).toBeGreaterThan(0)
+    expect(gauge.checkMaxMs).toBeGreaterThan(0)
+    expect(gauge.checkMaxMs).toBeLessThanOrEqual(gauge.checkTotalMs)
+    expect(gauge.passTotalMs).toBeGreaterThan(0)
+    expect(gauge.passMaxMs).toBeGreaterThan(0)
+    expect(gauge.passMaxMs).toBeLessThanOrEqual(gauge.passTotalMs)
+    for (const value of Object.values(gauge)) expect(Number.isFinite(value)).toBe(true)
+
+    // The events, each as it happened: what the logger adds to a record, and a code.
+    const eventRecords = records.filter((record) => record.kind === 'claude-debug-log')
+    expect(eventRecords.map(({ t: _t, pid: _pid, role: _role, ...rest }) => rest)).toEqual([
+      { kind: 'claude-debug-log', event: 'rotated', cause: 'replaced' },
+      { kind: 'claude-debug-log', event: 'degraded', reason: 'log-empty' }
+    ])
+    for (const record of eventRecords) {
+      expect(typeof record.t).toBe('string')
+      expect(record.pid).toBe(process.pid)
+    }
+
+    // Numbers and reasons only: no session, no path, no organization in what the source
+    // reported, and nothing of a line anywhere in the performance log.
+    const reported = JSON.stringify([gauge, ...eventRecords])
+    for (const secret of ['session-1', 'session-2', 'usage.log', dir, ORG_A, ORG_B, ME]) {
+      expect(reported.includes(secret)).toBe(false)
+    }
+    const text = perfLogText()
+    const pieces = new Set(
+      written.flatMap((line) => line.split(/[\s'"`{},\\]+/).filter((piece) => piece.length >= 12))
+    )
+    expect(pieces.size).toBeGreaterThan(0)
+    // Counted, not shown: a failure must not print the piece either.
+    expect([...pieces].filter((piece) => text.includes(piece)).length).toBe(0)
+
+    // The next sample starts from nothing.
+    expect(gaugeOf(logger.sample())).toMatchObject({
+      sessions: 2,
+      bytesRead: 0,
+      entriesParsed: 0,
+      parseFailures: 0,
+      rotations: 0,
+      degraded: 0
+    })
+    source.unregister('session-1')
+    source.unregister('session-2')
+  })
+
+  it('writes nothing to the performance log while performance logging is off, measures nothing, and keeps nothing for the day it is on', async () => {
+    const asked = vi.spyOn(perfLog, 'isEnabled')
+    const recorded = vi.spyOn(perfLog, 'record')
+    const clock = vi.spyOn(performance, 'now')
+
+    const source = await sessionsAtWork()
+    const clockReads = clock.mock.calls.length
+    source.checkNow()
+    source.turnCompleted('session-1')
+
+    // The source asked, was told no, and left it at that.
+    expect(asked).toHaveBeenCalled()
+    expect(asked.mock.results.every((result) => result.value === false)).toBe(true)
+    expect(recorded).not.toHaveBeenCalled()
+    expect(clock.mock.calls.length).toBe(clockReads)
+    expect(logger.isEnabled()).toBe(false)
+    expect(perfLogText()).toBe('')
+    expect(readdirSync(perfDir)).toEqual([])
+    // It all happened, though.
+    expect(source.facts('session-1')).toMatchObject({ entriesParsed: 2, parseFailures: 1 })
+    expect(source.facts('session-2')).toMatchObject({ health: { reason: 'log-empty' } })
+
+    // Switched on now: the first sample has nothing of what went before.
+    logger.start()
+    expect(gaugeOf(logger.sample())).toEqual({
+      sessions: 2,
+      passes: 0,
+      checks: 0,
+      bytesRead: 0,
+      entriesParsed: 0,
+      parseFailures: 0,
+      checkTotalMs: 0,
+      checkMaxMs: 0,
+      passTotalMs: 0,
+      passMaxMs: 0,
+      rotations: 0,
+      degraded: 0
+    })
+    source.unregister('session-1')
     source.unregister('session-2')
   })
 })
