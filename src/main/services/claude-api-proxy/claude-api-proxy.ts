@@ -8,8 +8,16 @@
  * title generation. The proxy forwards to whatever the user already pointed
  * the CLI at (a corporate gateway) or to api.anthropic.com, and feeds each
  * exchange to the app's live usage updater (`claude-usage-live.ts`), which it
- * neither creates nor disposes: the updater outlives the proxy. Nothing is
- * logged to disk.
+ * neither creates nor disposes: the updater outlives the proxy. The proxy
+ * writes nothing of an exchange to disk (its performance log, when switched
+ * on, records method, path, status and timings).
+ *
+ * One launch does not go through it: an interactive CLI session that asks for
+ * Code Mode, which the CLI only offers when it talks to the API directly. Its
+ * spawn leaves these variables out and removes the inherited ones
+ * (claude-cli-spawner.ts), and its usage is read from a log of response
+ * headers the CLI writes to disk for as long as the session runs
+ * (claude-cli-usage-launches.ts; docs/claude-usage-proxy.md).
  *
  * The tunnel itself runs in its own utility process (`claude-proxy-host.ts`)
  * so that a stall in main — whose thread pool once wedged for a whole night

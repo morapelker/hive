@@ -7,7 +7,11 @@
  * client as the API emits them and compressed bodies stay compressed (this
  * layer never decodes anything). Observers get the request/response HEADERS
  * plus a bounded copy of the request body as soon as the upstream answers —
- * nothing is written to disk and credentials never leave the socket pair.
+ * the tunnel writes none of that to disk (its performance log, when switched
+ * on, records method, path, status and timings) and credentials never leave
+ * the socket pair. That is a statement about this tunnel only: a Claude
+ * session launched off it for Code Mode has its response headers read from a
+ * log on disk instead (docs/claude-usage-proxy.md, "The header log on disk").
  *
  * Provider-agnostic on purpose: the Claude-specific upstream resolution and
  * header parsing live next door, and a Codex tunnel can reuse this unchanged.

@@ -1,12 +1,14 @@
 import type { AnthropicRateLimitWindow, UsageData } from './usage'
 
 /**
- * Published by the Electron main process every time the local Claude API
- * proxy observes an Anthropic response carrying `anthropic-ratelimit-unified-*`
- * headers. The payload is already attributed to the managed account whose
- * `account_uuid` rode in the request body — NOT necessarily the currently
- * selected account (a session still streaming on the previous account after a
- * switch keeps reporting for that previous account).
+ * Published by the Electron main process every time it observes an Anthropic
+ * response carrying `anthropic-ratelimit-unified-*` headers: through the local
+ * Claude API proxy, or, for a Code Mode session, which does not go through the
+ * proxy, in the debug log the CLI writes. The payload is already attributed to
+ * the managed account that was billed (by the access token the request
+ * carried, or by the organization a log entry names) — NOT necessarily the
+ * currently selected account (a session still streaming on the previous
+ * account after a switch keeps reporting for that previous account).
  */
 export const CLAUDE_LIVE_USAGE_CHANNEL = 'usage:claudeLive'
 
@@ -42,7 +44,10 @@ export interface ClaudeLiveUsagePayload {
   usage: UsageData
   /** Per-window status/reset as the rate-limit overlay understands it (epoch seconds). */
   rateLimit: ClaudeLiveUsageRateLimit
-  /** Epoch ms at which the proxy saw the upstream response headers. */
+  /**
+   * Epoch ms at which the proxy saw the upstream response headers; for a reading from a
+   * debug log, the time written in the log line.
+   */
   observedAt: number
   /**
    * The session whose debug log the reading came from (a Code Mode session, which does not

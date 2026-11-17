@@ -1,5 +1,9 @@
 /**
- * Turns proxied Anthropic exchanges into per-account usage updates.
+ * Turns observed Anthropic responses into per-account usage updates. Two
+ * sources feed it: the local API proxy, which sees every exchange of a
+ * proxied session, and the debug log of a Code Mode session, which does not
+ * go through the proxy (claude-debug-log/). What follows is the proxied case;
+ * the paragraph on organizations further down is the other.
  *
  * For every response that carries `anthropic-ratelimit-unified-*` headers:
  * 1. identify the account the request was BILLED to: the managed account
@@ -19,8 +23,9 @@
  *    updates that account's bar immediately — and the bottom bar only when it
  *    is the live account.
  *
- * Updates for one credential are coalesced (leading + trailing edge) because
- * a session with parallel subagents can answer several requests per second.
+ * Updates for one credential (for a reading without one: for one
+ * organization) are coalesced (leading + trailing edge) because a session
+ * with parallel subagents can answer several requests per second.
  *
  * A source that cannot see the credential (the CLI's debug log masks it) names
  * the organization the response was billed to instead. Such an observation is
@@ -158,7 +163,7 @@ export interface ClaudeUsageLiveUpdaterDeps {
   clearTimer?: (handle: unknown) => void
 }
 
-/** Minimum spacing between two published updates for the same credential. */
+/** Minimum spacing between two published updates for the same credential, or the same organization. */
 export const LIVE_USAGE_COALESCE_MS = 250
 /** How long a credential → account (or uuid → account) resolution is trusted. */
 const RESOLUTION_TTL_MS = 10 * 60_000
