@@ -41,6 +41,7 @@ import {
   readClaudeEffectiveBlob,
   readClaudeLiveEmail,
   removeClaudeAccount,
+  repairStaleClaudeLiveIdentityUuid,
   switchClaudeAccount,
   updateClaudeTokens
 } from '../../src/main/services/account-store-claude'
@@ -216,6 +217,122 @@ describe('account-store-claude', () => {
       expect(nested.oauthAccount.emailAddress).toBe('nested@example.com')
       const topLevel = JSON.parse(await readFile(identityPath(), 'utf-8'))
       expect(topLevel.oauthAccount.emailAddress).toBe('top-level@example.com')
+    })
+
+    describe('organization in the identity file', () => {
+      // A is signed in, as the claude CLI leaves the file after fetching A's profile.
+      const profileOfA = {
+        emailAddress: 'a@b.c',
+        accountUuid: 'uuid-a',
+        organizationUuid: 'org-a',
+        profileFetchedAt: 1_700_000_000_000,
+        displayName: 'A'
+      }
+
+      beforeEach(async () => {
+        await addClaudeAccount('a@b.c', 'uuid-a', claudeBlob({ accessToken: 'a-token' }))
+        await addClaudeAccount('d@e.f', 'uuid-d', claudeBlob({ accessToken: 'd-token' }))
+        await writeFile(
+          identityPath(),
+          JSON.stringify({ oauthAccount: profileOfA, someOtherSetting: 'keep-me' })
+        )
+        mocks.keychainStore.set(
+          LIVE_CLAUDE_KEYCHAIN_SERVICE,
+          claudeBlob({ accessToken: 'a-token' })
+        )
+      })
+
+      const readIdentity = async (): Promise<{
+        oauthAccount: Record<string, unknown>
+        someOtherSetting: string
+      }> => JSON.parse(await readFile(identityPath(), 'utf-8'))
+
+      it("carries the target account's stored organization after a switch", async () => {
+        await switchClaudeAccount('2', 'd@e.f', { organizationUuid: 'org-d' })
+
+        const identity = await readIdentity()
+        expect(identity.oauthAccount).toEqual({
+          emailAddress: 'd@e.f',
+          accountUuid: 'uuid-d',
+          organizationUuid: 'org-d',
+          displayName: 'A'
+        })
+        expect(identity.someOtherSetting).toBe('keep-me')
+      })
+
+      it('carries no organization and no profile stamp when none is stored for the target', async () => {
+        await switchClaudeAccount('2', 'd@e.f')
+
+        const identity = await readIdentity()
+        expect(identity.oauthAccount).toEqual({
+          emailAddress: 'd@e.f',
+          accountUuid: 'uuid-d',
+          displayName: 'A'
+        })
+        expect(identity.someOtherSetting).toBe('keep-me')
+      })
+
+      it('changes nothing in the file when switching to the account that is already live', async () => {
+        await switchClaudeAccount('1', 'a@b.c')
+        expect(await readIdentity()).toEqual({
+          oauthAccount: profileOfA,
+          someOtherSetting: 'keep-me'
+        })
+
+        await switchClaudeAccount('1', 'a@b.c', { organizationUuid: 'ORG-A' })
+        expect(await readIdentity()).toEqual({
+          oauthAccount: profileOfA,
+          someOtherSetting: 'keep-me'
+        })
+      })
+
+      it('never shows one account with the organization of another across switches back and forth', async () => {
+        const stored: Record<string, string | null> = { 'a@b.c': 'org-a', 'd@e.f': null }
+        const hops: Array<[string, string]> = [
+          ['2', 'd@e.f'],
+          ['1', 'a@b.c'],
+          ['2', 'd@e.f'],
+          ['2', 'd@e.f']
+        ]
+        for (const [num, email] of hops) {
+          await switchClaudeAccount(num, email, { organizationUuid: stored[email] })
+          const { oauthAccount } = await readIdentity()
+          expect(oauthAccount.emailAddress).toBe(email)
+          expect(oauthAccount.organizationUuid).toBe(stored[email] ?? undefined)
+          // A's profile was fetched as A; after any switch away nothing claims that.
+          expect(oauthAccount).not.toHaveProperty('profileFetchedAt')
+        }
+      })
+
+      it('corrects, at start-up, a file an older version left inconsistent', async () => {
+        // What the older switch from A to D wrote: D's account, A's organization and stamp.
+        await writeFile(
+          identityPath(),
+          JSON.stringify({
+            oauthAccount: { ...profileOfA, emailAddress: 'd@e.f', accountUuid: 'uuid-d' },
+            someOtherSetting: 'keep-me'
+          })
+        )
+        const organizations = [
+          { email: 'a@b.c', orgUuid: 'org-a' },
+          { email: 'd@e.f', orgUuid: 'org-d' }
+        ]
+
+        await expect(repairStaleClaudeLiveIdentityUuid(organizations)).resolves.toBe(true)
+
+        expect(await readIdentity()).toEqual({
+          oauthAccount: {
+            emailAddress: 'd@e.f',
+            accountUuid: 'uuid-d',
+            organizationUuid: 'org-d',
+            displayName: 'A'
+          },
+          someOtherSetting: 'keep-me'
+        })
+        // Nothing left to do the second time, and the lock is released.
+        await expect(repairStaleClaudeLiveIdentityUuid(organizations)).resolves.toBe(false)
+        await expect(readFile(`${identityPath()}.lock`)).rejects.toMatchObject({ code: 'ENOENT' })
+      })
     })
   })
 

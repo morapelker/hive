@@ -228,7 +228,11 @@ export async function switchAccount(
       if (row.provider === 'anthropic') {
         const account = await findClaudeStoreAccount(row.email)
         if (!account) return { success: false, error: 'account no longer in store' }
-        await switchClaudeAccount(account.num, account.email)
+        // Read here, inside the locks: a poll that held this account's lock may
+        // just have learned its organization.
+        await switchClaudeAccount(account.num, account.email, {
+          organizationUuid: db.getSavedUsageAccountOrgUuid(row.id)
+        })
       } else {
         const account = await findCodexStoreAccount(row.email)
         if (!account) return { success: false, error: 'account no longer in store' }

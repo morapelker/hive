@@ -74,6 +74,8 @@ const SEQUENCE_PATH = join(STORE_DIR, 'sequence.json')
 const IDENTITY_PATH = join(homedir(), '.claude', '.claude.json')
 const UUID_A = '718fd88e-2076-4451-bc5f-066158379585'
 const UUID_B = '0d2c9a9e-1f1d-4a8a-9d2c-3a4b5c6d7e8f'
+const ORG_A = '8023b5fe-0a4c-4f0e-9d53-1c2d3e4f5a6b'
+const ORG_B = '51c0ffee-7b1a-4c2d-8e3f-a1b2c3d4e5f6'
 
 const blob = (oauth: Record<string, unknown>): string => JSON.stringify({ claudeAiOauth: oauth })
 
@@ -91,8 +93,11 @@ function seedSequence(accounts: Record<string, { email: string; uuid: string }>)
   )
 }
 
-function seedIdentity(oauthAccount: Record<string, unknown>): void {
-  const identity = { numStartups: 3, oauthAccount }
+function seedIdentity(
+  oauthAccount: Record<string, unknown>,
+  rest: Record<string, unknown> = {}
+): void {
+  const identity = { numStartups: 3, ...rest, oauthAccount }
   fsMocks.files.set(IDENTITY_PATH, JSON.stringify(identity))
   vi.mocked(readJsonFile).mockImplementation(async (path: string) =>
     path === IDENTITY_PATH ? JSON.parse(JSON.stringify(identity)) : null
@@ -114,6 +119,12 @@ function writtenIdentity(): Record<string, unknown> | undefined {
     .mock.calls.filter(([path]) => path === IDENTITY_PATH)
     .at(-1)
   return call ? (call[1] as Record<string, unknown>) : undefined
+}
+
+function writtenOauthAccount(): Record<string, unknown> {
+  const identity = writtenIdentity()
+  expect(identity).toBeDefined()
+  return identity!.oauthAccount as Record<string, unknown>
 }
 
 beforeEach(() => {
@@ -148,12 +159,119 @@ describe('switchClaudeAccount identity file handling', () => {
 
     expect(writtenIdentity()).toMatchObject({
       numStartups: 3,
-      oauthAccount: {
-        emailAddress: 'b@example.com',
-        accountUuid: UUID_B,
-        organizationUuid: 'org-a'
-      }
+      oauthAccount: { emailAddress: 'b@example.com', accountUuid: UUID_B }
     })
+    // The outgoing account's organization does not travel with the new account.
+    expect(writtenOauthAccount()).not.toHaveProperty('organizationUuid')
+  })
+
+  it("writes the target's stored organization in place of the outgoing account's", async () => {
+    seedSequence({
+      '1': { email: 'a@example.com', uuid: UUID_A },
+      '2': { email: 'b@example.com', uuid: UUID_B }
+    })
+    seedIdentity({
+      emailAddress: 'a@example.com',
+      accountUuid: UUID_A,
+      organizationUuid: ORG_A,
+      profileFetchedAt: 123,
+      displayName: 'A'
+    })
+
+    await switchClaudeAccount('2', 'b@example.com', { organizationUuid: ORG_B })
+
+    const oauthAccount = writtenOauthAccount()
+    expect(oauthAccount).toMatchObject({
+      emailAddress: 'b@example.com',
+      accountUuid: UUID_B,
+      organizationUuid: ORG_B
+    })
+    // The rest of the profile in the block is still A's: nothing says it is fresh.
+    expect(oauthAccount).not.toHaveProperty('profileFetchedAt')
+    expect(JSON.stringify(writtenIdentity())).not.toContain(ORG_A)
+    // Everything outside the identity block survives.
+    expect(writtenIdentity()?.numStartups).toBe(3)
+  })
+
+  it('leaves no organization and no profile stamp when the target has none stored', async () => {
+    seedSequence({
+      '1': { email: 'a@example.com', uuid: UUID_A },
+      '2': { email: 'b@example.com', uuid: UUID_B }
+    })
+    seedIdentity({
+      emailAddress: 'a@example.com',
+      accountUuid: UUID_A,
+      organizationUuid: ORG_A,
+      profileFetchedAt: 123,
+      displayName: 'A'
+    })
+
+    // Not known comes in three spellings: left out, null and empty.
+    for (const options of [undefined, { organizationUuid: null }, { organizationUuid: '  ' }]) {
+      vi.mocked(atomicWriteJson).mockClear()
+      await switchClaudeAccount('2', 'b@example.com', options)
+
+      const oauthAccount = writtenOauthAccount()
+      expect(oauthAccount.emailAddress).toBe('b@example.com')
+      expect(oauthAccount.accountUuid).toBe(UUID_B)
+      expect(oauthAccount).not.toHaveProperty('organizationUuid')
+      expect(oauthAccount).not.toHaveProperty('profileFetchedAt')
+      // Unrelated fields survive.
+      expect(oauthAccount.displayName).toBe('A')
+    }
+  })
+
+  it('stores the organization in its normalized form', async () => {
+    seedSequence({
+      '1': { email: 'a@example.com', uuid: UUID_A },
+      '2': { email: 'b@example.com', uuid: UUID_B }
+    })
+    seedIdentity({ emailAddress: 'a@example.com', accountUuid: UUID_A, organizationUuid: ORG_A })
+
+    await switchClaudeAccount('2', 'b@example.com', {
+      organizationUuid: `  ${ORG_B.toUpperCase()} `
+    })
+
+    expect(writtenOauthAccount().organizationUuid).toBe(ORG_B)
+  })
+
+  it('drops the profile stamp even when both accounts are seats of one organization', async () => {
+    seedSequence({
+      '1': { email: 'a@example.com', uuid: UUID_A },
+      '2': { email: 'b@example.com', uuid: UUID_B }
+    })
+    seedIdentity({
+      emailAddress: 'a@example.com',
+      accountUuid: UUID_A,
+      organizationUuid: ORG_A,
+      profileFetchedAt: 123
+    })
+
+    await switchClaudeAccount('2', 'b@example.com', { organizationUuid: ORG_A })
+
+    const oauthAccount = writtenOauthAccount()
+    expect(oauthAccount.organizationUuid).toBe(ORG_A)
+    expect(oauthAccount).not.toHaveProperty('profileFetchedAt')
+  })
+
+  it("writes the stored organization when the target's uuid is unknown too", async () => {
+    seedSequence({
+      '1': { email: 'a@example.com', uuid: UUID_A },
+      '2': { email: 'b@example.com', uuid: '' }
+    })
+    seedIdentity({
+      emailAddress: 'a@example.com',
+      accountUuid: UUID_A,
+      organizationUuid: ORG_A,
+      profileFetchedAt: 123
+    })
+
+    await switchClaudeAccount('2', 'b@example.com', { organizationUuid: ORG_B })
+
+    const oauthAccount = writtenOauthAccount()
+    expect(oauthAccount).not.toHaveProperty('accountUuid')
+    expect(oauthAccount.organizationUuid).toBe(ORG_B)
+    expect(oauthAccount).not.toHaveProperty('profileFetchedAt')
   })
 
   it('drops the outgoing account identity when the target uuid is unknown', async () => {
@@ -188,6 +306,73 @@ describe('switchClaudeAccount identity file handling', () => {
 
     expect(writtenSequence().accounts['1'].uuid).toBe(UUID_A)
     expect((writtenIdentity()?.oauthAccount as Record<string, unknown>).accountUuid).toBe(UUID_A)
+  })
+
+  describe('to the account that is already live', () => {
+    const own = {
+      emailAddress: 'a@example.com',
+      accountUuid: UUID_A,
+      // As the CLI wrote it: the spelling is not ours to change.
+      organizationUuid: ORG_A.toUpperCase(),
+      profileFetchedAt: 123,
+      displayName: 'A'
+    }
+
+    beforeEach(() => {
+      seedSequence({
+        '1': { email: 'a@example.com', uuid: UUID_A },
+        '2': { email: 'b@example.com', uuid: UUID_B }
+      })
+    })
+
+    it('leaves the identity block as it was when no organization is stored', async () => {
+      seedIdentity(own)
+      await switchClaudeAccount('1', 'a@example.com')
+      expect(writtenOauthAccount()).toEqual(own)
+    })
+
+    it('leaves the identity block as it was when the stored organization agrees', async () => {
+      seedIdentity(own)
+      await switchClaudeAccount('1', 'a@example.com', { organizationUuid: ORG_A })
+      expect(writtenOauthAccount()).toEqual(own)
+    })
+
+    it('keeps the organization the CLI wrote for a legacy account whose uuid is learned', async () => {
+      seedSequence({ '1': { email: 'a@example.com', uuid: '' } })
+      seedIdentity(own)
+      await switchClaudeAccount('1', 'a@example.com')
+      expect(writtenOauthAccount()).toEqual(own)
+    })
+
+    it('fills in a stored organization the file does not have, keeping the stamp', async () => {
+      const withoutOrganization: Record<string, unknown> = { ...own }
+      delete withoutOrganization.organizationUuid
+      seedIdentity(withoutOrganization)
+      await switchClaudeAccount('1', 'a@example.com', { organizationUuid: ORG_A })
+      expect(writtenOauthAccount()).toEqual({ ...withoutOrganization, organizationUuid: ORG_A })
+    })
+
+    it('replaces an organization that is not the stored one and drops its stamp', async () => {
+      // What an older switch from B to A left behind: A's account, B's organization.
+      seedIdentity({ ...own, organizationUuid: ORG_B })
+      await switchClaudeAccount('1', 'a@example.com', { organizationUuid: ORG_A })
+
+      const oauthAccount = writtenOauthAccount()
+      expect(oauthAccount.organizationUuid).toBe(ORG_A)
+      expect(oauthAccount).not.toHaveProperty('profileFetchedAt')
+      expect(oauthAccount.accountUuid).toBe(UUID_A)
+    })
+
+    it("does not keep the organization next to another account's uuid", async () => {
+      // The live email with B's uuid: the block was never A's own.
+      seedIdentity({ ...own, accountUuid: UUID_B, organizationUuid: ORG_B })
+      await switchClaudeAccount('1', 'a@example.com')
+
+      const oauthAccount = writtenOauthAccount()
+      expect(oauthAccount.accountUuid).toBe(UUID_A)
+      expect(oauthAccount).not.toHaveProperty('organizationUuid')
+      expect(oauthAccount).not.toHaveProperty('profileFetchedAt')
+    })
   })
 })
 
@@ -243,6 +428,189 @@ describe('repairStaleClaudeLiveIdentityUuid', () => {
     vi.mocked(readJsonFile).mockResolvedValue(null)
     expect(await repairStaleClaudeLiveIdentityUuid()).toBe(false)
     expect(atomicWriteJson).not.toHaveBeenCalled()
+  })
+
+  describe('organization', () => {
+    const organizations = [
+      { email: 'a@example.com', orgUuid: ORG_A },
+      { email: 'b@example.com', orgUuid: ORG_B }
+    ]
+
+    beforeEach(() => {
+      seedSequence({
+        '1': { email: 'a@example.com', uuid: UUID_A },
+        '2': { email: 'b@example.com', uuid: UUID_B }
+      })
+    })
+
+    it("corrects a file an older switch left with the previous account's organization", async () => {
+      // Switched from A to B by an older version: B's account, A's organization.
+      seedIdentity({
+        emailAddress: 'b@example.com',
+        accountUuid: UUID_B,
+        organizationUuid: ORG_A,
+        profileFetchedAt: 123,
+        displayName: 'A'
+      })
+
+      expect(await repairStaleClaudeLiveIdentityUuid(organizations)).toBe(true)
+
+      const oauthAccount = writtenOauthAccount()
+      expect(oauthAccount).toEqual({
+        emailAddress: 'b@example.com',
+        accountUuid: UUID_B,
+        organizationUuid: ORG_B,
+        displayName: 'A'
+      })
+      expect(writtenIdentity()?.numStartups).toBe(3)
+    })
+
+    it("drops another account's organization when the live account has none stored", async () => {
+      seedIdentity({
+        emailAddress: 'b@example.com',
+        accountUuid: UUID_B,
+        organizationUuid: ORG_A,
+        profileFetchedAt: 123
+      })
+
+      expect(
+        await repairStaleClaudeLiveIdentityUuid([
+          { email: 'a@example.com', orgUuid: ORG_A },
+          { email: 'b@example.com', orgUuid: null }
+        ])
+      ).toBe(true)
+
+      expect(writtenOauthAccount()).toEqual({ emailAddress: 'b@example.com', accountUuid: UUID_B })
+    })
+
+    it('writes the stored organization when it drops a foreign uuid', async () => {
+      seedSequence({
+        '1': { email: 'a@example.com', uuid: UUID_A },
+        '2': { email: 'b@example.com', uuid: '' }
+      })
+      seedIdentity({
+        emailAddress: 'b@example.com',
+        accountUuid: UUID_A,
+        organizationUuid: ORG_A,
+        profileFetchedAt: 123
+      })
+
+      expect(await repairStaleClaudeLiveIdentityUuid(organizations)).toBe(true)
+
+      expect(writtenOauthAccount()).toEqual({
+        emailAddress: 'b@example.com',
+        organizationUuid: ORG_B
+      })
+    })
+
+    it('matches accounts and organizations whatever their letter case', async () => {
+      seedIdentity({
+        emailAddress: 'B@Example.com',
+        accountUuid: UUID_B,
+        organizationUuid: ORG_B.toUpperCase(),
+        profileFetchedAt: 123
+      })
+
+      expect(await repairStaleClaudeLiveIdentityUuid(organizations)).toBe(false)
+      expect(atomicWriteJson).not.toHaveBeenCalled()
+    })
+
+    it('leaves alone an organization it cannot show to be wrong', async () => {
+      const consistent = {
+        emailAddress: 'b@example.com',
+        accountUuid: UUID_B,
+        organizationUuid: ORG_B,
+        profileFetchedAt: 123
+      }
+
+      // Stored and equal.
+      seedIdentity(consistent)
+      expect(await repairStaleClaudeLiveIdentityUuid(organizations)).toBe(false)
+
+      // Nothing stored for anyone: nothing to compare with.
+      expect(await repairStaleClaudeLiveIdentityUuid()).toBe(false)
+      expect(
+        await repairStaleClaudeLiveIdentityUuid([
+          { email: 'a@example.com', orgUuid: null },
+          { email: 'b@example.com', orgUuid: null }
+        ])
+      ).toBe(false)
+
+      // Nothing stored for the live account, and nobody else is known by it.
+      expect(
+        await repairStaleClaudeLiveIdentityUuid([{ email: 'a@example.com', orgUuid: ORG_A }])
+      ).toBe(false)
+
+      // Seats of one team share an organization: stored for both, so it is right.
+      seedIdentity({ ...consistent, organizationUuid: ORG_A })
+      expect(
+        await repairStaleClaudeLiveIdentityUuid([
+          { email: 'a@example.com', orgUuid: ORG_A },
+          { email: 'b@example.com', orgUuid: ORG_A }
+        ])
+      ).toBe(false)
+
+      // No organization in the file and none stored.
+      seedIdentity({ emailAddress: 'b@example.com', accountUuid: UUID_B })
+      expect(
+        await repairStaleClaudeLiveIdentityUuid([{ email: 'a@example.com', orgUuid: ORG_A }])
+      ).toBe(false)
+
+      expect(atomicWriteJson).not.toHaveBeenCalled()
+    })
+
+    it('repairs what the file holds once it has the lock, not what it saw before', async () => {
+      const stale = {
+        emailAddress: 'b@example.com',
+        accountUuid: UUID_B,
+        organizationUuid: ORG_A,
+        profileFetchedAt: 123
+      }
+      fsMocks.files.set(IDENTITY_PATH, '{}')
+      // Between the first look and the lock, the trust pre-flight adds a folder.
+      vi.mocked(readJsonFile)
+        .mockResolvedValueOnce({ numStartups: 3, oauthAccount: { ...stale } })
+        .mockResolvedValueOnce({
+          numStartups: 4,
+          projects: { '/repo': { hasTrustDialogAccepted: true } },
+          oauthAccount: { ...stale }
+        })
+
+      expect(await repairStaleClaudeLiveIdentityUuid(organizations)).toBe(true)
+      expect(writtenIdentity()).toEqual({
+        numStartups: 4,
+        projects: { '/repo': { hasTrustDialogAccepted: true } },
+        oauthAccount: {
+          emailAddress: 'b@example.com',
+          accountUuid: UUID_B,
+          organizationUuid: ORG_B
+        }
+      })
+    })
+
+    it('writes nothing when the file was put right before it got the lock', async () => {
+      fsMocks.files.set(IDENTITY_PATH, '{}')
+      vi.mocked(readJsonFile)
+        .mockResolvedValueOnce({
+          oauthAccount: {
+            emailAddress: 'b@example.com',
+            accountUuid: UUID_B,
+            organizationUuid: ORG_A
+          }
+        })
+        // The CLI fetched B's profile in between.
+        .mockResolvedValueOnce({
+          oauthAccount: {
+            emailAddress: 'b@example.com',
+            accountUuid: UUID_B,
+            organizationUuid: ORG_B,
+            profileFetchedAt: 456
+          }
+        })
+
+      expect(await repairStaleClaudeLiveIdentityUuid(organizations)).toBe(false)
+      expect(atomicWriteJson).not.toHaveBeenCalled()
+    })
   })
 })
 

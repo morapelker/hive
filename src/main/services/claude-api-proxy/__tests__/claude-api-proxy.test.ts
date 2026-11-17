@@ -5,7 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const dbMocks = vi.hoisted(() => ({
   settings: null as string | null,
-  rows: new Map<string, Record<string, unknown>>()
+  rows: new Map<string, Record<string, unknown>>(),
+  // What getSavedUsageAccountOrganizations returns; an Error makes it throw.
+  organizations: [] as Array<{ id: string; email: string; org_uuid: string | null }> | Error
 }))
 
 const storeMocks = vi.hoisted(() => ({
@@ -37,6 +39,10 @@ vi.mock('../../../db', () => ({
     getSetting: () => dbMocks.settings,
     getSavedUsageAccountByProviderEmail: (_provider: string, email: string) =>
       dbMocks.rows.get(email) ?? null,
+    getSavedUsageAccountOrganizations: () => {
+      if (dbMocks.organizations instanceof Error) throw dbMocks.organizations
+      return dbMocks.organizations
+    },
     upsertSavedUsageAccount: (data: Record<string, unknown>) => {
       const email = data.email as string
       const row = {
@@ -99,6 +105,7 @@ beforeEach(() => {
   }
   dbMocks.settings = null
   dbMocks.rows.clear()
+  dbMocks.organizations = []
   __resetClaudeApiProxyCachesForTests()
 })
 
@@ -229,6 +236,10 @@ describe('resolveClaudeApiUpstream', () => {
 
 describe('startClaudeApiProxy', () => {
   it('starts on a loopback port, exports the env, chains to the original base URL, and restores on close', async () => {
+    dbMocks.organizations = [
+      { id: 'row-a', email: 'a@example.com', org_uuid: 'org-a' },
+      { id: 'row-b', email: 'b@example.com', org_uuid: null }
+    ]
     const result = await startClaudeApiProxy({
       env: {
         ANTHROPIC_BASE_URL: 'https://gateway.example.com/v1-proxy',
@@ -250,6 +261,11 @@ describe('startClaudeApiProxy', () => {
     await vi.waitFor(() =>
       expect(storeMocks.repairStaleClaudeLiveIdentityUuid).toHaveBeenCalledTimes(1)
     )
+    // The identity-file repair is given every account's stored organization.
+    expect(storeMocks.repairStaleClaudeLiveIdentityUuid).toHaveBeenCalledWith([
+      { email: 'a@example.com', orgUuid: 'org-a' },
+      { email: 'b@example.com', orgUuid: null }
+    ])
 
     // Idempotent: a second start reports the running proxy.
     const again = await startClaudeApiProxy()
@@ -260,6 +276,19 @@ describe('startClaudeApiProxy', () => {
     expect(getClaudeApiProxyUserBaseUrl()).toBeNull()
     expect(process.env.ANTHROPIC_BASE_URL).toBeUndefined()
     expect(process.env._CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL).toBeUndefined()
+  })
+
+  it('still repairs the identity file by account uuid when the organizations cannot be read', async () => {
+    dbMocks.organizations = new Error('database is locked')
+    const result = await startClaudeApiProxy({
+      env: { HIVE_CLAUDE_API_PROXY_PORT: '0' },
+      includeSettingsEnv: false
+    })
+    expect(result.started).toBe(true)
+    await vi.waitFor(() =>
+      expect(storeMocks.repairStaleClaudeLiveIdentityUuid).toHaveBeenCalledTimes(1)
+    )
+    expect(storeMocks.repairStaleClaudeLiveIdentityUuid).toHaveBeenCalledWith([])
   })
 
   it('does not start or touch the env when skipped', async () => {

@@ -19,6 +19,7 @@ import { atomicWriteJson, readJsonFile } from './atomic-json'
 import { withClaudeConfigLock } from './claude-config-lock'
 import { createLogger } from './logger'
 import { fingerprintSecret } from './credential-fingerprint'
+import { normalizeOrgUuid } from '../db/types'
 
 const log = createLogger({ component: 'AccountStoreClaude' })
 
@@ -641,10 +642,76 @@ export async function persistRotatedLiveClaudeTokens(
   return 'persisted'
 }
 
-/** Port of ccswitch `switch_to`: makes `num`/`email` the live active Claude account. */
-export async function switchClaudeAccount(num: string, email: string): Promise<void> {
+/** A managed account and the organization stored for it (null: not learned yet). */
+export interface ClaudeAccountOrganization {
+  email: string
+  orgUuid: string | null
+}
+
+/**
+ * Make the organization in an identity block agree with the account the block
+ * names. `storedOrganization` is that account's stored organization, as
+ * `normalizeOrgUuid()` gives it; null when none is known.
+ *
+ * A block that still `describesAnotherAccount` (the outgoing account's, on a
+ * switch) never keeps that account's organization: it gets the stored one, or
+ * none. Its profile stamp goes either way, since the rest of the profile in
+ * the block is the other account's too, so the CLI fetches the right profile
+ * on its next launch.
+ *
+ * A block that is the account's own is left as the CLI wrote it, unless the
+ * stored organization says otherwise: a missing organization is filled in, and
+ * a different one is replaced and loses its stamp. Returns true when the block
+ * changed.
+ */
+function reconcileIdentityOrganization(
+  oauthAccount: Record<string, unknown>,
+  storedOrganization: string | null,
+  describesAnotherAccount: boolean
+): boolean {
+  const fileOrganization = normalizeOrgUuid(
+    typeof oauthAccount.organizationUuid === 'string' ? oauthAccount.organizationUuid : null
+  )
+
+  if (!describesAnotherAccount) {
+    if (storedOrganization === null || fileOrganization === storedOrganization) return false
+    oauthAccount.organizationUuid = storedOrganization
+    if (fileOrganization !== null) delete oauthAccount.profileFetchedAt
+    return true
+  }
+
+  let changed = false
+  if (storedOrganization === null) {
+    if ('organizationUuid' in oauthAccount) {
+      delete oauthAccount.organizationUuid
+      changed = true
+    }
+  } else if (fileOrganization !== storedOrganization) {
+    oauthAccount.organizationUuid = storedOrganization
+    changed = true
+  }
+  if ('profileFetchedAt' in oauthAccount) {
+    delete oauthAccount.profileFetchedAt
+    changed = true
+  }
+  return changed
+}
+
+/**
+ * Port of ccswitch `switch_to`: makes `num`/`email` the live active Claude account.
+ *
+ * `organizationUuid` is the organization stored for the target account (the
+ * index does not hold it, the caller's database does). Without one the identity
+ * file is left with no organization, unless it already describes the target.
+ */
+export async function switchClaudeAccount(
+  num: string,
+  email: string,
+  options: { organizationUuid?: string | null } = {}
+): Promise<void> {
   invalidateListCache()
   const seq = await readSequence()
+  const storedOrganization = normalizeOrgUuid(options.organizationUuid)
 
   // 1) Preserve the outgoing account's freshest (live) credentials into its
   //    own backup slot before overwriting the live credential, so a
@@ -693,17 +760,20 @@ export async function switchClaudeAccount(num: string, email: string): Promise<v
         ? { ...(identity.oauthAccount as Record<string, unknown>) }
         : {}
     const switchingToLive = currentLiveEmail !== null && currentLiveEmail === email.toLowerCase()
+    const fileUuid = typeof oauthAccount.accountUuid === 'string' ? oauthAccount.accountUuid : ''
+    // Whether the block, as found, is the target account's own: only then may
+    // its organization and profile stamp stay.
+    let describesTarget = switchingToLive
     oauthAccount.emailAddress = email
     if (uuid !== '') {
+      // The live email with another account's uuid is what an older switch left
+      // behind; nothing else in such a block can be trusted either.
+      if (fileUuid !== '' && fileUuid.toLowerCase() !== uuid.toLowerCase()) describesTarget = false
       oauthAccount.accountUuid = uuid
-    } else if (
-      switchingToLive &&
-      typeof oauthAccount.accountUuid === 'string' &&
-      oauthAccount.accountUuid
-    ) {
+    } else if (switchingToLive && fileUuid !== '') {
       // The index never learned this account's uuid but the CLI did (it fetched
       // its profile): remember it, so attribution by uuid works from now on.
-      uuid = oauthAccount.accountUuid
+      uuid = fileUuid
       const entry = seq.accounts[num]
       if (entry) seq.accounts[num] = { ...entry, uuid }
     } else {
@@ -713,9 +783,11 @@ export async function switchClaudeAccount(num: string, email: string): Promise<v
       // usage to the previous one. Dropping the profile stamp too makes the CLI
       // re-fetch its profile (and write the real uuid) on its next launch.
       delete oauthAccount.accountUuid
-      delete oauthAccount.organizationUuid
-      delete oauthAccount.profileFetchedAt
+      describesTarget = false
     }
+    // The same goes for the organization, whether or not the uuid is known: the
+    // block must never name one account with another account's organization.
+    reconcileIdentityOrganization(oauthAccount, storedOrganization, !describesTarget)
     identity.oauthAccount = oauthAccount
     await atomicWriteJson(path, identity, { pretty: true })
   })
@@ -747,49 +819,114 @@ export async function rememberClaudeAccountUuid(email: string, uuid: string): Pr
 }
 
 /**
- * Heal an identity file left behind by an older `switchClaudeAccount`: a
- * switch to an account the index knew no uuid for used to keep the OUTGOING
- * account's `accountUuid`, so the CLI stamped the new account's requests with
- * a foreign uuid. When the identity file's uuid provably belongs to a
- * different managed account than its email, drop it (and the profile stamp,
- * so the CLI re-fetches the right one). Returns true when the file changed.
+ * What `repairStaleClaudeLiveIdentityUuid` should leave in the identity file's
+ * `oauthAccount`, or null when the block is consistent (or says too little to
+ * judge).
  */
-export async function repairStaleClaudeLiveIdentityUuid(): Promise<boolean> {
-  const path = claudeJsonPath()
-  const identity = await readJsonFile<Record<string, unknown>>(path)
+function repairedStaleIdentityBlock(
+  identity: Record<string, unknown> | null,
+  seq: SequenceFile,
+  organizations: readonly ClaudeAccountOrganization[]
+): Record<string, unknown> | null {
   const oauthAccount =
     identity?.oauthAccount && typeof identity.oauthAccount === 'object'
       ? (identity.oauthAccount as Record<string, unknown>)
       : null
-  if (!identity || !oauthAccount) return false
+  if (!oauthAccount) return null
   const liveEmail =
     typeof oauthAccount.emailAddress === 'string' ? oauthAccount.emailAddress.toLowerCase() : ''
+  if (!liveEmail) return null
   const liveUuid =
     typeof oauthAccount.accountUuid === 'string' ? oauthAccount.accountUuid.toLowerCase() : ''
-  if (!liveEmail || !liveUuid) return false
-
-  const seq = await readSequence()
-  const entries = Object.values(seq.accounts)
-  const ownedByLiveEmail = entries.some(
-    (entry) =>
-      (entry.email ?? '').toLowerCase() === liveEmail &&
-      (entry.uuid ?? '').toLowerCase() === liveUuid
-  )
-  if (ownedByLiveEmail) return false
-  const ownedByOther = entries.some(
-    (entry) =>
-      (entry.uuid ?? '').toLowerCase() === liveUuid &&
-      (entry.email ?? '').toLowerCase() !== liveEmail
-  )
-  if (!ownedByOther) return false
 
   const repaired = { ...oauthAccount }
-  delete repaired.accountUuid
-  delete repaired.organizationUuid
-  delete repaired.profileFetchedAt
-  await atomicWriteJson(path, { ...identity, oauthAccount: repaired }, { pretty: true })
+  let uuidDropped = false
+
+  // A uuid that provably belongs to a different managed account than the email.
+  if (liveUuid) {
+    const entries = Object.values(seq.accounts)
+    const ownedByLiveEmail = entries.some(
+      (entry) =>
+        (entry.email ?? '').toLowerCase() === liveEmail &&
+        (entry.uuid ?? '').toLowerCase() === liveUuid
+    )
+    const ownedByOther = entries.some(
+      (entry) =>
+        (entry.uuid ?? '').toLowerCase() === liveUuid &&
+        (entry.email ?? '').toLowerCase() !== liveEmail
+    )
+    if (!ownedByLiveEmail && ownedByOther) {
+      delete repaired.accountUuid
+      uuidDropped = true
+    }
+  }
+
+  let storedOrganization: string | null = null
+  const otherOrganizations = new Set<string>()
+  for (const entry of organizations) {
+    const organization = normalizeOrgUuid(entry.orgUuid)
+    if (organization === null) continue
+    if (entry.email.toLowerCase() === liveEmail) storedOrganization = organization
+    else otherOrganizations.add(organization)
+  }
+  // With nothing stored for the live account, an organization stored for a
+  // different account cannot be confirmed as this one's (it would be for a seat
+  // of the same team). It is not carried: the CLI writes the real one back when
+  // it next fetches its profile.
+  const fileOrganization = normalizeOrgUuid(
+    typeof oauthAccount.organizationUuid === 'string' ? oauthAccount.organizationUuid : null
+  )
+  const organizationIsAnotherAccounts =
+    storedOrganization === null &&
+    fileOrganization !== null &&
+    otherOrganizations.has(fileOrganization)
+
+  const organizationChanged = reconcileIdentityOrganization(
+    repaired,
+    storedOrganization,
+    uuidDropped || organizationIsAnotherAccounts
+  )
+  return uuidDropped || organizationChanged ? repaired : null
+}
+
+/**
+ * Heal an identity file left behind by an older `switchClaudeAccount`, which
+ * kept the OUTGOING account's `accountUuid` when the index knew no uuid for the
+ * target, and always kept its `organizationUuid` and profile stamp. New
+ * sessions read that file.
+ *
+ * - A uuid that provably belongs to a different managed account than the file's
+ *   email is dropped, with the organization and the profile stamp (so the CLI
+ *   re-fetches the right profile).
+ * - An organization that differs from the one stored for the live account is
+ *   replaced by the stored one; one that is only known as another account's is
+ *   dropped. `organizations` is what the caller's database has stored; without
+ *   it only the uuid can be checked.
+ *
+ * Returns true when the file changed.
+ */
+export async function repairStaleClaudeLiveIdentityUuid(
+  organizations: readonly ClaudeAccountOrganization[] = []
+): Promise<boolean> {
+  const path = claudeJsonPath()
+  // Look before locking: almost every start-up finds nothing to repair.
+  const found = await readJsonFile<Record<string, unknown>>(path)
+  if (!found?.oauthAccount || typeof found.oauthAccount !== 'object') return false
+  const seq = await readSequence()
+  if (repairedStaleIdentityBlock(found, seq, organizations) === null) return false
+
+  // The CLI and the trust pre-flight rewrite this file too: decide again on a
+  // fresh read under the shared lock, so none of their writes is dropped.
+  const liveEmail = await withClaudeConfigLock(path, async () => {
+    const identity = await readJsonFile<Record<string, unknown>>(path)
+    const repaired = repairedStaleIdentityBlock(identity, seq, organizations)
+    if (!identity || !repaired) return null
+    await atomicWriteJson(path, { ...identity, oauthAccount: repaired }, { pretty: true })
+    return typeof repaired.emailAddress === 'string' ? repaired.emailAddress.toLowerCase() : ''
+  })
+  if (liveEmail === null) return false
   invalidateListCache()
-  log.info('Dropped a stale account uuid from the Claude identity file', { email: liveEmail })
+  log.info('Repaired a stale account identity in the Claude identity file', { email: liveEmail })
   return true
 }
 

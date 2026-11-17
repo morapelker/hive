@@ -23,7 +23,10 @@ import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import tls from 'tls'
 import { getDatabase } from '../../db'
-import { repairStaleClaudeLiveIdentityUuid } from '../account-store-claude'
+import {
+  repairStaleClaudeLiveIdentityUuid,
+  type ClaudeAccountOrganization
+} from '../account-store-claude'
 import { getUserEnvironmentVariables } from '../env-vars'
 import { createLogger } from '../logger'
 import { perfLog, PERF_ROLE_ENV } from '../perf-logging/perf-logger'
@@ -384,6 +387,24 @@ function emitRequestRecord(record: LocalApiProxyRequestRecord): void {
   }
 }
 
+/**
+ * Every saved Claude account with the organization stored for it, for the
+ * identity-file repair. Empty when the database cannot be read: the repair
+ * then checks the account uuid only.
+ */
+function readStoredClaudeOrganizations(): ClaudeAccountOrganization[] {
+  try {
+    return getDatabase()
+      .getSavedUsageAccountOrganizations('anthropic')
+      .map((row) => ({ email: row.email, orgUuid: row.org_uuid }))
+  } catch (error) {
+    log.warn('Could not read the stored Claude organizations', {
+      error: error instanceof Error ? error.message : String(error)
+    })
+    return []
+  }
+}
+
 export async function startClaudeApiProxy(
   options: StartClaudeApiProxyOptions = {}
 ): Promise<ClaudeApiProxyStartResult> {
@@ -494,12 +515,14 @@ export async function startClaudeApiProxy(
     applyBaseUrl(baseUrl, applyToProcessEnv)
     setClaudeApiProxyUserBaseUrl(originalBaseUrl)
 
-    // An older switch to an account whose uuid the index did not know left
-    // the OUTGOING account's uuid in the CLI's identity file — requests would
-    // be credited to the wrong account. Heal that once, in the background.
-    void repairStaleClaudeLiveIdentityUuid()
+    // An older switch left the OUTGOING account's organization in the CLI's
+    // identity file, and its uuid too when the index did not know the target's
+    // — requests would be credited to the wrong account. Heal that once, in
+    // the background.
+    void Promise.resolve()
+      .then(() => repairStaleClaudeLiveIdentityUuid(readStoredClaudeOrganizations()))
       .then((repaired) => {
-        if (repaired) log.info('Dropped a stale account uuid from the Claude identity file')
+        if (repaired) log.info('Repaired a stale account identity in the Claude identity file')
       })
       .catch((error) => {
         log.warn('Could not check the Claude identity file', {

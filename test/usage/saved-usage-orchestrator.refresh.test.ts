@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
     getSavedUsageAccountById: vi.fn(),
     getSavedUsageAccountsByProvider: vi.fn(),
     getSavedUsageAccountByProviderEmail: vi.fn(),
+    getSavedUsageAccountOrgUuid: vi.fn(),
     upsertSavedUsageAccount: vi.fn(),
     updateSavedUsageAccountUsage: vi.fn(),
     deleteSavedUsageAccount: vi.fn()
@@ -659,10 +660,30 @@ describe('switchAccount', () => {
     mocks.db.getSavedUsageAccountById.mockReturnValue(savedRow({ id: 'saved-1' }))
     mocks.listClaudeAccounts.mockResolvedValue([claudeAccount()])
 
+    mocks.db.getSavedUsageAccountOrgUuid.mockReturnValue(null)
+
     const result = await switchAccount('saved-1')
 
     expect(result).toEqual({ success: true })
-    expect(mocks.switchClaudeAccount).toHaveBeenCalledWith('1', 'claude@example.com')
+    expect(mocks.switchClaudeAccount).toHaveBeenCalledWith('1', 'claude@example.com', {
+      organizationUuid: null
+    })
+  })
+
+  it("hands the switch the target account's stored organization", async () => {
+    // The row was read before the account locks were taken; the organization is read
+    // again inside them, where a poll may just have stored it.
+    mocks.db.getSavedUsageAccountById.mockReturnValue(savedRow({ id: 'saved-1', org_uuid: null }))
+    mocks.db.getSavedUsageAccountOrgUuid.mockReturnValue('org-1')
+    mocks.listClaudeAccounts.mockResolvedValue([claudeAccount()])
+
+    const result = await switchAccount('saved-1')
+
+    expect(result).toEqual({ success: true })
+    expect(mocks.db.getSavedUsageAccountOrgUuid).toHaveBeenCalledWith('saved-1')
+    expect(mocks.switchClaudeAccount).toHaveBeenCalledWith('1', 'claude@example.com', {
+      organizationUuid: 'org-1'
+    })
   })
 
   it('maps a missing store account to an error result', async () => {
