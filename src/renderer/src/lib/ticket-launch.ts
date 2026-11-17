@@ -30,6 +30,7 @@ import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { orchestratorLaunchRefusal } from '@/lib/document-flow/ticket-run-membership'
 import { shellCommandIdOfTicket } from '@shared/lib/shell-commands'
 import { useShellCommandRunStore } from '@/stores/useShellCommandRunStore'
+import { beginTicketLaunch, settleTicketLaunch } from '@/stores/useTicketLaunchStore'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { opencodeApi } from '@/api/opencode-api'
 import { dbApi } from '@/api/db-api'
@@ -289,6 +290,12 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
     return launchTicketOnConnection(spec, spec.worktree)
   }
 
+  // From here until the ticket is linked to its session the board has nothing else to show
+  // for the launch: the card says what it is doing (a worktree can take a while to make)
+  const launchHold = beginTicketLaunch(
+    spec.ticketId,
+    spec.worktree.type === 'new' ? 'worktree' : 'session'
+  )
   try {
     // 1. Resolve worktree
     let worktreeId: string
@@ -344,6 +351,7 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
       worktreeId = spec.worktree.worktreeId
     }
     createdWorktreeId = worktreeId
+    launchHold.setPhase('session')
 
     // Setting-gated auto-pin so the ticket shows on the pinned board. Fired
     // here (not by callers) because 'current-branch' mode needs the worktree
@@ -383,6 +391,8 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
           variant_group_id: null,
           ...spec.ticketUpdateExtras
         })
+        // The ticket has its session: the card shows that from here
+        settleTicketLaunch(spec.ticketId)
       }
     })
     // worktreeId is included on every outcome so a just-created worktree stays
@@ -396,6 +406,8 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
       error: detail || 'Could not launch session',
       ...(createdWorktreeId ? { worktreeId: createdWorktreeId } : {})
     }
+  } finally {
+    launchHold.release()
   }
 }
 
@@ -415,6 +427,11 @@ async function launchTicketOnConnection(
 ): Promise<TicketLaunchResult> {
   const goalMode = spec.goalMode === true
   const goalSuccessCriteria = spec.goalSuccessCriteria?.trim() || null
+  // As in `launchTicketWithModel`; a new instance makes a worktree in every member project
+  const launchHold = beginTicketLaunch(
+    spec.ticketId,
+    target.type === 'connection-new' ? 'worktree' : 'session'
+  )
   try {
     const launch = await import('@/lib/connection-project-launch')
     const { getMemberProjects } = await import('@/lib/connection-project')
@@ -457,6 +474,7 @@ async function launchTicketOnConnection(
       connectionId,
       ...(worktrees ? { worktrees } : {})
     }
+    launchHold.setPhase('session')
 
     const { sdk, model, codexFastMode } = spec.modelConfig
     const customProviderId = resolveLaunchCustomProviderId(sdk, spec.modelConfig.customProviderId)
@@ -490,6 +508,8 @@ async function launchTicketOnConnection(
   } catch (err) {
     const detail = err instanceof Error ? err.message : null
     return { success: false, error: detail || 'Could not launch session' }
+  } finally {
+    launchHold.release()
   }
 }
 

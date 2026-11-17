@@ -72,6 +72,7 @@ import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useClaudeCliSessionPortal } from '@/contexts/ClaudeCliSessionPortalContext'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useShellCommandRunStore } from '@/stores/useShellCommandRunStore'
+import { useTicketLaunchStore } from '@/stores/useTicketLaunchStore'
 import { useCommandApprovalStore } from '@/stores/useCommandApprovalStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
@@ -1401,6 +1402,8 @@ function EditModeContent({
   const isPinnedBoardActive = useKanbanStore((s) => s.isPinnedBoardActive)
   const sendConnectionId = !isPinnedBoardActive && boardConnectionId ? boardConnectionId : null
   const canSend = ticket.column === 'todo' && !remoteLaunchInfo
+  // A launch of this ticket is already on its way (its card says so): no second Send
+  const isLaunching = useTicketLaunchStore((s) => ticket.id in s.phaseByTicket)
   // A shell command's ticket: Save & Send runs the command instead of launching an agent
   const isMarkedShellCommandTicket = shellCommandIdOfTicket(ticket) !== null
   const runsShellCommand = useShellCommandRunStore(
@@ -1502,11 +1505,11 @@ function EditModeContent({
         e.preventDefault()
         // Cmd/Ctrl+Shift+Enter saves and sends with the default launch
         // arguments (To Do tickets only); Cmd/Ctrl+Enter just saves.
-        if (e.shiftKey && canSend) handleSaveAndSend()
+        if (e.shiftKey && canSend && !isLaunching) handleSaveAndSend()
         else handleSave()
       }
     },
-    [handleSave, handleSaveAndSend, canSend, title]
+    [handleSave, handleSaveAndSend, canSend, isLaunching, title]
   )
 
   return (
@@ -1861,7 +1864,7 @@ function EditModeContent({
                   ? "Save the ticket and run its command now in the project's base worktree"
                   : 'Save the ticket and start it now with the default launch settings'
               }
-              disabled={!title.trim() || isSaving}
+              disabled={!title.trim() || isSaving || isLaunching}
               onClick={handleSaveAndSend}
             >
               <Send className="h-3.5 w-3.5" />
@@ -1869,9 +1872,11 @@ function EditModeContent({
                 ? runsShellCommand
                   ? 'Starting...'
                   : 'Sending...'
-                : runsShellCommand
-                  ? 'Save & Run'
-                  : 'Save & Send'}
+                : isLaunching
+                  ? 'Starting...'
+                  : runsShellCommand
+                    ? 'Save & Run'
+                    : 'Save & Send'}
               <ShortcutHint label={submitShortcutLabel({ shift: true })} />
             </Button>
           )}

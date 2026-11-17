@@ -34,6 +34,13 @@ import { useSessionStore } from '@/stores/useSessionStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import {
+  TICKET_ALREADY_LAUNCHING,
+  beginTicketLaunch,
+  isTicketLaunching,
+  settleTicketLaunch,
+  type TicketLaunchHold
+} from '@/stores/useTicketLaunchStore'
+import {
   useSettingsStore,
   resolveModelForSdk,
   resolvePreferredAgentSdk,
@@ -361,6 +368,13 @@ export async function quickLaunchTicket(ticket: KanbanTicket): Promise<boolean> 
   const projectId = ticket.project_id
   const settings = useSettingsStore.getState()
 
+  // A launch of this ticket is already on its way (its worktree is being made): a second
+  // gesture meanwhile must not start a second session
+  if (isTicketLaunching(ticket.id)) {
+    toast.info(TICKET_ALREADY_LAUNCHING)
+    return false
+  }
+
   // Connection-project tickets have no worktrees of their own — quick launch
   // creates a fresh worktree in EACH member project and connects them.
   const ticketProject = useProjectStore.getState().projects.find((p) => p.id === projectId)
@@ -427,6 +441,12 @@ export async function quickLaunchTicketOnConnection(
   const codexFastMode = settings.codexFastMode
   const promptText = buildPrompt(mode, ticket)
 
+  if (isTicketLaunching(ticket.id)) {
+    toast.info(TICKET_ALREADY_LAUNCHING)
+    return false
+  }
+  // The card says the ticket is starting until its session exists
+  const launchHold = beginTicketLaunch(ticket.id, 'session')
   try {
     const connection = useConnectionStore
       .getState()
@@ -482,6 +502,7 @@ export async function quickLaunchTicketOnConnection(
       variant_group_id: null,
       pending_launch_config: null
     })
+    settleTicketLaunch(ticket.id)
 
     const ticketTitle = ticket.title.trim()
     if (connection && !connection.custom_name && ticketTitle) {
@@ -555,6 +576,8 @@ export async function quickLaunchTicketOnConnection(
   } catch (error) {
     toast.error(error instanceof Error ? error.message : 'Failed to start session')
     return false
+  } finally {
+    launchHold.release()
   }
 }
 
@@ -1496,6 +1519,8 @@ export function WorktreePickerModal({
 
     // ── Connection mode path ──────────────────────────────────────
     if (isConnectionMode && connectionId) {
+      // The dialog can be closed while it sends: the card then says the ticket is starting
+      const launchHold = beginTicketLaunch(ticket.id, 'session')
       try {
         const connection = useConnectionStore
           .getState()
@@ -1582,6 +1607,7 @@ export function WorktreePickerModal({
           // auto-launched again later (same hole as the worktree path below).
           pending_launch_config: null
         })
+        settleTicketLaunch(ticket.id)
 
         // Name the connection after the ticket unless the user already renamed it
         const ticketTitle = ticket.title.trim()
@@ -1691,6 +1717,7 @@ export function WorktreePickerModal({
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Failed to start session')
       } finally {
+        launchHold.release()
         setIsSending(false)
       }
       return // Don't fall through to worktree logic
@@ -1795,6 +1822,9 @@ export function WorktreePickerModal({
       }
     }
 
+    // Taken once this is a launch (not a queued config, an assignment or a multi-model
+    // hand-off): the dialog can be closed while it sends, and the card then says so
+    let launchHold: TicketLaunchHold | null = null
     try {
       let worktreeId = selectedWorktreeId
 
@@ -1957,6 +1987,8 @@ export function WorktreePickerModal({
         return
       }
 
+      launchHold = beginTicketLaunch(ticket.id, isNewWorktree && project ? 'worktree' : 'session')
+
       // Create new worktree if needed
       if (isNewWorktree && project) {
         const targetBranch = sourceBranch ?? defaultBranchName
@@ -1982,6 +2014,7 @@ export function WorktreePickerModal({
         setIsSending(false)
         return
       }
+      launchHold.setPhase('session')
 
       // Setting-gated auto-pin so the ticket shows on the pinned board — now
       // that the worktree exists, 'current-branch' mode can pin it directly.
@@ -2088,6 +2121,7 @@ export function WorktreePickerModal({
         // auto-launched again later (e.g. once its blocking dependency resolves).
         pending_launch_config: null
       })
+      settleTicketLaunch(ticket.id)
 
       // Trigger usage refresh so the board shows up-to-date usage (debounced in store)
       const launchUsageProvider = resolveDefaultUsageProvider(agentSdk, effectiveCustomProviderId)
@@ -2192,6 +2226,7 @@ export function WorktreePickerModal({
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to start session')
     } finally {
+      launchHold?.release()
       setIsSending(false)
     }
   }, [

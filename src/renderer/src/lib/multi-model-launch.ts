@@ -1,6 +1,7 @@
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useUsageStore, resolveDefaultUsageProvider } from '@/stores/useUsageStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
+import { beginTicketLaunch, type TicketLaunchHold } from '@/stores/useTicketLaunchStore'
 import { resolveModelForSdk } from '@/stores/useSettingsStore'
 import { toast } from '@/lib/toast'
 import {
@@ -71,6 +72,11 @@ function errorMessage(err: unknown): string {
  * throw is toasted instead — this function never rethrows.
  */
 export async function runMultiModelLaunch(plan: MultiModelLaunchPlan): Promise<void> {
+  // Every ticket of the batch shows as starting until its own launch is over: the launches
+  // run one after the other, so the last one waits for all the worktrees before it
+  const launchHolds = new Map<string, TicketLaunchHold>([
+    [plan.ticket.id, beginTicketLaunch(plan.ticket.id)]
+  ])
   try {
     const variantGroupId = crypto.randomUUID()
     const effectiveModels = plan.entries.map(resolveEffectiveModel)
@@ -134,6 +140,7 @@ export async function runMultiModelLaunch(plan: MultiModelLaunchPlan): Promise<v
         continue
       }
       ticketIds.push(duplicate.id)
+      launchHolds.set(duplicate.id, beginTicketLaunch(duplicate.id))
     }
 
     // Sequential launches — never parallel, git worktree creation serializes anyway.
@@ -161,6 +168,8 @@ export async function runMultiModelLaunch(plan: MultiModelLaunchPlan): Promise<v
         // tickets keep their shared group id.
         ticketUpdateExtras: { variant_group_id: variantGroupId }
       })
+      // Launched or not, this ticket's part of the batch is over
+      launchHolds.get(ticketId)?.release()
 
       if (!result.success) {
         toast.error(`Failed to launch ${model.modelID}: ${result.error}`)
@@ -225,5 +234,7 @@ export async function runMultiModelLaunch(plan: MultiModelLaunchPlan): Promise<v
     const label = liveTicket ? visibleTicketTitle(liveTicket) : plan.ticket.title
     console.error(`Multi-model launch failed for "${label}"`, err)
     toast.error(`Failed to launch "${label}": ${errorMessage(err)}`)
+  } finally {
+    for (const hold of launchHolds.values()) hold.release()
   }
 }

@@ -9,6 +9,7 @@ import { opencodeApi } from '@/api/opencode-api'
 import { toast } from '@/lib/toast'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useShellCommandRunStore } from '@/stores/useShellCommandRunStore'
+import { settleTicketLaunch, useTicketLaunchStore } from '@/stores/useTicketLaunchStore'
 import { createSessionShellCommandSnapshot } from '@shared/lib/shell-commands'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useSessionStore } from '@/stores/useSessionStore'
@@ -223,6 +224,69 @@ describe('launchTicketWithModel', () => {
     useProjectStore.setState(initialProjectState, true)
     useUsageStore.setState(initialUsageState, true)
     useWorktreeStatusStore.setState(initialWorktreeStatusState, true)
+  })
+
+  describe('launch in flight on the card', () => {
+    const phase = (): string | undefined =>
+      useTicketLaunchStore.getState().phaseByTicket['ticket-1']
+
+    afterEach(() => settleTicketLaunch('ticket-1'))
+
+    it('marks the ticket while its worktree is made, until it is linked to its session', async () => {
+      const { createWorktreeFromBranch, updateTicket } = setupStores()
+      const phases: (string | undefined)[] = []
+      let finishWorktree: () => void = () => {}
+      createWorktreeFromBranch.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finishWorktree = () => resolve({ success: true, worktree: makeWorktree() })
+          })
+      )
+      updateTicket.mockImplementation(async () => {
+        phases.push(phase())
+      })
+
+      const launch = launchTicketWithModel(
+        baseSpec({ worktree: { type: 'new', sourceBranch: 'main' } })
+      )
+      // Marked before the first await: a second gesture in the same tick already sees it
+      expect(phase()).toBe('worktree')
+
+      finishWorktree()
+      const result = await launch
+
+      expect(result.success).toBe(true)
+      // Still marked while the ticket was being linked, not once it was
+      expect(phases).toEqual(['session'])
+      expect(phase()).toBeUndefined()
+    })
+
+    it('stops marking the ticket when the launch fails', async () => {
+      const { createWorktreeFromBranch } = setupStores()
+      createWorktreeFromBranch.mockResolvedValue({ success: false, error: 'boom' })
+
+      const result = await launchTicketWithModel(
+        baseSpec({ worktree: { type: 'new', sourceBranch: 'main' } })
+      )
+
+      expect(result).toMatchObject({ success: false, error: 'boom' })
+      expect(phase()).toBeUndefined()
+    })
+
+    it('never marks a ticket it refuses to launch', async () => {
+      useKanbanStore.setState({
+        tickets: new Map([
+          ['project-1', [{ id: 'ticket-1', external_provider: 'document-run', external_id: 'r' }]]
+        ]) as never
+      })
+      const seen: (string | undefined)[] = []
+      const unsubscribe = useTicketLaunchStore.subscribe(() => seen.push(phase()))
+
+      await launchTicketWithModel(baseSpec())
+      unsubscribe()
+
+      expect(seen).toEqual([])
+    })
   })
 
   it('refuses the ticket of a document run before creating anything', async () => {

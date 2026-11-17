@@ -21,6 +21,12 @@ import {
   resolvePreferredAgentSdk
 } from '@/stores/useSettingsStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
+import {
+  TICKET_ALREADY_LAUNCHING,
+  beginTicketLaunch,
+  isTicketLaunching,
+  settleTicketLaunch
+} from '@/stores/useTicketLaunchStore'
 import { useUsageStore, resolveDefaultUsageProvider } from '@/stores/useUsageStore'
 import { connectionApi } from '@/api/connection-api'
 import { worktreeApi } from '@/api/worktree-api'
@@ -647,6 +653,8 @@ export async function startTicketSessionOnConnectionInstance(args: {
         pending_launch_config: null,
         ...args.ticketUpdateExtras
       })
+      // The ticket has its session: the card shows that from here
+      settleTicketLaunch(ticket.id)
 
       // Name the instance after the ticket unless the user already renamed it —
       // never the base instance (it is the project's "main", like a default worktree).
@@ -692,24 +700,35 @@ export async function launchTicketOnConnectionProject(args: {
   // `launchTicketWithModel`, never this entry), before any instance is made for it
   const refusal = orchestratorLaunchRefusal(args.ticket.id)
   if (refusal) return { success: false, error: refusal }
-  const memberProjects = getMemberProjects(args.savedProject)
-  const nameHint = canonicalizeTicketTitle(args.ticket.title) || undefined
-  const resolved = await resolveConnectionForLaunch({
-    savedProjectId: args.savedProject.id,
-    memberProjects,
-    target: args.target,
-    nameHint
-  })
-  if (!resolved.connectionId) {
-    return { success: false, error: resolved.error || 'Failed to resolve connection' }
+  // The ticket's card says a launch is on its way until its session exists: making the
+  // instance (for a new one, a worktree in every member project) can take a while
+  const launchHold = beginTicketLaunch(
+    args.ticket.id,
+    args.target.type === 'new' ? 'worktree' : 'session'
+  )
+  try {
+    const memberProjects = getMemberProjects(args.savedProject)
+    const nameHint = canonicalizeTicketTitle(args.ticket.title) || undefined
+    const resolved = await resolveConnectionForLaunch({
+      savedProjectId: args.savedProject.id,
+      memberProjects,
+      target: args.target,
+      nameHint
+    })
+    if (!resolved.connectionId) {
+      return { success: false, error: resolved.error || 'Failed to resolve connection' }
+    }
+    launchHold.setPhase('session')
+    return await startTicketSessionOnConnectionInstance({
+      ticket: args.ticket,
+      savedProjectId: args.savedProject.id,
+      connectionId: resolved.connectionId,
+      connectionPath: resolved.connectionPath,
+      options: args.options
+    })
+  } finally {
+    launchHold.release()
   }
-  return startTicketSessionOnConnectionInstance({
-    ticket: args.ticket,
-    savedProjectId: args.savedProject.id,
-    connectionId: resolved.connectionId,
-    connectionPath: resolved.connectionPath,
-    options: args.options
-  })
 }
 
 /**
@@ -725,6 +744,11 @@ export async function quickLaunchTicketOnConnectionProject(
   const savedProject = useProjectStore.getState().projects.find((p) => p.id === ticket.project_id)
   if (!savedProject || savedProject.kind !== 'connection') {
     toast.error('Connection project not found')
+    return false
+  }
+  // A second gesture while the first launch still makes its worktrees starts nothing
+  if (isTicketLaunching(ticket.id)) {
+    toast.info(TICKET_ALREADY_LAUNCHING)
     return false
   }
   const { sdk, model } = resolveQuickModel()

@@ -128,6 +128,7 @@ import { ConnectionProjectTicketTag } from './ConnectionProjectTicketTag'
 import { useScriptStore } from '@/stores/useScriptStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useShellCommandRunStore } from '@/stores/useShellCommandRunStore'
+import { ticketLaunchLabel, useTicketLaunchStore } from '@/stores/useTicketLaunchStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
 import { usePinnedStore } from '@/stores/usePinnedStore'
 import { useFavoriteTicketsStore } from '@/stores/useFavoriteTicketsStore'
@@ -722,6 +723,15 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     )
   )
 
+  // ── Launch on its way ──
+  // Between the gesture that starts the ticket (Create & Send, a right-drag, the picker) and
+  // the session that puts it in In Progress, its worktree is being made: the card stays where
+  // it was, dimmed, and says what the launch is doing. It cannot be dragged meanwhile, so it
+  // is not started a second time.
+  const launchPhase = useTicketLaunchStore(
+    useCallback((state) => state.phaseByTicket[ticket.id] ?? null, [ticket.id])
+  )
+
   // ── Launch that never got going (claude-cli) ──
   // The CLI is sitting on its folder-trust dialog, or never reported a
   // SessionStart: nothing has run, whatever the column says. Dropped by the
@@ -1277,7 +1287,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   )
   const { onMouseDown: rightDragMouseDown, onContextMenuCapture: rightDragContextMenuCapture } =
     useRightButtonDrag({
-      enabled: !isArchived && !blockingDiagnostic && !isDocumentRunTicket,
+      enabled: !isArchived && !blockingDiagnostic && !isDocumentRunTicket && !launchPhase,
       onDrop: handleRightDrop,
       // Show the default model + effort the drop will launch with, riding
       // along under the ghost so it's clear before release
@@ -1785,7 +1795,9 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                 data-project-id={ticket.project_id}
                 data-ticket-key={domTicketKey}
                 data-sidebar-hover-highlight={isSidebarHoverHighlighted ? '' : undefined}
-                draggable={!isArchived && !blockingDiagnostic && !isRunTicketHeld}
+                data-launching={launchPhase ? '' : undefined}
+                aria-busy={launchPhase ? true : undefined}
+                draggable={!isArchived && !blockingDiagnostic && !isRunTicketHeld && !launchPhase}
                 onDragStart={handleDragStart}
                 onDragEnd={handleDragEnd}
                 onClick={handleClick}
@@ -1823,6 +1835,8 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   isDragging && 'invisible',
                   isArchived && 'opacity-50 cursor-default',
                   (isBlocked || blockingDiagnostic) && 'opacity-60',
+                  // A launch on its way: everything but the line that says so is dimmed
+                  launchPhase && 'cursor-progress [&>*:not([data-launch-status])]:opacity-45',
                   // Highlighted as a blocker of the currently hovered ticket
                   isHighlightedAsBlocker && 'border-dashed !border-amber-500/70 ring-1 ring-amber-500/30',
                   // Linked to the sidebar project/worktree/connection under the pointer
@@ -2554,6 +2568,19 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                     </Tooltip>
                   )
                 })()}
+              </div>
+            )}
+            {/* A launch on its way: what it is doing, at full strength on the dimmed card */}
+            {launchPhase && (
+              <div
+                data-launch-status=""
+                data-testid="kanban-ticket-launching"
+                data-phase={launchPhase}
+                role="status"
+                className="mt-1.5 flex items-center gap-1.5 text-[11px] font-medium text-foreground"
+              >
+                <Loader2 className="h-3 w-3 shrink-0 animate-spin text-muted-foreground" />
+                {ticketLaunchLabel(launchPhase)}
               </div>
             )}
               </div>
