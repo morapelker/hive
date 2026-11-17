@@ -1065,4 +1065,99 @@ describeIf('database migration safety', () => {
       db.close()
     })
   })
+
+  describe('saved usage account organization (v64)', () => {
+    const ORG = '11111111-2222-4333-8444-555555555555'
+    const savedAccountRows = (db: DatabaseService): Record<string, unknown>[] =>
+      db.getRawDb().prepare('SELECT * FROM saved_usage_accounts ORDER BY id').all() as Record<
+        string,
+        unknown
+      >[]
+
+    it('adds saved_usage_accounts.org_uuid on a fresh database', () => {
+      const db = new DatabaseService(makeDbPath())
+      db.init()
+
+      expect(db.getSchemaVersion()).toBe(CURRENT_SCHEMA_VERSION)
+      expect(columnNames(db, 'saved_usage_accounts')).toEqual(expect.arrayContaining(['org_uuid']))
+      expect(db.getSavedUsageAccountOrganizations()).toEqual([])
+
+      db.close()
+    })
+
+    it('upgrades a v63-shaped database keeping its accounts, which read as having no organization', () => {
+      const dbPath = makeDbPath()
+      const seeded = new DatabaseService(dbPath)
+      seeded.init()
+      const claude = seeded.upsertSavedUsageAccount({
+        provider: 'anthropic',
+        email: 'claude@example.com',
+        credentials_json: '',
+        last_usage_json: JSON.stringify({ seven_day: { utilization: 40 } }),
+        status: 'stale',
+        last_error: 'rate limited'
+      })
+      seeded.upsertSavedUsageAccount({
+        provider: 'openai',
+        email: 'codex@example.com',
+        credentials_json: ''
+      })
+      // v63 shape: saved_usage_accounts without the organization.
+      seeded.getRawDb().exec('ALTER TABLE saved_usage_accounts DROP COLUMN org_uuid')
+      seeded.setSetting('schema_version', '63')
+      const before = savedAccountRows(seeded)
+      expect(before).toHaveLength(2)
+      expect(Object.keys(before[0])).not.toContain('org_uuid')
+      seeded.close()
+
+      const db = new DatabaseService(dbPath)
+      db.init()
+
+      expect(db.getSchemaVersion()).toBe(CURRENT_SCHEMA_VERSION)
+      expect(columnNames(db, 'saved_usage_accounts')).toEqual(expect.arrayContaining(['org_uuid']))
+      // Every row is what it was, with the new value empty.
+      expect(savedAccountRows(db)).toEqual(before.map((row) => ({ ...row, org_uuid: null })))
+      expect(db.getSavedUsageAccountById(claude.id)).toEqual({ ...claude, org_uuid: null })
+      expect(db.getSavedUsageAccountOrgUuid(claude.id)).toBeNull()
+
+      // The upgraded row takes an organization, and it survives a restart.
+      expect(db.setSavedUsageAccountOrgUuid(claude.id, ORG)?.org_uuid).toBe(ORG)
+      db.close()
+      const db2 = new DatabaseService(dbPath)
+      expect(() => db2.init()).not.toThrow()
+      expect(db2.getSavedUsageAccountOrgUuid(claude.id)).toBe(ORG)
+      expect(db2.setSavedUsageAccountOrgUuid(claude.id, null)?.org_uuid).toBeNull()
+      db2.close()
+      const db3 = new DatabaseService(dbPath)
+      db3.init()
+      expect(db3.getSavedUsageAccountOrgUuid(claude.id)).toBeNull()
+      db3.close()
+    })
+
+    it('repairs the column even if schema_version was already advanced', () => {
+      const dbPath = makeDbPath()
+      const seeded = new DatabaseService(dbPath)
+      seeded.init()
+      seeded.getRawDb().exec('ALTER TABLE saved_usage_accounts DROP COLUMN org_uuid')
+      seeded.close()
+
+      const db = new DatabaseService(dbPath)
+      db.init()
+
+      expect(columnNames(db, 'saved_usage_accounts')).toEqual(expect.arrayContaining(['org_uuid']))
+      db.close()
+    })
+
+    it('adds the column to the accounts table of an origin/main v31-shaped database', () => {
+      const dbPath = makeDbPath()
+      seedOriginMainVersion31Shape(dbPath)
+
+      const db = new DatabaseService(dbPath)
+      db.init()
+
+      expect(db.getSchemaVersion()).toBe(CURRENT_SCHEMA_VERSION)
+      expect(columnNames(db, 'saved_usage_accounts')).toEqual(expect.arrayContaining(['org_uuid']))
+      db.close()
+    })
+  })
 })

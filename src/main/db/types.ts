@@ -408,8 +408,29 @@ export interface SavedUsageAccount {
   last_fetched_at: string | null
   status: SavedUsageStatus
   last_error: string | null
+  /**
+   * The organization this account's requests are billed to (Anthropic's
+   * `anthropic-organization-id`), in the form normalizeOrgUuid() gives. Null until it is learned.
+   */
+  org_uuid: string | null
   created_at: string
   updated_at: string
+}
+
+/** One saved usage account and the organization stored for it (null: not known yet). */
+export interface SavedUsageAccountOrganization {
+  id: string
+  email: string
+  org_uuid: string | null
+}
+
+/**
+ * The form an organization id is stored in and has to be looked up by: trimmed and lower-cased
+ * (SQLite compares TEXT case-sensitively). Null for a missing or empty value.
+ */
+export function normalizeOrgUuid(value: string | null | undefined): string | null {
+  const normalized = value?.trim().toLowerCase()
+  return normalized ? normalized : null
 }
 
 export interface SavedUsageAccountUpsert {

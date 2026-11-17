@@ -93,6 +93,7 @@ function row(email: string, usage: UsageData | null, id = `row-${email}`): Saved
     last_fetched_at: '2026-01-01T00:00:00.000Z',
     status: 'error',
     last_error: 'poll failed',
+    org_uuid: null,
     created_at: '2026-01-01T00:00:00.000Z',
     updated_at: '2026-01-01T00:00:00.000Z'
   }

@@ -1,5 +1,6 @@
 export { DatabaseService, getDatabase, closeDatabase } from './database'
 export { CURRENT_SCHEMA_VERSION, MIGRATIONS } from './schema'
+export { normalizeOrgUuid } from './types'
 export type {
   Project,
   ProjectCreate,
@@ -59,6 +60,7 @@ export type {
   DiffCommentCreate,
   DiffCommentUpdate,
   SavedUsageAccount,
+  SavedUsageAccountOrganization,
   SavedUsageAccountUpsert,
   SavedUsageAccountUsageUpdate,
   SavedUsageProvider,

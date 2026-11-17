@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 63
+export const CURRENT_SCHEMA_VERSION = 64
 
 /**
  * "Implement document" flow (v55). `document_runs` is one spec document turned into tickets
@@ -1180,6 +1180,15 @@ DROP TABLE IF EXISTS diff_comments;`
     name: 'add_document_run_item_worktree_clean_status',
     // `cleaning` while a finished ticket's worktree is being cleaned, for the ticket to say so.
     up: `-- NOTE: ALTER TABLE for document_run_items.worktree_clean_status is handled idempotently by
+         -- safeAddColumn() in database.ts to avoid "duplicate column" errors.`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 64,
+    name: 'add_saved_usage_account_org_uuid',
+    // The organization a saved usage account's requests are billed to, as Anthropic names it in
+    // the anthropic-organization-id response header. Null until it is learned.
+    up: `-- NOTE: ALTER TABLE for saved_usage_accounts.org_uuid is handled idempotently by
          -- safeAddColumn() in database.ts to avoid "duplicate column" errors.`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }

@@ -89,6 +89,7 @@ function savedRow(overrides: Partial<SavedUsageAccount> = {}): SavedUsageAccount
     last_fetched_at: null,
     status: 'ok',
     last_error: null,
+    org_uuid: null,
     created_at: '2026-01-01T00:00:00.000Z',
     updated_at: '2026-01-01T00:00:00.000Z',
     ...overrides

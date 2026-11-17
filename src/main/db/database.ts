@@ -139,6 +139,7 @@ import type {
   DiffCommentCreate,
   DiffCommentUpdate,
   SavedUsageAccount,
+  SavedUsageAccountOrganization,
   SavedUsageAccountUpsert,
   SavedUsageAccountUsageUpdate,
   SavedUsageProvider,
@@ -157,6 +158,7 @@ import type {
   RelocateProjectResult
 } from '../services/dev-folder/types'
 import type { DocumentRunStatus } from '@shared/types/document-flow'
+import { normalizeOrgUuid } from './types'
 
 /** Escape `%`, `_` and `\` for a LIKE pattern used with `ESCAPE '\'`. */
 function escapeLike(value: string): string {
@@ -1053,6 +1055,8 @@ export class DatabaseService implements DocumentFlowDb, DataProjectsRepository {
       CREATE INDEX IF NOT EXISTS idx_saved_usage_accounts_provider_created
         ON saved_usage_accounts(provider, created_at);
     `)
+    // v64: the organization the account is billed to. Null until it is learned.
+    this.safeAddColumn('saved_usage_accounts', 'org_uuid', 'TEXT DEFAULT NULL')
 
     db.exec(`
       CREATE TABLE IF NOT EXISTS discord_resources (
@@ -2218,6 +2222,50 @@ export class DatabaseService implements DocumentFlowDb, DataProjectsRepository {
     return db
       .prepare('SELECT * FROM saved_usage_accounts WHERE provider = ? ORDER BY created_at ASC')
       .all(provider) as SavedUsageAccount[]
+  }
+
+  /** The organization stored for one saved usage account; null when none is known. */
+  getSavedUsageAccountOrgUuid(id: string): string | null {
+    const db = this.getDb()
+    const row = db.prepare('SELECT org_uuid FROM saved_usage_accounts WHERE id = ?').get(id) as
+      { org_uuid: string | null } | undefined
+    return row?.org_uuid ?? null
+  }
+
+  /**
+   * Every saved usage account of a provider with its organization, oldest first. Accounts
+   * whose organization is not known yet are listed with null. Several accounts may carry the
+   * same organization (seats of one team), so a lookup by organization has to expect any
+   * number of matches.
+   */
+  getSavedUsageAccountOrganizations(
+    provider: SavedUsageProvider = 'anthropic'
+  ): SavedUsageAccountOrganization[] {
+    const db = this.getDb()
+    return db
+      .prepare(
+        `SELECT id, email, org_uuid FROM saved_usage_accounts
+         WHERE provider = ? ORDER BY created_at ASC`
+      )
+      .all(provider) as SavedUsageAccountOrganization[]
+  }
+
+  /**
+   * Set one account's organization, or clear it with null (an empty value clears too). The
+   * value is stored as normalizeOrgUuid() returns it. Only `org_uuid` and `updated_at` are
+   * written: the cached usage and what the last poll left (`last_fetched_at`, `status`,
+   * `last_error`) stay as they are. Writing the value the row already holds changes nothing.
+   * Returns the row, or null when there is no such account.
+   */
+  setSavedUsageAccountOrgUuid(id: string, orgUuid: string | null): SavedUsageAccount | null {
+    const db = this.getDb()
+    const now = new Date().toISOString()
+    const value = normalizeOrgUuid(orgUuid)
+    db.prepare(
+      `UPDATE saved_usage_accounts SET org_uuid = ?, updated_at = ?
+       WHERE id = ? AND org_uuid IS NOT ?`
+    ).run(value, now, id, value)
+    return this.getSavedUsageAccountById(id)
   }
 
   clearSavedUsageAccountCredentials(): void {
