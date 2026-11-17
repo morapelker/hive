@@ -7,7 +7,9 @@
  * sessions, the Agent SDK, tmux launches, plain terminals in the server child,
  * title generation. The proxy forwards to whatever the user already pointed
  * the CLI at (a corporate gateway) or to api.anthropic.com, and feeds each
- * exchange to the live usage updater. Nothing is logged to disk.
+ * exchange to the app's live usage updater (`claude-usage-live.ts`), which it
+ * neither creates nor disposes: the updater outlives the proxy. Nothing is
+ * logged to disk.
  *
  * The tunnel itself runs in its own utility process (`claude-proxy-host.ts`)
  * so that a stall in main — whose thread pool once wedged for a whole night
@@ -21,17 +23,7 @@ import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import tls from 'tls'
 import { getDatabase } from '../../db'
-import { publishDesktopBackendEvent } from '../../desktop/backend-event-publisher'
-import {
-  addClaudeAccount,
-  isClaudeAccountManaged,
-  listClaudeAccountTokenFingerprints,
-  readClaudeLiveIdentityCached,
-  readClaudeLiveRawBlob,
-  readClaudeLiveTokenFingerprint,
-  rememberClaudeAccountUuid,
-  repairStaleClaudeLiveIdentityUuid
-} from '../account-store-claude'
+import { repairStaleClaudeLiveIdentityUuid } from '../account-store-claude'
 import { getUserEnvironmentVariables } from '../env-vars'
 import { createLogger } from '../logger'
 import { perfLog, PERF_ROLE_ENV } from '../perf-logging/perf-logger'
@@ -48,7 +40,8 @@ import {
   type ProxyHostStatus
 } from './claude-proxy-host-manager'
 import { CLAUDE_PROXY_HOST_SERVICE_NAME } from './claude-proxy-host-protocol'
-import { ClaudeUsageLiveUpdater } from './claude-usage-live-updater'
+import { getClaudeUsageLiveUpdater } from './claude-usage-live'
+import type { ClaudeProxyObservedExchange } from './claude-usage-live-updater'
 import {
   startLocalApiProxy,
   type LocalApiProxy,
@@ -88,7 +81,6 @@ interface ProxyState {
   hostMode: ClaudeApiProxyHostMode
   proxy: LocalApiProxy | null
   manager: ClaudeProxyHostManager | null
-  updater: ClaudeUsageLiveUpdater
   /** The user's own `ANTHROPIC_BASE_URL` (the default upstream) before the proxy took the variable over. */
   originalBaseUrl: string | null
   /** What `process.env.ANTHROPIC_BASE_URL` held before we exported ours, to restore on close. */
@@ -286,32 +278,12 @@ export function resolveClaudeApiUpstream(
   )
 }
 
-function buildUpdater(): ClaudeUsageLiveUpdater {
-  return new ClaudeUsageLiveUpdater({
-    listManagedAccounts: (options) => listClaudeAccountTokenFingerprints(options),
-    // Consulted on every update: served from a stat-keyed cache so the large
-    // identity file is only re-parsed when it actually changed.
-    readLiveIdentity: readClaudeLiveIdentityCached,
-    readLiveTokenFingerprint: readClaudeLiveTokenFingerprint,
-    isAccountManaged: isClaudeAccountManaged,
-    ensureLiveAccountManaged: async (email, uuid) => {
-      const rawBlob = await readClaudeLiveRawBlob()
-      if (!rawBlob) return false
-      await addClaudeAccount(email, uuid, rawBlob)
-      return true
-    },
-    rememberAccountUuid: rememberClaudeAccountUuid,
-    readUsageRow: (email) => getDatabase().getSavedUsageAccountByProviderEmail('anthropic', email),
-    writeLiveUsage: (email, usage) => {
-      const db = getDatabase()
-      const row =
-        db.getSavedUsageAccountByProviderEmail('anthropic', email) ??
-        db.upsertSavedUsageAccount({ provider: 'anthropic', email, credentials_json: '' })
-      return db.updateSavedUsageAccountLiveUsage(row.id, JSON.stringify(usage)) ?? row
-    },
-    publish: (channel, payload) => publishDesktopBackendEvent(channel, payload),
-    log
-  })
+/**
+ * Every exchange either tunnel reports goes to the app's one live usage
+ * updater. Looked up per exchange: the updater is not this proxy's to hold.
+ */
+function feedLiveUsageUpdater(exchange: ClaudeProxyObservedExchange): void {
+  getClaudeUsageLiveUpdater().handleExchange(exchange)
 }
 
 /**
@@ -448,7 +420,6 @@ export async function startClaudeApiProxy(
 
   startingPromise = (async (): Promise<ClaudeApiProxyStartResult> => {
     const originalBaseUrl = nonEmpty(env[ANTHROPIC_BASE_URL_ENV])
-    const updater = buildUpdater()
     const trust = buildUpstreamCaCertificates(mergedEnv)
     const preferredPort = parseClaudeApiProxyPort(env[CLAUDE_API_PROXY_PORT_ENV])
     const connectTimeoutMs = parseClaudeApiProxyConnectTimeout(env[CLAUDE_API_PROXY_CONNECT_TIMEOUT_ENV])
@@ -473,7 +444,7 @@ export async function startClaudeApiProxy(
         ca: trust.ca,
         connectTimeoutMs,
         perfEnabled,
-        onExchange: (exchange) => updater.handleExchange(exchange),
+        onExchange: feedLiveUsageUpdater,
         onRequestRecord: emitRequestRecord,
         onEvent: emitHostEvent,
         onListening: (info) => {
@@ -505,7 +476,7 @@ export async function startClaudeApiProxy(
         proxy = await startLocalApiProxy({
           port: preferredPort,
           resolveUpstream,
-          onExchange: (exchange) => updater.handleExchange(exchange),
+          onExchange: feedLiveUsageUpdater,
           onRequestRecord: emitRequestRecord,
           upstreamTls: { ca: trust.ca },
           connectTimeoutMs,
@@ -524,7 +495,6 @@ export async function startClaudeApiProxy(
       hostMode: manager ? 'utility' : 'in-process',
       proxy,
       manager,
-      updater,
       originalBaseUrl,
       previousProcessEnvBaseUrl: process.env[ANTHROPIC_BASE_URL_ENV],
       appliedToProcessEnv: applyToProcessEnv,
@@ -630,7 +600,9 @@ export async function closeClaudeApiProxy(): Promise<void> {
   settingsEnvCache = null
   setClaudeApiProxyBaseUrl(null)
   if (current === null) return
-  current.updater.dispose()
+  // The live usage updater is left alone: a reading it is still holding back
+  // for a burst is published after the proxy is gone, and the next start
+  // feeds the same updater.
   if (current.appliedToProcessEnv) {
     if (current.previousProcessEnvBaseUrl !== undefined) {
       process.env[ANTHROPIC_BASE_URL_ENV] = current.previousProcessEnvBaseUrl

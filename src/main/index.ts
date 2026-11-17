@@ -83,6 +83,7 @@ import {
   probeClaudeApiUpstream,
   startClaudeApiProxy
 } from './services/claude-api-proxy/claude-api-proxy'
+import { disposeClaudeUsageLiveUpdater } from './services/claude-api-proxy/claude-usage-live'
 import { startThreadpoolProbe } from './services/perf-logging/threadpool-probe'
 import { publishDesktopBackendEvent } from './desktop/backend-event-publisher'
 import { createThreadpoolStallRecovery } from './services/perf-logging/threadpool-stall-recovery'
@@ -998,6 +999,8 @@ wireQuitCleanup({
     { name: 'closeClaudeHookServer', run: () => closeClaudeHookServer() },
     { name: 'sessionRecovery', run: () => disposeClaudeCliSessionRecovery() },
     { name: 'closeClaudeApiProxy', run: () => closeClaudeApiProxy() },
+    // After its sources: the live usage updater outlives the proxy
+    { name: 'claudeUsageLiveUpdater', run: () => disposeClaudeUsageLiveUpdater() },
     { name: 'cleanupScripts', run: () => cleanupScripts() },
     { name: 'bashKillAll', run: () => bashService.killAll() },
     { name: 'disposeAllRuntimes', run: () => disposeAllRuntimes() },

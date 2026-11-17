@@ -83,6 +83,7 @@ import {
   __resetClaudeApiProxyCachesForTests
 } from '../claude-api-proxy'
 import { getClaudeApiProxyEnv } from '../claude-api-proxy-env'
+import { __resetClaudeUsageLiveUpdaterForTests } from '../claude-usage-live'
 import { fingerprintSecret } from '../../credential-fingerprint'
 
 const ENV_KEYS = ['ANTHROPIC_BASE_URL', '_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL']
@@ -103,6 +104,8 @@ beforeEach(() => {
 
 afterEach(async () => {
   await closeClaudeApiProxy()
+  // The updater outlives the proxy; each test starts with one that remembers nothing.
+  __resetClaudeUsageLiveUpdaterForTests()
   for (const key of ENV_KEYS) {
     if (saved[key] === undefined) delete process.env[key]
     else process.env[key] = saved[key]
