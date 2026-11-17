@@ -21,6 +21,22 @@ export function getClaudeApiProxyBaseUrl(): string | null {
   return activeBaseUrl
 }
 
+let userBaseUrl: string | null = null
+
+export function setClaudeApiProxyUserBaseUrl(baseUrl: string | null): void {
+  userBaseUrl = baseUrl
+}
+
+/**
+ * The user's own `ANTHROPIC_BASE_URL` that the running proxy took over (it
+ * exports its loopback address on `process.env` and chains to this one as its
+ * upstream). Null when the user had none or the proxy is not running — in
+ * which case `process.env` still holds whatever the user set.
+ */
+export function getClaudeApiProxyUserBaseUrl(): string | null {
+  return userBaseUrl
+}
+
 /**
  * Env overrides for a Claude Code spawn. Spread these LAST so they win over
  * the user's own `ANTHROPIC_BASE_URL` (which the proxy chains to as its
@@ -30,4 +46,19 @@ export function getClaudeApiProxyBaseUrl(): string | null {
 export function getClaudeApiProxyEnv(): Record<string, string> {
   if (activeBaseUrl === null) return {}
   return { [ANTHROPIC_BASE_URL_ENV]: activeBaseUrl, [ASSUME_FIRST_PARTY_ENV]: '1' }
+}
+
+/** The variables that switch the CLI to a non-Anthropic provider, which ignores the base URL. */
+export const THIRD_PARTY_PROVIDER_ENVS = [
+  'CLAUDE_CODE_USE_BEDROCK',
+  'CLAUDE_CODE_USE_VERTEX',
+  'CLAUDE_CODE_USE_FOUNDRY',
+  'CLAUDE_CODE_USE_ANTHROPIC_AWS',
+  'CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD'
+] as const
+
+export function isTruthyEnvValue(value: string | undefined): boolean {
+  if (value === undefined) return false
+  const normalized = value.trim().toLowerCase()
+  return normalized !== '' && normalized !== '0' && normalized !== 'false' && normalized !== 'no'
 }

@@ -31,7 +31,10 @@ import {
   ANTHROPIC_BASE_URL_ENV,
   ASSUME_FIRST_PARTY_ENV,
   getClaudeApiProxyBaseUrl,
-  setClaudeApiProxyBaseUrl
+  isTruthyEnvValue,
+  setClaudeApiProxyBaseUrl,
+  setClaudeApiProxyUserBaseUrl,
+  THIRD_PARTY_PROVIDER_ENVS
 } from './claude-api-proxy-env'
 import {
   ClaudeProxyHostManager,
@@ -95,12 +98,6 @@ let settingsEnvCache: { value: Record<string, string>; expiresAt: number } | nul
 const requestRecordListeners = new Set<(record: LocalApiProxyRequestRecord) => void>()
 const hostEventListeners = new Set<(name: string, data: Record<string, unknown>) => void>()
 
-function isTruthy(value: string | undefined): boolean {
-  if (value === undefined) return false
-  const normalized = value.trim().toLowerCase()
-  return normalized !== '' && normalized !== '0' && normalized !== 'false' && normalized !== 'no'
-}
-
 function nonEmpty(value: string | undefined): string | null {
   const trimmed = value?.trim()
   return trimmed ? trimmed : null
@@ -117,7 +114,7 @@ function nonEmpty(value: string | undefined): string | null {
 export function claudeApiProxySkipReason(
   env: NodeJS.ProcessEnv = process.env
 ): ClaudeApiProxySkipReason | null {
-  if (isTruthy(env[CLAUDE_API_PROXY_DISABLE_ENV])) return 'disabled'
+  if (isTruthyEnvValue(env[CLAUDE_API_PROXY_DISABLE_ENV])) return 'disabled'
   if (
     nonEmpty(env.HTTPS_PROXY) ||
     nonEmpty(env.https_proxy) ||
@@ -130,13 +127,7 @@ export function claudeApiProxySkipReason(
   }
   if (nonEmpty(env.CLAUDE_CODE_CLIENT_CERT)) return 'client-cert'
   if (nonEmpty(env.ANTHROPIC_UNIX_SOCKET)) return 'unix-socket'
-  if (
-    isTruthy(env.CLAUDE_CODE_USE_BEDROCK) ||
-    isTruthy(env.CLAUDE_CODE_USE_VERTEX) ||
-    isTruthy(env.CLAUDE_CODE_USE_FOUNDRY) ||
-    isTruthy(env.CLAUDE_CODE_USE_ANTHROPIC_AWS) ||
-    isTruthy(env.CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD)
-  ) {
+  if (THIRD_PARTY_PROVIDER_ENVS.some((name) => isTruthyEnvValue(env[name]))) {
     return 'third-party-provider'
   }
   return null
@@ -501,6 +492,7 @@ export async function startClaudeApiProxy(
       port
     }
     applyBaseUrl(baseUrl, applyToProcessEnv)
+    setClaudeApiProxyUserBaseUrl(originalBaseUrl)
 
     // An older switch to an account whose uuid the index did not know left
     // the OUTGOING account's uuid in the CLI's identity file — requests would
@@ -599,6 +591,7 @@ export async function closeClaudeApiProxy(): Promise<void> {
   state = null
   settingsEnvCache = null
   setClaudeApiProxyBaseUrl(null)
+  setClaudeApiProxyUserBaseUrl(null)
   if (current === null) return
   // The live usage updater is left alone: a reading it is still holding back
   // for a burst is published after the proxy is gone, and the next start

@@ -82,7 +82,7 @@ import {
   startClaudeApiProxy,
   __resetClaudeApiProxyCachesForTests
 } from '../claude-api-proxy'
-import { getClaudeApiProxyEnv } from '../claude-api-proxy-env'
+import { getClaudeApiProxyEnv, getClaudeApiProxyUserBaseUrl } from '../claude-api-proxy-env'
 import { __resetClaudeUsageLiveUpdaterForTests } from '../claude-usage-live'
 import { fingerprintSecret } from '../../credential-fingerprint'
 
@@ -127,7 +127,17 @@ describe('claudeApiProxySkipReason', () => {
     expect(claudeApiProxySkipReason({ CLAUDE_CODE_USE_VERTEX: 'true' })).toBe(
       'third-party-provider'
     )
+    expect(claudeApiProxySkipReason({ CLAUDE_CODE_USE_FOUNDRY: 'yes' })).toBe(
+      'third-party-provider'
+    )
+    expect(claudeApiProxySkipReason({ CLAUDE_CODE_USE_ANTHROPIC_AWS: '1' })).toBe(
+      'third-party-provider'
+    )
+    expect(claudeApiProxySkipReason({ CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD: '1' })).toBe(
+      'third-party-provider'
+    )
     expect(claudeApiProxySkipReason({ CLAUDE_CODE_USE_BEDROCK: '0' })).toBeNull()
+    expect(claudeApiProxySkipReason({ CLAUDE_CODE_USE_BEDROCK: 'false' })).toBeNull()
     expect(claudeApiProxySkipReason({ HIVE_DISABLE_CLAUDE_API_PROXY: '1' })).toBe('disabled')
   })
 })
@@ -235,6 +245,8 @@ describe('startClaudeApiProxy', () => {
       ANTHROPIC_BASE_URL: result.baseUrl,
       _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL: '1'
     })
+    // The address the proxy took over stays readable for launches that must know it.
+    expect(getClaudeApiProxyUserBaseUrl()).toBe('https://gateway.example.com/v1-proxy')
     await vi.waitFor(() =>
       expect(storeMocks.repairStaleClaudeLiveIdentityUuid).toHaveBeenCalledTimes(1)
     )
@@ -245,6 +257,7 @@ describe('startClaudeApiProxy', () => {
 
     await closeClaudeApiProxy()
     expect(getClaudeApiProxyEnv()).toEqual({})
+    expect(getClaudeApiProxyUserBaseUrl()).toBeNull()
     expect(process.env.ANTHROPIC_BASE_URL).toBeUndefined()
     expect(process.env._CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL).toBeUndefined()
   })
@@ -254,6 +267,7 @@ describe('startClaudeApiProxy', () => {
     expect(result).toEqual({ started: false, reason: 'http-proxy-env' })
     expect(process.env.ANTHROPIC_BASE_URL).toBeUndefined()
     expect(getClaudeApiProxyEnv()).toEqual({})
+    expect(getClaudeApiProxyUserBaseUrl()).toBeNull()
   })
 
   it('also honours a corporate proxy configured in Settings → Environment Variables', async () => {
