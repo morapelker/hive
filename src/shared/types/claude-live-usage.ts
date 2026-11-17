@@ -44,6 +44,13 @@ export interface ClaudeLiveUsagePayload {
   rateLimit: ClaudeLiveUsageRateLimit
   /** Epoch ms at which the proxy saw the upstream response headers. */
   observedAt: number
+  /**
+   * The session whose debug log the reading came from (a Code Mode session, which does not
+   * go through the proxy). Absent for a reading the proxy saw. It lets the usage UI take
+   * back "Live" when that session's log stops giving readings
+   * (`CLAUDE_LIVE_USAGE_HEALTH_CHANNEL`).
+   */
+  sessionId?: string
 }
 
 export function isClaudeLiveUsagePayload(value: unknown): value is ClaudeLiveUsagePayload {
@@ -53,6 +60,7 @@ export function isClaudeLiveUsagePayload(value: unknown): value is ClaudeLiveUsa
   if (typeof payload.accountId !== 'string' || typeof payload.email !== 'string') return false
   if (payload.accountUuid !== null && typeof payload.accountUuid !== 'string') return false
   if (typeof payload.observedAt !== 'number') return false
+  if (payload.sessionId !== undefined && typeof payload.sessionId !== 'string') return false
   if (typeof payload.isLiveAccount !== 'boolean') return false
   if (payload.liveEmail !== null && typeof payload.liveEmail !== 'string') return false
   if (typeof payload.usage !== 'object' || payload.usage === null) return false
@@ -67,4 +75,50 @@ export function isClaudeLiveUsagePayload(value: unknown): value is ClaudeLiveUsa
     'seven_day' in usage &&
     typeof usage.seven_day === 'object'
   )
+}
+
+/**
+ * Published by the Electron main process when the debug log of a Code Mode session stops
+ * giving usage readings, and when it gives them again (Code Mode T18; PRD FR-30, FR-31).
+ * While a session is degraded its usage comes from the usage poll alone, so the usage UI
+ * must not go on saying "Live" because of the last reading that session gave.
+ */
+export const CLAUDE_LIVE_USAGE_HEALTH_CHANNEL = 'usage:claudeLiveHealth'
+
+/**
+ * Why a session's debug log gives no readings: missing or empty after a completed turn;
+ * responses logged and none readable; deleted for its size; refused as not safe to read.
+ */
+export type ClaudeLiveUsageDegradedReason =
+  'log-empty' | 'unparsed-responses' | 'hard-cap' | 'unsafe-file'
+
+export interface ClaudeLiveUsageHealthPayload {
+  provider: 'anthropic'
+  /** The session, as `ClaudeLiveUsagePayload.sessionId` names it. */
+  sessionId: string
+  /** True: no live readings from this session until further notice. False: they are back. */
+  degraded: boolean
+  reason: ClaudeLiveUsageDegradedReason | null
+  /** Epoch ms of the change. */
+  at: number
+}
+
+const DEGRADED_REASONS: ReadonlySet<string> = new Set([
+  'log-empty',
+  'unparsed-responses',
+  'hard-cap',
+  'unsafe-file'
+])
+
+export function isClaudeLiveUsageHealthPayload(
+  value: unknown
+): value is ClaudeLiveUsageHealthPayload {
+  if (typeof value !== 'object' || value === null) return false
+  const payload = value as Record<string, unknown>
+  if (payload.provider !== 'anthropic') return false
+  if (typeof payload.sessionId !== 'string' || payload.sessionId === '') return false
+  if (typeof payload.degraded !== 'boolean' || typeof payload.at !== 'number') return false
+  return payload.degraded
+    ? typeof payload.reason === 'string' && DEGRADED_REASONS.has(payload.reason)
+    : payload.reason === null
 }

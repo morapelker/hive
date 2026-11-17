@@ -1,18 +1,31 @@
 import { renderHook } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { ClaudeLiveUsagePayload } from '@shared/types/claude-live-usage'
+import type {
+  ClaudeLiveUsageHealthPayload,
+  ClaudeLiveUsagePayload
+} from '@shared/types/claude-live-usage'
 
 const mocks = vi.hoisted(() => ({
   onClaudeLiveUsage: vi.fn(),
-  applyClaudeLiveUsage: vi.fn()
+  onClaudeLiveUsageHealth: vi.fn(),
+  applyClaudeLiveUsage: vi.fn(),
+  applyClaudeLiveUsageHealth: vi.fn()
 }))
 
 vi.mock('@/api/usage-api', () => ({
-  usageApi: { onClaudeLiveUsage: mocks.onClaudeLiveUsage }
+  usageApi: {
+    onClaudeLiveUsage: mocks.onClaudeLiveUsage,
+    onClaudeLiveUsageHealth: mocks.onClaudeLiveUsageHealth
+  }
 }))
 
 vi.mock('@/stores/useUsageStore', () => ({
-  useUsageStore: { getState: () => ({ applyClaudeLiveUsage: mocks.applyClaudeLiveUsage }) }
+  useUsageStore: {
+    getState: () => ({
+      applyClaudeLiveUsage: mocks.applyClaudeLiveUsage,
+      applyClaudeLiveUsageHealth: mocks.applyClaudeLiveUsageHealth
+    })
+  }
 }))
 
 import { useClaudeLiveUsageListener } from '../useClaudeLiveUsageListener'
@@ -40,6 +53,7 @@ describe('useClaudeLiveUsageListener', () => {
   it('forwards live usage events into the store and unsubscribes on unmount', () => {
     const unsubscribe = vi.fn()
     mocks.onClaudeLiveUsage.mockReturnValue(unsubscribe)
+    mocks.onClaudeLiveUsageHealth.mockReturnValue(vi.fn())
 
     const { unmount } = renderHook(() => useClaudeLiveUsageListener())
     expect(mocks.onClaudeLiveUsage).toHaveBeenCalledTimes(1)
@@ -47,6 +61,32 @@ describe('useClaudeLiveUsageListener', () => {
     const callback = mocks.onClaudeLiveUsage.mock.calls[0][0] as (p: ClaudeLiveUsagePayload) => void
     callback(payload)
     expect(mocks.applyClaudeLiveUsage).toHaveBeenCalledWith(payload)
+
+    unmount()
+    expect(unsubscribe).toHaveBeenCalledTimes(1)
+  })
+
+  it('forwards the health of Code Mode debug logs into the store and unsubscribes on unmount', () => {
+    const unsubscribe = vi.fn()
+    mocks.onClaudeLiveUsage.mockReturnValue(vi.fn())
+    mocks.onClaudeLiveUsageHealth.mockReturnValue(unsubscribe)
+
+    const { unmount } = renderHook(() => useClaudeLiveUsageListener())
+    expect(mocks.onClaudeLiveUsageHealth).toHaveBeenCalledTimes(1)
+
+    const degraded: ClaudeLiveUsageHealthPayload = {
+      provider: 'anthropic',
+      sessionId: 'session-1',
+      degraded: true,
+      reason: 'log-empty',
+      at: 1
+    }
+    const callback = mocks.onClaudeLiveUsageHealth.mock.calls[0][0] as (
+      p: ClaudeLiveUsageHealthPayload
+    ) => void
+    callback(degraded)
+    expect(mocks.applyClaudeLiveUsageHealth).toHaveBeenCalledWith(degraded)
+    expect(mocks.applyClaudeLiveUsage).not.toHaveBeenCalled()
 
     unmount()
     expect(unsubscribe).toHaveBeenCalledTimes(1)

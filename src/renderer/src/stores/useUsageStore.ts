@@ -14,7 +14,10 @@ import type {
   SavedAccountDTO,
   RefreshAllResultItem
 } from '@shared/types/usage'
-import type { ClaudeLiveUsagePayload } from '@shared/types/claude-live-usage'
+import type {
+  ClaudeLiveUsageHealthPayload,
+  ClaudeLiveUsagePayload
+} from '@shared/types/claude-live-usage'
 import { accountApi } from '@/api/account-api'
 import { usageApi } from '@/api/usage-api'
 import { reportActiveAccountsSnapshot } from '@/lib/hive-account-report'
@@ -54,6 +57,14 @@ interface UsageState {
    * ACTIVE account. While recent, the polled refresh cadence and the burn-rate
    * predictor stand down: every API response already brings exact numbers. */
   anthropicLiveUpdatedAt: number | null
+  /** The session whose debug log gave that update (a Code Mode session), or
+   * null for one the proxy saw. When that session's log stops giving readings
+   * the update no longer counts as live (`applyClaudeLiveUsageHealth`). */
+  anthropicLiveSessionId: string | null
+  /** Sessions whose debug log stopped giving readings, with the moment it
+   * did (epoch ms). A reading of such a session from before that moment can
+   * still arrive (updates are coalesced on their way here) and is not live. */
+  anthropicLiveDegradedSessions: Record<string, number>
 
   openaiUsage: OpenAIUsageData | null
   openaiLastFetchedAt: number | null
@@ -101,6 +112,13 @@ interface UsageState {
    * that account's saved row; mirrors into the live slot only when it is the
    * active account. */
   applyClaudeLiveUsage: (payload: ClaudeLiveUsagePayload) => void
+  /** The debug log of a Code Mode session stopped giving usage readings (or
+   * gives them again). A degraded session's usage comes from the poll, so the
+   * live mark is taken back when it rests on that session's last reading:
+   * the popover returns to the polled state and the burn-rate predictor to
+   * its early sampling. Nothing is done on recovery: the next reading marks
+   * the usage live again by itself. */
+  applyClaudeLiveUsageHealth: (payload: ClaudeLiveUsageHealthPayload) => void
   /** Called when the active Anthropic identity changed hands OUTSIDE a
    * Hive-initiated switch (external `claude login` observed via an email
    * change). Applies the same invalidation an internal switch does. */
@@ -122,6 +140,17 @@ export const EARLY_USAGE_REFRESH_FLOOR_MS = 30_000
 // this window the usage popover says "Live" instead of counting down to the
 // next poll and the burn-rate predictor skips its early sampling.
 export const LIVE_USAGE_FRESH_MS = 2 * 60_000
+
+// How many degraded Code Mode sessions are remembered (see
+// anthropicLiveDegradedSessions). Far more than run at once.
+const MAX_DEGRADED_LIVE_SESSIONS = 64
+
+function withoutKey<T>(record: Record<string, T>, key: string): Record<string, T> {
+  if (!(key in record)) return record
+  const next = { ...record }
+  delete next[key]
+  return next
+}
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -146,6 +175,8 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
   anthropicAccountSwitchedAt: null,
   anthropicEarlyRefreshAttemptAt: null,
   anthropicLiveUpdatedAt: null,
+  anthropicLiveSessionId: null,
+  anthropicLiveDegradedSessions: {},
 
   openaiUsage: null,
   openaiLastFetchedAt: null,
@@ -381,7 +412,8 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
             anthropicLastRetryAfter: null,
             anthropicLastFetchedAt: null,
             anthropicEarlyRefreshAttemptAt: null,
-            anthropicLiveUpdatedAt: null
+            anthropicLiveUpdatedAt: null,
+            anthropicLiveSessionId: null
           })
         }
         if (provider) {
@@ -705,7 +737,8 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
       anthropicLastRetryAfter: null,
       anthropicLastFetchedAt: null,
       anthropicEarlyRefreshAttemptAt: null,
-      anthropicLiveUpdatedAt: null
+      anthropicLiveUpdatedAt: null,
+      anthropicLiveSessionId: null
     })
   },
 
@@ -762,6 +795,23 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
       useAccountStore.setState({ anthropicEmail: payload.liveEmail })
     }
 
+    // A reading from the debug log of a session that has since stopped giving
+    // them (T18): the numbers are applied, but they are that session's last,
+    // not a sign of live data. One read after it degraded means it recovered.
+    const degradedAt =
+      payload.sessionId === undefined
+        ? undefined
+        : get().anthropicLiveDegradedSessions[payload.sessionId]
+    const staleSource = degradedAt !== undefined && payload.observedAt <= degradedAt
+    if (degradedAt !== undefined && !staleSource) {
+      set((state) => ({
+        anthropicLiveDegradedSessions: withoutKey(
+          state.anthropicLiveDegradedSessions,
+          payload.sessionId as string
+        )
+      }))
+    }
+
     const now = Date.now()
     // Not anthropicLastFetchedAt / anthropicLastRetryAfter: those gate the
     // usage-endpoint poll, which must keep its cadence (and its Retry-After
@@ -776,7 +826,9 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
       return {
         anthropicUsage: payload.usage,
         anthropicUsageFromFetch: true,
-        anthropicLiveUpdatedAt: now,
+        ...(staleSource
+          ? {}
+          : { anthropicLiveUpdatedAt: now, anthropicLiveSessionId: payload.sessionId ?? null }),
         ...(retryPending ? {} : { anthropicLastError: null })
       }
     })
@@ -796,6 +848,35 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
         { triggerRefresh: false }
       )
     }
+  },
+
+  applyClaudeLiveUsageHealth: (payload: ClaudeLiveUsageHealthPayload) => {
+    if (payload.provider !== 'anthropic') return
+    if (!payload.degraded) {
+      set((state) => ({
+        anthropicLiveDegradedSessions: withoutKey(
+          state.anthropicLiveDegradedSessions,
+          payload.sessionId
+        )
+      }))
+      return
+    }
+    set((state) => {
+      const sessions = { ...state.anthropicLiveDegradedSessions, [payload.sessionId]: payload.at }
+      // Marks of sessions long gone: keep the newest few.
+      const ids = Object.keys(sessions)
+      for (const id of ids.slice(0, Math.max(0, ids.length - MAX_DEGRADED_LIVE_SESSIONS))) {
+        delete sessions[id]
+      }
+      return {
+        anthropicLiveDegradedSessions: sessions,
+        // Only a live mark that rests on this session: a reading the proxy
+        // saw, or one from another session's log, is as current as it was.
+        ...(state.anthropicLiveSessionId === payload.sessionId
+          ? { anthropicLiveUpdatedAt: null, anthropicLiveSessionId: null }
+          : {})
+      }
+    })
   },
 
   fetchUsage: async () => {

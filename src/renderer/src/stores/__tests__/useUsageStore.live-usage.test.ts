@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { resetRendererRpcClientForTests, setRendererRpcClient } from '@/api/rpc-client'
-import type { ClaudeLiveUsagePayload } from '@shared/types/claude-live-usage'
+import type {
+  ClaudeLiveUsageHealthPayload,
+  ClaudeLiveUsagePayload
+} from '@shared/types/claude-live-usage'
 import type { SavedAccountDTO, UsageData } from '@shared/types/usage'
 import { useUsageStore } from '../useUsageStore'
 import { useAccountStore } from '../useAccountStore'
@@ -87,6 +90,8 @@ describe('useUsageStore.applyClaudeLiveUsage', () => {
       anthropicAccountSwitchedAt: null,
       anthropicEarlyRefreshAttemptAt: null,
       anthropicLiveUpdatedAt: null,
+      anthropicLiveSessionId: null,
+      anthropicLiveDegradedSessions: {},
       savedAccounts: {
         anthropic: [
           account('row-a', 'a@example.com', polledUsage),
@@ -230,5 +235,171 @@ describe('useUsageStore.applyClaudeLiveUsage', () => {
 
     useUsageStore.getState().noteExternalAnthropicAccountSwitch()
     expect(useUsageStore.getState().anthropicLiveUpdatedAt).toBeNull()
+  })
+})
+
+// Code Mode T18: a session whose debug log stops giving readings falls back to the poll,
+// and the usage UI must not go on saying "Live" on the strength of that session.
+describe('useUsageStore.applyClaudeLiveUsageHealth', () => {
+  const CODE_MODE_SESSION = 'session-code-mode'
+  const OTHER_SESSION = 'session-other'
+
+  function health(
+    overrides: Partial<ClaudeLiveUsageHealthPayload> = {}
+  ): ClaudeLiveUsageHealthPayload {
+    return {
+      provider: 'anthropic',
+      sessionId: CODE_MODE_SESSION,
+      degraded: true,
+      reason: 'hard-cap',
+      at: NOW,
+      ...overrides
+    }
+  }
+
+  const store = (): ReturnType<typeof useUsageStore.getState> => useUsageStore.getState()
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
+    const request: ReturnType<typeof vi.fn> = vi.fn(async () => null)
+    setRendererRpcClient({ request, subscribe: vi.fn() })
+    useAccountStore.setState({ anthropicEmail: 'a@example.com' })
+    useUsageStore.setState({
+      anthropicUsage: polledUsage,
+      anthropicLastFetchedAt: NOW - 60_000,
+      anthropicLastError: null,
+      anthropicLastRetryAfter: null,
+      anthropicRateLimit: null,
+      anthropicUsageFromFetch: true,
+      anthropicAccountSwitchedAt: null,
+      anthropicEarlyRefreshAttemptAt: null,
+      anthropicLiveUpdatedAt: null,
+      anthropicLiveSessionId: null,
+      anthropicLiveDegradedSessions: {},
+      savedAccounts: {
+        anthropic: [account('row-a', 'a@example.com', polledUsage)],
+        openai: []
+      },
+      savedAccountsLoaded: { anthropic: true, openai: false }
+    })
+  })
+
+  afterEach(() => {
+    resetRendererRpcClientForTests()
+    vi.useRealTimers()
+    vi.clearAllMocks()
+  })
+
+  it('remembers which session a live reading came from', () => {
+    store().applyClaudeLiveUsage(payload({ sessionId: CODE_MODE_SESSION, observedAt: NOW - 500 }))
+    expect(store().anthropicLiveUpdatedAt).toBe(NOW)
+    expect(store().anthropicLiveSessionId).toBe(CODE_MODE_SESSION)
+
+    // A reading the proxy saw names no session.
+    store().applyClaudeLiveUsage(payload())
+    expect(store().anthropicLiveSessionId).toBeNull()
+  })
+
+  it('takes the live mark back when the session behind it stops giving readings', () => {
+    store().applyClaudeLiveUsage(payload({ sessionId: CODE_MODE_SESSION, observedAt: NOW - 500 }))
+    const fetchedAt = store().anthropicLastFetchedAt
+
+    store().applyClaudeLiveUsageHealth(health())
+
+    expect(store().anthropicLiveUpdatedAt).toBeNull()
+    expect(store().anthropicLiveSessionId).toBeNull()
+    // The numbers it gave stay until the poll brings newer ones, and the poll's own clock
+    // was never touched: it runs on its normal schedule.
+    expect(store().anthropicUsage?.seven_day?.utilization).toBe(61)
+    expect(store().anthropicLastFetchedAt).toBe(fetchedAt)
+  })
+
+  it('keeps the live mark of a reading the proxy saw, or of another session', () => {
+    store().applyClaudeLiveUsage(payload())
+    store().applyClaudeLiveUsageHealth(health())
+    expect(store().anthropicLiveUpdatedAt).toBe(NOW)
+
+    store().applyClaudeLiveUsage(payload({ sessionId: OTHER_SESSION }))
+    store().applyClaudeLiveUsageHealth(health({ reason: 'log-empty' }))
+    expect(store().anthropicLiveUpdatedAt).toBe(NOW)
+    expect(store().anthropicLiveSessionId).toBe(OTHER_SESSION)
+  })
+
+  it('does not call a reading live that the degraded session gave before it went quiet', () => {
+    store().applyClaudeLiveUsageHealth(health({ at: NOW }))
+
+    // Still on its way when the log was given up: updates are coalesced before they are sent.
+    store().applyClaudeLiveUsage(
+      payload({
+        sessionId: CODE_MODE_SESSION,
+        observedAt: NOW - 200,
+        usage: {
+          five_hour: { utilization: 44, resets_at: null },
+          seven_day: { utilization: 62, resets_at: null }
+        }
+      })
+    )
+
+    // Its numbers count, its being live does not.
+    expect(store().anthropicUsage?.seven_day?.utilization).toBe(62)
+    expect(store().anthropicLiveUpdatedAt).toBeNull()
+    expect(store().anthropicLiveDegradedSessions).toEqual({ [CODE_MODE_SESSION]: NOW })
+  })
+
+  it('is live again with the first reading after the session recovered', () => {
+    store().applyClaudeLiveUsage(payload({ sessionId: CODE_MODE_SESSION, observedAt: NOW - 500 }))
+    store().applyClaudeLiveUsageHealth(health({ at: NOW }))
+    expect(store().anthropicLiveUpdatedAt).toBeNull()
+
+    vi.setSystemTime(NOW + 30_000)
+    store().applyClaudeLiveUsageHealth(health({ degraded: false, reason: null, at: NOW + 30_000 }))
+    // Being healthy again is not a reading: nothing is live until one arrives.
+    expect(store().anthropicLiveUpdatedAt).toBeNull()
+    expect(store().anthropicLiveDegradedSessions).toEqual({})
+
+    store().applyClaudeLiveUsage(
+      payload({ sessionId: CODE_MODE_SESSION, observedAt: NOW + 29_900 })
+    )
+    expect(store().anthropicLiveUpdatedAt).toBe(NOW + 30_000)
+    expect(store().anthropicLiveSessionId).toBe(CODE_MODE_SESSION)
+  })
+
+  it('takes a reading newer than the degradation as the recovery, should its notice be late', () => {
+    store().applyClaudeLiveUsageHealth(health({ at: NOW }))
+    vi.setSystemTime(NOW + 10_000)
+
+    store().applyClaudeLiveUsage(payload({ sessionId: CODE_MODE_SESSION, observedAt: NOW + 9_000 }))
+
+    expect(store().anthropicLiveUpdatedAt).toBe(NOW + 10_000)
+    expect(store().anthropicLiveDegradedSessions).toEqual({})
+  })
+
+  it('leaves a session that never gave a reading without a live mark to take back', () => {
+    // An empty log after the first turn: there was nothing live to begin with.
+    store().applyClaudeLiveUsageHealth(health({ reason: 'log-empty' }))
+
+    expect(store().anthropicLiveUpdatedAt).toBeNull()
+    expect(store().anthropicUsage).toEqual(polledUsage)
+    expect(store().anthropicLastFetchedAt).toBe(NOW - 60_000)
+  })
+
+  it('forgets the oldest marks rather than keeping every session that ever degraded', () => {
+    for (let index = 0; index < 80; index += 1) {
+      store().applyClaudeLiveUsageHealth(health({ sessionId: `session-${index}`, at: NOW + index }))
+    }
+
+    const kept = Object.keys(store().anthropicLiveDegradedSessions)
+    expect(kept).toHaveLength(64)
+    expect(kept[0]).toBe('session-16')
+    expect(kept.at(-1)).toBe('session-79')
+  })
+
+  it('clears the live mark and the session behind it on an account switch', () => {
+    store().applyClaudeLiveUsage(payload({ sessionId: CODE_MODE_SESSION }))
+    store().noteExternalAnthropicAccountSwitch()
+
+    expect(store().anthropicLiveUpdatedAt).toBeNull()
+    expect(store().anthropicLiveSessionId).toBeNull()
   })
 })

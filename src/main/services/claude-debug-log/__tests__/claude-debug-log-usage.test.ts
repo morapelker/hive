@@ -94,6 +94,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   CLAUDE_LIVE_USAGE_CHANNEL,
+  isClaudeLiveUsagePayload,
   type ClaudeLiveUsagePayload
 } from '@shared/types/claude-live-usage'
 import type { UsageData } from '@shared/types/usage'
@@ -274,8 +275,11 @@ describe('debug-log usage through the app source and the live updater', () => {
       accountUuid: null,
       isLiveAccount: true,
       // The time in the log line (three days before this test runs), not the time it was read.
-      observedAt: STREAMING_AT
+      observedAt: STREAMING_AT,
+      // Whose log the reading came from: the usage UI takes "Live" back by it (T18).
+      sessionId: 'session-1'
     })
+    expect(isClaudeLiveUsagePayload(payload)).toBe(true)
     expect(payload.usage.seven_day?.utilization).toBe(37)
     expect(payload.usage.five_hour?.utilization).toBe(3)
     expect(storedUsage(ME)?.seven_day?.utilization).toBe(37)

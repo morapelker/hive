@@ -107,7 +107,10 @@ vi.mock('../db', () => ({
 
 vi.mock('./claude-binary-resolver', () => ({
   resolveClaudeBinaryPath: vi.fn(() => '/usr/local/bin/claude'),
-  logClaudeBinaryVersion: vi.fn()
+  logClaudeBinaryVersion: vi.fn(),
+  getClaudeBinaryVersion: vi.fn((path: string) =>
+    path === '/usr/local/bin/claude' ? '2.1.326' : null
+  )
 }))
 
 vi.mock('./codex-binary-resolver', () => ({
@@ -165,9 +168,14 @@ vi.mock('./claude-cli-spawner', async (importOriginal) => {
 })
 
 import type { Session } from '../db/types'
+import {
+  CLAUDE_LIVE_USAGE_HEALTH_CHANNEL,
+  isClaudeLiveUsageHealthPayload
+} from '@shared/types/claude-live-usage'
 import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
 import type { ClaudeUsageObservation } from './claude-api-proxy/claude-usage-live-updater'
 import { setClaudeApiProxyBaseUrl } from './claude-api-proxy/claude-api-proxy-env'
+import { getClaudeBinaryVersion } from './claude-binary-resolver'
 import { CLAUDE_CLI_DEBUG_DIRNAME, ClaudeCliDebugDirs } from './claude-cli-debug-dir'
 import { buildClaudeCliPtySpawn } from './claude-cli-spawner'
 import type { ClaudeCliUsageLaunches } from './claude-cli-usage-launches'
@@ -661,6 +669,64 @@ describePosix('a Claude CLI session that asks for Code Mode, with live usage on'
     expect(source.facts(SESSION)?.turnInProgress).toBe(false)
     // The end of a turn reads the log at once.
     expect(observations).toHaveLength(1)
+  })
+
+  it('tells the usage UI when a turn completes over a log that stayed empty, and when it gives readings again (T18)', async () => {
+    await createClaudeCliTerminal(SESSION)
+    const healthEvents = (): unknown[] =>
+      mocks.publishDesktopBackendEvent.mock.calls
+        .filter(([channel]) => channel === CLAUDE_LIVE_USAGE_HEALTH_CHANNEL)
+        .map(([, payload]) => payload)
+
+    // Reported idle before any turn: an empty log is no trouble yet.
+    tellStatus('completed')
+    expect(healthEvents()).toEqual([])
+
+    tellStatus('working')
+    tellStatus('completed')
+
+    expect(launches.degradedReason(SESSION)).toBe('log-empty')
+    expect(healthEvents()).toEqual([
+      {
+        provider: 'anthropic',
+        sessionId: SESSION,
+        degraded: true,
+        reason: 'log-empty',
+        at: expect.any(Number)
+      }
+    ])
+    expect(healthEvents().every(isClaudeLiveUsageHealthPayload)).toBe(true)
+    // The warning names the version of the binary this launch runs.
+    expect(vi.mocked(getClaudeBinaryVersion)).toHaveBeenCalledWith('/usr/local/bin/claude')
+    // The session itself is untouched: same process, still followed.
+    expect(mocks.ptyService.destroy).not.toHaveBeenCalled()
+    expect(source.facts(SESSION)).not.toBeNull()
+
+    tellStatus('working')
+    appendFileSync(source.facts(SESSION)!.logPath, `${RESPONSE_LINE}\n`)
+    tellStatus('completed')
+
+    expect(launches.degradedReason(SESSION)).toBeNull()
+    expect(observations).toHaveLength(1)
+    // The reading says whose log it came from.
+    expect(observations[0].sessionId).toBe(SESSION)
+    expect(healthEvents()).toHaveLength(2)
+    expect(healthEvents()[1]).toMatchObject({ sessionId: SESSION, degraded: false, reason: null })
+  })
+
+  it('never judges a session that goes through the proxy', async () => {
+    resolveTransport.mockResolvedValue('proxy')
+    await createClaudeCliTerminal(SESSION)
+
+    tellStatus('working')
+    tellStatus('completed')
+
+    expect(launches.degradedReason(SESSION)).toBeNull()
+    expect(
+      mocks.publishDesktopBackendEvent.mock.calls.filter(
+        ([channel]) => channel === CLAUDE_LIVE_USAGE_HEALTH_CHANNEL
+      )
+    ).toEqual([])
   })
 
   describe('ends its launch', () => {

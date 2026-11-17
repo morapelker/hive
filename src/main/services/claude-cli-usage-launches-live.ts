@@ -2,12 +2,39 @@
 // live PTYs, the launch directories beside the database, the debug-log usage source and the
 // transport decision. Kept apart from the class itself so its tests need neither node-pty
 // nor the database module.
+import {
+  CLAUDE_LIVE_USAGE_HEALTH_CHANNEL,
+  type ClaudeLiveUsageHealthPayload
+} from '@shared/types/claude-live-usage'
+import { publishDesktopBackendEvent } from '../desktop/backend-event-publisher'
 import { isClaudeDebugUsageEnabled } from './claude-api-proxy/claude-debug-usage-setting'
+import { getClaudeBinaryVersion } from './claude-binary-resolver'
 import { claudeCliDebugDirs } from './claude-cli-debug-dir'
-import { ClaudeCliUsageLaunches, type ClaudeCliUsageLaunchesDeps } from './claude-cli-usage-launches'
+import {
+  ClaudeCliUsageLaunches,
+  type ClaudeCliUsageHealthChange,
+  type ClaudeCliUsageLaunchesDeps
+} from './claude-cli-usage-launches'
 import { getClaudeDebugLogUsageSource } from './claude-debug-log/claude-debug-log-usage'
 import { resolveClaudeUsageTransport } from './claude-usage-transport'
 import { ptyService } from './pty-service'
+
+/**
+ * Tell the usage UI that a session's debug log stopped giving readings, or gives them again
+ * (T18): it then no longer says "Live" on the strength of that session's last reading.
+ */
+function publishUsageHealth(change: ClaudeCliUsageHealthChange): void {
+  const payload: ClaudeLiveUsageHealthPayload = {
+    provider: 'anthropic',
+    sessionId: change.sessionId,
+    degraded: change.degraded,
+    reason: change.reason,
+    at: change.at
+  }
+  void Promise.resolve(publishDesktopBackendEvent(CLAUDE_LIVE_USAGE_HEALTH_CHANNEL, payload)).catch(
+    () => undefined
+  )
+}
 
 /**
  * The launches as the app runs them. `overrides` replaces single pieces (tests: directories
@@ -24,6 +51,8 @@ export function createClaudeCliUsageLaunches(
     // when a closed or reaped session's launch ends.
     onProcessExit: (sessionId, listener) => ptyService.onExit(sessionId, () => listener()),
     hasLiveProcess: (sessionId) => ptyService.has(sessionId),
+    cliVersion: (path) => getClaudeBinaryVersion(path),
+    onHealthChange: publishUsageHealth,
     ...overrides,
     dirs: overrides.dirs ?? claudeCliDebugDirs(),
     source: overrides.source ?? getClaudeDebugLogUsageSource()

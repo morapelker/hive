@@ -14,12 +14,25 @@
 //             live usage (`none`).
 //   started   the process exists: from here on its end is the end of the launch.
 //   abandon   the process never started: what `begin` made is taken back.
+//   noteStatus  the session's hook status: the log is read faster while a turn runs, and
+//             judged when the turn completes (health, below).
 //   sweep     deletes the directories a crash left behind, at start and every hour.
 //   quit      the app is going: every launch ends once the PTYs have been reaped.
 //
 // A launch belongs to a process, not to a session. A view that attaches to a running process
 // begins nothing; a session that is started again (a restart, a resume after the app was
 // closed) is a new launch with a new directory, and shares nothing with the earlier one.
+//
+// Health (Code Mode T18; PRD FR-30, FR-31, LF-5). A log can stop giving readings: the CLI
+// could not write it, an update changed its format, the follower had to give it up. The
+// usage source notices (claude-debug-log-usage-source.ts says when) and this is where the
+// launch is told. A degraded launch needs nothing switched over: the usage poll runs on its
+// own schedule whatever a session's transport is, so its numbers are simply the only ones
+// left. What is done here is the telling: one warning per launch, with the reason and the
+// CLI's version and nothing from the log, and a word to `onHealthChange` every time the
+// launch becomes degraded or healthy again (the usage UI stops saying "Live" on the
+// strength of that session). The launch stays a `debug-log` launch throughout, and is
+// healthy again with the next response its log gives.
 //
 // The end is the same whatever ended the process (it exited, the session was closed, it was
 // reaped, the app quits): the log is read one last time and let go of, then the directory is
@@ -30,7 +43,11 @@ import { basename } from 'node:path'
 import type { SessionStatusType } from '@shared/types/session-status'
 import type { ClaudeCliDebugDirs, ClaudeCliDebugLaunch } from './claude-cli-debug-dir'
 import type { ClaudeCliUsageLaunch } from './claude-cli-spawner'
-import type { ClaudeDebugLogUsageSource } from './claude-debug-log/claude-debug-log-usage-source'
+import type {
+  ClaudeDebugLogDegradedReason,
+  ClaudeDebugLogHealthChange,
+  ClaudeDebugLogUsageSource
+} from './claude-debug-log/claude-debug-log-usage-source'
 import type {
   ClaudeUsageTransport,
   ResolveClaudeUsageTransportOptions
@@ -52,7 +69,10 @@ export interface ClaudeCliUsageLaunchesDeps {
   /** The launch directories (`claudeCliDebugDirs()` in the app). */
   readonly dirs: Pick<ClaudeCliDebugDirs, 'prepare' | 'remove' | 'sweep'>
   /** The follower of every Code Mode session's log (`getClaudeDebugLogUsageSource()`). */
-  readonly source: Pick<ClaudeDebugLogUsageSource, 'register' | 'unregister' | 'setTurnInProgress'>
+  readonly source: Pick<
+    ClaudeDebugLogUsageSource,
+    'register' | 'unregister' | 'setTurnInProgress' | 'turnCompleted' | 'onHealthChange'
+  >
   /** Whether live usage for Code Mode sessions is on, given the environment to read. */
   readonly isFeatureEnabled: (env: NodeJS.ProcessEnv) => boolean
   /** The transport decision for one launch. */
@@ -67,6 +87,16 @@ export interface ClaudeCliUsageLaunchesDeps {
   readonly onProcessExit: (sessionId: string, listener: () => void) => () => void
   /** Whether the session has a PTY right now. */
   readonly hasLiveProcess: (sessionId: string) => boolean
+  /**
+   * The version of the CLI binary at `path`, or null when it is not known. Asked when a
+   * launch becomes degraded; must answer at once.
+   */
+  readonly cliVersion?: (path: string) => string | null
+  /**
+   * Told when the log of a session's running launch stops giving readings and when it gives
+   * them again (the app tells the usage UI). Must return at once.
+   */
+  readonly onHealthChange?: (change: ClaudeCliUsageHealthChange) => void
   /** The app's own environment; `process.env` unless a test says otherwise. */
   readonly env?: NodeJS.ProcessEnv
   /** Defaults to `CLAUDE_CLI_USAGE_SWEEP_INTERVAL_MS`. */
@@ -87,6 +117,21 @@ export interface ClaudeCliUsageBeginOptions {
   readonly cwd: string
   /** Reads Settings → Environment Variables. */
   readonly db: SettingsReader
+  /** The CLI binary the launch runs, for the version a degraded launch is reported with. */
+  readonly cliPath?: string | null
+}
+
+/** The live usage of a session's launch stopped coming from its debug log, or came back. */
+export interface ClaudeCliUsageHealthChange {
+  readonly sessionId: string
+  /** True: usage for this session comes from the usage poll alone until it recovers. */
+  readonly degraded: boolean
+  /** Why, for a degraded launch; null for one that is healthy again. */
+  readonly reason: ClaudeDebugLogDegradedReason | null
+  /** The CLI's version, or null when it is not known. */
+  readonly cliVersion: string | null
+  /** When it changed (epoch ms). */
+  readonly at: number
 }
 
 /** One process of a session that is off the proxy, from `begin` to the end of the process. */
@@ -104,6 +149,14 @@ interface Launch {
   offExit: (() => void) | null
   /** The last sweep found it without a PTY and without a reported end. */
   withoutProcess: boolean
+  /** The CLI binary it runs, when the caller said. */
+  readonly cliPath: string | null
+  /** A turn started and has not completed. */
+  turnOpen: boolean
+  /** Why its log gives no readings right now; null while it does (or has had no reason to). */
+  degraded: ClaudeDebugLogDegradedReason | null
+  /** The one warning a degraded launch gets was logged. */
+  warned: boolean
 }
 
 const errorText = (error: unknown): string =>
@@ -112,6 +165,10 @@ const errorText = (error: unknown): string =>
 /** A turn is running: the agent is at work, not waiting for the person. */
 const isTurnInProgress = (status: SessionStatusType): boolean =>
   status === 'working' || status === 'planning'
+
+/** The turn is over (the Stop hook, or what stands in for it), not waiting on an answer. */
+const isTurnCompleted = (status: SessionStatusType): boolean =>
+  status === 'completed' || status === 'unread'
 
 export class ClaudeCliUsageLaunches {
   private readonly deps: ClaudeCliUsageLaunchesDeps
@@ -128,6 +185,12 @@ export class ClaudeCliUsageLaunches {
   constructor(deps: ClaudeCliUsageLaunchesDeps) {
     this.deps = deps
     this.sweepIntervalMs = Math.max(1, deps.sweepIntervalMs ?? CLAUDE_CLI_USAGE_SWEEP_INTERVAL_MS)
+    try {
+      // For as long as the launches live: they are the app's, like the source.
+      deps.source.onHealthChange((change) => this.noteHealth(change))
+    } catch (error) {
+      log.warn('Could not listen for the health of the debug logs', { error: errorText(error) })
+    }
   }
 
   private get env(): NodeJS.ProcessEnv {
@@ -192,7 +255,11 @@ export class ClaudeCliUsageLaunches {
       started: false,
       ended: false,
       offExit: null,
-      withoutProcess: false
+      withoutProcess: false,
+      cliPath: options.cliPath ?? null,
+      turnOpen: false,
+      degraded: null,
+      warned: false
     }
     this.current.set(sessionId, launch)
     if (!files) return { transport: 'none' }
@@ -233,19 +300,36 @@ export class ClaudeCliUsageLaunches {
 
   /**
    * The session's hook status changed. The log of a session whose turn is running is read
-   * on the fast schedule, and once more the moment the turn ends.
+   * on the fast schedule, and once more the moment the turn ends. A turn that completes is
+   * when the log is judged (FR-30): one that started here, so that a session reported idle
+   * before it ever ran a turn is not judged by an empty log.
    */
   noteStatus(sessionId: string, status: SessionStatusType): void {
     const launch = this.current.get(sessionId)
     if (!launch?.registered) return
     try {
-      this.deps.source.setTurnInProgress(sessionId, isTurnInProgress(status))
+      const inProgress = isTurnInProgress(status)
+      this.deps.source.setTurnInProgress(sessionId, inProgress)
+      if (inProgress) {
+        launch.turnOpen = true
+      } else if (launch.turnOpen && isTurnCompleted(status)) {
+        launch.turnOpen = false
+        this.deps.source.turnCompleted(sessionId)
+      }
     } catch (error) {
       log.warn('Could not pass a turn status on to the debug-log follower', {
         sessionId,
         error: errorText(error)
       })
     }
+  }
+
+  /**
+   * Why the log of the session's running launch gives no readings right now, or null: for a
+   * healthy launch, for one that is not on `debug-log`, and for a session without one.
+   */
+  degradedReason(sessionId: string): ClaudeDebugLogDegradedReason | null {
+    return this.current.get(sessionId)?.degraded ?? null
   }
 
   /**
@@ -338,6 +422,67 @@ export class ClaudeCliUsageLaunches {
         if (!launch.started || (processesEnded && reaped.has(launch))) this.end(launch)
         else this.leaveToNextStart(launch)
       }
+    }
+  }
+
+  /**
+   * The usage source says a session's log stopped giving readings, or gives them again.
+   * Only the session's running launch is meant: what the last read of a log that is being
+   * let go of turns up changes nothing for anybody. Never throws.
+   */
+  private noteHealth(change: ClaudeDebugLogHealthChange): void {
+    const launch = this.current.get(change.sessionId)
+    if (!launch?.registered || launch.ended) return
+    const reason = change.degradation?.reason ?? null
+    if (reason === launch.degraded) return
+    launch.degraded = reason
+    const cliVersion = this.cliVersionOf(launch)
+    if (reason === null) {
+      log.info('The debug log of a Code Mode session gives readings again: live usage resumes', {
+        sessionId: launch.sessionId
+      })
+    } else if (!launch.warned) {
+      // Once per launch, however often it recovers and degrades again (FR-31, LF-5).
+      // Numbers and fixed words only: nothing here was read from the log (SEC-5).
+      launch.warned = true
+      const facts = change.facts
+      log.warn(
+        'The debug log of a Code Mode session gives no usage readings: its usage comes from the usage poll',
+        {
+          sessionId: launch.sessionId,
+          reason,
+          ...(change.degradation?.detail ? { detail: change.degradation.detail } : {}),
+          cliVersion: cliVersion ?? 'unknown',
+          turnsCompleted: facts.turnsCompleted,
+          bytesRead: facts.bytesRead,
+          statusLines: facts.statusLines,
+          entriesParsed: facts.entriesParsed,
+          parseFailures: facts.parseFailures
+        }
+      )
+    }
+    try {
+      this.deps.onHealthChange?.({
+        sessionId: launch.sessionId,
+        degraded: reason !== null,
+        reason,
+        cliVersion,
+        at: change.degradation?.at ?? Date.now()
+      })
+    } catch (error) {
+      log.warn('Could not pass on the health of a debug log', {
+        sessionId: launch.sessionId,
+        error: errorText(error)
+      })
+    }
+  }
+
+  private cliVersionOf(launch: Launch): string | null {
+    if (launch.cliPath === null || !this.deps.cliVersion) return null
+    try {
+      return this.deps.cliVersion(launch.cliPath)
+    } catch {
+      return null
     }
   }
 

@@ -155,6 +155,87 @@ describe('usageApi', () => {
     expect(unsubscribe).toHaveBeenCalledTimes(1)
   })
 
+  it('accepts the session a debug-log reading came from, and nothing else in its place', () => {
+    const subscribe = vi.fn().mockReturnValue(vi.fn())
+    setRendererRpcClient({ request: vi.fn(), subscribe })
+    const callback = vi.fn()
+    usageApi.onClaudeLiveUsage(callback)
+    const listener = subscribe.mock.calls[0][1] as (event: {
+      channel: string
+      payload: unknown
+    }) => void
+    const payload = {
+      provider: 'anthropic',
+      accountId: 'row-a',
+      email: 'a@example.com',
+      accountUuid: null,
+      isLiveAccount: true,
+      liveEmail: 'a@example.com',
+      usage: {
+        five_hour: { utilization: 3, resets_at: null },
+        seven_day: { utilization: 39, resets_at: null }
+      },
+      rateLimit: {},
+      observedAt: 1
+    }
+
+    listener({ channel: 'usage:claudeLive', payload: { ...payload, sessionId: 'session-1' } })
+    listener({ channel: 'usage:claudeLive', payload: { ...payload, sessionId: 7 } })
+    listener({ channel: 'usage:claudeLive', payload: { ...payload, sessionId: null } })
+
+    expect(callback).toHaveBeenCalledTimes(1)
+    expect(callback).toHaveBeenCalledWith({ ...payload, sessionId: 'session-1' })
+  })
+
+  it('subscribes to the health of Code Mode debug logs and ignores malformed payloads', () => {
+    const unsubscribe = vi.fn()
+    const subscribe = vi.fn().mockReturnValue(unsubscribe)
+    setRendererRpcClient({ request: vi.fn(), subscribe })
+
+    const callback = vi.fn()
+    const dispose = usageApi.onClaudeLiveUsageHealth(callback)
+    expect(subscribe).toHaveBeenCalledWith('usage:claudeLiveHealth', expect.any(Function))
+    const listener = subscribe.mock.calls[0][1] as (event: {
+      channel: string
+      payload: unknown
+    }) => void
+    const deliver = (payload: unknown): void =>
+      listener({ channel: 'usage:claudeLiveHealth', payload })
+
+    const degraded = {
+      provider: 'anthropic',
+      sessionId: 'session-1',
+      degraded: true,
+      reason: 'log-empty',
+      at: 1_700_000_000_000
+    }
+    const recovered = { ...degraded, degraded: false, reason: null }
+    deliver(degraded)
+    deliver(recovered)
+    for (const reason of ['unparsed-responses', 'hard-cap', 'unsafe-file']) {
+      deliver({ ...degraded, reason })
+    }
+    expect(callback).toHaveBeenCalledTimes(5)
+    expect(callback).toHaveBeenNthCalledWith(1, degraded)
+    expect(callback).toHaveBeenNthCalledWith(2, recovered)
+
+    // Anything else is dropped: another provider, no session, a reason nobody knows, a
+    // degraded session without a reason, a healthy one with one.
+    deliver(null)
+    deliver({ ...degraded, provider: 'openai' })
+    deliver({ ...degraded, sessionId: '' })
+    deliver({ ...degraded, sessionId: undefined })
+    deliver({ ...degraded, reason: 'the log said: sk-ant-...' })
+    deliver({ ...degraded, reason: null })
+    deliver({ ...recovered, reason: 'log-empty' })
+    deliver({ ...degraded, degraded: 'yes' })
+    deliver({ ...degraded, at: '2026-11-17' })
+    expect(callback).toHaveBeenCalledTimes(5)
+
+    dispose()
+    expect(unsubscribe).toHaveBeenCalledTimes(1)
+  })
+
   it('accepts live usage with null windows and rejects payloads missing a window key', () => {
     const request = vi.fn()
     const subscribe = vi.fn().mockReturnValue(vi.fn())

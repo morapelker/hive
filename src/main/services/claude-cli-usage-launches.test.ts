@@ -15,6 +15,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  symlinkSync,
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -23,8 +24,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
 import type { ClaudeUsageObservation } from './claude-api-proxy/claude-usage-live-updater'
 
+/** The module's logger: what a degraded launch is reported with is looked at (T18). */
+const logMock = vi.hoisted(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }))
+
 vi.mock('./logger', () => ({
-  createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() })
+  createLogger: () => logMock
 }))
 
 import {
@@ -35,6 +39,7 @@ import {
 import {
   CLAUDE_CLI_USAGE_SWEEP_INTERVAL_MS,
   ClaudeCliUsageLaunches,
+  type ClaudeCliUsageHealthChange,
   type ClaudeCliUsageLaunchesDeps
 } from './claude-cli-usage-launches'
 import { ClaudeDebugLogUsageSource } from './claude-debug-log/claude-debug-log-usage-source'
@@ -53,6 +58,27 @@ const RESPONSE_LINE = readFileSync(
 )
   .split('\n')
   .filter((line) => line !== '')[0]
+
+const NOT_ENTRY_LINES = readFileSync(
+  join(__dirname, 'claude-debug-log', '__fixtures__', 'not-entries.txt'),
+  'utf8'
+)
+  .split('\n')
+  .filter((line) => line !== '')
+/** `sending request`, as the CLI logs it: about 2 KB, no entry. */
+const REQUEST_LINE = NOT_ENTRY_LINES[0]
+/** The SDK's one-line report of a successful response: no headers, no entry. */
+const STATUS_LINE = NOT_ENTRY_LINES[2]
+/** A line the CLI logs without talking to the API. */
+const STARTUP_LINE = NOT_ENTRY_LINES[10]
+/** A response entry after an update renamed it: the parser no longer knows the line. */
+const RENAMED_RESPONSE_LINE = RESPONSE_LINE.replace('response start', 'response begin')
+
+/** What every warning about a log without readings was logged with (T18). */
+const degradedWarnings = (): Array<Record<string, unknown>> =>
+  logMock.warn.mock.calls
+    .filter(([message]) => String(message).includes('gives no usage readings'))
+    .map(([, data]) => data as Record<string, unknown>)
 
 const SESSION = 'session-1'
 const OTHER_SESSION = 'session-2'
@@ -108,7 +134,9 @@ const launchesOf = (overrides: Partial<ClaudeCliUsageLaunchesDeps> = {}): Claude
         events.push(`unregister ${sessionId}`)
         return source.unregister(sessionId)
       },
-      setTurnInProgress: (sessionId, inProgress) => source.setTurnInProgress(sessionId, inProgress)
+      setTurnInProgress: (sessionId, inProgress) => source.setTurnInProgress(sessionId, inProgress),
+      turnCompleted: (sessionId) => source.turnCompleted(sessionId),
+      onHealthChange: (listener) => source.onHealthChange(listener)
     },
     isFeatureEnabled,
     resolveTransport,
@@ -189,6 +217,7 @@ const startDebugLogLaunch = (
 }
 
 beforeEach(() => {
+  for (const fn of Object.values(logMock)) fn.mockClear()
   base = mkdtempSync(join(tmpdir(), 'claude-cli-usage-launches-'))
   root = join(base, 'data', CLAUDE_CLI_DEBUG_DIRNAME)
   mkdirSync(dirname(root))
@@ -383,7 +412,9 @@ describePosix('ClaudeCliUsageLaunches.begin', () => {
           throw new TypeError('A debug-log session needs an absolute log path')
         },
         unregister: (sessionId) => source.unregister(sessionId),
-        setTurnInProgress: () => false
+        setTurnInProgress: () => false,
+        turnCompleted: () => false,
+        onHealthChange: () => () => {}
       }
     })
 
@@ -641,7 +672,9 @@ describePosix('the end of a usage launch', () => {
         unregister: () => {
           throw new Error('the follower is stuck')
         },
-        setTurnInProgress: () => false
+        setTurnInProgress: () => false,
+        turnCompleted: () => false,
+        onHealthChange: () => () => {}
       }
     })
     const { files, pty } = startDebugLogLaunch(launches)
@@ -765,11 +798,14 @@ describePosix('ClaudeCliUsageLaunches.noteStatus', () => {
 
   it('says nothing about a session that is not followed', () => {
     const setTurnInProgress = vi.fn(() => true)
+    const turnCompleted = vi.fn(() => true)
     const launches = launchesOf({
       source: {
         register: (registration) => source.register(registration),
         unregister: (sessionId) => source.unregister(sessionId),
-        setTurnInProgress
+        setTurnInProgress,
+        turnCompleted,
+        onHealthChange: (listener) => source.onHealthChange(listener)
       }
     })
     launches.begin(SESSION, 'none', { cwd: WORKTREE, db: settingsDb() })
@@ -778,8 +814,352 @@ describePosix('ClaudeCliUsageLaunches.noteStatus', () => {
 
     launches.noteStatus(SESSION, 'working')
     launches.noteStatus(OTHER_SESSION, 'working')
+    launches.noteStatus(SESSION, 'completed')
+    launches.noteStatus(OTHER_SESSION, 'completed')
 
     expect(setTurnInProgress).not.toHaveBeenCalled()
+    expect(turnCompleted).not.toHaveBeenCalled()
+    expect(launches.degradedReason(SESSION)).toBeNull()
+    expect(degradedWarnings()).toEqual([])
+  })
+})
+
+// Code Mode T18: a log that gives no readings. The usage source says when (its own tests
+// cover every way a log goes quiet); here is what the launch does about it.
+describePosix('ClaudeCliUsageLaunches health', () => {
+  const CLI = '/opt/claude/bin/claude'
+  const CLI_VERSION = '2.1.326'
+
+  let changes: ClaudeCliUsageHealthChange[]
+
+  const healthLaunches = (
+    overrides: Partial<ClaudeCliUsageLaunchesDeps> = {}
+  ): ClaudeCliUsageLaunches => {
+    changes = []
+    return launchesOf({
+      cliVersion: (path) => (path === CLI ? CLI_VERSION : null),
+      onHealthChange: (change) => changes.push(change),
+      ...overrides
+    })
+  }
+
+  /** Begin a `debug-log` launch of the CLI at `CLI` and start its process. */
+  const start = (
+    launches: ClaudeCliUsageLaunches,
+    sessionId = SESSION,
+    cliPath: string | null = CLI
+  ): { logFile: string; pty: FakePty } => {
+    const usage = launches.begin(sessionId, 'debug-log', {
+      cwd: WORKTREE,
+      db: settingsDb(),
+      cliPath
+    })
+    if (usage?.transport !== 'debug-log') throw new Error('The launch was not prepared')
+    const pty = spawnPty(sessionId)
+    launches.started(sessionId)
+    return { logFile: usage.debugLogFile, pty }
+  }
+
+  /** One turn: the prompt is submitted, the CLI logs `lines`, the Stop hook fires. */
+  const turn = (
+    launches: ClaudeCliUsageLaunches,
+    logFile: string | null,
+    lines: string[] = [],
+    sessionId = SESSION
+  ): void => {
+    launches.noteStatus(sessionId, 'working')
+    if (logFile) for (const line of lines) appendFileSync(logFile, `${line}\n`)
+    launches.noteStatus(sessionId, 'completed')
+  }
+
+  /** A source whose followers delete a log past 8 KiB, in place of the test's own. */
+  const useSmallHardCap = (): void => {
+    source.dispose()
+    source = new ClaudeDebugLogUsageSource({
+      submit: (observation) => observations.push(observation),
+      setTimer: () => ({}),
+      clearTimer: () => {},
+      follower: { hardCapBytes: 8 * 1024 }
+    })
+  }
+
+  /** Enough of a request to pass 8 KiB: no entry among them. */
+  const overTheCap = (): string[] => Array.from({ length: 6 }, () => REQUEST_LINE)
+
+  it('warns once, with the reason and the CLI version, when a turn completes over an empty log', () => {
+    const launches = healthLaunches()
+    start(launches)
+
+    turn(launches, null)
+
+    expect(launches.degradedReason(SESSION)).toBe('log-empty')
+    expect(degradedWarnings()).toEqual([
+      expect.objectContaining({
+        sessionId: SESSION,
+        reason: 'log-empty',
+        cliVersion: CLI_VERSION,
+        turnsCompleted: 1,
+        bytesRead: 0,
+        statusLines: 0,
+        entriesParsed: 0,
+        parseFailures: 0
+      })
+    ])
+    expect(changes).toEqual([
+      {
+        sessionId: SESSION,
+        degraded: true,
+        reason: 'log-empty',
+        cliVersion: CLI_VERSION,
+        at: expect.any(Number)
+      }
+    ])
+    // It stays the launch it was: nothing is switched, the poll covers it.
+    expect(launches.transport(SESSION)).toBe('debug-log')
+    expect(source.facts(SESSION)).not.toBeNull()
+  })
+
+  it('warns when the log cannot be written: the file is gone and cannot be made again', () => {
+    const launches = healthLaunches()
+    const { logFile } = start(launches)
+    // What an unwritable location amounts to: the CLI writes nothing and says nothing.
+    rmSync(logFile)
+    chmodSync(dirname(logFile), 0o500)
+
+    try {
+      turn(launches, null)
+    } finally {
+      chmodSync(dirname(logFile), 0o700)
+    }
+
+    expect(degradedWarnings()).toEqual([
+      expect.objectContaining({ reason: 'log-empty', cliVersion: CLI_VERSION })
+    ])
+  })
+
+  it('warns when responses were logged and none could be read', () => {
+    const launches = healthLaunches()
+    const { logFile } = start(launches)
+
+    turn(launches, logFile, [REQUEST_LINE, STATUS_LINE, RENAMED_RESPONSE_LINE])
+
+    expect(launches.degradedReason(SESSION)).toBe('unparsed-responses')
+    expect(degradedWarnings()).toEqual([
+      expect.objectContaining({
+        reason: 'unparsed-responses',
+        cliVersion: CLI_VERSION,
+        statusLines: 1,
+        entriesParsed: 0
+      })
+    ])
+    expect(changes.map((change) => change.reason)).toEqual(['unparsed-responses'])
+    expect(observations).toEqual([])
+  })
+
+  it('warns the moment a log past the hard cap is deleted, without waiting for a turn', () => {
+    useSmallHardCap()
+    const launches = healthLaunches()
+    const { logFile } = start(launches)
+    for (const line of overTheCap()) appendFileSync(logFile, `${line}\n`)
+
+    source.checkNow(SESSION)
+
+    expect(existsSync(logFile)).toBe(false)
+    expect(degradedWarnings()).toEqual([
+      expect.objectContaining({ reason: 'hard-cap', cliVersion: CLI_VERSION })
+    ])
+    expect(changes.map((change) => change.reason)).toEqual(['hard-cap'])
+  })
+
+  it('warns the moment the follower refuses what is at the path of the log', () => {
+    const launches = healthLaunches()
+    const { logFile } = start(launches)
+    rmSync(logFile)
+    writeFileSync(join(base, 'elsewhere.log'), `${RESPONSE_LINE}\n`)
+    symlinkSync(join(base, 'elsewhere.log'), logFile)
+
+    source.checkNow(SESSION)
+
+    expect(degradedWarnings()).toEqual([
+      expect.objectContaining({ reason: 'unsafe-file', detail: 'symlink', cliVersion: CLI_VERSION })
+    ])
+    expect(changes.map((change) => change.reason)).toEqual(['unsafe-file'])
+    expect(observations).toEqual([])
+  })
+
+  it('leaves a healthy session alone, also one whose turn sent nothing to the API', () => {
+    const launches = healthLaunches()
+    const { logFile } = start(launches)
+
+    turn(launches, logFile, [REQUEST_LINE, STATUS_LINE, RESPONSE_LINE])
+    // A local command: the CLI logged a line and made no request.
+    turn(launches, logFile, [STARTUP_LINE])
+    turn(launches, logFile)
+
+    expect(launches.degradedReason(SESSION)).toBeNull()
+    expect(degradedWarnings()).toEqual([])
+    expect(changes).toEqual([])
+    expect(observations).toHaveLength(1)
+  })
+
+  it('does not judge a session that was reported idle before it ran a turn', () => {
+    const launches = healthLaunches()
+    start(launches)
+
+    launches.noteStatus(SESSION, 'completed')
+    launches.noteStatus(SESSION, 'unread')
+
+    expect(source.facts(SESSION)).toMatchObject({ turnsCompleted: 0, health: null })
+    expect(degradedWarnings()).toEqual([])
+  })
+
+  it('does not judge a turn that waits for the person, only one that completed', () => {
+    const launches = healthLaunches()
+    start(launches)
+
+    launches.noteStatus(SESSION, 'working')
+    for (const status of ['permission', 'answering', 'command_approval', 'plan_ready'] as const) {
+      launches.noteStatus(SESSION, status)
+      launches.noteStatus(SESSION, 'planning')
+    }
+    expect(source.facts(SESSION)).toMatchObject({ turnsCompleted: 0, health: null })
+    expect(degradedWarnings()).toEqual([])
+
+    // The Stop hook, seen while the session's tab is not looked at.
+    launches.noteStatus(SESSION, 'unread')
+
+    expect(source.facts(SESSION)).toMatchObject({ turnsCompleted: 1 })
+    expect(degradedWarnings()).toHaveLength(1)
+    // One completed turn is one judgement: `completed` after `unread` is the same turn.
+    launches.noteStatus(SESSION, 'completed')
+    expect(source.facts(SESSION)).toMatchObject({ turnsCompleted: 1 })
+  })
+
+  it('is healthy again when readings resume, and says so', () => {
+    const launches = healthLaunches()
+    const { logFile } = start(launches)
+    turn(launches, null)
+    expect(launches.degradedReason(SESSION)).toBe('log-empty')
+
+    // The log is written after all: the next response is read like any other.
+    turn(launches, logFile, [REQUEST_LINE, STATUS_LINE, RESPONSE_LINE])
+
+    expect(launches.degradedReason(SESSION)).toBeNull()
+    expect(observations).toHaveLength(1)
+    expect(changes).toEqual([
+      expect.objectContaining({ sessionId: SESSION, degraded: true, reason: 'log-empty' }),
+      {
+        sessionId: SESSION,
+        degraded: false,
+        reason: null,
+        cliVersion: CLI_VERSION,
+        at: expect.any(Number)
+      }
+    ])
+    expect(logMock.info).toHaveBeenCalledWith(expect.stringContaining('gives readings again'), {
+      sessionId: SESSION
+    })
+  })
+
+  it('logs exactly one warning for a session, however often it degrades', () => {
+    useSmallHardCap()
+    const launches = healthLaunches()
+    const { logFile } = start(launches)
+
+    turn(launches, null)
+    turn(launches, null)
+    turn(launches, logFile, [RESPONSE_LINE])
+    for (const line of overTheCap()) appendFileSync(logFile, `${line}\n`)
+    source.checkNow(SESSION)
+    turn(launches, null)
+
+    expect(changes.map((change) => change.reason)).toEqual(['log-empty', null, 'hard-cap'])
+    expect(launches.degradedReason(SESSION)).toBe('hard-cap')
+    expect(degradedWarnings()).toEqual([expect.objectContaining({ reason: 'log-empty' })])
+  })
+
+  it('warns once per session when several degrade', () => {
+    const launches = healthLaunches()
+    start(launches, SESSION)
+    start(launches, OTHER_SESSION, null)
+
+    turn(launches, null, [], SESSION)
+    turn(launches, null, [], OTHER_SESSION)
+    turn(launches, null, [], SESSION)
+
+    expect(degradedWarnings().map((data) => [data.sessionId, data.cliVersion])).toEqual([
+      [SESSION, CLI_VERSION],
+      // Nobody said which binary runs: the warning says the version is not known.
+      [OTHER_SESSION, 'unknown']
+    ])
+    expect(changes.map((change) => [change.sessionId, change.cliVersion])).toEqual([
+      [SESSION, CLI_VERSION],
+      [OTHER_SESSION, null]
+    ])
+  })
+
+  it('writes nothing of the log into the warning', () => {
+    const launches = healthLaunches()
+    const { logFile } = start(launches)
+    const lines = [REQUEST_LINE, STATUS_LINE, RENAMED_RESPONSE_LINE]
+
+    turn(launches, logFile, lines)
+
+    expect(degradedWarnings()).toHaveLength(1)
+    const logged = JSON.stringify([
+      ...logMock.warn.mock.calls,
+      ...logMock.info.mock.calls,
+      ...logMock.debug.mock.calls
+    ])
+    // Header names and values, ids, URLs: anything of a line long enough to give it away.
+    const pieces = lines.flatMap((line) =>
+      line.split(/[\s'"`{},\\]+/).filter((piece) => piece.length >= 12)
+    )
+    expect(pieces.length).toBeGreaterThan(20)
+    for (const piece of pieces) expect(logged.includes(piece)).toBe(false)
+    expect(logged).not.toContain(logFile)
+  })
+
+  it('still warns when the version cannot be asked or the listener fails', () => {
+    const launches = healthLaunches({
+      cliVersion: () => {
+        throw new Error('the binary is gone')
+      },
+      onHealthChange: () => {
+        throw new Error('nobody listens')
+      }
+    })
+    const { logFile } = start(launches)
+
+    turn(launches, null)
+    turn(launches, logFile, [RESPONSE_LINE])
+
+    expect(degradedWarnings()).toEqual([
+      expect.objectContaining({ reason: 'log-empty', cliVersion: 'unknown' })
+    ])
+    expect(launches.degradedReason(SESSION)).toBeNull()
+    expect(observations).toHaveLength(1)
+  })
+
+  it('says nothing for a launch that has ended, and starts the next one healthy', () => {
+    const launches = healthLaunches()
+    const first = start(launches)
+    turn(launches, null)
+    expect(degradedWarnings()).toHaveLength(1)
+
+    // The last read of a log that is let go of turns up a response: nobody is told.
+    appendFileSync(first.logFile, `${RESPONSE_LINE}\n`)
+    exitPty(first.pty)
+    expect(changes).toHaveLength(1)
+    expect(launches.degradedReason(SESSION)).toBeNull()
+
+    // The session is started again: a new launch, judged on its own.
+    start(launches)
+    expect(launches.degradedReason(SESSION)).toBeNull()
+    turn(launches, null)
+
+    expect(degradedWarnings()).toHaveLength(2)
+    expect(changes.map((change) => change.degraded)).toEqual([true, true])
   })
 })
 

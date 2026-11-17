@@ -112,6 +112,36 @@ describe('useAccountScheduleRunner usage refresh cadence', () => {
     expect(fetchUsageForProvider).toHaveBeenCalledWith('anthropic', { minIntervalMs: 180_000 })
   })
 
+  it('polls on the same 5-minute schedule for a Code Mode session whose debug log gives no readings (T18)', async () => {
+    // A Claude CLI session off the proxy: its live usage came from its debug log, until
+    // the log went quiet. Nothing has to switch the poll back on: it never stopped.
+    useSessionStore.setState({
+      sessionsByWorktree: new Map([
+        ['wt-1', [{ id: 'session-1', agent_sdk: 'claude-code-cli' } as unknown as Session]]
+      ])
+    })
+    useUsageStore.setState({
+      anthropicLiveUpdatedAt: Date.now(),
+      anthropicLiveSessionId: 'session-1'
+    })
+    useUsageStore.getState().applyClaudeLiveUsageHealth({
+      provider: 'anthropic',
+      sessionId: 'session-1',
+      degraded: true,
+      reason: 'log-empty',
+      at: Date.now()
+    })
+    expect(useUsageStore.getState().anthropicLiveUpdatedAt).toBeNull()
+    renderHook(() => useAccountScheduleRunner())
+
+    await advance(4 * 60_000)
+    expect(fetchUsageForProvider).not.toHaveBeenCalled()
+
+    await advance(60_000)
+    expect(fetchUsageForProvider).toHaveBeenCalledTimes(1)
+    expect(fetchUsageForProvider).toHaveBeenCalledWith('anthropic', { minIntervalMs: 180_000 })
+  })
+
   it('refreshes every 2 minutes in the last 10 points before an armed auto-switch threshold', async () => {
     useAccountScheduleStore.setState({
       autoSwitch: {

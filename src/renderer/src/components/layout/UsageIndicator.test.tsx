@@ -8,7 +8,9 @@ import { autoSwitchIneligibilityReason } from '@/lib/auto-switch-score'
 import { useAccountStore, useUsageStore } from '@/stores'
 import { useAccountScheduleStore } from '@/stores/useAccountScheduleStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
+import { useTimerTickStore } from '@/stores/useTimerTickStore'
 import type { AccountMemberInfo } from './MemberAvatarStack'
+import type { ClaudeLiveUsagePayload } from '@shared/types/claude-live-usage'
 import type { OpenAIUsageData, SavedAccountDTO, UsageData } from '@shared/types/usage'
 import { nextUsageRefreshAt } from '@/hooks/useAccountScheduleRunner'
 
@@ -783,6 +785,131 @@ describe('UsageAccountRow refresh countdown', () => {
     render(<UsageAccountRow row={activeRow} provider="anthropic" onRefresh={vi.fn()} />)
 
     expect(screen.getByTestId('usage-refresh-countdown').textContent).toBe('Refreshed just now')
+  })
+
+  describe('live usage and its fallback to the poll (Code Mode T18)', () => {
+    const livePayload = (sessionId?: string): ClaudeLiveUsagePayload => ({
+      provider: 'anthropic',
+      accountId: 'acc-1',
+      email: 'active@example.com',
+      accountUuid: null,
+      isLiveAccount: true,
+      liveEmail: null,
+      usage: sampleUsage,
+      rateLimit: {},
+      observedAt: Date.now(),
+      ...(sessionId ? { sessionId } : {})
+    })
+
+    const label = (): string | null => screen.getByTestId('usage-refresh-countdown').textContent
+
+    beforeEach(() => {
+      vi.mocked(nextUsageRefreshAt).mockImplementation(() => Date.now() + 150_000)
+      useUsageStore.setState({
+        anthropicLiveUpdatedAt: null,
+        anthropicLiveSessionId: null,
+        anthropicLiveDegradedSessions: {},
+        anthropicAccountSwitchedAt: null
+      })
+      useTimerTickStore.setState({ tickMs: Date.now() })
+    })
+
+    afterEach(() => {
+      useUsageStore.setState({
+        anthropicLiveUpdatedAt: null,
+        anthropicLiveSessionId: null,
+        anthropicLiveDegradedSessions: {}
+      })
+    })
+
+    it('says "Live" while a Code Mode session\'s readings are fresh', () => {
+      act(() => useUsageStore.getState().applyClaudeLiveUsage(livePayload('session-1')))
+
+      render(<UsageAccountRow row={activeRow} provider="anthropic" onRefresh={vi.fn()} />)
+
+      expect(label()).toBe('Live')
+    })
+
+    it('shows the ordinary polled state once that session is degraded, not "Live"', () => {
+      act(() => useUsageStore.getState().applyClaudeLiveUsage(livePayload('session-1')))
+      render(<UsageAccountRow row={activeRow} provider="anthropic" onRefresh={vi.fn()} />)
+      expect(label()).toBe('Live')
+
+      act(() =>
+        useUsageStore.getState().applyClaudeLiveUsageHealth({
+          provider: 'anthropic',
+          sessionId: 'session-1',
+          degraded: true,
+          reason: 'hard-cap',
+          at: Date.now()
+        })
+      )
+
+      // The countdown to the next poll, as for any session without live usage.
+      expect(label()).toMatch(/^Refreshing in \d+ min$/)
+      expect(screen.getByTestId('usage-refresh-countdown').getAttribute('title')).toBeNull()
+    })
+
+    it('never says "Live" for a session that was degraded from its first turn', () => {
+      render(<UsageAccountRow row={activeRow} provider="anthropic" onRefresh={vi.fn()} />)
+
+      act(() =>
+        useUsageStore.getState().applyClaudeLiveUsageHealth({
+          provider: 'anthropic',
+          sessionId: 'session-1',
+          degraded: true,
+          reason: 'log-empty',
+          at: Date.now()
+        })
+      )
+
+      expect(label()).toMatch(/^Refreshing in \d+ min$/)
+    })
+
+    it('keeps "Live" when another source still feeds the account', () => {
+      act(() => useUsageStore.getState().applyClaudeLiveUsage(livePayload()))
+      render(<UsageAccountRow row={activeRow} provider="anthropic" onRefresh={vi.fn()} />)
+
+      act(() =>
+        useUsageStore.getState().applyClaudeLiveUsageHealth({
+          provider: 'anthropic',
+          sessionId: 'session-1',
+          degraded: true,
+          reason: 'unsafe-file',
+          at: Date.now()
+        })
+      )
+
+      expect(label()).toBe('Live')
+    })
+
+    it('says "Live" again when the session\'s readings resume', () => {
+      act(() => useUsageStore.getState().applyClaudeLiveUsage(livePayload('session-1')))
+      render(<UsageAccountRow row={activeRow} provider="anthropic" onRefresh={vi.fn()} />)
+      act(() =>
+        useUsageStore.getState().applyClaudeLiveUsageHealth({
+          provider: 'anthropic',
+          sessionId: 'session-1',
+          degraded: true,
+          reason: 'hard-cap',
+          at: Date.now() - 1
+        })
+      )
+      expect(label()).toMatch(/^Refreshing in/)
+
+      act(() => {
+        useUsageStore.getState().applyClaudeLiveUsageHealth({
+          provider: 'anthropic',
+          sessionId: 'session-1',
+          degraded: false,
+          reason: null,
+          at: Date.now()
+        })
+        useUsageStore.getState().applyClaudeLiveUsage(livePayload('session-1'))
+      })
+
+      expect(label()).toBe('Live')
+    })
   })
 
   it('is hidden when nothing is scheduled and usage was never fetched', () => {

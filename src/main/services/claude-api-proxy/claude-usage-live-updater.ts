@@ -68,6 +68,11 @@ export interface ClaudeUsageObservation {
   organizationUuid?: string | null
   snapshot: UnifiedRateLimitSnapshot
   observedAt: number
+  /**
+   * The session the reading was read for, when its source knows (the debug log of a Code
+   * Mode session). Decides nothing here: it is passed on with the published update.
+   */
+  sessionId?: string
 }
 
 /** A saved account and the organization stored for it (null: not learned yet). */
@@ -1089,7 +1094,8 @@ export class ClaudeUsageLiveUpdater {
           'seven_day'
         )
       },
-      observedAt: observation.observedAt
+      observedAt: observation.observedAt,
+      ...(observation.sessionId ? { sessionId: observation.sessionId } : {})
     }
 
     if (!this.announced.has(email)) {

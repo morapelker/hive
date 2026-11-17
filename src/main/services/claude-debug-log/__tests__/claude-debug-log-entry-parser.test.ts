@@ -9,6 +9,7 @@ import {
 } from '../../claude-api-proxy/anthropic-rate-limit-headers'
 import {
   CLAUDE_DEBUG_LOG_MAX_LINE_LENGTH,
+  isClaudeDebugLogSuccessStatusLine,
   parseClaudeDebugLogLine,
   type ClaudeDebugLogParseResult,
   type ClaudeDebugLogResponseEntry
@@ -483,6 +484,75 @@ describe('parseClaudeDebugLogLine', () => {
       )
       expect(entry.status).toBe(200)
       expect(entry.organizationUuid).toBe(ORG_A)
+    })
+  })
+
+  describe('the status line of a successful response (health detection, T18)', () => {
+    const STATUS_LINE = fixtureLines('not-entries.txt')[2]
+
+    it('recognises the line the SDK writes for a response that succeeded', () => {
+      expect(STATUS_LINE).toContain('succeeded with status 200')
+      expect(isClaudeDebugLogSuccessStatusLine(STATUS_LINE)).toBe(true)
+      expect(isClaudeDebugLogSuccessStatusLine(`${STATUS_LINE}\n`)).toBe(true)
+      // Any level tag, any 2xx, a retry named in the bracket, no request id at all.
+      for (const line of [
+        STATUS_LINE.replace('[DEBUG]', '[INFO]'),
+        STATUS_LINE.replace('status 200', 'status 201'),
+        STATUS_LINE.replace('[log_49f1c6,', '[log_49f1c6, retryOf: log_38697c,'),
+        `${TIMESTAMP} [DEBUG] console.log: [log_0a1b2c] get https://api.anthropic.com/v1/models succeeded with status 200 in 4ms`
+      ]) {
+        expect(isClaudeDebugLogSuccessStatusLine(line)).toBe(true)
+      }
+      // It stays no entry: it carries no headers.
+      expect(parseClaudeDebugLogLine(STATUS_LINE)).toEqual(UNRELATED)
+    })
+
+    it('recognises nothing else in a log', () => {
+      // Requests, failed responses, the raw stream line, parsed bodies, start-up lines.
+      const others = fixtureLines('not-entries.txt').filter((line) => line !== STATUS_LINE)
+      expect(others).toHaveLength(13)
+      for (const line of others) expect(isClaudeDebugLogSuccessStatusLine(line)).toBe(false)
+      for (const name of [
+        'response-start-streaming.txt',
+        'response-start-non-streaming.txt',
+        'response-error-404.txt',
+        'response-error-429-plan-limit.txt'
+      ]) {
+        expect(isClaudeDebugLogSuccessStatusLine(fixtureLine(name))).toBe(false)
+      }
+    })
+
+    it('is not taken in by the words inside another line', () => {
+      const words = 'post https://api.anthropic.com/v1/messages succeeded with status 200 in 9ms'
+      for (const line of [
+        // A prompt that quotes the words, inside the request the SDK logs.
+        sdkLine('sending request', { body: { messages: [{ content: words }] } }),
+        `${TIMESTAMP} [DEBUG] console.log: [log_0a1b2c] sending request ${words}`,
+        // Hook or tool output, which is logged inside other entries.
+        `${TIMESTAMP} [DEBUG] Hook Stop success: console.log: [log_0a1b2c] ${words}`,
+        `${TIMESTAMP} [DEBUG] console.log: ${words}`,
+        // Not the SDK's shape: no method, an upper-case method, no URL.
+        `${TIMESTAMP} [DEBUG] console.log: [log_0a1b2c]  succeeded with status 200 in 9ms`,
+        `${TIMESTAMP} [DEBUG] console.log: [log_0a1b2c] POST https://x succeeded with status 200`,
+        `${TIMESTAMP} [DEBUG] console.log: [log_0a1b2c] post succeeded with status 200 in 9ms`,
+        // Without the timestamp and level prefix.
+        STATUS_LINE.slice(TIMESTAMP.length + 1),
+        '',
+        `${TIMESTAMP} [DEBUG] console.log: [log_0a1b2c`
+      ]) {
+        expect(isClaudeDebugLogSuccessStatusLine(line)).toBe(false)
+      }
+    })
+
+    it('never throws and never reads an oversized line', () => {
+      const long = STATUS_LINE + 'x'.repeat(CLAUDE_DEBUG_LOG_MAX_LINE_LENGTH)
+      expect(isClaudeDebugLogSuccessStatusLine(long)).toBe(false)
+      for (const value of [null, undefined, 42, {}]) {
+        expect(isClaudeDebugLogSuccessStatusLine(value as unknown as string)).toBe(false)
+      }
+      for (let length = 0; length < STATUS_LINE.length; length += 7) {
+        expect(() => isClaudeDebugLogSuccessStatusLine(STATUS_LINE.slice(0, length))).not.toThrow()
+      }
     })
   })
 

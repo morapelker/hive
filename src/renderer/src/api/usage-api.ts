@@ -10,7 +10,10 @@ import type {
 } from '@shared/types/usage'
 import {
   CLAUDE_LIVE_USAGE_CHANNEL,
+  CLAUDE_LIVE_USAGE_HEALTH_CHANNEL,
+  isClaudeLiveUsageHealthPayload,
   isClaudeLiveUsagePayload,
+  type ClaudeLiveUsageHealthPayload,
   type ClaudeLiveUsagePayload
 } from '@shared/types/claude-live-usage'
 import type { ServerEvent } from '@shared/rpc/protocol'
@@ -24,6 +27,16 @@ export const usageApi = {
   onClaudeLiveUsage: (callback: (payload: ClaudeLiveUsagePayload) => void): (() => void) =>
     getRendererRpcClient().subscribe(CLAUDE_LIVE_USAGE_CHANNEL, (event: ServerEvent) => {
       if (isClaudeLiveUsagePayload(event.payload)) callback(event.payload)
+    }),
+  /**
+   * The debug log of a Code Mode session stopped giving usage readings, or
+   * gives them again: its usage comes from the poll meanwhile.
+   */
+  onClaudeLiveUsageHealth: (
+    callback: (payload: ClaudeLiveUsageHealthPayload) => void
+  ): (() => void) =>
+    getRendererRpcClient().subscribe(CLAUDE_LIVE_USAGE_HEALTH_CHANNEL, (event: ServerEvent) => {
+      if (isClaudeLiveUsageHealthPayload(event.payload)) callback(event.payload)
     }),
   listOpenaiResets: (accountId: string): Promise<OpenAIResetCredits> =>
     getRendererRpcClient().request('usageOps.listOpenaiResets', { accountId }),

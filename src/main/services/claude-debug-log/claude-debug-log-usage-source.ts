@@ -13,8 +13,9 @@
  *
  *   register(session)       before the CLI process starts
  *   setTurnInProgress(...)  from the session's hook status
+ *   turnCompleted(session)  its Stop hook: the moment its log is judged
  *   unregister(session)     when it ends: one final read, then nothing more
- *   facts(session)          what health detection reads (T18)
+ *   facts(session)          the counters, and whether the log gives readings
  *
  * One schedule for all sessions (PF-2): a single timer, re-armed after every
  * pass, and no timer at all while nothing is registered.
@@ -38,12 +39,31 @@
  * unchanged file (PF-3): synchronous, bounded fs work on the main thread,
  * like the transcript tailers, which keeps it off the libuv thread pool.
  *
+ * Health (Code Mode T18; FR-30, FR-31, LF-5). The log's format is the CLI's
+ * own and can change with an update, and a log the CLI cannot write fails
+ * without a word. A session whose log gives no readings is degraded, and its
+ * usage then comes from the usage poll, which runs whatever this source does.
+ * A session becomes degraded when
+ * - a turn completed and its log is missing or empty (`log-empty`);
+ * - a turn completed, responses were logged (the SDK's `succeeded with
+ *   status` line, or a response entry that could not be read) and no response
+ *   entry could ever be read (`unparsed-responses`);
+ * - the follower deleted a log past the hard cap (`hard-cap`) or refused what
+ *   is at the path (`unsafe-file`), the moment it says so.
+ * The first two are judged when a turn completes and at no other time: a
+ * session that sent no request has nothing in its log to be wrong, and
+ * between a turn's request and its response a log is rightly without an
+ * entry. A degraded session is healthy again with the next response entry
+ * that can be read. Every change is told to `onHealthChange`; nothing is
+ * logged here (the one warning per session is the listener's).
+ *
  * Nothing of a line is kept (SEC-5, SEC-6). A line is parsed in memory and
  * dropped; what leaves this module is the usage snapshot, the organization id
  * and the line's time. A line that cannot be read is counted, never recorded,
  * and nothing here logs anything read from a file.
  */
 import { isAbsolute } from 'node:path'
+import type { ClaudeLiveUsageDegradedReason } from '@shared/types/claude-live-usage'
 import {
   parseUnifiedRateLimitHeaders,
   snapshotHasUsage
@@ -56,7 +76,10 @@ import {
   type DebugLogFollowerStats,
   type DebugLogUnsafeFile
 } from '../claude-debug-log-follower'
-import { parseClaudeDebugLogLine } from './claude-debug-log-entry-parser'
+import {
+  isClaudeDebugLogSuccessStatusLine,
+  parseClaudeDebugLogLine
+} from './claude-debug-log-entry-parser'
 
 /** Time between two checks of a busy session (PF-2). */
 export const DEBUG_LOG_ACTIVE_CHECK_INTERVAL_MS = 250
@@ -89,6 +112,31 @@ export interface ClaudeDebugLogDegradedSignal {
   at: number
 }
 
+/**
+ * Why a session's log gives no readings (see the module comment).
+ * `log-empty`: missing or empty after a completed turn. `unparsed-responses`:
+ * responses were logged and none could be read. `hard-cap`, `unsafe-file`:
+ * the follower's signals.
+ */
+export type ClaudeDebugLogDegradedReason = ClaudeLiveUsageDegradedReason
+
+/** A session that is degraded right now. Carries no log content. */
+export interface ClaudeDebugLogDegradation {
+  reason: ClaudeDebugLogDegradedReason
+  /** For `unsafe-file`: what was wrong with it. */
+  detail: DebugLogUnsafeFile | null
+  /** Since when (the source's clock, epoch ms). */
+  at: number
+}
+
+/** A session became degraded (`degradation` set) or healthy again (null). */
+export interface ClaudeDebugLogHealthChange {
+  sessionId: string
+  degradation: ClaudeDebugLogDegradation | null
+  /** The session's facts at that moment. */
+  facts: ClaudeDebugLogSessionFacts
+}
+
 /** What is known about one registered session. Numbers and times only. */
 export interface ClaudeDebugLogSessionFacts {
   sessionId: string
@@ -112,18 +160,29 @@ export interface ClaudeDebugLogSessionFacts {
   entriesWithoutOrganization: number
   /** Lines that started like a response entry and could not be read. */
   parseFailures: number
+  /** The SDK's `succeeded with status` lines: successful responses that were logged. */
+  statusLines: number
   /** Lines over the length limit, skipped unread. */
   oversizedLines: number
   /** Observations the live updater refused by throwing. */
   submitFailures: number
+  /** Turns that completed while the session was followed. */
+  turnsCompleted: number
   /** The time written in the log line of the last observation (epoch ms), or null. */
   lastObservationAt: number | null
   /** When that line was read (the source's clock), or null. */
   lastObservationReadAt: number | null
-  /** The latest degraded signal of the follower, or null when there was none. */
+  /**
+   * The latest degraded signal of the follower, or null when there was none.
+   * Kept once given: whether the session is degraded now is `health`.
+   */
   degraded: ClaudeDebugLogDegradedSignal | null
   /** How many degraded signals there were. */
   degradedSignals: number
+  /** Set while the session's log gives no readings; null for a healthy session. */
+  health: ClaudeDebugLogDegradation | null
+  /** How many times the session became degraded. */
+  timesDegraded: number
   /** The follower's own counters (reads, rotations, fs errors, ...). */
   follower: DebugLogFollowerStats
 }
@@ -146,6 +205,11 @@ export interface ClaudeDebugLogUsageSourceDeps {
    * return at once.
    */
   submit: (observation: ClaudeUsageObservation) => void
+  /**
+   * Told when a session becomes degraded and when it is healthy again, in
+   * addition to the listeners of `onHealthChange()`. Must return at once.
+   */
+  onHealthChange?: (change: ClaudeDebugLogHealthChange) => void
   /** Session ids and counters only: nothing read from a log is ever passed to it. */
   log?: {
     debug: (message: string, data?: Record<string, unknown>) => void
@@ -182,12 +246,16 @@ interface Session {
   entriesWithoutUsage: number
   entriesWithoutOrganization: number
   parseFailures: number
+  statusLines: number
   oversizedLines: number
   submitFailures: number
+  turnsCompleted: number
   lastObservationAt: number | null
   lastObservationReadAt: number | null
   degraded: ClaudeDebugLogDegradedSignal | null
   degradedSignals: number
+  health: ClaudeDebugLogDegradation | null
+  timesDegraded: number
 }
 
 export class ClaudeDebugLogUsageSource {
@@ -196,6 +264,7 @@ export class ClaudeDebugLogUsageSource {
   private readonly idleIntervalMs: number
   private readonly activityHoldMs: number
   private readonly sessions = new Map<string, Session>()
+  private readonly healthListeners = new Set<(change: ClaudeDebugLogHealthChange) => void>()
   private timer: unknown = null
   /** When the armed timer is meant to fire. */
   private timerDueAt = 0
@@ -254,12 +323,16 @@ export class ClaudeDebugLogUsageSource {
       entriesWithoutUsage: 0,
       entriesWithoutOrganization: 0,
       parseFailures: 0,
+      statusLines: 0,
       oversizedLines: 0,
       submitFailures: 0,
+      turnsCompleted: 0,
       lastObservationAt: null,
       lastObservationReadAt: null,
       degraded: null,
-      degradedSignals: 0
+      degradedSignals: 0,
+      health: null,
+      timesDegraded: 0
     }
     session.follower = new DebugLogFollower({
       ...this.deps.follower,
@@ -293,7 +366,8 @@ export class ClaudeDebugLogUsageSource {
       entriesParsed: facts.entriesParsed,
       observations: facts.observations,
       parseFailures: facts.parseFailures,
-      degraded: facts.degraded?.reason ?? null
+      degraded: facts.degraded?.reason ?? null,
+      health: facts.health?.reason ?? null
     })
     this.arm()
     return facts
@@ -319,6 +393,45 @@ export class ClaudeDebugLogUsageSource {
     }
     this.arm()
     return true
+  }
+
+  /**
+   * A turn of the session completed (its Stop hook). Its log is looked at now
+   * and judged: a log that is still missing or empty, or one in which
+   * responses were logged and none could ever be read, makes the session
+   * degraded. This is the only moment those two are judged; a session that
+   * completes no turn is never degraded by them. Returns false when the
+   * session is not registered.
+   */
+  turnCompleted(sessionId: string): boolean {
+    const session = this.sessions.get(sessionId)
+    if (!session) return false
+    const now = this.now()
+    this.check(session, now)
+    session.turnsCompleted += 1
+    if (session.health === null) {
+      if (session.follower.stats().bytesRead === 0) {
+        this.degrade(session, 'log-empty', null)
+      } else if (
+        session.entriesParsed === 0 &&
+        (session.statusLines > 0 || session.parseFailures > 0)
+      ) {
+        this.degrade(session, 'unparsed-responses', null)
+      }
+    }
+    this.arm()
+    return true
+  }
+
+  /**
+   * Be told when a session becomes degraded and when it is healthy again.
+   * Returns what takes the listener off. A listener that throws is ignored.
+   */
+  onHealthChange(listener: (change: ClaudeDebugLogHealthChange) => void): () => void {
+    this.healthListeners.add(listener)
+    return () => {
+      this.healthListeners.delete(listener)
+    }
   }
 
   /**
@@ -468,9 +581,12 @@ export class ClaudeDebugLogUsageSource {
     if (result.kind !== 'entry') {
       if (result.reason === 'malformed') session.parseFailures += 1
       else if (result.reason === 'oversized') session.oversizedLines += 1
+      else if (isClaudeDebugLogSuccessStatusLine(line)) session.statusLines += 1
       return
     }
     session.entriesParsed += 1
+    // An entry that can be read: whatever was wrong with the log is over.
+    if (session.health !== null) this.recover(session)
     const entry = result.entry
     const snapshot = parseUnifiedRateLimitHeaders(entry.headers)
     if (snapshot === null || !snapshotHasUsage(snapshot)) {
@@ -490,7 +606,9 @@ export class ClaudeDebugLogUsageSource {
         accountUuid: null,
         organizationUuid: entry.organizationUuid,
         snapshot,
-        observedAt: entry.observedAt
+        observedAt: entry.observedAt,
+        // So that the usage UI knows whose reading it shows, should this log go quiet.
+        sessionId: session.id
       })
     } catch {
       session.submitFailures += 1
@@ -505,10 +623,42 @@ export class ClaudeDebugLogUsageSource {
   private onFollowerEvent(session: Session, event: DebugLogFollowerEvent): void {
     if (event.type !== 'degraded') return
     session.degradedSignals += 1
-    session.degraded = {
-      reason: event.reason,
-      detail: event.reason === 'unsafe-file' ? event.detail : null,
-      at: this.now()
+    const detail = event.reason === 'unsafe-file' ? event.detail : null
+    session.degraded = { reason: event.reason, detail, at: this.now() }
+    // What a closing read finds at shutdown changes nothing for anybody.
+    if (session.health === null && !session.muted) this.degrade(session, event.reason, detail)
+  }
+
+  private degrade(
+    session: Session,
+    reason: ClaudeDebugLogDegradedReason,
+    detail: DebugLogUnsafeFile | null
+  ): void {
+    session.health = { reason, detail, at: this.now() }
+    session.timesDegraded += 1
+    this.tellHealth(session)
+  }
+
+  private recover(session: Session): void {
+    session.health = null
+    this.tellHealth(session)
+  }
+
+  private tellHealth(session: Session): void {
+    const change: ClaudeDebugLogHealthChange = {
+      sessionId: session.id,
+      degradation: session.health ? { ...session.health } : null,
+      facts: this.factsOf(session)
+    }
+    const listeners = this.deps.onHealthChange
+      ? [this.deps.onHealthChange, ...this.healthListeners]
+      : [...this.healthListeners]
+    for (const listener of listeners) {
+      try {
+        listener(change)
+      } catch {
+        // A listener's trouble is its own: the log is followed all the same.
+      }
     }
   }
 
@@ -527,12 +677,16 @@ export class ClaudeDebugLogUsageSource {
       entriesWithoutUsage: session.entriesWithoutUsage,
       entriesWithoutOrganization: session.entriesWithoutOrganization,
       parseFailures: session.parseFailures,
+      statusLines: session.statusLines,
       oversizedLines: session.oversizedLines + follower.oversizedLinesSkipped,
       submitFailures: session.submitFailures,
+      turnsCompleted: session.turnsCompleted,
       lastObservationAt: session.lastObservationAt,
       lastObservationReadAt: session.lastObservationReadAt,
       degraded: session.degraded ? { ...session.degraded } : null,
       degradedSignals: session.degradedSignals,
+      health: session.health ? { ...session.health } : null,
+      timesDegraded: session.timesDegraded,
       follower
     }
   }

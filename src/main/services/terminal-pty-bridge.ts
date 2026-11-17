@@ -1020,7 +1020,8 @@ export async function createClaudeCliTerminal(
       if (usageTransport !== null && !ptyService.has(sessionId)) {
         usage = claudeCliUsageLaunches().begin(sessionId, usageTransport, {
           cwd: worktreePath,
-          db
+          db,
+          cliPath: claudeBinary
         })
         usageLaunchPending = usage !== null
       }

@@ -38,6 +38,7 @@ import {
   DEBUG_LOG_ACTIVE_CHECK_INTERVAL_MS,
   DEBUG_LOG_ACTIVITY_HOLD_MS,
   DEBUG_LOG_IDLE_CHECK_INTERVAL_MS,
+  type ClaudeDebugLogHealthChange,
   type ClaudeDebugLogUsageSourceDeps
 } from '../claude-debug-log-usage-source'
 
@@ -299,7 +300,7 @@ describe('ClaudeDebugLogUsageSource', () => {
     source.facts(session)!.follower.checks
 
   describe('observations', () => {
-    it('submits one observation per response entry: the line time and the organization, nothing else', () => {
+    it('submits one observation per response entry: the line time, the organization and whose log it was, nothing else', () => {
       const source = makeSource()
       register(source, 'a')
 
@@ -319,8 +320,11 @@ describe('ClaudeDebugLogUsageSource', () => {
         'credentialFingerprint',
         'observedAt',
         'organizationUuid',
+        // The app's own id of the session, not something read from the log (T18).
+        'sessionId',
         'snapshot'
       ])
+      expect(submitted[0].sessionId).toBe('a')
       expect(submitted[0].snapshot.sevenDay).toEqual({
         utilizationPercent: 37,
         resetsAt: 1795435200,
@@ -908,7 +912,11 @@ describe('ClaudeDebugLogUsageSource', () => {
         lastObservationAt: null,
         lastObservationReadAt: null,
         degraded: null,
-        degradedSignals: 0
+        degradedSignals: 0,
+        statusLines: 0,
+        turnsCompleted: 0,
+        health: null,
+        timesDegraded: 0
       })
 
       const lines = [NOT_ENTRIES[0], STREAMING, NOT_ENTRIES[2], STREAMING.slice(0, 700), NOT_FOUND]
@@ -925,6 +933,8 @@ describe('ClaudeDebugLogUsageSource', () => {
         observations: 1,
         entriesWithoutUsage: 1,
         parseFailures: 1,
+        // The one `succeeded with status` line among them.
+        statusLines: 1,
         oversizedLines: 0,
         // The time in the line, and the time the line was read.
         lastObservationAt: STREAMING_AT,
@@ -1002,6 +1012,389 @@ describe('ClaudeDebugLogUsageSource', () => {
         lastObservationReadAt: START + 3 * ACTIVE,
         degradedSignals: 1
       })
+    })
+  })
+
+  describe('health: a log that gives no readings (T18)', () => {
+    /** The SDK's one-line report of a successful response: no headers, no entry. */
+    const STATUS_LINE = NOT_ENTRIES[2]
+    /** What the CLI logs without talking to the API. */
+    const STARTUP_LINES = [NOT_ENTRIES[10], NOT_ENTRIES[11], NOT_ENTRIES[12]]
+    /** A response entry after an update renamed it: the parser no longer knows the line. */
+    const RENAMED_ENTRY = STREAMING.replace('response start', 'response begin')
+
+    let changes: ClaudeDebugLogHealthChange[]
+
+    function watched(deps: Partial<ClaudeDebugLogUsageSourceDeps> = {}): ClaudeDebugLogUsageSource {
+      changes = []
+      const source = makeSource(deps)
+      source.onHealthChange((change) => changes.push(change))
+      return source
+    }
+
+    /** One turn of a session: the prompt is submitted, `during` happens, the Stop hook fires. */
+    function turn(source: ClaudeDebugLogUsageSource, session: string, during?: () => void): void {
+      source.setTurnInProgress(session, true)
+      during?.()
+      clock.advance(3_000)
+      source.setTurnInProgress(session, false)
+      source.turnCompleted(session)
+    }
+
+    const reasons = (): Array<string | null> =>
+      changes.map((change) => change.degradation?.reason ?? null)
+
+    it('is degraded when a turn completes and the log never appeared', () => {
+      const source = watched()
+      register(source, 'a')
+
+      turn(source, 'a')
+
+      expect(source.facts('a')).toMatchObject({
+        bytesRead: 0,
+        turnsCompleted: 1,
+        health: { reason: 'log-empty', detail: null, at: START + 3_000 },
+        timesDegraded: 1,
+        // Not one of the follower's signals.
+        degraded: null,
+        degradedSignals: 0
+      })
+      expect(changes).toHaveLength(1)
+      expect(changes[0]).toMatchObject({
+        sessionId: 'a',
+        degradation: { reason: 'log-empty', detail: null, at: START + 3_000 },
+        facts: { sessionId: 'a', bytesRead: 0, turnsCompleted: 1 }
+      })
+    })
+
+    it('is degraded when a turn completes and the log is there and empty', () => {
+      const source = watched()
+      mkdirSync(join(dir, 'a'))
+      writeFileSync(logPath('a'), '')
+      register(source, 'a')
+
+      turn(source, 'a')
+
+      expect(reasons()).toEqual(['log-empty'])
+    })
+
+    it('judges the log as it is when the turn completes, not as the last pass left it', () => {
+      const source = watched()
+      // Nothing fires a pass here: only the completed turn looks at the log.
+      register(source, 'a')
+      source.setTurnInProgress('a', true)
+      append('a', ONE_REQUEST.trimEnd())
+
+      source.turnCompleted('a')
+
+      expect(source.facts('a')).toMatchObject({ entriesParsed: 1, health: null })
+      expect(changes).toEqual([])
+    })
+
+    it('is degraded when responses were logged and none could be read', () => {
+      const source = watched()
+      register(source, 'a')
+
+      turn(source, 'a', () => {
+        // A log level without headers, or a format the parser does not know.
+        append('a', NOT_ENTRIES[0], STATUS_LINE, RENAMED_ENTRY, NOT_ENTRIES[6])
+      })
+
+      expect(source.facts('a')).toMatchObject({
+        statusLines: 1,
+        entriesParsed: 0,
+        observations: 0,
+        health: { reason: 'unparsed-responses', detail: null },
+        timesDegraded: 1
+      })
+      expect(source.facts('a')!.bytesRead).toBeGreaterThan(0)
+      expect(reasons()).toEqual(['unparsed-responses'])
+      expect(submitted).toEqual([])
+    })
+
+    it('is degraded when the entries are there and none can be read, status line or not', () => {
+      const source = watched()
+      register(source, 'with-status')
+      register(source, 'without-status')
+
+      turn(source, 'with-status', () => append('with-status', STATUS_LINE, STREAMING.slice(0, 700)))
+      // The status line changed too: the entry that cannot be read says a response was logged.
+      turn(source, 'without-status', () => append('without-status', FABLE.slice(0, 700)))
+
+      expect(source.facts('with-status')).toMatchObject({
+        statusLines: 1,
+        parseFailures: 1,
+        entriesParsed: 0,
+        health: { reason: 'unparsed-responses' }
+      })
+      expect(source.facts('without-status')).toMatchObject({
+        statusLines: 0,
+        parseFailures: 1,
+        entriesParsed: 0,
+        health: { reason: 'unparsed-responses' }
+      })
+    })
+
+    it('is not degraded by one entry that cannot be read among entries that can', () => {
+      const source = watched()
+      register(source, 'a')
+
+      turn(source, 'a', () => append('a', STATUS_LINE, STREAMING.slice(0, 700), STATUS_LINE, FABLE))
+
+      expect(source.facts('a')).toMatchObject({
+        parseFailures: 1,
+        entriesParsed: 1,
+        health: null
+      })
+      expect(changes).toEqual([])
+    })
+
+    it('leaves a session alone that completed a turn without a request to the API', () => {
+      const source = watched()
+      register(source, 'a')
+
+      // A local command: the CLI logged, and sent nothing.
+      turn(source, 'a', () => append('a', ...STARTUP_LINES))
+      turn(source, 'a')
+
+      expect(source.facts('a')).toMatchObject({
+        turnsCompleted: 2,
+        statusLines: 0,
+        entriesParsed: 0,
+        health: null,
+        timesDegraded: 0
+      })
+      expect(source.facts('a')!.bytesRead).toBeGreaterThan(0)
+      expect(changes).toEqual([])
+    })
+
+    it('leaves a session alone that has not completed a turn, however long its log stays empty', () => {
+      const source = watched()
+      register(source, 'a')
+
+      clock.advance(10 * 60_000)
+      // Waiting for the person in the middle of a turn is not the end of it.
+      source.setTurnInProgress('a', true)
+      clock.advance(60_000)
+      source.setTurnInProgress('a', false)
+      clock.advance(60_000)
+
+      expect(source.facts('a')).toMatchObject({ bytesRead: 0, turnsCompleted: 0, health: null })
+      expect(changes).toEqual([])
+    })
+
+    it('does not judge the responses before the turn completes', () => {
+      const source = watched()
+      register(source, 'a')
+      source.setTurnInProgress('a', true)
+
+      // The status line is written just before the entry: a pass can fall between the two.
+      append('a', NOT_ENTRIES[0], STATUS_LINE)
+      clock.advance(ACTIVE)
+      expect(source.facts('a')).toMatchObject({ statusLines: 1, entriesParsed: 0, health: null })
+
+      append('a', STREAMING)
+      source.setTurnInProgress('a', false)
+      source.turnCompleted('a')
+
+      expect(source.facts('a')).toMatchObject({ entriesParsed: 1, health: null })
+      expect(changes).toEqual([])
+    })
+
+    it('stays healthy over turns whose responses can be read', () => {
+      const source = watched()
+      register(source, 'a')
+
+      turn(source, 'a', () => append('a', ONE_REQUEST.trimEnd()))
+      // An entry without usage is an entry that was read (a 404, a temporary throttle).
+      turn(source, 'a', () => append('a', STATUS_LINE, NOT_FOUND))
+
+      expect(source.facts('a')).toMatchObject({
+        turnsCompleted: 2,
+        statusLines: 2,
+        entriesParsed: 2,
+        health: null
+      })
+      expect(changes).toEqual([])
+    })
+
+    it('is degraded the moment the follower deletes a log past the hard cap, turn or no turn', () => {
+      const source = watched({ follower: { hardCapBytes: 8 * 1024 } })
+      register(source, 'a')
+      append('a', STREAMING)
+      clock.advance(ACTIVE)
+      expect(source.facts('a')!.health).toBeNull()
+
+      append('a', ...Array.from({ length: 6 }, () => NOT_ENTRIES[0]))
+      clock.advance(ACTIVE)
+
+      expect(source.facts('a')).toMatchObject({
+        turnsCompleted: 0,
+        health: { reason: 'hard-cap', detail: null, at: START + 2 * ACTIVE },
+        timesDegraded: 1
+      })
+      expect(reasons()).toEqual(['hard-cap'])
+    })
+
+    posixOnly('is degraded the moment the follower refuses an unsafe file', () => {
+      const source = watched()
+      mkdirSync(join(dir, 'a'))
+      writeFileSync(join(dir, 'elsewhere.log'), '')
+      symlinkSync(join(dir, 'elsewhere.log'), logPath('a'))
+      register(source, 'a')
+
+      clock.advance(1_000)
+
+      expect(source.facts('a')!.health).toEqual({
+        reason: 'unsafe-file',
+        detail: 'symlink',
+        at: START + ACTIVE
+      })
+      expect(changes).toHaveLength(1)
+      expect(changes[0].degradation).toMatchObject({ reason: 'unsafe-file', detail: 'symlink' })
+      // Told once, though the file is refused on every pass.
+      clock.advance(10 * IDLE)
+      expect(changes).toHaveLength(1)
+    })
+
+    it('is healthy again, and submits again, when entries that can be read appear', () => {
+      const source = watched({ follower: { hardCapBytes: 8 * 1024 } })
+      register(source, 'a')
+      append('a', ...Array.from({ length: 6 }, () => NOT_ENTRIES[0]))
+      clock.advance(ACTIVE)
+      expect(reasons()).toEqual(['hard-cap'])
+      expect(submitted).toEqual([])
+
+      // The CLI makes the file again with its next line: other lines change nothing...
+      append('a', ...STARTUP_LINES)
+      clock.advance(ACTIVE)
+      expect(source.facts('a')!.health).toMatchObject({ reason: 'hard-cap' })
+
+      // ...a response entry does.
+      append('a', FABLE)
+      clock.advance(ACTIVE)
+
+      expect(reasons()).toEqual(['hard-cap', null])
+      expect(changes[1]).toMatchObject({ sessionId: 'a', degradation: null })
+      expect(submitted.map((observation) => observation.observedAt)).toEqual([FABLE_AT])
+      expect(source.facts('a')).toMatchObject({
+        health: null,
+        timesDegraded: 1,
+        // The follower's signal is kept as it was given.
+        degraded: { reason: 'hard-cap' },
+        degradedSignals: 1
+      })
+    })
+
+    it('recovers from an empty log and from unread responses alike', () => {
+      const source = watched()
+      register(source, 'empty')
+      register(source, 'unread')
+      turn(source, 'empty')
+      turn(source, 'unread', () => append('unread', STATUS_LINE, RENAMED_ENTRY))
+      expect(reasons()).toEqual(['log-empty', 'unparsed-responses'])
+
+      append('empty', STREAMING)
+      append('unread', billedTo(FABLE, ORG_A))
+      clock.advance(ACTIVE)
+
+      expect(changes.slice(2).map((change) => [change.sessionId, change.degradation])).toEqual([
+        ['empty', null],
+        ['unread', null]
+      ])
+      expect(submitted).toHaveLength(2)
+      // A later turn finds nothing wrong: the entries count for good.
+      turn(source, 'empty')
+      turn(source, 'unread', () => append('unread', STATUS_LINE))
+      expect(source.facts('empty')!.health).toBeNull()
+      expect(source.facts('unread')!.health).toBeNull()
+      expect(changes).toHaveLength(4)
+    })
+
+    it('tells a change once: a degraded session is not degraded again by its next turn', () => {
+      const source = watched()
+      register(source, 'a')
+
+      turn(source, 'a')
+      turn(source, 'a')
+      turn(source, 'a', () => append('a', STATUS_LINE))
+
+      // Still the first reason: the session was never healthy in between.
+      expect(reasons()).toEqual(['log-empty'])
+      expect(source.facts('a')).toMatchObject({
+        turnsCompleted: 3,
+        health: { reason: 'log-empty', at: START + 3_000 },
+        timesDegraded: 1
+      })
+    })
+
+    it('can become degraded again after it recovered', () => {
+      const source = watched({ follower: { hardCapBytes: 8 * 1024 } })
+      register(source, 'a')
+      turn(source, 'a')
+      append('a', STREAMING)
+      clock.advance(ACTIVE)
+
+      append('a', ...Array.from({ length: 6 }, () => NOT_ENTRIES[0]))
+      clock.advance(ACTIVE)
+
+      expect(reasons()).toEqual(['log-empty', null, 'hard-cap'])
+      expect(source.facts('a')!.timesDegraded).toBe(2)
+    })
+
+    it('tells every listener, whatever one of them does, until it is taken off', () => {
+      const viaDeps: ClaudeDebugLogHealthChange[] = []
+      const source = watched({ onHealthChange: (change) => viaDeps.push(change) })
+      const late: ClaudeDebugLogHealthChange[] = []
+      source.onHealthChange(() => {
+        throw new Error('a listener in trouble')
+      })
+      const off = source.onHealthChange((change) => late.push(change))
+      register(source, 'a')
+      register(source, 'b')
+
+      turn(source, 'a')
+      off()
+      turn(source, 'b')
+
+      expect(changes.map((change) => change.sessionId)).toEqual(['a', 'b'])
+      expect(viaDeps.map((change) => change.sessionId)).toEqual(['a', 'b'])
+      expect(late.map((change) => change.sessionId)).toEqual(['a'])
+      // The log is followed all the same.
+      append('a', STREAMING)
+      clock.advance(ACTIVE)
+      expect(submitted).toHaveLength(1)
+    })
+
+    it('judges only a session it follows', () => {
+      const source = watched()
+      register(source, 'a')
+
+      expect(source.turnCompleted('nobody')).toBe(false)
+      expect(source.turnCompleted('a')).toBe(true)
+      source.unregister('a')
+      expect(source.turnCompleted('a')).toBe(false)
+      expect(reasons()).toEqual(['log-empty'])
+    })
+
+    it('says nothing about what shutting down finds', () => {
+      const source = watched({ follower: { hardCapBytes: 8 * 1024 } })
+      register(source, 'a')
+      append('a', ...Array.from({ length: 6 }, () => NOT_ENTRIES[0]))
+
+      source.dispose()
+
+      expect(changes).toEqual([])
+    })
+
+    it("logs nothing of its own: the warning is the listener's", () => {
+      const source = watched()
+      register(source, 'a')
+      turn(source, 'a', () => append('a', STATUS_LINE, RENAMED_ENTRY))
+
+      expect(logged.filter((entry) => !entry.startsWith('debug Following'))).toEqual([])
+      source.unregister('a')
+      expect(logged.at(-1)).toContain('"health":"unparsed-responses"')
     })
   })
 })

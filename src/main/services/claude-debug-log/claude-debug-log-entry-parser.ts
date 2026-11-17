@@ -20,7 +20,10 @@
  *   when they contain both. A short object prints on one line.
  * - `sending request`, the `succeeded with status` line, `response parsed`
  *   and `connection failed` share the `[log_` prefix and are deliberately not
- *   entries.
+ *   entries. The `succeeded with status` line is the one thing recognised
+ *   besides entries (`isClaudeDebugLogSuccessStatusLine`): it is written for
+ *   every successful response, also at a log level that leaves the headers
+ *   out, so it tells health detection that a response was logged (FR-30).
  * - Only a payload that STARTS with the SDK prefix counts. Hook and MCP output
  *   is logged inside other entries and can contain the same text.
  * - Credentials are masked upstream, by the SDK (`***`) and then by the CLI's
@@ -95,6 +98,13 @@ const SDK_LINE_PREFIX = 'console.log: [log_'
 const MAX_LOG_ID_LENGTH = 40
 const RESPONSE_START_LABEL = 'response start '
 const RESPONSE_ERROR_LABEL = 'response error ('
+/** What follows the URL in the SDK's report of a response that was `ok`. */
+const SUCCESS_STATUS_LABEL = ' succeeded with status '
+/** `log_xxxxxx, retryOf: log_xxxxxx, request-id: "req_..."` is under a hundred characters. */
+const MAX_STATUS_BRACKET_LENGTH = 512
+/** `post`, `get`, `delete`, ... */
+const MAX_METHOD_LENGTH = 16
+const MAX_URL_LENGTH = 8192
 /** `error; not retryable`, `retrying, 2 attempts remaining`, ... */
 const MAX_ERROR_REASON_LENGTH = 200
 
@@ -420,11 +430,12 @@ function readDetails(
 }
 
 /**
- * Where the payload of a response entry starts, or -1. Fixed-offset character
- * tests and bounded prefix comparisons only: this is the check every unrelated
- * line fails, before any JSON decoding or regular expression runs (PRD PF-5).
+ * Where the SDK's log id starts (right after `console.log: [log_`), or -1 for
+ * a line that is not one of the SDK's. Fixed-offset character tests and
+ * bounded prefix comparisons only: this is the check every unrelated line
+ * fails, before any JSON decoding or regular expression runs (PRD PF-5).
  */
-function findResponseEntryPayload(line: string): number {
+function findSdkLogId(line: string): number {
   if (
     line.charCodeAt(TIMESTAMP_LENGTH) !== CHAR_SPACE ||
     line.charCodeAt(TIMESTAMP_LENGTH + 1) !== CHAR_OPEN_BRACKET
@@ -442,15 +453,22 @@ function findResponseEntryPayload(line: string): number {
   }
   if (levelEnd === levelStart || line.charCodeAt(levelEnd) !== CHAR_CLOSE_BRACKET) return -1
   if (line.charCodeAt(levelEnd + 1) !== CHAR_SPACE) return -1
-  const payloadStart = levelEnd + 2
 
   // The SDK's text follows either the opening quote of a JSON string literal
   // or, for a payload without newlines, nothing at all. None of the characters
-  // compared below is ever escaped by JSON, so the raw line can be tested.
-  let cursor = payloadStart
+  // compared here and by the callers is ever escaped by JSON, so the raw line
+  // can be tested.
+  let cursor = levelEnd + 2
   if (line.charCodeAt(cursor) === CHAR_DOUBLE_QUOTE) cursor++
   if (!line.startsWith(SDK_LINE_PREFIX, cursor)) return -1
-  cursor += SDK_LINE_PREFIX.length
+  return cursor + SDK_LINE_PREFIX.length
+}
+
+/** Where the payload of a response entry starts, or -1. */
+function findResponseEntryPayload(line: string): number {
+  const idStart = findSdkLogId(line)
+  if (idStart < 0) return -1
+  let cursor = idStart
   const idEnd = cursor + MAX_LOG_ID_LENGTH
   while (cursor < idEnd && isWordChar(line.charCodeAt(cursor))) cursor++
   if (line.charCodeAt(cursor) !== CHAR_CLOSE_BRACKET) return -1
@@ -462,7 +480,42 @@ function findResponseEntryPayload(line: string): number {
   ) {
     return -1
   }
-  return payloadStart
+  // The payload starts at the quote of a JSON string literal when there is one.
+  const prefixStart = idStart - SDK_LINE_PREFIX.length
+  return line.charCodeAt(prefixStart - 1) === CHAR_DOUBLE_QUOTE ? prefixStart - 1 : prefixStart
+}
+
+/**
+ * Whether the line is the SDK's one-line report of a successful response:
+ * `console.log: [log_xxxxxx, request-id: "..."] post <url> succeeded with
+ * status 200 in 15ms`. It carries no headers and is no entry. It is what says
+ * that a response was logged at all: a log with these lines and no entry that
+ * can be read is a log whose format the parser does not know (PRD FR-30).
+ *
+ * As strict and as cheap as the entry check: the SDK's prefix, its bracket
+ * (bounded), a lower-case method, a URL without a space, then the words. Text
+ * that merely contains the words (a prompt inside `sending request`) does not
+ * match. Never throws, and tells nothing about the line but yes or no.
+ */
+export function isClaudeDebugLogSuccessStatusLine(line: string): boolean {
+  if (typeof line !== 'string' || line.length > CLAUDE_DEBUG_LOG_MAX_LINE_LENGTH) return false
+  let cursor = findSdkLogId(line)
+  if (cursor < 0) return false
+  // `log_xxxxxx`, then what the SDK adds inside the bracket (a retry, the request id).
+  const bracketEnd = line.indexOf('] ', cursor)
+  if (bracketEnd < 0 || bracketEnd - cursor > MAX_STATUS_BRACKET_LENGTH) return false
+  cursor = bracketEnd + 2
+  const methodStart = cursor
+  while (cursor - methodStart <= MAX_METHOD_LENGTH) {
+    const code = line.charCodeAt(cursor)
+    if (!(code >= 0x61 && code <= 0x7a)) break
+    cursor++
+  }
+  if (cursor === methodStart || line.charCodeAt(cursor) !== CHAR_SPACE) return false
+  const urlStart = ++cursor
+  const urlEnd = line.indexOf(' ', urlStart)
+  if (urlEnd <= urlStart || urlEnd - urlStart > MAX_URL_LENGTH) return false
+  return line.startsWith(SUCCESS_STATUS_LABEL, urlEnd)
 }
 
 /** The SDK's text for the payload: decoded when it is a JSON string literal, as is otherwise. */

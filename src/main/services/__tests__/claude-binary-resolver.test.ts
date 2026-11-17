@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { logClaudeBinaryVersion } from '../claude-binary-resolver'
+import {
+  __resetClaudeBinaryVersionsForTests,
+  getClaudeBinaryVersion,
+  logClaudeBinaryVersion
+} from '../claude-binary-resolver'
 
 const childProcessMocks = vi.hoisted(() => ({
   execFile: vi.fn(),
@@ -66,5 +70,45 @@ describe('logClaudeBinaryVersion', () => {
       path: '/usr/local/bin/claude-c',
       error: 'spawn ENOENT'
     })
+  })
+})
+
+describe('getClaudeBinaryVersion', () => {
+  afterEach(() => {
+    __resetClaudeBinaryVersionsForTests()
+    vi.clearAllMocks()
+  })
+
+  it('remembers the version a binary reported, by its path, without running anything', () => {
+    expect(getClaudeBinaryVersion('/opt/claude')).toBeNull()
+
+    logClaudeBinaryVersion('/opt/claude')
+    // Asked, not answered yet.
+    expect(getClaudeBinaryVersion('/opt/claude')).toBeNull()
+    lastExecFileCallback()(null, '2.1.326 (Claude Code)\n', '')
+
+    expect(getClaudeBinaryVersion('/opt/claude')).toBe('2.1.326')
+    expect(getClaudeBinaryVersion('/opt/other-claude')).toBeNull()
+    expect(childProcessMocks.execFile).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a pre-release suffix and falls back to the first line of output without a number', () => {
+    logClaudeBinaryVersion('/opt/claude-next')
+    lastExecFileCallback()(null, '2.2.0-beta.3 (Claude Code)\n', '')
+    logClaudeBinaryVersion('/opt/claude-odd')
+    lastExecFileCallback()(null, 'development build\nsecond line\n', '')
+
+    expect(getClaudeBinaryVersion('/opt/claude-next')).toBe('2.2.0-beta.3')
+    expect(getClaudeBinaryVersion('/opt/claude-odd')).toBe('development build')
+  })
+
+  it('knows no version for a binary that could not be asked or said nothing', () => {
+    logClaudeBinaryVersion('/opt/claude-broken')
+    lastExecFileCallback()(new Error('spawn ENOENT'), '', '')
+    logClaudeBinaryVersion('/opt/claude-silent')
+    lastExecFileCallback()(null, '\n', '')
+
+    expect(getClaudeBinaryVersion('/opt/claude-broken')).toBeNull()
+    expect(getClaudeBinaryVersion('/opt/claude-silent')).toBeNull()
   })
 })
