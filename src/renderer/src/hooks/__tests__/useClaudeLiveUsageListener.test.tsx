@@ -1,5 +1,5 @@
-import { renderHook } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { renderHook, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   ClaudeLiveUsageHealthPayload,
   ClaudeLiveUsagePayload
@@ -8,15 +8,24 @@ import type {
 const mocks = vi.hoisted(() => ({
   onClaudeLiveUsage: vi.fn(),
   onClaudeLiveUsageHealth: vi.fn(),
+  onClaudeCodeModeUsageUnavailable: vi.fn(),
+  claimClaudeCodeModeUsageUnavailableNotice: vi.fn(),
   applyClaudeLiveUsage: vi.fn(),
-  applyClaudeLiveUsageHealth: vi.fn()
+  applyClaudeLiveUsageHealth: vi.fn(),
+  toastWarning: vi.fn()
 }))
 
 vi.mock('@/api/usage-api', () => ({
   usageApi: {
     onClaudeLiveUsage: mocks.onClaudeLiveUsage,
-    onClaudeLiveUsageHealth: mocks.onClaudeLiveUsageHealth
+    onClaudeLiveUsageHealth: mocks.onClaudeLiveUsageHealth,
+    onClaudeCodeModeUsageUnavailable: mocks.onClaudeCodeModeUsageUnavailable,
+    claimClaudeCodeModeUsageUnavailableNotice: mocks.claimClaudeCodeModeUsageUnavailableNotice
   }
+}))
+
+vi.mock('@/lib/toast', () => ({
+  toast: { warning: mocks.toastWarning }
 }))
 
 vi.mock('@/stores/useUsageStore', () => ({
@@ -28,7 +37,12 @@ vi.mock('@/stores/useUsageStore', () => ({
   }
 }))
 
-import { useClaudeLiveUsageListener } from '../useClaudeLiveUsageListener'
+import {
+  CODE_MODE_USAGE_UNAVAILABLE_TITLE,
+  CODE_MODE_USAGE_UNAVAILABLE_TOAST_ID,
+  codeModeUsageUnavailableDescription,
+  useClaudeLiveUsageListener
+} from '../useClaudeLiveUsageListener'
 
 const payload: ClaudeLiveUsagePayload = {
   provider: 'anthropic',
@@ -45,8 +59,15 @@ const payload: ClaudeLiveUsagePayload = {
   observedAt: 1
 }
 
+beforeEach(() => {
+  mocks.onClaudeLiveUsage.mockReturnValue(vi.fn())
+  mocks.onClaudeLiveUsageHealth.mockReturnValue(vi.fn())
+  mocks.onClaudeCodeModeUsageUnavailable.mockReturnValue(vi.fn())
+  mocks.claimClaudeCodeModeUsageUnavailableNotice.mockResolvedValue(null)
+})
+
 afterEach(() => {
-  vi.clearAllMocks()
+  vi.resetAllMocks()
 })
 
 describe('useClaudeLiveUsageListener', () => {
@@ -90,5 +111,106 @@ describe('useClaudeLiveUsageListener', () => {
 
     unmount()
     expect(unsubscribe).toHaveBeenCalledTimes(1)
+  })
+
+  describe('when live usage in Code Mode is switched off for the installed Claude Code (T19)', () => {
+    const notice = { provider: 'anthropic' as const, cliVersion: '2.1.326' }
+
+    /** Mount the listener and return what delivers the cue from the main process. */
+    const mount = (): { cue: () => void; unmount: () => void } => {
+      const { unmount } = renderHook(() => useClaudeLiveUsageListener())
+      const cue = mocks.onClaudeCodeModeUsageUnavailable.mock.calls[0][0] as (
+        payload: typeof notice
+      ) => void
+      return { cue: () => cue(notice), unmount }
+    }
+
+    it('says nothing until the cue comes: mounting claims nothing', () => {
+      mount()
+
+      expect(mocks.onClaudeCodeModeUsageUnavailable).toHaveBeenCalledTimes(1)
+      expect(mocks.claimClaudeCodeModeUsageUnavailableNotice).not.toHaveBeenCalled()
+      expect(mocks.toastWarning).not.toHaveBeenCalled()
+    })
+
+    it('claims the notice and tells the person in plain words, with the version', async () => {
+      mocks.claimClaudeCodeModeUsageUnavailableNotice.mockResolvedValueOnce(notice)
+      const { cue } = mount()
+
+      cue()
+
+      await waitFor(() => expect(mocks.toastWarning).toHaveBeenCalledTimes(1))
+      const [title, options] = mocks.toastWarning.mock.calls[0] as [
+        string,
+        { id: string; description: string; duration: number; closeButton: boolean }
+      ]
+      expect(title).toBe('Live usage is unavailable in Code Mode with this version of Claude Code')
+      expect(title).toBe(CODE_MODE_USAGE_UNAVAILABLE_TITLE)
+      expect(options.description).toBe(codeModeUsageUnavailableDescription('2.1.326'))
+      expect(options.description).toContain('Claude Code 2.1.326')
+      expect(options.description).toContain('Code Mode sessions keep working')
+      // It is said once, so it stays until it is closed.
+      expect(options).toMatchObject({
+        id: CODE_MODE_USAGE_UNAVAILABLE_TOAST_ID,
+        duration: Infinity,
+        closeButton: true
+      })
+    })
+
+    it('tells once, however often the cue comes: later claims come back empty', async () => {
+      mocks.claimClaudeCodeModeUsageUnavailableNotice.mockResolvedValueOnce(notice)
+      const { cue } = mount()
+
+      cue()
+      await waitFor(() => expect(mocks.toastWarning).toHaveBeenCalledTimes(1))
+      // The next blocked sessions, and the other window's share of the same cue.
+      cue()
+      cue()
+
+      await waitFor(() =>
+        expect(mocks.claimClaudeCodeModeUsageUnavailableNotice).toHaveBeenCalledTimes(3)
+      )
+      await Promise.resolve()
+      expect(mocks.toastWarning).toHaveBeenCalledTimes(1)
+    })
+
+    it('shows nothing in a window that another window was ahead of', async () => {
+      const { cue } = mount()
+
+      cue()
+
+      await waitFor(() =>
+        expect(mocks.claimClaudeCodeModeUsageUnavailableNotice).toHaveBeenCalledTimes(1)
+      )
+      await Promise.resolve()
+      expect(mocks.toastWarning).not.toHaveBeenCalled()
+    })
+
+    it('shows nothing when the claim fails, and tells with the next cue', async () => {
+      mocks.claimClaudeCodeModeUsageUnavailableNotice
+        .mockRejectedValueOnce(new Error('server restarting'))
+        .mockResolvedValueOnce(notice)
+      const { cue } = mount()
+
+      cue()
+      await waitFor(() =>
+        expect(mocks.claimClaudeCodeModeUsageUnavailableNotice).toHaveBeenCalledTimes(1)
+      )
+      await Promise.resolve()
+      expect(mocks.toastWarning).not.toHaveBeenCalled()
+
+      cue()
+      await waitFor(() => expect(mocks.toastWarning).toHaveBeenCalledTimes(1))
+    })
+
+    it('stops listening for the cue on unmount', () => {
+      const unsubscribe = vi.fn()
+      mocks.onClaudeCodeModeUsageUnavailable.mockReturnValue(unsubscribe)
+      const { unmount } = mount()
+
+      unmount()
+
+      expect(unsubscribe).toHaveBeenCalledTimes(1)
+    })
   })
 })

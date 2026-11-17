@@ -966,7 +966,11 @@ export async function createClaudeCliTerminal(
     let usageTransport: ClaudeUsageTransport | null =
       codex || ptyService.has(sessionId)
         ? null
-        : await claudeCliUsageLaunches().decide({ db, customProviderCommand })
+        : await claudeCliUsageLaunches().decide({
+            db,
+            customProviderCommand,
+            cliPath: claudeBinary
+          })
 
     const alreadyExists = ptyService.has(sessionId)
     if (!codex) {
@@ -984,7 +988,11 @@ export async function createClaudeCliTerminal(
     if (!codex && usageTransport === null && !ptyService.has(sessionId)) {
       // The process this call found is gone (closed or ended during the waits above): what
       // is started below is a new one, and it is decided for like any other.
-      usageTransport = await claudeCliUsageLaunches().decide({ db, customProviderCommand })
+      usageTransport = await claudeCliUsageLaunches().decide({
+        db,
+        customProviderCommand,
+        cliPath: claudeBinary
+      })
     }
 
     let spawn: {

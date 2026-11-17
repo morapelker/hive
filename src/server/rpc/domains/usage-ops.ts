@@ -14,7 +14,9 @@ import type {
   UsageProvider,
   UsageResult
 } from '@shared/types/usage'
+import type { ClaudeCodeModeUsageUnavailablePayload } from '@shared/types/claude-live-usage'
 import {
+  claimCodeModeUsageUnavailableNoticeOp,
   fetchForAccountOp,
   fetchOpenAIUsageOp,
   fetchUsageOp,
@@ -44,6 +46,12 @@ export interface UsageOpsRpcService {
     maxAgeMs?: number
   ) => Effect.Effect<RefreshAllResultItem[], unknown, never>
   readonly getClaudeTokenTally: () => Effect.Effect<ClaudeTokenTally, unknown, never>
+  /** The notice of a Code Mode live-usage switch-off, once: null to whoever asks after the first. */
+  readonly claimCodeModeUsageUnavailableNotice: () => Effect.Effect<
+    ClaudeCodeModeUsageUnavailablePayload | null,
+    unknown,
+    never
+  >
 }
 
 const resetAccountSchema = z.object({ accountId: z.string().min(1) }).strict()
@@ -94,6 +102,11 @@ export const makeLiveUsageOpsRpcService = (): UsageOpsRpcService => ({
   getClaudeTokenTally: () =>
     Effect.tryPromise({
       try: () => getClaudeTokenTallyOp(),
+      catch: (cause) => cause
+    }),
+  claimCodeModeUsageUnavailableNotice: () =>
+    Effect.tryPromise({
+      try: () => claimCodeModeUsageUnavailableNoticeOp(),
       catch: (cause) => cause
     })
 })
@@ -173,6 +186,17 @@ export const makeUsageOpsRpcHandlers = (
             catch: (cause) => cause
           })
           return yield* service.getClaudeTokenTally()
+        })
+    ],
+    [
+      'usageOps.claimCodeModeUsageUnavailableNotice',
+      (params) =>
+        Effect.gen(function* () {
+          yield* Effect.try({
+            try: () => emptyParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          return yield* service.claimCodeModeUsageUnavailableNotice()
         })
     ]
   ])

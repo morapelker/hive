@@ -122,3 +122,34 @@ export function isClaudeLiveUsageHealthPayload(
     ? typeof payload.reason === 'string' && DEGRADED_REASONS.has(payload.reason)
     : payload.reason === null
 }
+
+/**
+ * Published by the Electron main process when live usage for Code Mode sessions has been
+ * switched off for the installed version of the Claude CLI: three launches in a row gave no
+ * readings with it (Code Mode T19; PRD FR-32). New Code Mode sessions then start without a
+ * debug log, and their usage comes from the usage poll, until the CLI or the app is updated.
+ *
+ * It is the cue to tell the person, once. The event can be published more than once for one
+ * switch-off (to every window, and again with a later launch while nobody has been told):
+ * whoever receives it asks `usageOps.claimCodeModeUsageUnavailableNotice`, which answers with
+ * the notice exactly once.
+ */
+export const CLAUDE_CODE_MODE_USAGE_UNAVAILABLE_CHANNEL = 'usage:claudeCodeModeLiveUsageUnavailable'
+
+export interface ClaudeCodeModeUsageUnavailablePayload {
+  provider: 'anthropic'
+  /** The version of the Claude CLI the debug log gave no readings with, e.g. `2.1.326`. */
+  cliVersion: string
+}
+
+export function isClaudeCodeModeUsageUnavailablePayload(
+  value: unknown
+): value is ClaudeCodeModeUsageUnavailablePayload {
+  if (typeof value !== 'object' || value === null) return false
+  const payload = value as Record<string, unknown>
+  return (
+    payload.provider === 'anthropic' &&
+    typeof payload.cliVersion === 'string' &&
+    payload.cliVersion !== ''
+  )
+}

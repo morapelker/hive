@@ -236,6 +236,57 @@ describe('usageApi', () => {
     expect(unsubscribe).toHaveBeenCalledTimes(1)
   })
 
+  it('subscribes to the cue that live usage in Code Mode is switched off and ignores malformed payloads', () => {
+    const unsubscribe = vi.fn()
+    const subscribe = vi.fn().mockReturnValue(unsubscribe)
+    setRendererRpcClient({ request: vi.fn(), subscribe })
+
+    const callback = vi.fn()
+    const dispose = usageApi.onClaudeCodeModeUsageUnavailable(callback)
+    expect(subscribe).toHaveBeenCalledWith(
+      'usage:claudeCodeModeLiveUsageUnavailable',
+      expect.any(Function)
+    )
+    const listener = subscribe.mock.calls[0][1] as (event: {
+      channel: string
+      payload: unknown
+    }) => void
+    const deliver = (payload: unknown): void =>
+      listener({ channel: 'usage:claudeCodeModeLiveUsageUnavailable', payload })
+
+    const notice = { provider: 'anthropic', cliVersion: '2.1.326' }
+    deliver(notice)
+    expect(callback).toHaveBeenCalledTimes(1)
+    expect(callback).toHaveBeenCalledWith(notice)
+
+    deliver(null)
+    deliver({ ...notice, provider: 'openai' })
+    deliver({ ...notice, cliVersion: '' })
+    deliver({ provider: 'anthropic' })
+    deliver({ ...notice, cliVersion: 2 })
+    expect(callback).toHaveBeenCalledTimes(1)
+
+    dispose()
+    expect(unsubscribe).toHaveBeenCalledTimes(1)
+  })
+
+  it('claims the notice of that switch-off through the renderer RPC client', async () => {
+    const notice = { provider: 'anthropic', cliVersion: '2.1.326' }
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce(notice)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ cliVersion: '' })
+    setRendererRpcClient({ request, subscribe: vi.fn() })
+
+    await expect(usageApi.claimClaudeCodeModeUsageUnavailableNotice()).resolves.toEqual(notice)
+    // Given out before, to this window or to another.
+    await expect(usageApi.claimClaudeCodeModeUsageUnavailableNotice()).resolves.toBeNull()
+    // An answer that is no notice is none.
+    await expect(usageApi.claimClaudeCodeModeUsageUnavailableNotice()).resolves.toBeNull()
+    expect(request).toHaveBeenCalledWith('usageOps.claimCodeModeUsageUnavailableNotice', {})
+  })
+
   it('accepts live usage with null windows and rejects payloads missing a window key', () => {
     const request = vi.fn()
     const subscribe = vi.fn().mockReturnValue(vi.fn())

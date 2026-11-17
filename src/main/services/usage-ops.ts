@@ -6,6 +6,9 @@ import type {
   UsageProvider,
   UsageResult
 } from '@shared/types/usage'
+import type { ClaudeCodeModeUsageUnavailablePayload } from '@shared/types/claude-live-usage'
+import { getDatabase } from '../db'
+import { claimClaudeDebugUsageAutoDisableNotice } from './claude-debug-log/claude-debug-usage-auto-disable'
 import { getClaudeTokenTally } from './usage/claude-token-tally'
 import {
   captureLiveAccountFromFetch,
@@ -176,6 +179,15 @@ export async function refreshAllForProviderOp(
   maxAgeMs?: number
 ): Promise<RefreshAllResultItem[]> {
   return refreshAllForProvider(provider, excludeAccountIds, { maxAgeMs })
+}
+
+/**
+ * The notice that live usage in Code Mode is switched off for the installed version of the
+ * Claude CLI (Code Mode T19), for the first window that asks; null when there is nothing to
+ * tell and to every window that asks after it.
+ */
+export async function claimCodeModeUsageUnavailableNoticeOp(): Promise<ClaudeCodeModeUsageUnavailablePayload | null> {
+  return claimClaudeDebugUsageAutoDisableNotice(getDatabase())
 }
 
 /** Disk-derived cumulative token totals for the burn-rate predictor. */

@@ -10,6 +10,7 @@
 // and the spawn builder. Only the PTYs are stand-ins: destroying one forgets its id at
 // once, and its process ends when a test says so, as node-pty reports it.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { app } from 'electron'
 import {
   appendFileSync,
   existsSync,
@@ -80,7 +81,8 @@ const mocks = vi.hoisted(() => {
 
 vi.mock('electron', () => ({
   BrowserWindow: class {},
-  app: { getPath: vi.fn(() => '/tmp') }
+  // The app's version is what a switch-off of the debug log is kept for (T19).
+  app: { getPath: vi.fn(() => '/tmp'), getVersion: vi.fn(() => '1.4.0') }
 }))
 
 vi.mock('./logger', () => ({
@@ -109,6 +111,10 @@ vi.mock('./claude-binary-resolver', () => ({
   resolveClaudeBinaryPath: vi.fn(() => '/usr/local/bin/claude'),
   logClaudeBinaryVersion: vi.fn(),
   getClaudeBinaryVersion: vi.fn((path: string) =>
+    path === '/usr/local/bin/claude' ? '2.1.326' : null
+  ),
+  // What the binary on disk reports when a launch asks it (T19).
+  readClaudeBinaryVersion: vi.fn(async (path: string) =>
     path === '/usr/local/bin/claude' ? '2.1.326' : null
   )
 }))
@@ -169,13 +175,15 @@ vi.mock('./claude-cli-spawner', async (importOriginal) => {
 
 import type { Session } from '../db/types'
 import {
+  CLAUDE_CODE_MODE_USAGE_UNAVAILABLE_CHANNEL,
   CLAUDE_LIVE_USAGE_HEALTH_CHANNEL,
+  isClaudeCodeModeUsageUnavailablePayload,
   isClaudeLiveUsageHealthPayload
 } from '@shared/types/claude-live-usage'
 import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
 import type { ClaudeUsageObservation } from './claude-api-proxy/claude-usage-live-updater'
 import { setClaudeApiProxyBaseUrl } from './claude-api-proxy/claude-api-proxy-env'
-import { getClaudeBinaryVersion } from './claude-binary-resolver'
+import { getClaudeBinaryVersion, readClaudeBinaryVersion } from './claude-binary-resolver'
 import { CLAUDE_CLI_DEBUG_DIRNAME, ClaudeCliDebugDirs } from './claude-cli-debug-dir'
 import { buildClaudeCliPtySpawn } from './claude-cli-spawner'
 import type { ClaudeCliUsageLaunches } from './claude-cli-usage-launches'
@@ -189,6 +197,10 @@ import {
   getClaudeDebugLogUsageSource
 } from './claude-debug-log/claude-debug-log-usage'
 import { ClaudeDebugLogUsageSource } from './claude-debug-log/claude-debug-log-usage-source'
+import {
+  CLAUDE_DEBUG_USAGE_AUTO_DISABLE_STATE_KEY,
+  claimClaudeDebugUsageAutoDisableNotice
+} from './claude-debug-log/claude-debug-usage-auto-disable'
 import { resolveClaudeUsageTransport } from './claude-usage-transport'
 import {
   cleanupTerminals,
@@ -229,6 +241,8 @@ let claudeConfigDir: string
 let resolveTransport: ReturnType<typeof vi.fn<typeof resolveClaudeUsageTransport>>
 /** The hourly sweep, when it was asked for. */
 let sweepTimers: Array<{ fn: () => void; ms: number }>
+/** The rows of the `settings` table the app itself writes: they outlive a restart (T19). */
+let settingsRows: Map<string, string>
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -270,8 +284,10 @@ function setupDb(
     getConnection: vi.fn(() => ({ path: '/repo/connection' })),
     getProject: vi.fn(() => ({ id: session.project_id, path: '/repo', kind: 'git' })),
     getSetting: vi.fn((key: string) =>
-      key === APP_SETTINGS_DB_KEY ? JSON.stringify(settings) : null
+      key === APP_SETTINGS_DB_KEY ? JSON.stringify(settings) : (settingsRows.get(key) ?? null)
     ),
+    setSetting: vi.fn((key: string, value: string) => void settingsRows.set(key, value)),
+    deleteSetting: vi.fn((key: string) => void settingsRows.delete(key)),
     getSessionByClaudeSessionId: vi.fn(() => null),
     updateSession: vi.fn(),
     updateProjectTrustCheck: vi.fn()
@@ -359,6 +375,7 @@ beforeEach(() => {
   aliveInstances = new Set()
   observations = []
   sweepTimers = []
+  settingsRows = new Map()
 
   // The proxy runs: its address is on the app's environment, where every PTY inherits it.
   setClaudeApiProxyBaseUrl(PROXY_URL)
@@ -1052,6 +1069,173 @@ describe('a Claude CLI session that asks for Code Mode, with live usage off', ()
     await vi.waitFor(() =>
       expect(mocks.publishDesktopBackendEvent).toHaveBeenCalledWith(`terminal:exit:${SESSION}`, 0)
     )
+  })
+})
+
+describePosix('a CLI version whose debug log gives no readings (T19)', () => {
+  const CLI = '/usr/local/bin/claude'
+
+  const unavailableEvents = (): unknown[] =>
+    mocks.publishDesktopBackendEvent.mock.calls
+      .filter(([channel]) => channel === CLAUDE_CODE_MODE_USAGE_UNAVAILABLE_CHANNEL)
+      .map(([, payload]) => payload)
+
+  /** What a launch reported is counted once its CLI version has answered. */
+  const settle = async (): Promise<void> => {
+    for (let i = 0; i < 5; i += 1) await Promise.resolve()
+  }
+
+  /** A new Code Mode session: one turn over a log the CLI never wrote, then it is closed. */
+  const degradedSession = async (): Promise<void> => {
+    await createClaudeCliTerminal(SESSION)
+    expect(launches.transport(SESSION)).toBe('debug-log')
+    tellStatus('working')
+    tellStatus('completed')
+    expect(launches.degradedReason(SESSION)).toBe('log-empty')
+    exitPty(pty())
+    await settle()
+  }
+
+  const expectNoneLaunch = (): void => {
+    expect(lastBuilderInput().usage).toEqual({ transport: 'none' })
+    const { options } = pty()
+    // Off the proxy as it asked, and without anything of the debug log.
+    for (const name of PROXY_VARIABLES) expect(options.env).not.toHaveProperty(name)
+    expect(options.unsetEnv).toEqual(PROXY_VARIABLES)
+    expect(options.args.join(' ')).not.toContain('--debug')
+    expect(options.env).not.toHaveProperty('ANTHROPIC_LOG')
+    expect(options.env).not.toHaveProperty('CLAUDE_ENV_FILE')
+    expect(options.env).toMatchObject({ CLAUDE_CODE_EXPERIMENTAL_CODE_MODE: '1' })
+    expect(launchDirs()).toEqual([])
+    expect(source.stats().sessions).toBe(0)
+    expect(launches.transport(SESSION)).toBe('none')
+  }
+
+  beforeEach(() => {
+    setupDb(codeModeSettings())
+    vi.mocked(app.getVersion).mockReturnValue('1.4.0')
+    vi.mocked(readClaudeBinaryVersion).mockImplementation(async (path: string) =>
+      path === CLI ? '2.1.326' : null
+    )
+  })
+
+  it('starts the fourth session with transport none after three degraded ones, and tells once', async () => {
+    await degradedSession()
+    await degradedSession()
+    expect(unavailableEvents()).toEqual([])
+    await degradedSession()
+
+    // The cue for the windows, with the version and nothing else.
+    expect(unavailableEvents()).toEqual([{ provider: 'anthropic', cliVersion: '2.1.326' }])
+    expect(unavailableEvents().every(isClaudeCodeModeUsageUnavailablePayload)).toBe(true)
+    expect(vi.mocked(readClaudeBinaryVersion)).toHaveBeenCalledWith(CLI)
+    // The window claims the notice and shows it.
+    const db = mocks.getDatabase()
+    expect(claimClaudeDebugUsageAutoDisableNotice(db)).toEqual({
+      provider: 'anthropic',
+      cliVersion: '2.1.326'
+    })
+
+    const result = await createClaudeCliTerminal(SESSION, { pendingPrompt: 'Say hi' })
+
+    expect(result).toEqual({ success: true, cols: 120, rows: 40 })
+    expectNoneLaunch()
+    expect(pty().options.args.at(-1)).toBe('Say hi')
+
+    // A fifth, and the app started again on the same versions: still off, and nobody is told again.
+    exitPty(pty())
+    await createClaudeCliTerminal(SESSION)
+    expectNoneLaunch()
+    exitPty(pty())
+    installLaunches()
+    await createClaudeCliTerminal(SESSION)
+    expectNoneLaunch()
+    expect(unavailableEvents()).toHaveLength(1)
+    expect(claimClaudeDebugUsageAutoDisableNotice(db)).toBeNull()
+  })
+
+  it('starts the count again with a healthy session between failures', async () => {
+    await degradedSession()
+    await degradedSession()
+
+    await createClaudeCliTerminal(SESSION)
+    tellStatus('working')
+    appendFileSync(source.facts(SESSION)!.logPath, `${RESPONSE_LINE}\n`)
+    tellStatus('completed')
+    expect(launches.degradedReason(SESSION)).toBeNull()
+    exitPty(pty())
+    await settle()
+    expect(settingsRows.has(CLAUDE_DEBUG_USAGE_AUTO_DISABLE_STATE_KEY)).toBe(false)
+
+    await degradedSession()
+    await degradedSession()
+    await createClaudeCliTerminal(SESSION)
+
+    expect(launches.transport(SESSION)).toBe('debug-log')
+    expect(unavailableEvents()).toEqual([])
+  })
+
+  it('gives sessions their debug log again once the CLI is another version', async () => {
+    await degradedSession()
+    await degradedSession()
+    await degradedSession()
+    await createClaudeCliTerminal(SESSION)
+    expectNoneLaunch()
+    exitPty(pty())
+
+    // The CLI updated itself.
+    vi.mocked(readClaudeBinaryVersion).mockResolvedValue('2.1.327')
+    await createClaudeCliTerminal(SESSION)
+
+    expect(launches.transport(SESSION)).toBe('debug-log')
+    expect(argAfter(pty().options.args, '--debug-file')).toBe(
+      join(root, launchDirs()[0], 'usage.log')
+    )
+    expect(settingsRows.size).toBe(0)
+  })
+
+  it('gives sessions their debug log again once the app is another version', async () => {
+    await degradedSession()
+    await degradedSession()
+    await degradedSession()
+    await createClaudeCliTerminal(SESSION)
+    expectNoneLaunch()
+    exitPty(pty())
+
+    // The app was updated and started again.
+    vi.mocked(app.getVersion).mockReturnValue('1.4.1')
+    installLaunches()
+    await createClaudeCliTerminal(SESSION)
+
+    expect(launches.transport(SESSION)).toBe('debug-log')
+    expect(settingsRows.size).toBe(0)
+  })
+
+  it('leaves a session without Code Mode on the proxy, and asks nothing about it', async () => {
+    await degradedSession()
+    await degradedSession()
+    await degradedSession()
+    const stored = new Map(settingsRows)
+    vi.mocked(readClaudeBinaryVersion).mockClear()
+
+    // Code Mode is no longer asked for.
+    setupDb()
+    const result = await createClaudeCliTerminal(SESSION, { pendingPrompt: 'Say hi' })
+
+    expect(result).toEqual({ success: true, cols: 120, rows: 40 })
+    expect(lastBuilderInput()).not.toHaveProperty('usage')
+    const { options } = pty()
+    expect(options.env).toMatchObject({
+      ANTHROPIC_BASE_URL: PROXY_URL,
+      _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL: '1'
+    })
+    expect(options).not.toHaveProperty('unsetEnv')
+    expect(options.args.join(' ')).not.toContain('--debug')
+    expect(launches.transport(SESSION)).toBeNull()
+    // Its CLI was not asked for its version, nothing was counted, nobody was told again.
+    expect(vi.mocked(readClaudeBinaryVersion)).not.toHaveBeenCalled()
+    expect(settingsRows).toEqual(stored)
+    expect(unavailableEvents()).toHaveLength(1)
   })
 })
 

@@ -1,5 +1,6 @@
 import { execFile, execFileSync } from 'child_process'
 import { existsSync } from 'fs'
+import { realpath, stat } from 'fs/promises'
 import { createLogger } from './logger'
 
 const log = createLogger({ component: 'ClaudeBinaryResolver' })
@@ -50,10 +51,69 @@ export function getClaudeBinaryVersion(binaryPath: string): string | null {
   return versionByPath.get(binaryPath) ?? null
 }
 
+/** The file a path leads to and what tells one build of it from the next, without running it. */
+async function binaryIdentity(binaryPath: string): Promise<string | null> {
+  try {
+    const target = await realpath(binaryPath)
+    const { size, mtimeMs } = await stat(target)
+    return `${target}\n${size}\n${mtimeMs}`
+  } catch {
+    return null
+  }
+}
+
+/** The answer of each binary as it was on disk when it was last asked. */
+const versionByIdentity = new Map<string, { identity: string; version: Promise<string | null> }>()
+
+function askClaudeBinaryVersion(binaryPath: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    execFile(binaryPath, ['--version'], { encoding: 'utf-8', timeout: 5000 }, (error, stdout) => {
+      if (error) {
+        log.warn('Could not determine Claude CLI version', {
+          path: binaryPath,
+          error: error.message
+        })
+        resolve(null)
+        return
+      }
+      resolve(versionFromOutput(stdout))
+    })
+  })
+}
+
+/**
+ * The version of the binary at `binaryPath` as it is on disk now, or null when it cannot be
+ * told. The CLI updates itself while the app runs, at the same path, so the binary is asked
+ * again whenever the file the path leads to is another one or has changed, and only then:
+ * otherwise this costs two file lookups. A version it finds is what `getClaudeBinaryVersion`
+ * answers from then on. Never rejects.
+ *
+ * A wrapper script that picks the real binary by other means looks unchanged here when the
+ * binary behind it is updated; such a path keeps the version it first gave until the app
+ * restarts.
+ */
+export async function readClaudeBinaryVersion(binaryPath: string): Promise<string | null> {
+  const identity = await binaryIdentity(binaryPath)
+  if (identity === null) return null
+  const known = versionByIdentity.get(binaryPath)
+  if (known?.identity === identity) return known.version
+  const version = askClaudeBinaryVersion(binaryPath).then((found) => {
+    if (versionByIdentity.get(binaryPath)?.version === version) {
+      if (found !== null) versionByPath.set(binaryPath, found)
+      // An answer that did not come is asked for again by the next caller.
+      else versionByIdentity.delete(binaryPath)
+    }
+    return found
+  })
+  versionByIdentity.set(binaryPath, { identity, version })
+  return version
+}
+
 /** Tests only: forget every version asked for so far. */
 export function __resetClaudeBinaryVersionsForTests(): void {
   versionLoggedPaths.clear()
   versionByPath.clear()
+  versionByIdentity.clear()
 }
 
 /**

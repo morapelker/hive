@@ -2,13 +2,17 @@
 // live PTYs, the launch directories beside the database, the debug-log usage source and the
 // transport decision. Kept apart from the class itself so its tests need neither node-pty
 // nor the database module.
+import { app } from 'electron'
 import {
+  CLAUDE_CODE_MODE_USAGE_UNAVAILABLE_CHANNEL,
   CLAUDE_LIVE_USAGE_HEALTH_CHANNEL,
+  type ClaudeCodeModeUsageUnavailablePayload,
   type ClaudeLiveUsageHealthPayload
 } from '@shared/types/claude-live-usage'
+import { getDatabase } from '../db'
 import { publishDesktopBackendEvent } from '../desktop/backend-event-publisher'
 import { isClaudeDebugUsageEnabled } from './claude-api-proxy/claude-debug-usage-setting'
-import { getClaudeBinaryVersion } from './claude-binary-resolver'
+import { getClaudeBinaryVersion, readClaudeBinaryVersion } from './claude-binary-resolver'
 import { claudeCliDebugDirs } from './claude-cli-debug-dir'
 import {
   ClaudeCliUsageLaunches,
@@ -16,6 +20,7 @@ import {
   type ClaudeCliUsageLaunchesDeps
 } from './claude-cli-usage-launches'
 import { getClaudeDebugLogUsageSource } from './claude-debug-log/claude-debug-log-usage'
+import { ClaudeDebugUsageAutoDisable } from './claude-debug-log/claude-debug-usage-auto-disable'
 import { resolveClaudeUsageTransport } from './claude-usage-transport'
 import { ptyService } from './pty-service'
 
@@ -37,6 +42,30 @@ function publishUsageHealth(change: ClaudeCliUsageHealthChange): void {
 }
 
 /**
+ * The cue to tell the person that live usage in Code Mode is switched off for the installed
+ * version of the Claude CLI (T19). Every window gets it, and the one that claims the notice
+ * shows it (`usageOps.claimCodeModeUsageUnavailableNotice`).
+ */
+function publishUsageUnavailable(notice: ClaudeCodeModeUsageUnavailablePayload): void {
+  void Promise.resolve(
+    publishDesktopBackendEvent(CLAUDE_CODE_MODE_USAGE_UNAVAILABLE_CHANNEL, notice)
+  ).catch(() => undefined)
+}
+
+/**
+ * What switches the debug log off for a CLI version it gives no readings with, as the app
+ * runs it: counted in the app's database, for the version the binary on disk reports.
+ */
+export function createClaudeDebugUsageAutoDisable(): ClaudeDebugUsageAutoDisable {
+  return new ClaudeDebugUsageAutoDisable({
+    store: () => getDatabase(),
+    appVersion: () => app.getVersion(),
+    cliVersion: (path) => readClaudeBinaryVersion(path),
+    onBlocked: publishUsageUnavailable
+  })
+}
+
+/**
  * The launches as the app runs them. `overrides` replaces single pieces (tests: directories
  * in a temporary place, an environment of their own).
  */
@@ -54,6 +83,8 @@ export function createClaudeCliUsageLaunches(
     cliVersion: (path) => getClaudeBinaryVersion(path),
     onHealthChange: publishUsageHealth,
     ...overrides,
+    autoDisable:
+      'autoDisable' in overrides ? overrides.autoDisable : createClaudeDebugUsageAutoDisable(),
     dirs: overrides.dirs ?? claudeCliDebugDirs(),
     source: overrides.source ?? getClaudeDebugLogUsageSource()
   })

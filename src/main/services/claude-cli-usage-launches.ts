@@ -34,6 +34,14 @@
 // strength of that session). The launch stays a `debug-log` launch throughout, and is
 // healthy again with the next response its log gives.
 //
+// A CLI version the log does not work with (Code Mode T19; PRD FR-32). Every `debug-log`
+// launch says how it turned out to `autoDisable` (claude-debug-usage-auto-disable.ts, which
+// has the rules): that its log became degraded before one response in it could be read, or
+// that a response could be read. The second is looked for when a turn completes, when a
+// degraded launch recovers and in the final read. After three launches in a row without a
+// reading on one CLI version, `decide` gives the next ones `none` instead of `debug-log`,
+// until the CLI or the app is another version. Launches that are running keep what they have.
+//
 // The end is the same whatever ended the process (it exited, the session was closed, it was
 // reaped, the app quits): the log is read one last time and let go of, then the directory is
 // deleted. In that order, and the directory only once the process is gone: a CLI that still
@@ -46,8 +54,13 @@ import type { ClaudeCliUsageLaunch } from './claude-cli-spawner'
 import type {
   ClaudeDebugLogDegradedReason,
   ClaudeDebugLogHealthChange,
+  ClaudeDebugLogSessionFacts,
   ClaudeDebugLogUsageSource
 } from './claude-debug-log/claude-debug-log-usage-source'
+import type {
+  ClaudeDebugUsageAutoDisable,
+  ClaudeDebugUsageLaunchOutcome
+} from './claude-debug-log/claude-debug-usage-auto-disable'
 import type {
   ClaudeUsageTransport,
   ResolveClaudeUsageTransportOptions
@@ -71,7 +84,7 @@ export interface ClaudeCliUsageLaunchesDeps {
   /** The follower of every Code Mode session's log (`getClaudeDebugLogUsageSource()`). */
   readonly source: Pick<
     ClaudeDebugLogUsageSource,
-    'register' | 'unregister' | 'setTurnInProgress' | 'turnCompleted' | 'onHealthChange'
+    'register' | 'unregister' | 'setTurnInProgress' | 'turnCompleted' | 'onHealthChange' | 'facts'
   >
   /** Whether live usage for Code Mode sessions is on, given the environment to read. */
   readonly isFeatureEnabled: (env: NodeJS.ProcessEnv) => boolean
@@ -97,6 +110,11 @@ export interface ClaudeCliUsageLaunchesDeps {
    * them again (the app tells the usage UI). Must return at once.
    */
   readonly onHealthChange?: (change: ClaudeCliUsageHealthChange) => void
+  /**
+   * What switches the debug log off for a CLI version it gives no readings with (T19).
+   * Without it every launch the decision gives `debug-log` gets it.
+   */
+  readonly autoDisable?: Pick<ClaudeDebugUsageAutoDisable, 'blocks' | 'launch'>
   /** The app's own environment; `process.env` unless a test says otherwise. */
   readonly env?: NodeJS.ProcessEnv
   /** Defaults to `CLAUDE_CLI_USAGE_SWEEP_INTERVAL_MS`. */
@@ -110,6 +128,8 @@ export interface ClaudeCliUsageDecideInput {
   readonly db: SettingsReader
   /** The session's custom provider command, when it launches through one. */
   readonly customProviderCommand?: string | null
+  /** The CLI binary the launch will run: its version decides whether it gets a debug log. */
+  readonly cliPath?: string | null
 }
 
 export interface ClaudeCliUsageBeginOptions {
@@ -117,7 +137,10 @@ export interface ClaudeCliUsageBeginOptions {
   readonly cwd: string
   /** Reads Settings → Environment Variables. */
   readonly db: SettingsReader
-  /** The CLI binary the launch runs, for the version a degraded launch is reported with. */
+  /**
+   * The CLI binary the launch runs: its version is what a degraded launch is reported with
+   * and what the launch is counted for (T19).
+   */
   readonly cliPath?: string | null
 }
 
@@ -157,6 +180,8 @@ interface Launch {
   degraded: ClaudeDebugLogDegradedReason | null
   /** The one warning a degraded launch gets was logged. */
   warned: boolean
+  /** Where a `debug-log` launch says how it turned out (T19); null for any other. */
+  readonly outcome: ClaudeDebugUsageLaunchOutcome | null
 }
 
 const errorText = (error: unknown): string =>
@@ -202,15 +227,20 @@ export class ClaudeCliUsageLaunches {
    * process: one that is already running keeps what it was started with (FR-4), so a view
    * attaching to it does not ask.
    *
+   * A launch that would get `debug-log` gets `none` while the debug log is switched off for
+   * the version of its CLI (FR-32). Nothing else is asked about that: a launch on the proxy
+   * is decided as it always was.
+   *
    * Never throws. When the decision cannot be made the launch stays on the proxy, as every
    * launch did before.
    */
   async decide(input: ClaudeCliUsageDecideInput): Promise<ClaudeUsageTransport> {
+    let transport: ClaudeUsageTransport
     try {
       // The kill switch is read where the launch's own variables are: Settings → Environment
       // Variables over the app's environment.
       const settingsEnv = getUserEnvironmentVariables(input.db)
-      return await this.deps.resolveTransport({
+      transport = await this.deps.resolveTransport({
         db: input.db,
         featureEnabled: this.deps.isFeatureEnabled({ ...this.env, ...settingsEnv }),
         customProviderCommand: input.customProviderCommand,
@@ -222,6 +252,13 @@ export class ClaudeCliUsageLaunches {
       })
       return 'proxy'
     }
+    if (transport !== 'debug-log' || !(await this.switchedOff(input.cliPath ?? null))) {
+      return transport
+    }
+    log.info(
+      'A Code Mode launch starts without live usage: the debug log is switched off for this version of the Claude CLI'
+    )
+    return 'none'
   }
 
   /**
@@ -259,7 +296,8 @@ export class ClaudeCliUsageLaunches {
       cliPath: options.cliPath ?? null,
       turnOpen: false,
       degraded: null,
-      warned: false
+      warned: false,
+      outcome: files ? this.outcomeOf(options.cliPath ?? null) : null
     }
     this.current.set(sessionId, launch)
     if (!files) return { transport: 'none' }
@@ -315,6 +353,7 @@ export class ClaudeCliUsageLaunches {
       } else if (launch.turnOpen && isTurnCompleted(status)) {
         launch.turnOpen = false
         this.deps.source.turnCompleted(sessionId)
+        this.noteReadings(launch, this.deps.source.facts(sessionId))
       }
     } catch (error) {
       log.warn('Could not pass a turn status on to the debug-log follower', {
@@ -436,6 +475,10 @@ export class ClaudeCliUsageLaunches {
     const reason = change.degradation?.reason ?? null
     if (reason === launch.degraded) return
     launch.degraded = reason
+    // Recovered: a response could be read. Degraded with none read so far: for all this
+    // launch shows, the log does not work with its CLI (T19).
+    if (reason === null) this.report(launch, 'healthy')
+    else if (change.facts.entriesParsed === 0) this.report(launch, 'degraded')
     const cliVersion = this.cliVersionOf(launch)
     if (reason === null) {
       log.info('The debug log of a Code Mode session gives readings again: live usage resumes', {
@@ -483,6 +526,49 @@ export class ClaudeCliUsageLaunches {
       return this.deps.cliVersion(launch.cliPath)
     } catch {
       return null
+    }
+  }
+
+  /** Whether the debug log is switched off for the version of the CLI at `cliPath`. Never throws. */
+  private async switchedOff(cliPath: string | null): Promise<boolean> {
+    if (!this.deps.autoDisable) return false
+    try {
+      return await this.deps.autoDisable.blocks(cliPath)
+    } catch (error) {
+      log.warn('Could not ask whether the debug log is switched off for this Claude CLI', {
+        error: errorText(error)
+      })
+      return false
+    }
+  }
+
+  /** Where a `debug-log` launch that is about to start says how it turned out. Never throws. */
+  private outcomeOf(cliPath: string | null): ClaudeDebugUsageLaunchOutcome | null {
+    if (!this.deps.autoDisable) return null
+    try {
+      return this.deps.autoDisable.launch(cliPath)
+    } catch (error) {
+      log.warn('Could not count a Code Mode launch for its Claude CLI version', {
+        error: errorText(error)
+      })
+      return null
+    }
+  }
+
+  /** A response in the launch's log could be read: the log works with its CLI. */
+  private noteReadings(launch: Launch, facts: ClaudeDebugLogSessionFacts | null): void {
+    if (facts && facts.entriesParsed > 0) this.report(launch, 'healthy')
+  }
+
+  /** Tell how the launch turned out; whoever counts counts each of the two once. Never throws. */
+  private report(launch: Launch, outcome: keyof ClaudeDebugUsageLaunchOutcome): void {
+    try {
+      launch.outcome?.[outcome]()
+    } catch (error) {
+      log.warn('Could not count how a Code Mode launch turned out', {
+        sessionId: launch.sessionId,
+        error: errorText(error)
+      })
     }
   }
 
@@ -591,7 +677,9 @@ export class ClaudeCliUsageLaunches {
     if (!launch.registered) return
     launch.registered = false
     try {
-      this.deps.source.unregister(launch.sessionId)
+      // What the last read turned up counts too: a launch that ended in the middle of a turn
+      // may have given its readings without ever being judged.
+      this.noteReadings(launch, this.deps.source.unregister(launch.sessionId))
     } catch (error) {
       log.warn('Could not stop following a debug log', {
         sessionId: launch.sessionId,

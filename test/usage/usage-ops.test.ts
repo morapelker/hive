@@ -12,10 +12,13 @@ const mocks = vi.hoisted(() => ({
   listCodexAccounts: vi.fn(),
   captureLiveAccountFromFetch: vi.fn(),
   fetchForSavedAccount: vi.fn(),
-  refreshAllForProvider: vi.fn()
+  refreshAllForProvider: vi.fn(),
+  getDatabase: vi.fn()
 }))
 
 vi.mock('electron', () => ({ app: { getPath: () => '/tmp' } }))
+
+vi.mock('../../src/main/db', () => ({ getDatabase: mocks.getDatabase }))
 
 vi.mock('../../src/main/services/logger', () => ({
   createLogger: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() })
@@ -47,7 +50,15 @@ vi.mock('../../src/main/services/saved-usage-orchestrator', () => ({
   refreshAllForProvider: mocks.refreshAllForProvider
 }))
 
-import { fetchOpenAIUsageOp, fetchUsageOp } from '../../src/main/services/usage-ops'
+import {
+  claimCodeModeUsageUnavailableNoticeOp,
+  fetchOpenAIUsageOp,
+  fetchUsageOp
+} from '../../src/main/services/usage-ops'
+import {
+  CLAUDE_DEBUG_USAGE_AUTO_DISABLE_NOTICE_KEY,
+  CLAUDE_DEBUG_USAGE_AUTO_DISABLE_STATE_KEY
+} from '../../src/main/services/claude-debug-log/claude-debug-usage-auto-disable'
 
 describe('fetchUsageOp', () => {
   beforeEach(() => {
@@ -282,5 +293,47 @@ describe('fetchOpenAIUsageOp', () => {
       'internal-refresh-token'
     )
     expect(mocks.captureLiveAccountFromFetch).not.toHaveBeenCalled()
+  })
+})
+
+describe('claimCodeModeUsageUnavailableNoticeOp', () => {
+  /** The `settings` table of the app's database, as the main process left it. */
+  const databaseWith = (rows: Map<string, string>): void => {
+    mocks.getDatabase.mockReturnValue({
+      getSetting: (key: string) => rows.get(key) ?? null,
+      setSetting: (key: string, value: string) => void rows.set(key, value),
+      deleteSetting: (key: string) => void rows.delete(key)
+    })
+  }
+
+  const state = (blockedAt: number | null): string =>
+    JSON.stringify({ cliVersion: '2.1.326', appVersion: '1.4.0', failures: 3, blockedAt })
+
+  it('gives the notice of a switch-off out once, and records that it did', async () => {
+    const rows = new Map([[CLAUDE_DEBUG_USAGE_AUTO_DISABLE_STATE_KEY, state(1_800_000_000_000)]])
+    databaseWith(rows)
+
+    expect(await claimCodeModeUsageUnavailableNoticeOp()).toEqual({
+      provider: 'anthropic',
+      cliVersion: '2.1.326'
+    })
+    expect(await claimCodeModeUsageUnavailableNoticeOp()).toBeNull()
+
+    expect(JSON.parse(rows.get(CLAUDE_DEBUG_USAGE_AUTO_DISABLE_NOTICE_KEY)!)).toMatchObject({
+      cliVersion: '2.1.326',
+      appVersion: '1.4.0',
+      blockedAt: 1_800_000_000_000
+    })
+  })
+
+  it('has nothing to give while live usage in Code Mode is not switched off', async () => {
+    const rows = new Map<string, string>()
+    databaseWith(rows)
+    expect(await claimCodeModeUsageUnavailableNoticeOp()).toBeNull()
+
+    // Two failed launches so far: counted, not switched off.
+    rows.set(CLAUDE_DEBUG_USAGE_AUTO_DISABLE_STATE_KEY, state(null))
+    expect(await claimCodeModeUsageUnavailableNoticeOp()).toBeNull()
+    expect(rows.has(CLAUDE_DEBUG_USAGE_AUTO_DISABLE_NOTICE_KEY)).toBe(false)
   })
 })

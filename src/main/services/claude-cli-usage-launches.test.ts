@@ -43,6 +43,12 @@ import {
   type ClaudeCliUsageLaunchesDeps
 } from './claude-cli-usage-launches'
 import { ClaudeDebugLogUsageSource } from './claude-debug-log/claude-debug-log-usage-source'
+import {
+  ClaudeDebugUsageAutoDisable,
+  claimClaudeDebugUsageAutoDisableNotice,
+  type ClaudeDebugUsageAutoDisableStore
+} from './claude-debug-log/claude-debug-usage-auto-disable'
+import type { ClaudeCodeModeUsageUnavailablePayload } from '@shared/types/claude-live-usage'
 import type {
   ClaudeUsageTransport,
   ResolveClaudeUsageTransportOptions
@@ -136,7 +142,8 @@ const launchesOf = (overrides: Partial<ClaudeCliUsageLaunchesDeps> = {}): Claude
       },
       setTurnInProgress: (sessionId, inProgress) => source.setTurnInProgress(sessionId, inProgress),
       turnCompleted: (sessionId) => source.turnCompleted(sessionId),
-      onHealthChange: (listener) => source.onHealthChange(listener)
+      onHealthChange: (listener) => source.onHealthChange(listener),
+      facts: (sessionId) => source.facts(sessionId)
     },
     isFeatureEnabled,
     resolveTransport,
@@ -414,7 +421,8 @@ describePosix('ClaudeCliUsageLaunches.begin', () => {
         unregister: (sessionId) => source.unregister(sessionId),
         setTurnInProgress: () => false,
         turnCompleted: () => false,
-        onHealthChange: () => () => {}
+        onHealthChange: () => () => {},
+        facts: () => null
       }
     })
 
@@ -674,7 +682,8 @@ describePosix('the end of a usage launch', () => {
         },
         setTurnInProgress: () => false,
         turnCompleted: () => false,
-        onHealthChange: () => () => {}
+        onHealthChange: () => () => {},
+        facts: () => null
       }
     })
     const { files, pty } = startDebugLogLaunch(launches)
@@ -805,7 +814,8 @@ describePosix('ClaudeCliUsageLaunches.noteStatus', () => {
         unregister: (sessionId) => source.unregister(sessionId),
         setTurnInProgress,
         turnCompleted,
-        onHealthChange: (listener) => source.onHealthChange(listener)
+        onHealthChange: (listener) => source.onHealthChange(listener),
+        facts: (sessionId) => source.facts(sessionId)
       }
     })
     launches.begin(SESSION, 'none', { cwd: WORKTREE, db: settingsDb() })
@@ -1160,6 +1170,481 @@ describePosix('ClaudeCliUsageLaunches health', () => {
 
     expect(degradedWarnings()).toHaveLength(2)
     expect(changes.map((change) => change.degraded)).toEqual([true, true])
+  })
+})
+
+describePosix('a CLI version whose debug log gives no readings (T19)', () => {
+  const CLI = '/usr/local/bin/claude'
+
+  /** The `settings` table: what the app still has after a restart. */
+  let rows: Map<string, string>
+  let store: ClaudeDebugUsageAutoDisableStore
+  /** What the binary at `CLI` reports right now. */
+  let cliVersion: string | null
+  let appVersion: string
+  /** Every cue to tell the person, in order. */
+  let cues: ClaudeCodeModeUsageUnavailablePayload[]
+  /** Sessions started so far: each launch below is a new session. */
+  let started: number
+
+  /** The app starts (again): new launches and a new count, over the same database. */
+  const startApp = (): ClaudeCliUsageLaunches =>
+    launchesOf({
+      autoDisable: new ClaudeDebugUsageAutoDisable({
+        store: () => store,
+        appVersion: () => appVersion,
+        cliVersion: async () => cliVersion,
+        onBlocked: (notice) => cues.push(notice)
+      })
+    })
+
+  /** What a launch reported is counted once its CLI version has answered. */
+  const settle = async (): Promise<void> => {
+    for (let i = 0; i < 5; i += 1) await Promise.resolve()
+  }
+
+  /** Decide for a new Code Mode session and start it with what was decided. */
+  const launchSession = async (
+    launches: ClaudeCliUsageLaunches
+  ): Promise<{
+    sessionId: string
+    transport: ClaudeUsageTransport
+    logFile: string | null
+    pty: FakePty
+  }> => {
+    started += 1
+    const sessionId = `session-${started}`
+    const db = settingsDb()
+    const transport = await launches.decide({ db, cliPath: CLI })
+    const usage = launches.begin(sessionId, transport, { cwd: WORKTREE, db, cliPath: CLI })
+    const pty = spawnPty(sessionId)
+    launches.started(sessionId)
+    return {
+      sessionId,
+      transport: usage?.transport ?? 'proxy',
+      logFile: usage?.transport === 'debug-log' ? usage.debugLogFile : null,
+      pty
+    }
+  }
+
+  /** One turn of a session: the prompt, what the CLI logs meanwhile, the Stop hook. */
+  const turn = async (
+    launches: ClaudeCliUsageLaunches,
+    session: { sessionId: string; logFile: string | null },
+    lines: string[] = []
+  ): Promise<void> => {
+    launches.noteStatus(session.sessionId, 'working')
+    if (session.logFile) for (const line of lines) appendFileSync(session.logFile, `${line}\n`)
+    launches.noteStatus(session.sessionId, 'completed')
+    await settle()
+  }
+
+  /** A new Code Mode session whose log gives nothing to read: a turn, then it is closed. */
+  const degradedSession = async (
+    launches: ClaudeCliUsageLaunches
+  ): Promise<ClaudeUsageTransport> => {
+    const session = await launchSession(launches)
+    // What an update that renamed the entry leaves: responses were logged, none can be read.
+    await turn(launches, session, [REQUEST_LINE, STATUS_LINE, RENAMED_RESPONSE_LINE])
+    exitPty(session.pty)
+    await settle()
+    return session.transport
+  }
+
+  /** A new Code Mode session whose log gives a reading. */
+  const healthySession = async (
+    launches: ClaudeCliUsageLaunches
+  ): Promise<ClaudeUsageTransport> => {
+    const session = await launchSession(launches)
+    await turn(launches, session, [REQUEST_LINE, STATUS_LINE, RESPONSE_LINE])
+    exitPty(session.pty)
+    await settle()
+    return session.transport
+  }
+
+  const blockedLaunchLogs = (): unknown[][] =>
+    logMock.info.mock.calls.filter(([message]) =>
+      String(message).includes('the debug log is switched off for this version')
+    )
+
+  beforeEach(() => {
+    rows = new Map()
+    store = {
+      getSetting: (key) => rows.get(key) ?? null,
+      setSetting: (key, value) => void rows.set(key, value),
+      deleteSetting: (key) => void rows.delete(key)
+    }
+    cliVersion = '2.1.326'
+    appVersion = '1.4.0'
+    cues = []
+    started = 0
+    // Every session below asks for Code Mode and may have it.
+    resolveTransport.mockResolvedValue('debug-log')
+  })
+
+  it('starts the fourth session without a debug log after three degraded ones, and gives one cue', async () => {
+    const launches = startApp()
+
+    expect(await degradedSession(launches)).toBe('debug-log')
+    expect(await degradedSession(launches)).toBe('debug-log')
+    expect(cues).toEqual([])
+    expect(await degradedSession(launches)).toBe('debug-log')
+    expect(cues).toEqual([{ provider: 'anthropic', cliVersion: '2.1.326' }])
+
+    const fourth = await launchSession(launches)
+
+    expect(fourth.transport).toBe('none')
+    expect(launches.transport(fourth.sessionId)).toBe('none')
+    // Nothing was made for it: no directory, no follower.
+    expect(launchDirs()).toEqual([])
+    expect(source.facts(fourth.sessionId)).toBeNull()
+    expect(blockedLaunchLogs()).toHaveLength(1)
+  })
+
+  it('counts every reason a log gives no readings for', async () => {
+    const launches = startApp()
+
+    // The CLI could not write its log.
+    const empty = await launchSession(launches)
+    await turn(launches, empty)
+    expect(launches.degradedReason(empty.sessionId)).toBe('log-empty')
+    // Responses were logged and none can be read.
+    const unread = await launchSession(launches)
+    await turn(launches, unread, [REQUEST_LINE, STATUS_LINE, RENAMED_RESPONSE_LINE])
+    expect(launches.degradedReason(unread.sessionId)).toBe('unparsed-responses')
+    // What is at the path is not a file the follower reads.
+    const refused = await launchSession(launches)
+    rmSync(refused.logFile!)
+    symlinkSync(join(base, 'elsewhere.txt'), refused.logFile!)
+    writeFileSync(join(base, 'elsewhere.txt'), `${RESPONSE_LINE}\n`)
+    await turn(launches, refused)
+    expect(launches.degradedReason(refused.sessionId)).toBe('unsafe-file')
+
+    expect((await launchSession(launches)).transport).toBe('none')
+  })
+
+  it('starts the count again with a healthy session between failures', async () => {
+    const launches = startApp()
+
+    await degradedSession(launches)
+    await degradedSession(launches)
+    expect(await healthySession(launches)).toBe('debug-log')
+    await degradedSession(launches)
+    await degradedSession(launches)
+
+    expect((await launchSession(launches)).transport).toBe('debug-log')
+    expect(cues).toEqual([])
+    expect(blockedLaunchLogs()).toEqual([])
+  })
+
+  it('starts the count again with a healthy session that is still running', async () => {
+    const launches = startApp()
+    await degradedSession(launches)
+    await degradedSession(launches)
+
+    // Its first turn gave a reading; it is not closed.
+    const running = await launchSession(launches)
+    await turn(launches, running, [REQUEST_LINE, STATUS_LINE, RESPONSE_LINE])
+
+    await degradedSession(launches)
+    await degradedSession(launches)
+    expect((await launchSession(launches)).transport).toBe('debug-log')
+    expect(cues).toEqual([])
+  })
+
+  it('takes a session whose readings only turn up in the final read as healthy', async () => {
+    const launches = startApp()
+    await degradedSession(launches)
+    await degradedSession(launches)
+
+    // Closed in the middle of its first turn, after a response was logged.
+    const session = await launchSession(launches)
+    launches.noteStatus(session.sessionId, 'working')
+    appendFileSync(session.logFile!, `${RESPONSE_LINE}\n`)
+    exitPty(session.pty)
+    await settle()
+
+    await degradedSession(launches)
+    await degradedSession(launches)
+    expect((await launchSession(launches)).transport).toBe('debug-log')
+  })
+
+  it('takes a session that recovers as healthy', async () => {
+    const launches = startApp()
+    await degradedSession(launches)
+
+    // The second failure in a row, until its log is written after all.
+    const recovering = await launchSession(launches)
+    await turn(launches, recovering)
+    expect(launches.degradedReason(recovering.sessionId)).toBe('log-empty')
+    await turn(launches, recovering, [RESPONSE_LINE])
+    expect(launches.degradedReason(recovering.sessionId)).toBeNull()
+
+    await degradedSession(launches)
+    await degradedSession(launches)
+
+    expect((await launchSession(launches)).transport).toBe('debug-log')
+    expect(cues).toEqual([])
+  })
+
+  it('counts neither a session that made no request nor one that completed no turn', async () => {
+    const launches = startApp()
+    await degradedSession(launches)
+    await degradedSession(launches)
+
+    // A turn without a request: the log has lines, none about a response.
+    const quiet = await launchSession(launches)
+    await turn(launches, quiet, [STARTUP_LINE])
+    expect(launches.degradedReason(quiet.sessionId)).toBeNull()
+    exitPty(quiet.pty)
+    // Opened and closed.
+    const unused = await launchSession(launches)
+    exitPty(unused.pty)
+    await settle()
+
+    // Neither failed, and neither showed that the log works: the count stands at two.
+    expect(cues).toEqual([])
+    await degradedSession(launches)
+    expect(cues).toHaveLength(1)
+    expect((await launchSession(launches)).transport).toBe('none')
+  })
+
+  it('does not count a session that degrades after it gave readings', async () => {
+    source.dispose()
+    source = new ClaudeDebugLogUsageSource({
+      submit: (observation) => observations.push(observation),
+      setTimer: () => ({}),
+      clearTimer: () => {},
+      follower: { hardCapBytes: 8 * 1024 }
+    })
+    const launches = startApp()
+    await degradedSession(launches)
+    await degradedSession(launches)
+
+    const session = await launchSession(launches)
+    await turn(launches, session, [RESPONSE_LINE])
+    // Its log passes the hard cap in the next turn and is deleted.
+    await turn(
+      launches,
+      session,
+      Array.from({ length: 6 }, () => REQUEST_LINE)
+    )
+    expect(launches.degradedReason(session.sessionId)).toBe('hard-cap')
+    exitPty(session.pty)
+    await settle()
+
+    // It counted as healthy: two more failures do not make three.
+    await degradedSession(launches)
+    await degradedSession(launches)
+    expect((await launchSession(launches)).transport).toBe('debug-log')
+  })
+
+  it('leaves the sessions that are running on their debug log when the block comes', async () => {
+    const launches = startApp()
+    const running = await launchSession(launches)
+
+    await degradedSession(launches)
+    await degradedSession(launches)
+    await degradedSession(launches)
+
+    expect(launches.transport(running.sessionId)).toBe('debug-log')
+    await turn(launches, running, [RESPONSE_LINE])
+    expect(observations).toHaveLength(1)
+    // And what it shows changes nothing for the sessions that start now.
+    expect((await launchSession(launches)).transport).toBe('none')
+  })
+
+  it('keeps the block across a restart of the app on the same versions', async () => {
+    const before = startApp()
+    await degradedSession(before)
+    await degradedSession(before)
+    await degradedSession(before)
+
+    const after = startApp()
+
+    expect((await launchSession(after)).transport).toBe('none')
+    expect((await launchSession(after)).transport).toBe('none')
+  })
+
+  it('gives sessions their debug log again once the CLI is another version', async () => {
+    const launches = startApp()
+    await degradedSession(launches)
+    await degradedSession(launches)
+    await degradedSession(launches)
+    expect((await launchSession(launches)).transport).toBe('none')
+
+    // The CLI updated itself while the app runs.
+    cliVersion = '2.1.327'
+
+    const session = await launchSession(launches)
+    expect(session.transport).toBe('debug-log')
+    expect(source.facts(session.sessionId)).not.toBeNull()
+    expect(rows.size).toBe(0)
+  })
+
+  it('gives sessions their debug log again once the app is another version', async () => {
+    const before = startApp()
+    await degradedSession(before)
+    await degradedSession(before)
+    await degradedSession(before)
+
+    appVersion = '1.4.1'
+    const after = startApp()
+
+    expect((await launchSession(after)).transport).toBe('debug-log')
+    expect(rows.size).toBe(0)
+  })
+
+  it('tells the person once: not per session, and not again after a restart', async () => {
+    const launches = startApp()
+    await degradedSession(launches)
+    await degradedSession(launches)
+    await degradedSession(launches)
+    // The window takes the cue: it claims the notice and shows it.
+    expect(cues).toHaveLength(1)
+    expect(claimClaudeDebugUsageAutoDisableNotice(store)).toEqual({
+      provider: 'anthropic',
+      cliVersion: '2.1.326'
+    })
+
+    await launchSession(launches)
+    await launchSession(launches)
+    const after = startApp()
+    await launchSession(after)
+
+    expect(cues).toHaveLength(1)
+    expect(claimClaudeDebugUsageAutoDisableNotice(store)).toBeNull()
+  })
+
+  it('gives the cue again with the next blocked session while no window has claimed the notice', async () => {
+    const launches = startApp()
+    await degradedSession(launches)
+    await degradedSession(launches)
+    await degradedSession(launches)
+    expect(cues).toHaveLength(1)
+
+    await launchSession(launches)
+    expect(cues).toHaveLength(2)
+
+    // Two windows got it: one notice between them.
+    expect(claimClaudeDebugUsageAutoDisableNotice(store)).not.toBeNull()
+    expect(claimClaudeDebugUsageAutoDisableNotice(store)).toBeNull()
+    await launchSession(launches)
+    expect(cues).toHaveLength(2)
+  })
+
+  it('leaves sessions without Code Mode as they are, before and during the block', async () => {
+    const blocks = vi.fn(async () => true)
+    const launch = vi.fn(() => ({ degraded: vi.fn(), healthy: vi.fn() }))
+    const launches = launchesOf({ autoDisable: { blocks, launch } })
+    resolveTransport.mockResolvedValue('proxy')
+    const db = settingsDb()
+
+    expect(await launches.decide({ db, cliPath: CLI })).toBe('proxy')
+    expect(launches.begin(SESSION, 'proxy', { cwd: WORKTREE, db, cliPath: CLI })).toBeNull()
+
+    // Nobody was asked, nothing is counted, nothing is kept for the session.
+    expect(blocks).not.toHaveBeenCalled()
+    expect(launch).not.toHaveBeenCalled()
+    expect(launches.transport(SESSION)).toBeNull()
+    expect(events).toEqual([])
+    expect(launchDirs()).toEqual([])
+  })
+
+  it('stays on the proxy for sessions without Code Mode while the debug log is switched off', async () => {
+    const launches = startApp()
+    await degradedSession(launches)
+    await degradedSession(launches)
+    await degradedSession(launches)
+    const stored = new Map(rows)
+
+    resolveTransport.mockResolvedValue('proxy')
+    const session = await launchSession(launches)
+
+    expect(session.transport).toBe('proxy')
+    expect(launches.transport(session.sessionId)).toBeNull()
+    expect(rows).toEqual(stored)
+    expect(cues).toHaveLength(1)
+  })
+
+  it('does not ask about a launch the feature switch already keeps off the debug log', async () => {
+    const blocks = vi.fn(async () => true)
+    const launch = vi.fn(() => ({ degraded: vi.fn(), healthy: vi.fn() }))
+    const launches = launchesOf({ autoDisable: { blocks, launch } })
+    resolveTransport.mockResolvedValue('none')
+    const db = settingsDb()
+
+    expect(await launches.decide({ db, cliPath: CLI })).toBe('none')
+    launches.begin(SESSION, 'none', { cwd: WORKTREE, db, cliPath: CLI })
+
+    expect(blocks).not.toHaveBeenCalled()
+    expect(launch).not.toHaveBeenCalled()
+  })
+
+  it('asks with the binary the launch will run, and gives the debug log when it cannot ask', async () => {
+    const blocks = vi.fn(async (): Promise<boolean> => {
+      throw new Error('database is closed')
+    })
+    const launches = launchesOf({
+      autoDisable: {
+        blocks,
+        launch: () => {
+          throw new Error('database is closed')
+        }
+      }
+    })
+    const db = settingsDb()
+
+    expect(await launches.decide({ db, cliPath: CLI })).toBe('debug-log')
+    expect(blocks).toHaveBeenCalledWith(CLI)
+    // And the launch still starts, on its debug log, counted by nobody.
+    expect(launches.begin(SESSION, 'debug-log', { cwd: WORKTREE, db, cliPath: CLI })).toMatchObject(
+      {
+        transport: 'debug-log'
+      }
+    )
+    spawnPty(SESSION)
+    launches.started(SESSION)
+    launches.noteStatus(SESSION, 'working')
+    expect(() => launches.noteStatus(SESSION, 'completed')).not.toThrow()
+  })
+
+  it('does not count a launch that could not be prepared: it never had a debug log', async () => {
+    const launch = vi.fn(() => ({ degraded: vi.fn(), healthy: vi.fn() }))
+    const launches = launchesOf({
+      autoDisable: { blocks: async () => false, launch },
+      dirs: { prepare: () => null, remove: () => {}, sweep: () => {} }
+    })
+
+    expect(
+      launches.begin(SESSION, 'debug-log', { cwd: WORKTREE, db: settingsDb(), cliPath: CLI })
+    ).toEqual({
+      transport: 'none'
+    })
+
+    expect(launch).not.toHaveBeenCalled()
+  })
+
+  it('keeps nothing of a log in what it stores and logs', async () => {
+    const launches = startApp()
+    await degradedSession(launches)
+    await degradedSession(launches)
+    await degradedSession(launches)
+    await launchSession(launches)
+    claimClaudeDebugUsageAutoDisableNotice(store)
+
+    const kept = JSON.stringify([
+      [...rows],
+      cues,
+      logMock.warn.mock.calls,
+      logMock.info.mock.calls,
+      logMock.debug.mock.calls
+    ])
+    const pieces = [REQUEST_LINE, STATUS_LINE, RENAMED_RESPONSE_LINE].flatMap((line) =>
+      line.split(/[\s'"`{},\\]+/).filter((piece) => piece.length >= 12)
+    )
+    expect(pieces.length).toBeGreaterThan(20)
+    for (const piece of pieces) expect(kept.includes(piece)).toBe(false)
   })
 })
 
