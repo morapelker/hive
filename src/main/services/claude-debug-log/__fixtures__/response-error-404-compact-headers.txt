@@ -1,0 +1,1 @@
+2026-11-17T12:39:34.932Z [DEBUG] "console.log: [log_f89bea] response error (error; not retryable) {\n  url: 'https://api.anthropic.com/v1/messages?beta=true',\n  status: 404,\n  headers: { 'content-length': '9', 'content-type': 'text/plain' },\n  message: 'not found',\n  durationMs: 8\n}"
