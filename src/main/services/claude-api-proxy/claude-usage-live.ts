@@ -66,6 +66,11 @@ function buildUpdater(): ClaudeUsageLiveUpdater {
     // one record of them this process can read.
     readLastAccountSwitchAt: () => readClaudeAccountIndexUpdatedAt(),
     requestOrganizations: () => organizationsNeededHandler?.(),
+    // What a proxied response teaches: the organization its credential's
+    // account is billed to. The updater calls this only for a new value.
+    storeAccountOrganization: (accountId, organizationUuid) => {
+      getDatabase().setSavedUsageAccountOrgUuid(accountId, organizationUuid)
+    },
     log
   })
 }
@@ -110,6 +115,11 @@ export function submitClaudeUsageObservation(observation: ClaudeUsageObservation
  * do not await it). The reading is held for 60 seconds meanwhile; call
  * `notifyClaudeOrganizationsLearned()` once something was stored. Null
  * disconnects. One handler at a time.
+ *
+ * The updater also learns on its own, from proxied traffic: a response whose
+ * credential placed it stores the organization it names for that account.
+ * That only reaches accounts that send proxied requests; this handler is for
+ * the others.
  */
 export function setClaudeOrganizationsNeededHandler(handler: (() => void) | null): void {
   organizationsNeededHandler = handler

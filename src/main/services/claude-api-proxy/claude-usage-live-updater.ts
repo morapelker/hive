@@ -29,6 +29,11 @@
  * organization is held for a minute while organizations are learned; several
  * (seats of one team) → only the signed-in one, and only when no account
  * switch is recent. Anything else is dropped, never guessed.
+ *
+ * Those stored organizations are learned here too: a proxied response also
+ * names the organization it was billed to, so once its credential has placed
+ * the request, that organization is stored for the account. Only then: a
+ * request placed by the reported uuid, or not placed at all, teaches nothing.
  */
 import {
   CLAUDE_LIVE_USAGE_CHANNEL,
@@ -55,7 +60,9 @@ export interface ClaudeUsageObservation {
    * The organization the response says it was billed to
    * (`anthropic-organization-id`). It decides the account only when there is
    * no credential fingerprint: the observation is then placed through the
-   * organization stored per account and never through `accountUuid`.
+   * organization stored per account and never through `accountUuid`. Next to
+   * a credential fingerprint it decides nothing: it is what gets stored for
+   * the account the credential identifies.
    */
   organizationUuid?: string | null
   snapshot: UnifiedRateLimitSnapshot
@@ -128,6 +135,13 @@ export interface ClaudeUsageLiveUpdaterDeps {
    * most once a minute per organization; must return at once.
    */
   requestOrganizations?: () => void
+  /**
+   * Store `organizationUuid` (already in the stored form) as the organization
+   * of the saved account with this row id, replacing any other value. Called
+   * only when it differs from what the row holds, and only for a request its
+   * credential placed. Without it nothing is learned from proxied traffic.
+   */
+  storeAccountOrganization?: (accountId: string, organizationUuid: string) => void | Promise<void>
   log: {
     debug: (message: string, data?: Record<string, unknown>) => void
     info: (message: string, data?: Record<string, unknown>) => void
@@ -171,6 +185,32 @@ export const HELD_ORGANIZATION_RECHECK_MS = 1_000
  */
 export const ACCOUNT_SWITCH_SETTLE_MS = 30_000
 const MAX_HELD_ORGANIZATIONS = 20
+/** The response header that names the organization a request was billed to. */
+export const ANTHROPIC_ORGANIZATION_HEADER = 'anthropic-organization-id'
+/**
+ * What an organization id may look like (a uuid today). The stored value is
+ * later written into the CLI's identity file, so anything else is not taken.
+ */
+const ORGANIZATION_ID_PATTERN = /^[0-9a-z][0-9a-z_-]{0,127}$/
+/**
+ * How long after a credential was first paired with an account the pairing is
+ * looked at again, to store the organization seen meanwhile. Just past
+ * `AMBIGUOUS_RESOLUTION_TTL_MS`, so the second look is a fresh lookup.
+ */
+export const ORGANIZATION_CONFIRM_DELAY_MS = AMBIGUOUS_RESOLUTION_TTL_MS + 1_000
+const MAX_UNCONFIRMED_ORGANIZATIONS = 50
+
+/**
+ * The organization a response says it was billed to, in the form it is stored
+ * and compared in, or null when the header is missing or is not an id.
+ */
+export function organizationFromResponseHeaders(
+  headers: ClaudeProxyObservedExchange['responseHeaders']
+): string | null {
+  const raw = headers[ANTHROPIC_ORGANIZATION_HEADER]
+  const organization = normalizeOrgUuid(Array.isArray(raw) ? raw[0] : raw)
+  return organization !== null && ORGANIZATION_ID_PATTERN.test(organization) ? organization : null
+}
 
 /**
  * Pure: the usage observation an exchange carries, or null when it carries
@@ -200,7 +240,20 @@ export function observationFromExchange(
         : extractClaudeAccountUuid(exchange.requestBody)
   const credentialFingerprint = exchange.credentialFingerprint ?? null
   if (credentialFingerprint === null && accountUuid === null) return null
-  return { credentialFingerprint, accountUuid, snapshot, observedAt: exchange.observedAt }
+  // Only next to a credential, where it is something to learn. On its own it
+  // would decide the account, and a proxied request without a credential keeps
+  // being placed by the uuid it reported, as it always was.
+  const organizationUuid =
+    credentialFingerprint === null
+      ? null
+      : organizationFromResponseHeaders(exchange.responseHeaders)
+  return {
+    credentialFingerprint,
+    accountUuid,
+    ...(organizationUuid !== null ? { organizationUuid } : {}),
+    snapshot,
+    observedAt: exchange.observedAt
+  }
 }
 
 function parseUsageJson(json: string | null): UsageData | null {
@@ -278,9 +331,29 @@ interface CachedResolution {
   expiresAt: number
   /** Consecutive failed lookups (unknown credentials only). */
   misses?: number
+  /** The pairing has not held across two lookups yet (see `lookupByToken`). */
+  ambiguous?: boolean
 }
 
-type Attribution = { email: string; via: 'token' | 'reported-uuid' | 'organization' }
+type TokenAttribution = {
+  email: string
+  via: 'token'
+  /**
+   * False while the credential → account pairing is still the short-lived,
+   * unconfirmed kind. Usage is credited either way, as it always was; only
+   * what is stored for good (the organization) waits for a confirmed one.
+   */
+  confirmed: boolean
+}
+
+type Attribution = TokenAttribution | { email: string; via: 'reported-uuid' | 'organization' }
+
+/** An organization seen on a request whose credential pairing is not confirmed yet. */
+interface UnconfirmedOrganization {
+  email: string
+  organization: string
+  timer: unknown
+}
 
 /** A reading waiting for its organization to be mapped to an account. */
 interface HeldObservation {
@@ -311,6 +384,8 @@ export class ClaudeUsageLiveUpdater {
   /** The signed-in email as last read, and when it was seen to have changed. */
   private lastSeenLiveEmail: string | null = null
   private liveChangeSeenAt: number | null = null
+  /** By credential: the organization to store once its pairing is confirmed. */
+  private readonly unconfirmed = new Map<string, UnconfirmedOrganization>()
   private lastForcedRescanAt = 0
   private chain: Promise<void> = Promise.resolve()
 
@@ -380,9 +455,17 @@ export class ClaudeUsageLiveUpdater {
     })
   }
 
-  /** Resolves once every observation handed in so far has been applied. */
-  settle(): Promise<void> {
-    return this.chain
+  /**
+   * Resolves once every observation handed in so far has been applied,
+   * including what applying one queued behind it (a held reading released by
+   * an organization that was just stored).
+   */
+  async settle(): Promise<void> {
+    let awaited: Promise<void>
+    do {
+      awaited = this.chain
+      await awaited
+    } while (awaited !== this.chain)
   }
 
   dispose(): void {
@@ -393,6 +476,8 @@ export class ClaudeUsageLiveUpdater {
     if (this.heldTimer !== null) this.cancel(this.heldTimer)
     this.heldTimer = null
     this.held.clear()
+    for (const entry of this.unconfirmed.values()) this.cancel(entry.timer)
+    this.unconfirmed.clear()
   }
 
   private cancel(timer: unknown): void {
@@ -405,21 +490,28 @@ export class ClaudeUsageLiveUpdater {
     key: string,
     email: string | null,
     ttlMs: number,
-    misses?: number
+    extra: { misses?: number; ambiguous?: boolean } = {}
   ): void {
     if (cache.size >= MAX_CACHED_RESOLUTIONS && !cache.has(key)) cache.clear()
-    cache.set(key, { email, expiresAt: this.now() + ttlMs, ...(misses ? { misses } : {}) })
+    cache.set(key, {
+      email,
+      expiresAt: this.now() + ttlMs,
+      ...(extra.misses ? { misses: extra.misses } : {}),
+      ...(extra.ambiguous ? { ambiguous: true } : {})
+    })
   }
 
   private async attribute(
-    observation: ClaudeUsageObservation,
+    observation: Pick<ClaudeUsageObservation, 'credentialFingerprint' | 'accountUuid'>,
     live: ClaudeLiveIdentity
   ): Promise<Attribution | null> {
     const fingerprint = observation.credentialFingerprint
     if (fingerprint !== null) {
       const cached = this.tokenOwners.get(fingerprint)
       if (cached !== undefined && cached.expiresAt > this.now()) {
-        return cached.email === null ? null : { email: cached.email, via: 'token' }
+        return cached.email === null
+          ? null
+          : { email: cached.email, via: 'token', confirmed: cached.ambiguous !== true }
       }
       const misses = cached !== undefined && cached.email === null ? (cached.misses ?? 0) : 0
       // Only the first miss pays for a full rescan; a credential that stays
@@ -435,9 +527,10 @@ export class ClaudeUsageLiveUpdater {
           this.tokenOwners,
           fingerprint,
           byToken.email,
-          byToken.ambiguous ? AMBIGUOUS_RESOLUTION_TTL_MS : RESOLUTION_TTL_MS
+          byToken.ambiguous ? AMBIGUOUS_RESOLUTION_TTL_MS : RESOLUTION_TTL_MS,
+          { ambiguous: byToken.ambiguous }
         )
-        return { email: byToken.email, via: 'token' }
+        return { email: byToken.email, via: 'token', confirmed: !byToken.ambiguous }
       }
       if (byToken.tokensReadable) {
         // Tokens can be compared here and this one belongs to no account we
@@ -447,7 +540,7 @@ export class ClaudeUsageLiveUpdater {
           UNKNOWN_CREDENTIAL_TTL_MS * 4 ** misses,
           UNKNOWN_CREDENTIAL_MAX_TTL_MS
         )
-        this.remember(this.tokenOwners, fingerprint, null, ttlMs, misses + 1)
+        this.remember(this.tokenOwners, fingerprint, null, ttlMs, { misses: misses + 1 })
         return null
       }
     }
@@ -864,6 +957,109 @@ export class ClaudeUsageLiveUpdater {
     }
   }
 
+  /**
+   * A request its credential placed also names the organization it was billed
+   * to: that is the account's organization. Stored when it is not the one the
+   * row already holds (nothing is written otherwise), replacing an older one.
+   *
+   * A pairing that has not held across two lookups yet (the first sight of a
+   * credential, or a list read while a switch was half applied) is not stored
+   * from: unlike a usage reading, a wrong organization would stay and misplace
+   * every later reading that goes by it. It is looked at again shortly, so one
+   * request is still enough to learn from. Never throws: the usage update this
+   * rides on goes ahead whatever happens here.
+   */
+  private async learnOrganization(
+    observation: ClaudeUsageObservation,
+    attribution: TokenAttribution,
+    row: SavedUsageAccount
+  ): Promise<void> {
+    const fingerprint = observation.credentialFingerprint
+    const organization = normalizeOrgUuid(observation.organizationUuid)
+    if (fingerprint === null || organization === null) return
+    if (this.deps.storeAccountOrganization === undefined) return
+    if (normalizeOrgUuid(row.org_uuid) === organization) return
+    if (!attribution.confirmed) {
+      this.confirmLater(fingerprint, attribution.email, organization)
+      return
+    }
+    await this.storeOrganization(row, organization)
+  }
+
+  private async storeOrganization(row: SavedUsageAccount, organization: string): Promise<void> {
+    const previous = normalizeOrgUuid(row.org_uuid)
+    if (previous === organization || this.deps.storeAccountOrganization === undefined) return
+    try {
+      await this.deps.storeAccountOrganization(row.id, organization)
+    } catch (error) {
+      this.deps.log.warn('Failed to store the organization of a Claude account', {
+        email: row.email,
+        error: error instanceof Error ? error.message : String(error)
+      })
+      return
+    }
+    this.deps.log.info(
+      previous === null
+        ? 'Learned the organization of a Claude account'
+        : 'The organization of a Claude account changed',
+      { email: row.email, organization: shortOrganization(organization) }
+    )
+    // A reading held for this organization can be placed now.
+    this.organizationsLearned()
+  }
+
+  /** Keep the newest organization seen for `fingerprint` and look at its pairing again soon. */
+  private confirmLater(fingerprint: string, email: string, organization: string): void {
+    const waiting = this.unconfirmed.get(fingerprint)
+    if (waiting !== undefined) {
+      waiting.email = email
+      waiting.organization = organization
+      return
+    }
+    if (this.unconfirmed.size >= MAX_UNCONFIRMED_ORGANIZATIONS) {
+      const oldest = this.unconfirmed.entries().next().value
+      if (oldest !== undefined) {
+        this.cancel(oldest[1].timer)
+        this.unconfirmed.delete(oldest[0])
+      }
+    }
+    const timer = this.schedule(
+      () => this.run(() => this.confirmOrganization(fingerprint), null),
+      ORGANIZATION_CONFIRM_DELAY_MS
+    )
+    this.unconfirmed.set(fingerprint, { email, organization, timer })
+  }
+
+  /**
+   * The second look at a credential whose first pairing was unconfirmed: the
+   * organization is stored only when the credential still resolves, now
+   * confirmed, to the same account. Otherwise it is forgotten; the next
+   * request on that credential starts over.
+   */
+  private async confirmOrganization(fingerprint: string): Promise<void> {
+    const waiting = this.unconfirmed.get(fingerprint)
+    if (waiting === undefined) return
+    this.unconfirmed.delete(fingerprint)
+    try {
+      const row = this.deps.readUsageRow(waiting.email)
+      // Stored meanwhile by a later request, or the row is gone: nothing to do.
+      if (row === null || normalizeOrgUuid(row.org_uuid) === waiting.organization) return
+      const live = await this.readLive()
+      const attribution = await this.attribute(
+        { credentialFingerprint: fingerprint, accountUuid: null },
+        live
+      )
+      if (attribution === null || attribution.via !== 'token') return
+      if (!attribution.confirmed || attribution.email !== waiting.email) return
+      await this.storeOrganization(row, waiting.organization)
+    } catch (error) {
+      this.deps.log.warn('Failed to confirm the organization of a Claude account', {
+        email: waiting.email,
+        error: error instanceof Error ? error.message : String(error)
+      })
+    }
+  }
+
   private async commit(
     observation: ClaudeUsageObservation,
     attribution: Attribution,
@@ -875,6 +1071,7 @@ export class ClaudeUsageLiveUpdater {
     const previousUsage = parseUsageJson(previousRow?.last_usage_json ?? null)
     const usage = mergeUnifiedSnapshotIntoUsage(previousUsage, observation.snapshot)
     const row = this.deps.writeLiveUsage(email, usage)
+    if (attribution.via === 'token') await this.learnOrganization(observation, attribution, row)
 
     const payload: ClaudeLiveUsagePayload = {
       provider: 'anthropic',

@@ -7,7 +7,9 @@ const dbMocks = vi.hoisted(() => ({
   settings: null as string | null,
   rows: new Map<string, Record<string, unknown>>(),
   // What getSavedUsageAccountOrganizations returns; an Error makes it throw.
-  organizations: [] as Array<{ id: string; email: string; org_uuid: string | null }> | Error
+  organizations: [] as Array<{ id: string; email: string; org_uuid: string | null }> | Error,
+  // Every setSavedUsageAccountOrgUuid call, in order.
+  organizationWrites: [] as Array<{ id: string; orgUuid: string | null }>
 }))
 
 const storeMocks = vi.hoisted(() => ({
@@ -68,6 +70,22 @@ vi.mock('../../../db', () => ({
         }
       }
       return null
+    },
+    // One column of one table: a write shows on the row and in the organizations read.
+    setSavedUsageAccountOrgUuid: (id: string, orgUuid: string | null) => {
+      dbMocks.organizationWrites.push({ id, orgUuid })
+      for (const row of dbMocks.rows.values()) {
+        if (row.id !== id) continue
+        row.org_uuid = orgUuid
+        if (!(dbMocks.organizations instanceof Error)) {
+          dbMocks.organizations = [
+            ...dbMocks.organizations.filter((entry) => entry.id !== id),
+            { id, email: row.email as string, org_uuid: orgUuid }
+          ]
+        }
+        return row
+      }
+      return null
     }
   })
 }))
@@ -89,7 +107,11 @@ import {
   __resetClaudeApiProxyCachesForTests
 } from '../claude-api-proxy'
 import { getClaudeApiProxyEnv, getClaudeApiProxyUserBaseUrl } from '../claude-api-proxy-env'
-import { __resetClaudeUsageLiveUpdaterForTests } from '../claude-usage-live'
+import {
+  __resetClaudeUsageLiveUpdaterForTests,
+  submitClaudeUsageObservation
+} from '../claude-usage-live'
+import { parseUnifiedRateLimitHeaders } from '../anthropic-rate-limit-headers'
 import { fingerprintSecret } from '../../credential-fingerprint'
 
 const ENV_KEYS = ['ANTHROPIC_BASE_URL', '_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL']
@@ -106,6 +128,7 @@ beforeEach(() => {
   dbMocks.settings = null
   dbMocks.rows.clear()
   dbMocks.organizations = []
+  dbMocks.organizationWrites = []
   __resetClaudeApiProxyCachesForTests()
 })
 
@@ -405,6 +428,121 @@ describe('startClaudeApiProxy', () => {
       const row = dbMocks.rows.get('me@example.com')!
       expect(row.last_usage_json).toContain('"utilization":42')
       expect(row.last_fetched_at).toBe('polled-earlier')
+    } finally {
+      await new Promise<void>((resolve) => {
+        upstream.closeAllConnections()
+        upstream.close(() => resolve())
+      })
+    }
+  })
+
+  // Code Mode PRD AT-2: the organization on a proxied response is the organization of the
+  // account whose token the request carried.
+  it('stores the organization a proxied response names for the account its token belongs to', async () => {
+    const organization = 'f43590b8-1111-4222-8333-444455556666'
+    let sevenDay = 0.1
+    const upstream = http.createServer((req, res) => {
+      req.resume()
+      req.on('end', () => {
+        res.writeHead(200, {
+          'content-type': 'text/event-stream',
+          'Anthropic-Organization-Id': organization.toUpperCase(),
+          'anthropic-ratelimit-unified-7d-utilization': String(sevenDay),
+          'anthropic-ratelimit-unified-7d-reset': '4078890000',
+          'anthropic-ratelimit-unified-status': 'allowed'
+        })
+        res.end('event: message_stop\ndata: {}\n\n')
+      })
+    })
+    await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve))
+    const upstreamPort = (upstream.address() as AddressInfo).port
+    const uuid = '0d2c9a9e-1f1d-4a8a-9d2c-3a4b5c6d7e8f'
+    // Somebody else is signed in; the request below runs on me@example.com's token.
+    storeMocks.listClaudeAccountTokenFingerprints.mockResolvedValue([
+      { email: 'me@example.com', uuid, tokenFingerprint: fingerprintSecret('x') }
+    ])
+    storeMocks.readClaudeLiveIdentityCached.mockResolvedValue({
+      email: 'other@example.com',
+      uuid: '718fd88e-2076-4451-bc5f-066158379585'
+    })
+    storeMocks.readClaudeLiveTokenFingerprint.mockResolvedValue(fingerprintSecret('another-token'))
+    dbMocks.rows.set('me@example.com', {
+      id: 'row-me@example.com',
+      provider: 'anthropic',
+      email: 'me@example.com',
+      credentials_json: '',
+      last_usage_json: null,
+      last_fetched_at: null,
+      status: 'ok',
+      last_error: null,
+      org_uuid: null,
+      created_at: 'c',
+      updated_at: 'u'
+    })
+    const publishedEmails = (): string[] =>
+      (
+        publisherMocks.publishDesktopBackendEvent.mock.calls as unknown as Array<
+          [string, { email: string }]
+        >
+      ).map(([, payload]) => payload.email)
+
+    try {
+      const result = await startClaudeApiProxy({
+        env: {
+          ANTHROPIC_BASE_URL: `http://127.0.0.1:${upstreamPort}`,
+          HIVE_CLAUDE_API_PROXY_PORT: '0'
+        }
+      })
+      expect(result.started).toBe(true)
+      if (!result.started) return
+
+      const request = async (): Promise<void> => {
+        const response = await fetch(`${result.baseUrl}/v1/messages?beta=true`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: 'Bearer x' },
+          body: JSON.stringify({
+            model: 'claude-haiku-5-5',
+            messages: [{ role: 'user', content: 'hi' }],
+            metadata: {
+              user_id: JSON.stringify({ device_id: 'd', account_uuid: uuid, session_id: 's' })
+            }
+          })
+        })
+        expect(response.status).toBe(200)
+        await response.text()
+      }
+
+      await request()
+      await vi.waitFor(() => expect(publishedEmails()).toEqual(['me@example.com']))
+      // The header crossed the tunnel and was stored in the form the store compares by.
+      expect(dbMocks.organizationWrites).toEqual([
+        { id: 'row-me@example.com', orgUuid: organization }
+      ])
+      expect(dbMocks.rows.get('me@example.com')?.org_uuid).toBe(organization)
+
+      // A second response with the same organization is a usage update and no write.
+      sevenDay = 0.2
+      await request()
+      await vi.waitFor(() => expect(publishedEmails()).toHaveLength(2))
+      expect(dbMocks.rows.get('me@example.com')?.last_usage_json).toContain('"utilization":20')
+      expect(dbMocks.organizationWrites).toHaveLength(1)
+
+      // What a Code Mode session reports: the usage and the organization, no credential.
+      submitClaudeUsageObservation({
+        credentialFingerprint: null,
+        accountUuid: null,
+        organizationUuid: organization,
+        snapshot: parseUnifiedRateLimitHeaders({
+          'anthropic-ratelimit-unified-7d-utilization': '0.61',
+          'anthropic-ratelimit-unified-7d-reset': '4078890000',
+          'anthropic-ratelimit-unified-status': 'allowed'
+        })!,
+        observedAt: Date.now()
+      })
+      await vi.waitFor(() => expect(publishedEmails()).toHaveLength(3))
+      expect(publishedEmails()[2]).toBe('me@example.com')
+      expect(dbMocks.rows.get('me@example.com')?.last_usage_json).toContain('"utilization":61')
+      expect(dbMocks.organizationWrites).toHaveLength(1)
     } finally {
       await new Promise<void>((resolve) => {
         upstream.closeAllConnections()
