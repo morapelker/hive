@@ -220,13 +220,17 @@ function togglePinnedBoard(): void {
 }
 
 /**
- * New Ticket (Cmd+N) only acts on a board: one is on screen and offers "New ticket", nothing
- * is open over it (a ticket, a dialog, the ticket being written), and the terminal does not
- * have the focus (Ctrl+N is its next-history key).
+ * New Ticket (Cmd+N) only acts on a board: one is on screen and offers "New ticket", and
+ * nothing is open over it (a ticket, a dialog, the ticket being written).
+ *
+ * A focused terminal does not turn it off: the terminal panel beside the board takes the focus
+ * each time it comes into view (a worktree selected, the panel opened), without the user ever
+ * clicking it. It only keeps its own chords: bindings match Ctrl as Cmd, and Ctrl+N without
+ * Cmd is the shell's next-history key.
  */
-function canStartNewTicket(): boolean {
+function canStartNewTicket(event: KeyboardEvent): boolean {
   if (!canOpenBoardNewTicket()) return false
-  if (isTerminalFocused()) return false
+  if (isTerminalFocused() && event.ctrlKey && !event.metaKey) return false
   return document.querySelector('[role="dialog"], [role="alertdialog"]') === null
 }
 
@@ -606,7 +610,7 @@ export function useKeyboardShortcuts(): void {
           continue
 
         if (eventMatchesBinding(event, binding)) {
-          if (isAvailable && !isAvailable()) continue
+          if (isAvailable && !isAvailable(event)) continue
           event.preventDefault()
           event.stopPropagation()
           handler()
@@ -723,7 +727,7 @@ interface ShortcutHandler {
   handler: () => void
   allowInInput: boolean
   /** When it returns false the shortcut is off: its key is left to the page, not swallowed. */
-  isAvailable?: () => boolean
+  isAvailable?: (event: KeyboardEvent) => boolean
 }
 
 /**

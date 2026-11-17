@@ -1,8 +1,10 @@
 /**
  * Cmd+N starts a new ticket on the board on screen: it opens the To Do column's creation
  * modal, as the column's "New ticket" button does. It only acts on a board — with none on
- * screen, with something open over the board, while a search filters the board, or with the
- * terminal focused, the key is left alone (not swallowed). Rendered with the real column.
+ * screen, with something open over the board or while a search filters the board, the key is
+ * left alone (not swallowed). The terminal panel beside the board takes the focus by itself
+ * when it comes into view: Cmd+N still starts a ticket from there, and only Ctrl+N, the
+ * shell's next-history key, stays with the terminal. Rendered with the real column.
  */
 import type { PropsWithChildren } from 'react'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
@@ -176,6 +178,14 @@ describe('Cmd+N on a board', () => {
     expect(createModal()).not.toBeNull()
   })
 
+  it('works while the terminal beside the board has the focus', () => {
+    render(<Harness />)
+    focusOn('terminal-input')
+
+    expect(press(CMD_N)).toBe(true)
+    expect(createModal()).not.toBeNull()
+  })
+
   it('leaves Cmd+Shift+N (New Worktree) alone', () => {
     render(<Harness />)
 
@@ -237,11 +247,16 @@ describe('Cmd+N is left alone', () => {
     expect(screen.getAllByTestId('ticket-create-modal')).toHaveLength(1)
   })
 
-  it('in the terminal, where Ctrl+N is next-history', () => {
+  it('as Ctrl+N in the terminal, where it is next-history', () => {
     render(<Harness />)
     focusOn('terminal-input')
 
     expect(press({ key: 'n', ctrlKey: true })).toBe(false)
     expect(createModal()).toBeNull()
+
+    // Out of the terminal, Ctrl+N is the shortcut again
+    focusOn('board-search-input')
+    expect(press({ key: 'n', ctrlKey: true })).toBe(true)
+    expect(createModal()).not.toBeNull()
   })
 })
