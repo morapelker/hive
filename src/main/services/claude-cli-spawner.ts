@@ -6,7 +6,13 @@ import {
   type CustomProviderModel
 } from '@shared/types/custom-provider'
 import { getUserEnvironmentVariables } from './env-vars'
-import { getClaudeApiProxyEnv } from './claude-api-proxy/claude-api-proxy-env'
+import {
+  ANTHROPIC_BASE_URL_ENV,
+  ASSUME_FIRST_PARTY_ENV,
+  getClaudeApiProxyBaseUrl,
+  getClaudeApiProxyEnv
+} from './claude-api-proxy/claude-api-proxy-env'
+import type { ClaudeUsageTransport } from './claude-usage-transport'
 import type { DatabaseService } from '../db/database'
 
 export interface ClaudeCliPtySpawnInput {
@@ -42,13 +48,39 @@ export interface ClaudeCliPtySpawnInput {
    * terminal is fullscreen; only the tmux launch on a remote server inherits.
    */
   renderer?: ClaudeCliRenderer
+  /**
+   * Where the session's live usage comes from (claude-usage-transport.ts), with the files a
+   * `debug-log` launch writes to. Unset or null is `proxy`: the launch is unchanged. A custom
+   * provider launch stays on the proxy whatever is asked for here.
+   */
+  usage?: ClaudeCliUsageLaunch | null
 }
+
+/**
+ * The usage transport of one interactive launch, and what it needs prepared beforehand. Only
+ * `debug-log` takes files, both written by the caller before the process starts:
+ *
+ * - `debugLogFile`: absolute path of the file the CLI writes its debug log to.
+ * - `envFile`: absolute path of the shell file that removes `ANTHROPIC_LOG` again from the
+ *   commands the session runs (and sources the user's own `CLAUDE_ENV_FILE`, when they have
+ *   one, since this launch points the variable at the app's file).
+ */
+export type ClaudeCliUsageLaunch =
+  | { transport: Exclude<ClaudeUsageTransport, 'debug-log'> }
+  | { transport: Extract<ClaudeUsageTransport, 'debug-log'>; debugLogFile: string; envFile: string }
 
 export interface ClaudeCliPtySpawn {
   command: string
   args: string[]
   cwd: string
   env: Record<string, string>
+  /**
+   * Names of variables the process must not have at all, for `PtyCreateOpts.unsetEnv`. `env`
+   * can only add or override, and the app exports its proxy's address on its own environment,
+   * which every PTY inherits: a session that must not go through the proxy needs it removed.
+   * Empty for a `proxy` launch.
+   */
+  unsetEnv: string[]
   /**
    * The claude session id that went on argv as `--resume`, or null for a
    * brand-new session. The bridge keys its launch watch on this: a resumed
@@ -166,6 +198,50 @@ export function normalizeClaudeCliModel(modelId: string | null | undefined): str
   return null
 }
 
+/** The Anthropic SDK's log level, read by the SDK inside the CLI. */
+export const ANTHROPIC_LOG_ENV = 'ANTHROPIC_LOG'
+/** The only level at which the SDK logs response headers, where the usage figures are. */
+const ANTHROPIC_LOG_DEBUG = 'debug'
+/** A shell file the CLI sources before each Bash command of the session. */
+export const CLAUDE_ENV_FILE_ENV = 'CLAUDE_ENV_FILE'
+/**
+ * The debug-log category of the SDK's lines, and the only one a `debug-log` launch lets into
+ * the file. Not just a matter of size: unfiltered, the CLI's debug log holds paths under the
+ * home directory, the stderr of MCP servers, fragments of shell commands and more.
+ */
+export const CLAUDE_CLI_DEBUG_LOG_FILTER = 'console.log'
+
+const PROXY_USAGE_LAUNCH: ClaudeCliUsageLaunch = Object.freeze({ transport: 'proxy' })
+
+/**
+ * The debug options of a `debug-log` launch. `--debug-file` turns debug mode on and names the
+ * file. The filter has to be written with `=`: `--debug` takes an optional value, and only the
+ * `=` form binds one (a separate argument would be read as the prompt, and the log would be
+ * unfiltered). Include terms only; mixed with `!exclude` terms the CLI ignores the filter.
+ */
+function claudeCliDebugLogArgs(debugLogFile: string): string[] {
+  return ['--debug-file', debugLogFile, `--debug=${CLAUDE_CLI_DEBUG_LOG_FILTER}`]
+}
+
+/**
+ * The proxy variables to take out of the environment a session inherits from the app, for a
+ * launch that must reach the Anthropic API directly. Leaving them out of `env` is not enough:
+ * the running proxy exports both on the app's own environment, and the PTY starts from that.
+ *
+ * Only what the app put there is removed (as `buildDetachedEnv` does for detached runs): when
+ * the inherited address is not the proxy's, it is the user's own, and nothing is listed. An
+ * address the launch itself carries (the user's, from Settings) is left off the list as well,
+ * because removal in the PTY wins over `env` and would take theirs away.
+ */
+function inheritedProxyEnvToUnset(env: Record<string, string>): string[] {
+  const proxyBaseUrl = getClaudeApiProxyBaseUrl()
+  if (proxyBaseUrl === null || process.env[ANTHROPIC_BASE_URL_ENV] !== proxyBaseUrl) return []
+  const ownBaseUrl = env[ANTHROPIC_BASE_URL_ENV]
+  return ownBaseUrl !== undefined && ownBaseUrl !== proxyBaseUrl
+    ? [ASSUME_FIRST_PARTY_ENV]
+    : [ANTHROPIC_BASE_URL_ENV, ASSUME_FIRST_PARTY_ENV]
+}
+
 function normalizeClaudeCliEffort(effort: string | null | undefined): string | null {
   if (!effort) return null
   const lower = effort.toLowerCase()
@@ -175,6 +251,10 @@ function normalizeClaudeCliEffort(effort: string | null | undefined): string | n
 export function buildClaudeCliPtySpawn(input: ClaudeCliPtySpawnInput): ClaudeCliPtySpawn {
   const mode = input.session.mode
   const customCommand = input.customProviderCommand?.trim() || null
+  // A custom provider's command decides where the session talks to; the app cannot see what
+  // it sets, and its shell can export the proxy variables again. Those launches stay as they
+  // are.
+  const usage = (customCommand ? null : input.usage) ?? PROXY_USAGE_LAUNCH
   const args =
     mode === 'plan' || mode === 'super-plan'
       ? ['--allow-dangerously-skip-permissions', '--permission-mode', 'plan']
@@ -245,6 +325,12 @@ export function buildClaudeCliPtySpawn(input: ClaudeCliPtySpawnInput): ClaudeCli
     args.push('--settings', settingsArg)
   }
 
+  // Before the prompt, and before the `--` that may precede it: after either, the CLI would no
+  // longer read them as options.
+  if (usage.transport === 'debug-log') {
+    args.push(...claudeCliDebugLogArgs(usage.debugLogFile))
+  }
+
   const prompt = input.pendingPrompt?.trim()
   if (prompt) {
     // A prompt that opens with a dash (a markdown list) would be parsed as an unknown option,
@@ -260,18 +346,30 @@ export function buildClaudeCliPtySpawn(input: ClaudeCliPtySpawnInput): ClaudeCli
   // those are not Anthropic subscription accounts.
   // The renderer variables go after the user's own: a CLAUDE_CODE_NO_FLICKER=0 saved in
   // Settings must not put an app session back in the classic renderer.
-  const env = {
+  const env: Record<string, string> = {
     ...(fullscreen ? claudeCliScrollSpeedDefault() : {}),
     ...getUserEnvironmentVariables(input.db ?? null),
     ...(fullscreen ? CLAUDE_CLI_FULLSCREEN_ENV : {}),
-    ...getClaudeApiProxyEnv()
+    // Only a `proxy` launch is pointed at the proxy. The CLI offers Code Mode only when it
+    // talks to the API directly, so the other transports leave it: its env is not added, and
+    // what the session would inherit of it is listed for removal below.
+    ...(usage.transport === 'proxy' ? getClaudeApiProxyEnv() : {}),
+    // After the user's own variables, so an ANTHROPIC_LOG of theirs cannot lower the level:
+    // below `debug` the SDK logs no response headers, and the log has no usage figures. The
+    // env file takes the variable out again for the shell commands the session runs, where
+    // it would make any script that uses the SDK print its requests.
+    ...(usage.transport === 'debug-log'
+      ? { [ANTHROPIC_LOG_ENV]: ANTHROPIC_LOG_DEBUG, [CLAUDE_ENV_FILE_ENV]: usage.envFile }
+      : {})
   }
+  const unsetEnv = usage.transport === 'proxy' ? [] : inheritedProxyEnvToUnset(env)
 
   if (customCommand) {
     return {
       ...buildCustomProviderShellSpawn(customCommand, args),
       cwd: input.worktreePath,
       env,
+      unsetEnv,
       resumeSessionId
     }
   }
@@ -281,6 +379,7 @@ export function buildClaudeCliPtySpawn(input: ClaudeCliPtySpawnInput): ClaudeCli
     args,
     cwd: input.worktreePath,
     env,
+    unsetEnv,
     resumeSessionId
   }
 }

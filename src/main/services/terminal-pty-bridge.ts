@@ -960,7 +960,13 @@ export async function createClaudeCliTerminal(
     const { port } = await getClaudeHookServer()
     ensureClaudeCliStatusSubscription()
 
-    let spawn: { command: string; args: string[]; cwd: string; env: Record<string, string> }
+    let spawn: {
+      command: string
+      args: string[]
+      cwd: string
+      env: Record<string, string>
+      unsetEnv?: readonly string[]
+    }
     let codexPromptViaPty: string | null = null
     let claudeResumeSessionId: string | null = null
     if (codex) {
@@ -1116,7 +1122,9 @@ export async function createClaudeCliTerminal(
       cwd: spawn.cwd,
       command: spawn.command,
       args: spawn.args,
-      env: spawn.env
+      env: spawn.env,
+      // What a launch off the API proxy must not inherit from the app (claude-cli-spawner.ts).
+      ...(spawn.unsetEnv?.length ? { unsetEnv: spawn.unsetEnv } : {})
     })
     if (alreadyExists && pendingPrompt && wasPromptJustDelivered(sessionId, pendingPrompt)) {
       // The launch path and the mounting session view both carry the same

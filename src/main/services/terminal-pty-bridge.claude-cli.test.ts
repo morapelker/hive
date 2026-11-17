@@ -169,6 +169,13 @@ vi.mock('./claude-cli-subagent-tracker', async (importOriginal) => ({
   clearAllClaudeCliSubagentTracking: mocks.clearAllClaudeCliSubagentTracking
 }))
 
+// The real builder, wrapped so that one test can hand the bridge a launch off the API proxy
+// (nothing asks the builder for one yet).
+vi.mock('./claude-cli-spawner', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./claude-cli-spawner')>()
+  return { ...actual, buildClaudeCliPtySpawn: vi.fn(actual.buildClaudeCliPtySpawn) }
+})
+
 vi.mock('./claude-cli-session-recovery', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./claude-cli-session-recovery')>()),
   noteClaudeCliSessionGoneForRecovery: mocks.noteClaudeCliSessionGoneForRecovery
@@ -189,7 +196,7 @@ import { externalizeGoalHandoffPlan } from './claude-cli-plan-handoff'
 import { CLAUDE_CLI_LAUNCH_TIMEOUT_MS } from './claude-cli-launch-watch'
 import { reassertClaudeCliPromptSubmit } from './claude-cli-pty-prompt'
 import { __resetRuntimeRegistryForTests } from '../effect/_shared/runtime'
-import { CLAUDE_CLI_FULLSCREEN_ENV } from './claude-cli-spawner'
+import { CLAUDE_CLI_FULLSCREEN_ENV, buildClaudeCliPtySpawn } from './claude-cli-spawner'
 
 /**
  * The `--settings` JSON a Claude spawn carries for the hook settings the hook server built: the
@@ -292,6 +299,45 @@ describe('Claude CLI terminal hook status wiring', () => {
       'Implement the plan'
     ])
     expect(mocks.publishClaudeCliStatus).not.toHaveBeenCalled()
+  })
+
+  // Code Mode T15: a launch off the API proxy names the variables the process must not
+  // inherit from the app; `env` alone cannot take them away.
+  describe('variables a launch must not inherit', () => {
+    const lastSpawnOptions = (): Record<string, unknown> => {
+      const [, options] = mocks.ptyService.create.mock.calls.at(-1)! as unknown as [
+        string,
+        Record<string, unknown>
+      ]
+      return options
+    }
+
+    it("hands the builder's removal list to the PTY, next to its environment", async () => {
+      const unsetEnv = ['ANTHROPIC_BASE_URL', '_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL']
+      const builder = vi.mocked(buildClaudeCliPtySpawn)
+      const build = builder.getMockImplementation()!
+      builder.mockImplementationOnce((input) => {
+        const spawn = build(input)
+        return { ...spawn, env: { ...spawn.env, ANTHROPIC_LOG: 'debug' }, unsetEnv }
+      })
+
+      const result = await createClaudeCliTerminal('hive-session-1')
+
+      expect(result.success).toBe(true)
+      expect(lastSpawnOptions().unsetEnv).toEqual(unsetEnv)
+      expect(lastSpawnOptions().env).toMatchObject({ ANTHROPIC_LOG: 'debug' })
+    })
+
+    it('names none for a launch as the bridge asks for it today: it stays on the proxy', async () => {
+      await createClaudeCliTerminal('hive-session-1', { pendingPrompt: 'Implement the plan' })
+
+      // The bridge passes no usage transport, so the builder's default holds.
+      expect(vi.mocked(buildClaudeCliPtySpawn).mock.calls.at(-1)![0]).not.toHaveProperty('usage')
+      expect(lastSpawnOptions()).not.toHaveProperty('unsetEnv')
+      expect((lastSpawnOptions().args as string[]).join(' ')).not.toContain('--debug')
+      expect(lastSpawnOptions().env).not.toHaveProperty('ANTHROPIC_LOG')
+      expect(lastSpawnOptions().env).not.toHaveProperty('CLAUDE_ENV_FILE')
+    })
   })
 
   it('runs the trust pre-flight for the project and its worktree before spawning the PTY', async () => {

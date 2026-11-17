@@ -2,13 +2,23 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Session } from '../../db/types'
 import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
 import {
+  ANTHROPIC_LOG_ENV,
+  CLAUDE_CLI_DEBUG_LOG_FILTER,
   CLAUDE_CLI_DEFAULT_SCROLL_SPEED,
   CLAUDE_CLI_FULLSCREEN_ENV,
+  CLAUDE_ENV_FILE_ENV,
   buildClaudeCliPtySpawn,
   buildCustomProviderShellSpawn,
   isUltracodeEffort,
-  normalizeClaudeCliModel
+  normalizeClaudeCliModel,
+  type ClaudeCliPtySpawnInput,
+  type ClaudeCliUsageLaunch
 } from '../claude-cli-spawner'
+import {
+  ANTHROPIC_BASE_URL_ENV,
+  ASSUME_FIRST_PARTY_ENV,
+  setClaudeApiProxyBaseUrl
+} from '../claude-api-proxy/claude-api-proxy-env'
 
 /** The `--settings` JSON of a spawn that carries no hook settings: the fullscreen block alone. */
 const FULLSCREEN_SETTINGS = JSON.stringify({ env: CLAUDE_CLI_FULLSCREEN_ENV })
@@ -801,6 +811,398 @@ describe('buildClaudeCliPtySpawn', () => {
 
         expect(spawn.env.CLAUDE_CODE_SCROLL_SPEED).toBe('1')
       })
+    })
+  })
+})
+
+// Code Mode T15: the launch depends on where the session's live usage comes from
+// (claude-usage-transport.ts). The CLI offers Code Mode only off the app's API proxy.
+describe('buildClaudeCliPtySpawn usage transport', () => {
+  const PROXY_URL = 'http://127.0.0.1:42411'
+  const DEBUG_LOG_FILE = '/data/claude-cli-debug/hive-session-1-a1b2/usage.log'
+  const ENV_FILE = '/data/claude-cli-debug/hive-session-1-a1b2/env.sh'
+  const DEBUG_LOG: ClaudeCliUsageLaunch = {
+    transport: 'debug-log',
+    debugLogFile: DEBUG_LOG_FILE,
+    envFile: ENV_FILE
+  }
+  const NONE: ClaudeCliUsageLaunch = { transport: 'none' }
+  const DEBUG_ARGS = ['--debug-file', DEBUG_LOG_FILE, '--debug=console.log']
+  const PROXY_VARIABLES = [ANTHROPIC_BASE_URL_ENV, ASSUME_FIRST_PARTY_ENV]
+
+  const touchedKeys = [
+    ANTHROPIC_BASE_URL_ENV,
+    ASSUME_FIRST_PARTY_ENV,
+    ANTHROPIC_LOG_ENV,
+    CLAUDE_ENV_FILE_ENV,
+    'CLAUDE_CODE_SCROLL_SPEED',
+    'SHELL'
+  ]
+  const savedEnv: Record<string, string | undefined> = {}
+
+  /** The running proxy: its address is known and exported on the app's own environment. */
+  function startProxy(): void {
+    setClaudeApiProxyBaseUrl(PROXY_URL)
+    process.env[ANTHROPIC_BASE_URL_ENV] = PROXY_URL
+    process.env[ASSUME_FIRST_PARTY_ENV] = '1'
+  }
+
+  beforeEach(() => {
+    for (const key of touchedKeys) {
+      savedEnv[key] = process.env[key]
+      delete process.env[key]
+    }
+    startProxy()
+  })
+
+  afterEach(() => {
+    setClaudeApiProxyBaseUrl(null)
+    for (const key of touchedKeys) {
+      if (savedEnv[key] === undefined) delete process.env[key]
+      else process.env[key] = savedEnv[key]
+    }
+  })
+
+  /** A database whose Settings hold these environment variables. */
+  function dbWithEnvVars(vars: Record<string, string>): ClaudeCliPtySpawnInput['db'] {
+    const environmentVariables = Object.entries(vars).map(([key, value]) => ({ key, value }))
+    return {
+      getSetting: (key: string) =>
+        key === APP_SETTINGS_DB_KEY ? JSON.stringify({ environmentVariables }) : null
+    } as never
+  }
+
+  function launch(overrides: Partial<ClaudeCliPtySpawnInput> = {}): ClaudeCliPtySpawnInput {
+    return {
+      session: makeSession(),
+      worktreePath: '/repo/worktree',
+      pendingPrompt: 'Implement this plan',
+      claudeBinary: '/usr/local/bin/claude',
+      ...overrides
+    }
+  }
+
+  /** Every option the builder puts on argv, each in a launch of its own. */
+  const LAUNCHES: Array<[string, Partial<ClaudeCliPtySpawnInput>]> = [
+    ['a new session with a model and an effort', {}],
+    ['a session without a prompt', { pendingPrompt: null }],
+    ['a prompt that opens with a dash', { pendingPrompt: '- Set STRIPE_KEY\n- Rotate the webhook' }],
+    ['a resumed session', { session: makeSession({ claude_session_id: 'claude-uuid-1' }) }],
+    ['a plan session', { session: makeSession({ mode: 'plan', model_id: 'claude-opus-4-5' }) }],
+    ['a super-plan session', { session: makeSession({ mode: 'super-plan' }) }],
+    ['an ultracode session', { session: makeSession({ model_variant: 'ultracode' }) }],
+    [
+      'a session with neither a valid model nor a valid effort',
+      { session: makeSession({ model_id: 'gpt-5', model_variant: 'turbo' }) }
+    ],
+    ['a session with hook settings', { hookSettingsJson: '{"hooks":{"Stop":[]}}' }],
+    ['a launch that inherits the renderer', { renderer: 'inherit', pendingPrompt: null }]
+  ]
+
+  /** `args` with the debug options where a `debug-log` launch puts them: before the prompt. */
+  function withDebugArgs(args: string[], input: ClaudeCliPtySpawnInput): string[] {
+    const prompt = input.pendingPrompt?.trim()
+    const promptArgs = prompt ? (prompt.startsWith('-') ? 2 : 1) : 0
+    const options = args.slice(0, args.length - promptArgs)
+    return [...options, ...DEBUG_ARGS, ...args.slice(options.length)]
+  }
+
+  describe('proxy', () => {
+    it('points the session at the proxy, over an address of the user in Settings', () => {
+      const spawn = buildClaudeCliPtySpawn(
+        launch({ db: dbWithEnvVars({ [ANTHROPIC_BASE_URL_ENV]: 'https://gateway.example' }) })
+      )
+
+      expect(spawn.env[ANTHROPIC_BASE_URL_ENV]).toBe(PROXY_URL)
+      expect(spawn.env[ASSUME_FIRST_PARTY_ENV]).toBe('1')
+      expect(spawn.unsetEnv).toEqual([])
+    })
+
+    it('is the default: a launch that names no transport, or null, is a proxy launch', () => {
+      const expected = {
+        command: '/usr/local/bin/claude',
+        args: [
+          '--dangerously-skip-permissions',
+          '--model',
+          'sonnet',
+          '--effort',
+          'high',
+          '--settings',
+          FULLSCREEN_SETTINGS,
+          'Implement this plan'
+        ],
+        cwd: '/repo/worktree',
+        env: {
+          CLAUDE_CODE_SCROLL_SPEED: '3',
+          ...CLAUDE_CLI_FULLSCREEN_ENV,
+          [ANTHROPIC_BASE_URL_ENV]: PROXY_URL,
+          [ASSUME_FIRST_PARTY_ENV]: '1'
+        },
+        unsetEnv: [],
+        resumeSessionId: null
+      }
+
+      expect(buildClaudeCliPtySpawn(launch())).toStrictEqual(expected)
+      expect(buildClaudeCliPtySpawn(launch({ usage: null }))).toStrictEqual(expected)
+      expect(buildClaudeCliPtySpawn(launch({ usage: { transport: 'proxy' } }))).toStrictEqual(
+        expected
+      )
+    })
+
+    it.each(LAUNCHES)('asked for by name, leaves %s exactly as it was', (_name, overrides) => {
+      const before = buildClaudeCliPtySpawn(launch(overrides))
+      const proxy = buildClaudeCliPtySpawn(launch({ ...overrides, usage: { transport: 'proxy' } }))
+
+      expect(proxy).toStrictEqual(before)
+      expect(Object.keys(proxy.env)).toEqual(Object.keys(before.env))
+      expect(proxy.args.join(' ')).not.toContain('--debug')
+      expect(proxy.env).not.toHaveProperty(ANTHROPIC_LOG_ENV)
+      expect(proxy.env).not.toHaveProperty(CLAUDE_ENV_FILE_ENV)
+    })
+
+    it('adds nothing while the proxy is not running, as before', () => {
+      setClaudeApiProxyBaseUrl(null)
+      delete process.env[ANTHROPIC_BASE_URL_ENV]
+      delete process.env[ASSUME_FIRST_PARTY_ENV]
+
+      const spawn = buildClaudeCliPtySpawn(launch())
+      expect(spawn.env).toStrictEqual({ CLAUDE_CODE_SCROLL_SPEED: '3', ...CLAUDE_CLI_FULLSCREEN_ENV })
+      expect(spawn.unsetEnv).toEqual([])
+    })
+  })
+
+  describe('debug-log', () => {
+    it('writes the filtered debug log to the given file, ahead of the prompt', () => {
+      const spawn = buildClaudeCliPtySpawn(launch({ usage: DEBUG_LOG }))
+
+      expect(CLAUDE_CLI_DEBUG_LOG_FILTER).toBe('console.log')
+      expect(spawn.command).toBe('/usr/local/bin/claude')
+      expect(spawn.args).toEqual([
+        '--dangerously-skip-permissions',
+        '--model',
+        'sonnet',
+        '--effort',
+        'high',
+        '--settings',
+        FULLSCREEN_SETTINGS,
+        '--debug-file',
+        DEBUG_LOG_FILE,
+        '--debug=console.log',
+        'Implement this plan'
+      ])
+    })
+
+    it('binds the filter with `=`: a separate value would be read as the prompt', () => {
+      const { args } = buildClaudeCliPtySpawn(launch({ usage: DEBUG_LOG }))
+
+      expect(args).not.toContain('--debug')
+      expect(args).not.toContain('console.log')
+      expect(args.filter((arg) => arg.startsWith('--debug='))).toEqual(['--debug=console.log'])
+      // Include terms only: mixed with an exclusion the CLI ignores the whole filter.
+      expect(CLAUDE_CLI_DEBUG_LOG_FILTER).not.toContain('!')
+    })
+
+    it('still passes a prompt that opens with a dash, after the end of the options', () => {
+      const prompt = '- Set STRIPE_KEY\n- Rotate the webhook'
+      const { args } = buildClaudeCliPtySpawn(launch({ usage: DEBUG_LOG, pendingPrompt: prompt }))
+
+      expect(args.slice(-5)).toEqual([...DEBUG_ARGS, '--', prompt])
+      // One terminator only, and nothing of the debug options behind it.
+      expect(args.filter((arg) => arg === '--')).toHaveLength(1)
+      expect(args.indexOf('--debug-file')).toBeLessThan(args.indexOf('--'))
+      expect(args.indexOf('--debug=console.log')).toBeLessThan(args.indexOf('--'))
+    })
+
+    it('ends the argv with the debug options when there is no prompt', () => {
+      const { args } = buildClaudeCliPtySpawn(launch({ usage: DEBUG_LOG, pendingPrompt: null }))
+
+      expect(args.slice(-3)).toEqual(DEBUG_ARGS)
+    })
+
+    it('is not pointed at the proxy: its variables are not set and are listed for removal', () => {
+      const spawn = buildClaudeCliPtySpawn(launch({ usage: DEBUG_LOG }))
+
+      expect(spawn.env).not.toHaveProperty(ANTHROPIC_BASE_URL_ENV)
+      expect(spawn.env).not.toHaveProperty(ASSUME_FIRST_PARTY_ENV)
+      expect(spawn.unsetEnv).toEqual(PROXY_VARIABLES)
+    })
+
+    it('turns the SDK debug log on and puts the shell environment file in effect', () => {
+      const spawn = buildClaudeCliPtySpawn(launch({ usage: DEBUG_LOG }))
+
+      expect(spawn.env).toStrictEqual({
+        CLAUDE_CODE_SCROLL_SPEED: '3',
+        ...CLAUDE_CLI_FULLSCREEN_ENV,
+        ANTHROPIC_LOG: 'debug',
+        CLAUDE_ENV_FILE: ENV_FILE
+      })
+    })
+
+    it("overrides a log level the user set, in Settings or in the app's environment", () => {
+      process.env[ANTHROPIC_LOG_ENV] = 'info'
+      const spawn = buildClaudeCliPtySpawn(
+        launch({ usage: DEBUG_LOG, db: dbWithEnvVars({ ANTHROPIC_LOG: 'off', MY_TOKEN: 'abc' }) })
+      )
+
+      // The PTY merges these over the app's environment, so this is the value that holds.
+      expect(spawn.env.ANTHROPIC_LOG).toBe('debug')
+      // The rest of the user's variables are passed as before.
+      expect(spawn.env.MY_TOKEN).toBe('abc')
+    })
+
+    it("points the environment file variable at the app's file, over the user's own", () => {
+      process.env[CLAUDE_ENV_FILE_ENV] = '/Users/someone/.shell-env.sh'
+      const spawn = buildClaudeCliPtySpawn(
+        launch({
+          usage: DEBUG_LOG,
+          db: dbWithEnvVars({ CLAUDE_ENV_FILE: '/Users/someone/.claude-env.sh' })
+        })
+      )
+
+      expect(spawn.env.CLAUDE_ENV_FILE).toBe(ENV_FILE)
+    })
+
+    it('keeps the fullscreen renderer of the launch', () => {
+      const spawn = buildClaudeCliPtySpawn(
+        launch({
+          usage: DEBUG_LOG,
+          db: dbWithEnvVars({ PATH: '/opt/tools/bin:/usr/bin', CLAUDE_CODE_NO_FLICKER: '0' })
+        })
+      )
+
+      expect(spawn.env).toMatchObject({
+        ...CLAUDE_CLI_FULLSCREEN_ENV,
+        PATH: '/opt/tools/bin:/usr/bin'
+      })
+      expect(settingsOf(spawn.args)).toEqual({ env: CLAUDE_CLI_FULLSCREEN_ENV })
+    })
+
+    it.each(LAUNCHES)('changes nothing else about %s', (_name, overrides) => {
+      const input = launch(overrides)
+      const before = buildClaudeCliPtySpawn(input)
+      const spawn = buildClaudeCliPtySpawn({ ...input, usage: DEBUG_LOG })
+
+      expect(spawn.args).toEqual(withDebugArgs(before.args, input))
+      expect(spawn.command).toBe(before.command)
+      expect(spawn.cwd).toBe(before.cwd)
+      expect(spawn.resumeSessionId).toBe(before.resumeSessionId)
+      // The environment differs by the transport's own variables and by nothing else.
+      const { ANTHROPIC_LOG, CLAUDE_ENV_FILE, ...rest } = spawn.env
+      const { ANTHROPIC_BASE_URL, _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL, ...restBefore } =
+        before.env
+      expect(rest).toStrictEqual(restBefore)
+      expect([ANTHROPIC_LOG, CLAUDE_ENV_FILE]).toEqual(['debug', ENV_FILE])
+      expect([ANTHROPIC_BASE_URL, _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL]).toEqual([
+        PROXY_URL,
+        '1'
+      ])
+    })
+  })
+
+  describe('none', () => {
+    it('is not pointed at the proxy and has no debug logging of any kind', () => {
+      const spawn = buildClaudeCliPtySpawn(launch({ usage: NONE }))
+
+      expect(spawn.unsetEnv).toEqual(PROXY_VARIABLES)
+      expect(spawn.env).toStrictEqual({ CLAUDE_CODE_SCROLL_SPEED: '3', ...CLAUDE_CLI_FULLSCREEN_ENV })
+      expect(spawn.args.some((arg) => arg.startsWith('--debug'))).toBe(false)
+    })
+
+    it("sets no log level and no environment file of its own; the user's stay theirs", () => {
+      const spawn = buildClaudeCliPtySpawn(
+        launch({
+          usage: NONE,
+          db: dbWithEnvVars({ ANTHROPIC_LOG: 'warn', CLAUDE_ENV_FILE: '/Users/someone/env.sh' })
+        })
+      )
+
+      expect(spawn.env.ANTHROPIC_LOG).toBe('warn')
+      expect(spawn.env.CLAUDE_ENV_FILE).toBe('/Users/someone/env.sh')
+    })
+
+    it.each(LAUNCHES)('changes nothing else about %s', (_name, overrides) => {
+      const before = buildClaudeCliPtySpawn(launch(overrides))
+      const spawn = buildClaudeCliPtySpawn(launch({ ...overrides, usage: NONE }))
+
+      const { ANTHROPIC_BASE_URL, _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL, ...restBefore } =
+        before.env
+      expect(spawn).toStrictEqual({ ...before, env: restBefore, unsetEnv: PROXY_VARIABLES })
+      expect([ANTHROPIC_BASE_URL, _CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL]).toEqual([
+        PROXY_URL,
+        '1'
+      ])
+    })
+  })
+
+  describe.each([
+    ['debug-log', DEBUG_LOG],
+    ['none', NONE]
+  ])('what a %s launch removes from the inherited environment', (_transport, usage) => {
+    it("leaves the user's own API address alone when that is what the app's environment holds", () => {
+      // The proxy runs but did not take over the app's environment.
+      process.env[ANTHROPIC_BASE_URL_ENV] = 'https://api.anthropic.com'
+      delete process.env[ASSUME_FIRST_PARTY_ENV]
+
+      const spawn = buildClaudeCliPtySpawn(launch({ usage }))
+      expect(spawn.unsetEnv).toEqual([])
+      expect(spawn.env).not.toHaveProperty(ANTHROPIC_BASE_URL_ENV)
+    })
+
+    it('removes nothing while the proxy is not running', () => {
+      setClaudeApiProxyBaseUrl(null)
+      // What is left is the user's, even at the address the proxy would use.
+      process.env[ANTHROPIC_BASE_URL_ENV] = PROXY_URL
+
+      expect(buildClaudeCliPtySpawn(launch({ usage })).unsetEnv).toEqual([])
+    })
+
+    it('compares addresses exactly: one that merely resembles the proxy is not removed', () => {
+      process.env[ANTHROPIC_BASE_URL_ENV] = `${PROXY_URL}/`
+
+      expect(buildClaudeCliPtySpawn(launch({ usage })).unsetEnv).toEqual([])
+    })
+
+    it("keeps the user's own address from Settings and removes only the app's marker", () => {
+      const spawn = buildClaudeCliPtySpawn(
+        launch({
+          usage,
+          db: dbWithEnvVars({ [ANTHROPIC_BASE_URL_ENV]: 'https://api.anthropic.com' })
+        })
+      )
+
+      // Removal in the PTY wins over the launch's own variables: listing the address would
+      // take the user's away.
+      expect(spawn.env[ANTHROPIC_BASE_URL_ENV]).toBe('https://api.anthropic.com')
+      expect(spawn.unsetEnv).toEqual([ASSUME_FIRST_PARTY_ENV])
+    })
+
+    it("leaves the app's own environment as it was, for every launch that is not this one", () => {
+      const before = { ...process.env }
+      buildClaudeCliPtySpawn(launch({ usage }))
+
+      // Agent SDK, headless, title and data-assistant runs start from this environment: they
+      // stay on the proxy and never see the log level or the environment file.
+      expect({ ...process.env }).toStrictEqual(before)
+      expect(process.env[ANTHROPIC_BASE_URL_ENV]).toBe(PROXY_URL)
+      expect(process.env[ASSUME_FIRST_PARTY_ENV]).toBe('1')
+      expect(process.env).not.toHaveProperty(ANTHROPIC_LOG_ENV)
+      expect(process.env).not.toHaveProperty(CLAUDE_ENV_FILE_ENV)
+    })
+
+    it('leaves a custom provider launch on the proxy, exactly as it was', () => {
+      process.env.SHELL = '/bin/zsh'
+      const custom = launch({
+        customProviderCommand: 'ANTHROPIC_BASE_URL=https://gateway.example claudex'
+      })
+
+      expect(buildClaudeCliPtySpawn({ ...custom, usage })).toStrictEqual(
+        buildClaudeCliPtySpawn(custom)
+      )
+      const spawn = buildClaudeCliPtySpawn({ ...custom, usage })
+      expect(spawn.env[ANTHROPIC_BASE_URL_ENV]).toBe(PROXY_URL)
+      expect(spawn.unsetEnv).toEqual([])
+      expect(spawn.args.join(' ')).not.toContain('--debug')
+      expect(spawn.env).not.toHaveProperty(ANTHROPIC_LOG_ENV)
     })
   })
 })
