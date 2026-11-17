@@ -13,6 +13,7 @@ import { makeEventBus } from '../events/event-bus'
 import type { DbRpcService } from '../rpc/domains/db'
 import type { GitOpsRpcService } from '../rpc/domains/git-ops'
 import { parseKanbanBoardImportFile } from '../rpc/domains/kanban'
+import type { SettingsOpsRpcService } from '../rpc/domains/settings-ops'
 import { makeRpcRouter } from '../rpc/router'
 
 describe('rpc router', () => {
@@ -10378,7 +10379,7 @@ describe('rpc router', () => {
         getAll: () => Effect.succeed({}),
         openWithEditor: () => Effect.succeed({ success: true }),
         openWithTerminal: () => Effect.succeed({ success: true })
-      }
+      } as unknown as SettingsOpsRpcService
     })
 
     const response = await Effect.runPromise(
@@ -10406,7 +10407,7 @@ describe('rpc router', () => {
         getAll: () => Effect.succeed({}),
         openWithEditor: () => Effect.succeed({ success: true }),
         openWithTerminal: () => Effect.succeed({ success: true })
-      }
+      } as unknown as SettingsOpsRpcService
     })
 
     const response = await Effect.runPromise(
@@ -10446,7 +10447,7 @@ describe('rpc router', () => {
         getAll: () => Effect.succeed({}),
         openWithEditor: () => Effect.succeed({ success: true }),
         openWithTerminal: () => Effect.succeed({ success: true })
-      }
+      } as unknown as SettingsOpsRpcService
     })
 
     const response = await Effect.runPromise(
@@ -10474,7 +10475,7 @@ describe('rpc router', () => {
         getAll: () => Effect.succeed({}),
         openWithEditor: () => Effect.succeed({ success: true }),
         openWithTerminal: () => Effect.succeed({ success: true })
-      }
+      } as unknown as SettingsOpsRpcService
     })
 
     const response = await Effect.runPromise(
@@ -10506,7 +10507,7 @@ describe('rpc router', () => {
             return { success: true }
           }),
         openWithTerminal: () => Effect.succeed({ success: true })
-      }
+      } as unknown as SettingsOpsRpcService
     })
 
     const response = await Effect.runPromise(
@@ -10540,7 +10541,7 @@ describe('rpc router', () => {
         getAll: () => Effect.succeed({}),
         openWithEditor: () => Effect.succeed({ success: false, error: 'should not run' }),
         openWithTerminal: () => Effect.succeed({ success: true })
-      }
+      } as unknown as SettingsOpsRpcService
     })
 
     const response = await Effect.runPromise(
@@ -10572,7 +10573,7 @@ describe('rpc router', () => {
             calls.push({ worktreePath, terminalId, customCommand })
             return { success: true }
           })
-      }
+      } as unknown as SettingsOpsRpcService
     })
 
     const response = await Effect.runPromise(
@@ -10606,7 +10607,7 @@ describe('rpc router', () => {
         getAll: () => Effect.succeed({}),
         openWithEditor: () => Effect.succeed({ success: true }),
         openWithTerminal: () => Effect.succeed({ success: false, error: 'should not run' })
-      }
+      } as unknown as SettingsOpsRpcService
     })
 
     const response = await Effect.runPromise(
@@ -10642,7 +10643,7 @@ describe('rpc router', () => {
           }),
         openWithEditor: () => Effect.succeed({ success: true }),
         openWithTerminal: () => Effect.succeed({ success: true })
-      }
+      } as unknown as SettingsOpsRpcService
     })
 
     const response = await Effect.runPromise(
@@ -10670,7 +10671,7 @@ describe('rpc router', () => {
         getAll: () => Effect.succeed({}),
         openWithEditor: () => Effect.succeed({ success: true }),
         openWithTerminal: () => Effect.succeed({ success: true })
-      }
+      } as unknown as SettingsOpsRpcService
     })
 
     const response = await Effect.runPromise(

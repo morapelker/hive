@@ -1,7 +1,6 @@
 import { randomUUID } from 'crypto'
 import { existsSync, mkdirSync, rmSync } from 'fs'
-import { homedir } from 'os'
-import { dirname, join } from 'path'
+import { join } from 'path'
 import {
   ChannelType,
   Client,
@@ -31,19 +30,29 @@ import { canonicalizeTicketTitle } from '@shared/types/branch-utils'
 import type { DatabaseService } from '../db/database'
 import { getDatabase } from '../db'
 import type { DiscordResource, Project, SessionMode, Worktree } from '../db/types'
+import { gitService } from '../effect/git/facade'
+import {
+  describeDevFolder,
+  findProjectByOrigin,
+  isRegisteredProjectFolder,
+  safeCloneDirName,
+  uniquePath
+} from './clone-destination'
+import { resolveDevFolder } from './dev-folder/dev-folder-settings'
 import { createGitService } from './git-service'
 import { createLogger } from './logger'
-import {
-  createWorktreeFromBranchOp,
-  deleteWorktreeOp,
-  syncWorktreesOp
-} from './worktree-ops'
+import { createWorktreeFromBranchOp, deleteWorktreeOp, syncWorktreesOp } from './worktree-ops'
 import {
   createProjectWithDefaultWorktree,
   detectProjectFavicon,
   detectProjectLanguage
 } from './project-ops'
-import { cloneRepository, deriveProjectNameFromGitUrl, isSafeGitRemoteUrl } from './git-repository'
+import {
+  cloneRepository,
+  deriveProjectNameFromGitUrl,
+  isSafeGitRemoteUrl,
+  normalizeGitRemoteUrl
+} from './git-repository'
 import { discordSessionBridge, type DiscordSessionBridge } from './discord-session-bridge'
 import {
   DISCORD_CONFIG_KEY,
@@ -751,15 +760,31 @@ export class DiscordService {
         return
       }
 
-      const name = deriveProjectNameFromGitUrl(url)
+      // The name becomes a folder in the dev folder and comes from a Discord member, so `..`,
+      // `.git` and anything else that may not be the folder of a clone is refused, never
+      // resolved.
+      const name = safeCloneDirName(deriveProjectNameFromGitUrl(url))
       if (!name) {
-        await interaction.editReply('Could not derive a project name from that git URL.')
+        await interaction.editReply(
+          'Could not take a project name from that git URL. It has to end in the repository ' +
+            'name, as in owner/repo.git.'
+        )
         return
       }
 
-      const destDir = join(homedir(), 'hive-projects', name)
       const db = this.getDb()
-      const existingProject = db.getProjectByPath(destDir)
+      const devFolder = resolveDevFolder(db)
+      const preferredDir = join(devFolder, name)
+      const origin = normalizeGitRemoteUrl(url)
+      const getRemoteUrl = async (path: string): Promise<string | null> => {
+        const remote = await gitService.getRemoteUrl(path, 'origin')
+        return remote.success && remote.url ? remote.url : null
+      }
+      // Looked up by origin too: a project still in a folder that was the dev folder before
+      // is this repository already and must not be cloned a second time.
+      const existingProject =
+        db.getProjectByPath(preferredDir) ??
+        (origin ? await findProjectByOrigin(origin, { db, git: { getRemoteUrl } }) : null)
       if (existingProject) {
         if (this.isProjectManagedInDiscord(db, config.guildId, existingProject.id, config)) {
           await interaction.editReply(
@@ -775,13 +800,35 @@ export class DiscordService {
         return
       }
 
-      const pathExists = existsSync(destDir)
+      // A folder already at that place is attached only when it is itself a clone of this
+      // repository. Any member of the guild can name a URL that ends in the name of a folder
+      // in the dev folder, so anything else is left alone and the clone gets a free name
+      // beside it: one that is neither on disk nor the path of a project whose folder is gone.
+      const attachExisting =
+        origin !== null &&
+        existsSync(join(preferredDir, '.git')) &&
+        normalizeGitRemoteUrl(await getRemoteUrl(preferredDir).catch(() => null)) === origin
+      const destDir = attachExisting
+        ? preferredDir
+        : uniquePath(preferredDir, (path) => existsSync(path) || db.getProjectByPath(path) !== null)
 
-      if (!pathExists) {
-        mkdirSync(dirname(destDir), { recursive: true })
+      if (!attachExisting) {
+        try {
+          mkdirSync(devFolder, { recursive: true })
+        } catch (error) {
+          throw new Error(
+            `Could not create ${describeDevFolder(devFolder)}: ` +
+              (error instanceof Error ? error.message : String(error))
+          )
+        }
         const cloneResult = await cloneRepository(url, destDir)
         if (!cloneResult.success) {
-          rmSync(destDir, { recursive: true, force: true })
+          // What the failed clone left behind is removed so that a retry is not blocked. The
+          // folder was free when the clone started: a project registered there now was moved
+          // into the dev folder meanwhile and is not the clone's to delete.
+          if (!isRegisteredProjectFolder(db, destDir)) {
+            rmSync(destDir, { recursive: true, force: true })
+          }
           await interaction.editReply(
             `Could not clone repository: ${cloneResult.error ?? 'unknown error'}`
           )
@@ -790,12 +837,20 @@ export class DiscordService {
       }
 
       const project = createProjectWithDefaultWorktree(db, { name, path: destDir })
-      const syncResult = await syncWorktreesOp({
-        projectId: project.id,
-        projectPath: destDir
-      })
-      if (!syncResult.success) {
-        throw new Error(syncResult.error || 'Failed to sync worktrees')
+      try {
+        const syncResult = await syncWorktreesOp({
+          projectId: project.id,
+          projectPath: destDir
+        })
+        if (!syncResult.success) {
+          throw new Error(syncResult.error || 'Failed to sync worktrees')
+        }
+      } catch (error) {
+        // A project whose worktrees could not be read is half added, so its row goes again.
+        // The folder stays. Where it has the repository's own name, the next /add-project
+        // attaches it instead of cloning again.
+        db.deleteProject(project.id)
+        throw error
       }
 
       void detectProjectLanguage(destDir)
@@ -813,7 +868,7 @@ export class DiscordService {
 
       await this.provision([...config.selectedProjectIds, project.id])
       await interaction.editReply(
-        pathExists
+        attachExisting
           ? `Added existing path **${name}** to Hive and provisioned its Discord channel.`
           : `Added **${name}** and provisioned its Discord channel.`
       )

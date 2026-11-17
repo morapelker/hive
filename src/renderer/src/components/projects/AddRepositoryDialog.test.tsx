@@ -1,9 +1,11 @@
 import '@testing-library/jest-dom/vitest'
 import { render, screen, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { getRendererRpcClient, setRendererRpcClient } from '@/api/rpc-client'
 import type { GithubCloneProgressEvent } from '@shared/github-events'
+import { DEV_FOLDER_RPC, type DevFolderState } from '@shared/types/dev-folder'
 import { AddRepositoryDialog } from './AddRepositoryDialog'
 
 const mocks = vi.hoisted(() => ({
@@ -174,5 +176,151 @@ describe('AddRepositoryDialog', () => {
 
     expect(githubApiMocks.cancelClone).toHaveBeenCalledWith(operationId)
     expect(screen.getByTestId('clone-repository')).toBeInTheDocument()
+  })
+})
+
+// The dialog asks the server for the dev folder when it opens. The cases above run under the
+// client test/setup.ts installs, which answers undefined: no dev folder, nothing prefilled.
+describe('AddRepositoryDialog destination', () => {
+  const defaultClient = getRendererRpcClient()
+
+  const devFolderState = (overrides: Partial<DevFolderState> = {}): DevFolderState => ({
+    path: '/Users/me/code',
+    isDefault: false,
+    defaultPath: '/Users/me/hive-projects',
+    exists: true,
+    previousPaths: [],
+    leftBehind: { count: 0, folders: [] },
+    ...overrides
+  })
+
+  /** `answer` is what `settingsOps.getDevFolder` answers: a value, or a promise still pending. */
+  const answerDevFolder = (answer: unknown): ReturnType<typeof vi.fn> => {
+    const request: ReturnType<typeof vi.fn> = vi.fn(async (method: string, params?: unknown) =>
+      method === DEV_FOLDER_RPC.get ? answer : defaultClient.request(method, params)
+    )
+    setRendererRpcClient({ request, subscribe: vi.fn(() => () => {}) })
+    return request
+  }
+
+  const devFolderCalls = (request: ReturnType<typeof vi.fn>): number =>
+    request.mock.calls.filter(([method]) => method === DEV_FOLDER_RPC.get).length
+
+  afterEach(() => {
+    setRendererRpcClient(defaultClient)
+  })
+
+  it('starts from the dev folder, and clones into it without a folder being picked', async () => {
+    answerDevFolder(devFolderState())
+    render(<AddRepositoryDialog open onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('repository-destination')).toHaveValue('/Users/me/code')
+    })
+
+    await userEvent.click(await screen.findByTestId('repository-item-me/alpha'))
+    expect(screen.getByText('/Users/me/code/alpha')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('clone-repository'))
+
+    await waitFor(() => {
+      expect(githubApiMocks.cloneRepository).toHaveBeenCalledWith({
+        nameWithOwner: 'me/alpha',
+        parentPath: '/Users/me/code',
+        operationId: expect.any(String)
+      })
+    })
+    expect(projectApiMocks.openDirectoryDialog).not.toHaveBeenCalled()
+  })
+
+  it('stays empty when the dev folder is not on disk', async () => {
+    const request = answerDevFolder(devFolderState({ exists: false }))
+    render(<AddRepositoryDialog open onOpenChange={vi.fn()} />)
+
+    await userEvent.click(await screen.findByTestId('repository-item-me/alpha'))
+    await waitFor(() => expect(devFolderCalls(request)).toBe(1))
+
+    expect(screen.getByTestId('repository-destination')).toHaveValue('')
+    expect(screen.getByTestId('clone-repository')).toBeDisabled()
+  })
+
+  it('stays empty when the answer is not a dev folder', async () => {
+    const request = answerDevFolder({ ok: true })
+    render(<AddRepositoryDialog open onOpenChange={vi.fn()} />)
+
+    await userEvent.click(await screen.findByTestId('repository-item-me/alpha'))
+    await waitFor(() => expect(devFolderCalls(request)).toBe(1))
+
+    expect(screen.getByTestId('repository-destination')).toHaveValue('')
+    expect(screen.getByTestId('clone-repository')).toBeDisabled()
+  })
+
+  it('keeps the folder the person picked when the dev folder answers late', async () => {
+    let answer: (state: DevFolderState) => void = () => {}
+    answerDevFolder(
+      new Promise<DevFolderState>((resolve) => {
+        answer = resolve
+      })
+    )
+    render(<AddRepositoryDialog open onOpenChange={vi.fn()} />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Browse…' }))
+    await waitFor(() => {
+      expect(screen.getByTestId('repository-destination')).toHaveValue('/tmp/dest')
+    })
+
+    await act(async () => {
+      answer(devFolderState())
+    })
+
+    expect(screen.getByTestId('repository-destination')).toHaveValue('/tmp/dest')
+  })
+
+  it('keeps a folder picked earlier when it is opened again', async () => {
+    const request = answerDevFolder(devFolderState({ exists: false }))
+    const { rerender } = render(<AddRepositoryDialog open onOpenChange={vi.fn()} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Browse…' }))
+    await waitFor(() => {
+      expect(screen.getByTestId('repository-destination')).toHaveValue('/tmp/dest')
+    })
+
+    rerender(<AddRepositoryDialog open={false} onOpenChange={vi.fn()} />)
+    request.mockImplementation(async () => devFolderState())
+    rerender(<AddRepositoryDialog open onOpenChange={vi.fn()} />)
+    await waitFor(() => expect(devFolderCalls(request)).toBe(2))
+    await act(async () => {})
+
+    expect(screen.getByTestId('repository-destination')).toHaveValue('/tmp/dest')
+  })
+
+  it('ignores an answer that arrives after it was closed', async () => {
+    let answer: (state: DevFolderState) => void = () => {}
+    const request = answerDevFolder(
+      new Promise<DevFolderState>((resolve) => {
+        answer = resolve
+      })
+    )
+    const { rerender } = render(<AddRepositoryDialog open onOpenChange={vi.fn()} />)
+    await waitFor(() => expect(devFolderCalls(request)).toBe(1))
+
+    rerender(<AddRepositoryDialog open={false} onOpenChange={vi.fn()} />)
+    await act(async () => {
+      answer(devFolderState())
+    })
+
+    // Opened again while the folder is gone: the answer from before must not show up.
+    request.mockImplementation(async () => devFolderState({ exists: false }))
+    rerender(<AddRepositoryDialog open onOpenChange={vi.fn()} />)
+    await waitFor(() => expect(devFolderCalls(request)).toBe(2))
+    await act(async () => {})
+
+    expect(screen.getByTestId('repository-destination')).toHaveValue('')
+  })
+
+  it('does not ask while it is closed', async () => {
+    const request = answerDevFolder(devFolderState())
+    render(<AddRepositoryDialog open={false} onOpenChange={vi.fn()} />)
+    await act(async () => {})
+
+    expect(devFolderCalls(request)).toBe(0)
   })
 })

@@ -62,6 +62,8 @@ import type { AttachmentInput } from '@/components/sessions/AttachmentPreview'
 import { QuitConfirmationOverlay } from './QuitConfirmationOverlay'
 import { DataProjectDialogs } from '@/components/data-projects/wizard/DataProjectDialogs'
 import { PrdFlowDialog } from '@/components/prd-flow/PrdFlowDialog'
+import { DevFolderMoveHost } from '@/components/settings/dev-folder/DevFolderMoveHost'
+import { startRunningSessionsReport } from '@/lib/running-sessions-report'
 
 function GlobalProjectSettings(): React.JSX.Element | null {
   const settingsProjectId = useProjectStore((s) => s.settingsProjectId)
@@ -275,6 +277,10 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
     }
   }, [selectedWorktreeId, selectedWorktreePath])
 
+  // The backend is told which sessions run in this window: a project with one of them is not
+  // moved to the dev folder.
+  useEffect(() => startRunningSessionsReport(), [])
+
   const createPRWorktreeId = useGitStore((s) => s.createPRWorktreeId)
   const createPRWorktreePath = useGitStore((s) => s.createPRWorktreePath)
   const connectionPRConnectionId = useGitStore((s) => s.connectionPRConnectionId)
@@ -372,6 +378,11 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
               the command palette or a connection row's menu. */}
           <ErrorBoundary componentName="PrdFlowDialog" fallback={null}>
             <PrdFlowDialog />
+          </ErrorBoundary>
+          {/* "Move projects" of Settings › General: a run goes on when Settings is closed, so
+              its dialog is drawn here and not inside the Settings modal. */}
+          <ErrorBoundary componentName="DevFolderMoveHost" fallback={null}>
+            <DevFolderMoveHost />
           </ErrorBoundary>
           <AgentSetupGuard />
           <ErrorBoundary componentName="ForceUpdateModal" fallback={null}>

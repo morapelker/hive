@@ -245,8 +245,17 @@ export const makeLiveProjectOpsRpcService = (): ProjectOpsRpcService => ({
         const initResult = initRepository(path)
         if (!initResult.success) {
           if (createdByUs) {
-            // The folder was just created empty by us, so it is safe to remove.
-            await rm(path, { recursive: true, force: true }).catch(() => undefined)
+            // The folder was just created empty by us, so it is safe to remove, unless a
+            // project was moved to this path since: the folder is then that project's. The
+            // check and the start of the removal are one step, with no await between them.
+            const [{ getDatabase }, { isRegisteredProjectFolder }] = await Promise.all([
+              import('../../../main/db'),
+              import('../../../main/services/clone-destination')
+            ])
+            const projects = { getAllProjects: () => getDatabase().getAllProjects() }
+            if (existsSync(path) && !isRegisteredProjectFolder(projects, path)) {
+              await rm(path, { recursive: true, force: true }).catch(() => undefined)
+            }
           }
           return {
             success: false,

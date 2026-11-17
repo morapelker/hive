@@ -148,6 +148,76 @@ const WORKTREE_IGNORE_PATTERNS = [
   '**/*.log'
 ]
 
+/**
+ * Start watching the git metadata of a worktree whose git dir is `gitDir`. Shared by the first
+ * watch of a worktree and by `rebindWorktreeGitWatch`, which watches a git dir that moved.
+ */
+function createGitWatcher(gitDir: string): chokidar.FSWatcher | null {
+  const commonGitDir = resolveCommonGitDir(gitDir)
+
+  // Build list of .git paths to watch
+  const gitPaths: string[] = []
+
+  // Watch index file (in worktree-specific gitdir for linked worktrees)
+  const indexPath = join(gitDir, 'index')
+  if (existsSync(indexPath)) {
+    gitPaths.push(indexPath)
+  }
+
+  // Watch HEAD (worktree-specific HEAD for linked worktrees)
+  const headPath = join(gitDir, 'HEAD')
+  if (existsSync(headPath)) {
+    gitPaths.push(headPath)
+  }
+
+  // Watch refs directory (always in common git dir)
+  const refsPath = join(commonGitDir, 'refs')
+  if (existsSync(refsPath)) {
+    gitPaths.push(refsPath)
+  }
+
+  // Watch MERGE_HEAD, REBASE_HEAD, CHERRY_PICK_HEAD (in worktree gitdir).
+  // These rarely exist when the watcher starts — chokidar watches the
+  // not-yet-existing path via the gitdir and emits 'add' when a merge/rebase
+  // begins and 'unlink' when it ends, so in-progress states reflect live.
+  for (const specialFile of ['MERGE_HEAD', 'REBASE_HEAD', 'CHERRY_PICK_HEAD']) {
+    gitPaths.push(join(gitDir, specialFile))
+  }
+
+  if (gitPaths.length === 0) return null
+  return chokidar.watch(gitPaths, {
+    persistent: true,
+    ignoreInitial: true,
+    // Don't use awaitWriteFinish for .git files - they're written atomically
+    depth: 3, // refs/heads/*, refs/tags/*, refs/remotes/*/*
+    // The native fsevents backend deadlocks during process teardown — never use it
+    useFsEvents: false
+  })
+}
+
+/** Every change the git watcher reports asks for one debounced status refresh of the entry. */
+function attachGitWatcherHandlers(
+  gitWatcher: chokidar.FSWatcher,
+  entry: WatcherEntry,
+  worktreePath: string
+): void {
+  gitWatcher.on('change', (path) => {
+    log.info('Git metadata changed', { path, worktreePath })
+    scheduleGitRefresh(entry, worktreePath)
+  })
+  gitWatcher.on('add', (path) => {
+    log.info('Git metadata added', { path, worktreePath })
+    scheduleGitRefresh(entry, worktreePath)
+  })
+  gitWatcher.on('unlink', (path) => {
+    log.info('Git metadata removed', { path, worktreePath })
+    scheduleGitRefresh(entry, worktreePath)
+  })
+  gitWatcher.on('error', (error) => {
+    log.error('Git watcher error', error, { worktreePath })
+  })
+}
+
 export async function watchWorktree(
   worktreePath: string,
   options: WatchWorktreeOptions = {}
@@ -166,51 +236,7 @@ export async function watchWorktree(
   log.info('Starting worktree watcher', { worktreePath })
 
   const gitDir = resolveGitDir(worktreePath)
-  let gitWatcher: chokidar.FSWatcher | null = null
-
-  if (gitDir) {
-    const commonGitDir = resolveCommonGitDir(gitDir)
-
-    // Build list of .git paths to watch
-    const gitPaths: string[] = []
-
-    // Watch index file (in worktree-specific gitdir for linked worktrees)
-    const indexPath = join(gitDir, 'index')
-    if (existsSync(indexPath)) {
-      gitPaths.push(indexPath)
-    }
-
-    // Watch HEAD (worktree-specific HEAD for linked worktrees)
-    const headPath = join(gitDir, 'HEAD')
-    if (existsSync(headPath)) {
-      gitPaths.push(headPath)
-    }
-
-    // Watch refs directory (always in common git dir)
-    const refsPath = join(commonGitDir, 'refs')
-    if (existsSync(refsPath)) {
-      gitPaths.push(refsPath)
-    }
-
-    // Watch MERGE_HEAD, REBASE_HEAD, CHERRY_PICK_HEAD (in worktree gitdir).
-    // These rarely exist when the watcher starts — chokidar watches the
-    // not-yet-existing path via the gitdir and emits 'add' when a merge/rebase
-    // begins and 'unlink' when it ends, so in-progress states reflect live.
-    for (const specialFile of ['MERGE_HEAD', 'REBASE_HEAD', 'CHERRY_PICK_HEAD']) {
-      gitPaths.push(join(gitDir, specialFile))
-    }
-
-    if (gitPaths.length > 0) {
-      gitWatcher = chokidar.watch(gitPaths, {
-        persistent: true,
-        ignoreInitial: true,
-        // Don't use awaitWriteFinish for .git files - they're written atomically
-        depth: 3, // refs/heads/*, refs/tags/*, refs/remotes/*/*
-        // The native fsevents backend deadlocks during process teardown — never use it
-        useFsEvents: false
-      })
-    }
-  }
+  const gitWatcher = gitDir ? createGitWatcher(gitDir) : null
 
   // Working tree watcher (for file modifications before staging)
   const worktreeWatcher = chokidar.watch(worktreePath, {
@@ -232,23 +258,7 @@ export async function watchWorktree(
   }
 
   // Attach git watcher handlers after entry is initialized
-  if (gitWatcher) {
-    gitWatcher.on('change', (path) => {
-      log.info('Git metadata changed', { path, worktreePath })
-      scheduleGitRefresh(entry, worktreePath)
-    })
-    gitWatcher.on('add', (path) => {
-      log.info('Git metadata added', { path, worktreePath })
-      scheduleGitRefresh(entry, worktreePath)
-    })
-    gitWatcher.on('unlink', (path) => {
-      log.info('Git metadata removed', { path, worktreePath })
-      scheduleGitRefresh(entry, worktreePath)
-    })
-    gitWatcher.on('error', (error) => {
-      log.error('Git watcher error', error, { worktreePath })
-    })
-  }
+  if (gitWatcher) attachGitWatcherHandlers(gitWatcher, entry, worktreePath)
 
   worktreeWatcher.on('add', () => scheduleWorktreeRefresh(entry, worktreePath))
   worktreeWatcher.on('change', () => scheduleWorktreeRefresh(entry, worktreePath))
@@ -313,6 +323,60 @@ export async function unwatchWorktree(worktreePath: string): Promise<void> {
   }
 
   log.info('Worktree watcher stopped', { worktreePath })
+}
+
+/**
+ * Watch the git metadata of a worktree again after its git dir moved.
+ *
+ * The git dir of a linked worktree lives inside the main checkout. When the checkout is moved
+ * the worktree stays where it is and `git worktree repair` rewrites its `.git` pointer, but the
+ * git watcher still holds the old paths and reports nothing more. Only that watcher is
+ * replaced: the entry, its refCount, its publisher and the working tree watcher stay as they
+ * are. Resolves false when the worktree is not watched (nothing is changed), or stops being
+ * watched while the old watcher closes. Otherwise ends by scheduling one status refresh, so
+ * the UI reads git from the new place.
+ */
+export async function rebindWorktreeGitWatch(worktreePath: string): Promise<boolean> {
+  const entry = watchers.get(worktreePath)
+  if (!entry) return false
+
+  const previous = entry.gitWatcher
+  const gitDir = resolveGitDir(worktreePath)
+  const gitWatcher = gitDir ? createGitWatcher(gitDir) : null
+  if (gitWatcher) attachGitWatcherHandlers(gitWatcher, entry, worktreePath)
+  // Swapped before the first await: an unwatch that runs meanwhile closes the new watcher.
+  entry.gitWatcher = gitWatcher
+
+  if (previous) {
+    try {
+      await previous.close()
+    } catch (error) {
+      log.error(
+        'Failed to close the previous git watcher',
+        error instanceof Error ? error : new Error(String(error)),
+        { worktreePath }
+      )
+    }
+  }
+
+  // Unwatched while the old watcher was closing: nobody listens any more, so nothing is
+  // refreshed. Closing a watcher twice is harmless.
+  if (watchers.get(worktreePath) !== entry) {
+    try {
+      if (gitWatcher) await gitWatcher.close()
+    } catch {
+      // The unwatch already closed it.
+    }
+    return false
+  }
+
+  log.info('Worktree git watcher rebound', {
+    worktreePath,
+    hasGitWatcher: !!gitWatcher,
+    gitDir: gitDir || 'not found'
+  })
+  scheduleGitRefresh(entry, worktreePath)
+  return true
 }
 
 export function getWorktreeWatcherCount(): number {

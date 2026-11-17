@@ -243,13 +243,23 @@ export interface RpcContext {
   readonly worktreeOps?: WorktreeOpsRpcService
 }
 
+/** What the transport knows about one call. Absent when the call came through no socket. */
+export interface RpcCallInfo {
+  /** Names the WebSocket the request came through, for as long as that socket is open. */
+  readonly socketId: string
+}
+
 export type RpcHandler = (
   params: unknown,
-  context: RpcContext
+  context: RpcContext,
+  call?: RpcCallInfo
 ) => Effect.Effect<unknown, unknown, never>
 
 export interface RpcRouter {
-  readonly handle: (request: unknown) => Effect.Effect<RpcResponse, never, never>
+  readonly handle: (
+    request: unknown,
+    call?: RpcCallInfo
+  ) => Effect.Effect<RpcResponse, never, never>
 }
 
 const emptyParamsSchema = z.union([z.object({}).strict(), z.undefined(), z.null()])
@@ -365,7 +375,7 @@ export const makeRpcRouter = (
   context: RpcContext,
   handlers: ReadonlyMap<string, RpcHandler> = makeDefaultRpcHandlers(context)
 ): RpcRouter => ({
-  handle: (request) =>
+  handle: (request, call) =>
     Effect.gen(function* () {
       const parsed = RpcRequestSchema.safeParse(request)
       if (!parsed.success) {
@@ -401,7 +411,7 @@ export const makeRpcRouter = (
         } satisfies RpcResponse
       }
 
-      const result = yield* handler(rpcRequest.params, context).pipe(
+      const result = yield* handler(rpcRequest.params, context, call).pipe(
         Effect.map((value) => ({ id: rpcRequest.id, ok: true as const, value })),
         Effect.catchAll((cause) =>
           Effect.succeed({

@@ -179,6 +179,51 @@ export async function unwatchBranch(worktreePath: string): Promise<void> {
   }
 }
 
+/**
+ * Point the watch of a worktree at its git dir again after that git dir moved.
+ *
+ * A linked worktree's HEAD lives in the main checkout (`<checkout>/.git/worktrees/<name>`).
+ * When the checkout is moved, the worktree stays where it is and `git worktree repair` rewrites
+ * its `.git` pointer, but the watch is still on the old directory and never fires again.
+ *
+ * The same entry is watched under the new HEAD path, so its refCount (how many consumers asked
+ * for this worktree) is untouched. Returns false, changing nothing, when the worktree is not
+ * watched, when its git dir cannot be resolved or has no HEAD, or when it resolves to a
+ * directory that is already watched (nothing moved, or the pointer was not repaired). Otherwise
+ * ends with one `git:branchChanged`, so the sidebar re-reads the branch from the new place.
+ */
+export function rebindBranchWatch(worktreePath: string): boolean {
+  const oldHead = worktreeToHead.get(worktreePath)
+  if (!oldHead) return false
+  const entry = watchedPaths.get(oldHead)
+  if (!entry) return false
+
+  const gitDir = resolveGitDir(worktreePath)
+  if (!gitDir) return false
+  const headPath = join(gitDir, 'HEAD')
+  if (watchedPaths.has(headPath) || !existsSync(headPath)) return false
+
+  // The move itself made chokidar report HEAD as removed; the refresh below replaces that one.
+  if (entry.debounceTimer) {
+    clearTimeout(entry.debounceTimer)
+    entry.debounceTimer = null
+  }
+
+  sharedWatcher?.unwatch(entry.gitDir)
+  watchedPaths.delete(oldHead)
+  entry.gitDir = gitDir
+  watchedPaths.set(headPath, entry)
+  // Every spelling of this worktree that was watched through the old HEAD follows it.
+  for (const [watchedWorktree, head] of worktreeToHead) {
+    if (head === oldHead) worktreeToHead.set(watchedWorktree, headPath)
+  }
+  sharedWatcher?.add(gitDir)
+
+  log.info('Branch watcher rebound', { worktreePath, headPath })
+  emitBranchChanged(worktreePath)
+  return true
+}
+
 export function getBranchWatcherCount(): number {
   return watchedPaths.size
 }

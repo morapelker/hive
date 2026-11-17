@@ -9,7 +9,12 @@ import {
   type SharedSelectedModel
 } from '@shared/model-resolution'
 import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
-import { isAgentCli, supportsGoalMode, toModelCatalogSdk, type AgentSdk } from '@shared/types/agent-sdk'
+import {
+  isAgentCli,
+  supportsGoalMode,
+  toModelCatalogSdk,
+  type AgentSdk
+} from '@shared/types/agent-sdk'
 import type { DiscordEmissionMode } from '@shared/types/discord'
 import { getDiscordToolEmoji, getToolLabel, isFileChangeTool } from '@shared/tool-label'
 import type { DatabaseService } from '../db/database'
@@ -71,6 +76,8 @@ interface ChannelRuntime {
   channelId: string
   channel: DiscordTextChannel
   hiveSessionId: string
+  // The folder the agent holds the session under. The agent finds a session by folder and id,
+  // so this follows the worktree to a new folder only once the session is connected there.
   worktreePath: string
   opencodeSessionId: string
   model: SharedSelectedModel
@@ -84,6 +91,8 @@ interface ChannelRuntime {
   typingInterval: ReturnType<typeof setInterval> | null
   queue: string[]
   sendChain: Promise<void>
+  // Set while the session is being reconnected under the worktree's new folder.
+  folderChange: Promise<{ success: boolean }> | null
 }
 
 export interface DiscordSessionBridgeDependencies {
@@ -418,7 +427,8 @@ export class DiscordSessionBridge {
       postedToolIds: new Set(),
       typingInterval: null,
       queue: [],
-      sendChain: Promise.resolve()
+      sendChain: Promise.resolve(),
+      folderChange: null
     })
   }
 
@@ -475,6 +485,9 @@ export class DiscordSessionBridge {
 
     const session = db.getSession(resource.managed_session_id)
     const runtime = session ? this.runtimesBySessionId.get(session.id) : undefined
+    // The agent holds the session under the runtime's folder, which is still the previous one
+    // when the project was moved since the channel's last message.
+    const sessionPath = runtime?.worktreePath ?? input.worktreePath
     if (runtime) {
       this.stopTyping(runtime)
       this.runtimesBySessionId.delete(runtime.hiveSessionId)
@@ -484,7 +497,7 @@ export class DiscordSessionBridge {
 
     if (session?.opencode_session_id) {
       try {
-        await this.openCode.abort(input.worktreePath, session.opencode_session_id)
+        await this.openCode.abort(sessionPath, session.opencode_session_id)
       } catch (error) {
         log.warn('Failed to abort cleared Discord managed session', {
           worktreeId: input.worktreeId,
@@ -494,7 +507,7 @@ export class DiscordSessionBridge {
       }
 
       try {
-        await this.openCode.disconnect(input.worktreePath, session.opencode_session_id)
+        await this.openCode.disconnect(sessionPath, session.opencode_session_id)
       } catch (error) {
         log.warn('Failed to disconnect cleared Discord managed session', {
           worktreeId: input.worktreeId,
@@ -527,7 +540,11 @@ export class DiscordSessionBridge {
     this.clearPendingForSession(resource.managed_session_id, 'Session stopped')
     claudeCliDiscordBridge.cancelSession(resource.managed_session_id)
 
-    return this.openCode.abort(input.worktreePath, session.opencode_session_id)
+    // As in clearManagedSession: the turn runs under the folder the runtime is filed under.
+    return this.openCode.abort(
+      runtime?.worktreePath ?? input.worktreePath,
+      session.opencode_session_id
+    )
   }
 
   private async resolveManagedSession(
@@ -543,23 +560,35 @@ export class DiscordSessionBridge {
       throw new Error(`No Discord channel resource found for worktree ${input.worktreeId}`)
     }
 
+    // The session of a runtime that could not be reconnected under the worktree's new folder.
+    let strandedSessionId: string | null = null
     if (resource.managed_session_id) {
       const existing = db.getSession(resource.managed_session_id)
       if (existing?.opencode_session_id) {
         const runtime = this.runtimesBySessionId.get(existing.id)
-        if (runtime) {
+        // A runtime filed under another folder (the project was moved) is left as it is while
+        // it is busy: disconnecting its session would cut the turn off. The first message
+        // that finds it idle moves it.
+        if (runtime && (runtime.busy || runtime.worktreePath === input.worktreePath)) {
           runtime.model = this.getSessionModel(existing)
           return { resource, session: existing }
         }
 
-        const reconnect = await this.openCode.reconnect(
-          input.worktreePath,
-          existing.opencode_session_id,
-          existing.id
-        )
+        const reconnect = runtime
+          ? await this.moveSessionToFolder(
+              runtime,
+              existing.opencode_session_id,
+              input.worktreePath
+            )
+          : await this.openCode.reconnect(
+              input.worktreePath,
+              existing.opencode_session_id,
+              existing.id
+            )
         if (reconnect.success) {
           return { resource, session: existing }
         }
+        if (runtime) strandedSessionId = existing.id
       }
     }
 
@@ -582,7 +611,56 @@ export class DiscordSessionBridge {
       opencode_session_id: connection.sessionId
     }
     db.setDiscordResourceManagedSession(resource.id, updated.id)
+    const stranded = strandedSessionId ? this.runtimesBySessionId.get(strandedSessionId) : undefined
+    if (stranded && !stranded.busy) {
+      // The channel goes on in this new session. The runtime of the one that could not be
+      // reconnected moves to it, so the text still queued there is sent here.
+      this.runtimesBySessionId.delete(stranded.hiveSessionId)
+      stranded.hiveSessionId = updated.id
+      stranded.opencodeSessionId = connection.sessionId
+      stranded.worktreePath = input.worktreePath
+      this.runtimesBySessionId.set(updated.id, stranded)
+    }
     return { resource: { ...resource, managed_session_id: updated.id }, session: updated }
+  }
+
+  /**
+   * The worktree is in another folder than the one this idle runtime's session is filed under:
+   * the project was moved. The session is dropped under the old folder and reconnected under
+   * the new one. The runtime keeps the old folder until the reconnect succeeded, so after a
+   * failure the next message tries again instead of prompting a folder the agent has no
+   * session under.
+   */
+  private moveSessionToFolder(
+    runtime: ChannelRuntime,
+    opencodeSessionId: string,
+    worktreePath: string
+  ): Promise<{ success: boolean }> {
+    // A second message can arrive before this is done. It waits for the same attempt: a
+    // disconnect of its own could hit the session while it is being reconnected.
+    runtime.folderChange ??= (async () => {
+      try {
+        await this.openCode.disconnect(runtime.worktreePath, opencodeSessionId)
+      } catch (error) {
+        log.warn('Failed to disconnect Discord managed session under its previous folder', {
+          worktreePath: runtime.worktreePath,
+          opencodeSessionId,
+          error: error instanceof Error ? error.message : String(error)
+        })
+      }
+      const reconnect = await this.openCode.reconnect(
+        worktreePath,
+        opencodeSessionId,
+        runtime.hiveSessionId
+      )
+      if (reconnect.success) {
+        runtime.worktreePath = worktreePath
+      }
+      return reconnect
+    })().finally(() => {
+      runtime.folderChange = null
+    })
+    return runtime.folderChange
   }
 
   private registerRuntime(
@@ -592,9 +670,10 @@ export class DiscordSessionBridge {
   ): ChannelRuntime {
     const existing = this.runtimesBySessionId.get(session.id)
     if (existing) {
+      // The folder is not taken from the message: resolveManagedSession changes it once the
+      // session is connected under the new one.
       existing.channelId = input.channelId
       existing.channel = input.channel
-      existing.worktreePath = input.worktreePath
       existing.opencodeSessionId = session.opencode_session_id ?? existing.opencodeSessionId
       existing.mode = session.mode
       existing.model = this.getSessionModel(session)
@@ -625,7 +704,8 @@ export class DiscordSessionBridge {
       postedToolIds: new Set(),
       typingInterval: null,
       queue: [],
-      sendChain: Promise.resolve()
+      sendChain: Promise.resolve(),
+      folderChange: null
     }
     this.runtimesBySessionId.set(session.id, runtime)
     if (isAgentCli(session.agent_sdk)) {
@@ -1245,7 +1325,10 @@ export class DiscordSessionBridge {
       throw new Error('Discord channel is no longer linked to this worktree')
     }
 
-    const worktreePath = pending.worktreePath
+    // The new session starts in the folder the worktree is in now. The folder kept with the
+    // plan is the one its session's runtime was created under, which is the previous one when
+    // the project was moved since: only the managed session's runtime follows a move.
+    const worktreePath = db.getWorktree?.(sourceSession.worktree_id)?.path ?? pending.worktreePath
     if (!worktreePath) {
       throw new Error('Missing worktree path for handoff')
     }
@@ -1597,7 +1680,8 @@ export class DiscordSessionBridge {
       [...this.discordPending.values()].find(
         (pending) =>
           pending.kind === 'plan' &&
-          (pending.sessionId === runtime.hiveSessionId || pending.channelId === runtime.channelId)
+          (pending.sessionId === runtime.hiveSessionId ||
+            pending.channelId === runtime.channelId)
       ) ?? null
     )
   }

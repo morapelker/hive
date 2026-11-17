@@ -1488,7 +1488,7 @@ class MarkdownKanbanBackend implements KanbanBackend {
     return this.reloadIndex(projectId)
   }
 
-  private async reloadIndex(projectId: string): Promise<MarkdownIndex> {
+  private async reloadIndex(projectId: string, isRescan = false): Promise<MarkdownIndex> {
     // Read before the runtime rows: a rewrite landing mid-scan leaves the index outdated.
     const labelSnapshotGeneration = getDatabase().ticketLabelSnapshotGeneration
     const project = requireProject(projectId)
@@ -1530,6 +1530,33 @@ class MarkdownKanbanBackend implements KanbanBackend {
           })
         }
       }
+    }
+
+    // The scan above waited on the filesystem, so the project may have been pointed at another
+    // folder since its row was read (a move renames the folder and updates the row in one
+    // tick), or been given other board folders. What was scanned is then not this project's
+    // board: usually no card at all, because the old folder is gone. Going on would stamp every
+    // runtime row as orphaned, and the next such scan would delete them with their session
+    // links, notes and labels. Everything from here to `indexes.set` is synchronous, so a row
+    // that still matches here cannot change before the index is stored. A project that was
+    // removed meanwhile is reported as any later call would report it.
+    const current = requireProject(projectId)
+    if (
+      current.path !== project.path ||
+      (current.kanban_markdown_config ?? null) !== (project.kanban_markdown_config ?? null)
+    ) {
+      // Scan once more, from the row as it is now. Should the project change again during that
+      // second scan, stop, instead of scanning a third time (which could be outrun the same
+      // way) or going on with what was read. An outdated scan must not touch the runtime rows
+      // (not even to note where a card was last seen), must not be stored as the board, and
+      // must not reach a caller that would then write card files into the folder the project
+      // has left. The caller gets an error it can retry, and the next call scans from scratch.
+      if (isRescan) {
+        throw new Error(
+          'The project folder or its board folders changed while its board was being read. Try again.'
+        )
+      }
+      return this.reloadIndex(projectId, true)
     }
 
     const pathsById = new Map<string, string[]>()

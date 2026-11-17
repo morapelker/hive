@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { resetRendererRpcClientForTests, setRendererRpcClient } from '@/api/rpc-client'
 import { useTicketLabelsStore } from '@/stores/useTicketLabelsStore'
 import type { BackupFile, ProjectClassification, RestoreProjectResult } from '@shared/types/backup'
+import { DEV_FOLDER_RPC, type DevFolderState } from '@shared/types/dev-folder'
 import type { SavedTicketLabel } from '@shared/lib/ticket-labels'
 import { RestoreWizard } from './RestoreWizard'
 
@@ -346,6 +347,124 @@ describe('RestoreWizard', () => {
 
       expect(request.mock.calls.filter((call) => call[0] === 'ticketLabels.list')).toHaveLength(0)
       expect(useTicketLabelsStore.getState().labels).toEqual([joy])
+    })
+  })
+
+  // The wizard asks the server for the dev folder when it is given a backup. The cases above
+  // run under a client that refuses that call: no dev folder, nothing prefilled.
+  describe('the clone folder', () => {
+    const devFolderState = (overrides: Partial<DevFolderState> = {}): DevFolderState => ({
+      path: '/Users/me/code',
+      isDefault: false,
+      defaultPath: '/Users/me/hive-projects',
+      exists: true,
+      previousPaths: [],
+      leftBehind: { count: 0, folders: [] },
+      ...overrides
+    })
+
+    /** `devFolder` is what `settingsOps.getDevFolder` answers: a value, or a pending promise. */
+    function setupWithDevFolder(devFolder: unknown): ReturnType<typeof vi.fn> {
+      const request: ReturnType<typeof vi.fn> = vi.fn(async (method: string) => {
+        if (method === 'backupOps.classifyProjects') return classifications
+        if (method === DEV_FOLDER_RPC.get) return devFolder
+        if (method === 'projectOps.openDirectoryDialog') return '/tmp/picked'
+        throw new Error(`unexpected method ${method}`)
+      })
+      setRendererRpcClient({ request, subscribe: vi.fn() })
+      return request
+    }
+
+    const devFolderCalls = (request: ReturnType<typeof vi.fn>): number =>
+      request.mock.calls.filter(([method]) => method === DEV_FOLDER_RPC.get).length
+
+    async function openFolderStep(): Promise<ReturnType<typeof userEvent.setup>> {
+      const user = userEvent.setup()
+      await screen.findByText('Exists — will pull')
+      await user.click(screen.getByRole('button', { name: 'Continue' }))
+      await act(async () => {})
+      return user
+    }
+
+    it('starts from the dev folder, so the restore can start without a folder being picked', async () => {
+      setupWithDevFolder(devFolderState())
+      render(<RestoreWizard backup={backup} open={true} onOpenChange={vi.fn()} />)
+
+      await openFolderStep()
+
+      expect(screen.getByTestId('restore-wizard-folder-input')).toHaveValue('/Users/me/code')
+      expect(screen.getByText('/Users/me/code/clone-proj')).not.toBeNull()
+      expect(screen.getByRole('button', { name: 'Start restore' })).not.toBeDisabled()
+    })
+
+    it('is empty until a folder is picked when the server has no dev folder to offer', async () => {
+      const request = setup()
+      render(<RestoreWizard backup={backup} open={true} onOpenChange={vi.fn()} />)
+
+      await openFolderStep()
+
+      expect(devFolderCalls(request)).toBe(1)
+      expect(screen.getByTestId('restore-wizard-folder-input')).toHaveValue('')
+      expect(screen.getByRole('button', { name: 'Start restore' })).toBeDisabled()
+    })
+
+    it('is empty when the dev folder is not on disk', async () => {
+      setupWithDevFolder(devFolderState({ exists: false }))
+      render(<RestoreWizard backup={backup} open={true} onOpenChange={vi.fn()} />)
+
+      await openFolderStep()
+
+      expect(screen.getByTestId('restore-wizard-folder-input')).toHaveValue('')
+      expect(screen.getByRole('button', { name: 'Start restore' })).toBeDisabled()
+    })
+
+    it('keeps the folder the person picked when the dev folder answers late', async () => {
+      let answer: (state: DevFolderState) => void = () => {}
+      setupWithDevFolder(
+        new Promise<DevFolderState>((resolve) => {
+          answer = resolve
+        })
+      )
+      render(<RestoreWizard backup={backup} open={true} onOpenChange={vi.fn()} />)
+
+      const user = await openFolderStep()
+      await user.click(screen.getByRole('button', { name: 'Browse…' }))
+      await screen.findByText('/tmp/picked/clone-proj')
+
+      await act(async () => {
+        answer(devFolderState())
+      })
+
+      expect(screen.getByTestId('restore-wizard-folder-input')).toHaveValue('/tmp/picked')
+    })
+
+    it('ignores the answer asked for a backup that is no longer the one shown', async () => {
+      let answer: (state: DevFolderState) => void = () => {}
+      const request = setupWithDevFolder(
+        new Promise<DevFolderState>((resolve) => {
+          answer = resolve
+        })
+      )
+      const { rerender } = render(
+        <RestoreWizard backup={backup} open={true} onOpenChange={vi.fn()} />
+      )
+      await screen.findByText('Exists — will pull')
+
+      // Another backup is loaded while the folder is gone; then the first answer arrives.
+      request.mockImplementation(async (method: string) => {
+        if (method === 'backupOps.classifyProjects') return classifications
+        if (method === DEV_FOLDER_RPC.get) return devFolderState({ exists: false })
+        throw new Error(`unexpected method ${method}`)
+      })
+      rerender(<RestoreWizard backup={{ ...backup }} open={true} onOpenChange={vi.fn()} />)
+      await act(async () => {
+        answer(devFolderState())
+      })
+
+      await openFolderStep()
+
+      expect(devFolderCalls(request)).toBe(2)
+      expect(screen.getByTestId('restore-wizard-folder-input')).toHaveValue('')
     })
   })
 })

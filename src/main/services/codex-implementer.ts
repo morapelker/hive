@@ -675,6 +675,8 @@ export class CodexImplementer implements AgentSdkImplementer {
       // like thread/tokenUsage/updated reach handleManagerEvent.
       this.attachManagerListener()
 
+      await this.closeThreadStatesUnderOtherFolders(worktreePath, agentSessionId)
+
       const resolvedModel = resolveCodexModelSlug(this.selectedModel)
       const providerSession = await this.manager.startSession({
         cwd: worktreePath,
@@ -755,6 +757,50 @@ export class CodexImplementer implements AgentSdkImplementer {
     this.cleanupPendingForThread(agentSessionId)
 
     log.info('Disconnected', { worktreePath, agentSessionId })
+  }
+
+  // The manager files one helper process per thread, under the thread id alone. After a project
+  // folder was moved, the thread is asked for under the new folder while its state from the old
+  // folder is still here with its helper running. Resuming the thread on top of that would
+  // replace the manager's entry, so the first helper could no longer be stopped by the app, and
+  // events, titles, questions and approvals would go on finding the state that names the old
+  // folder. So that state is closed before the thread is resumed.
+  private async closeThreadStatesUnderOtherFolders(
+    worktreePath: string,
+    agentSessionId: string
+  ): Promise<void> {
+    for (const [key, other] of [...this.sessions.entries()]) {
+      if (other.threadId !== agentSessionId || other.worktreePath === worktreePath) continue
+
+      // Stopping the helper now would cut off the turn it is running, or the goal run that is
+      // waiting for its next turn. A project is not moved while a session works in it, so this
+      // is not expected; the state is left alone and the thread is resumed beside it.
+      if (other.status === 'running' || other.goalIdleFallbackTimer) {
+        log.warn('Left a working Codex session that is filed under another folder', {
+          worktreePath,
+          otherWorktreePath: other.worktreePath,
+          agentSessionId
+        })
+        continue
+      }
+
+      try {
+        await this.disconnect(other.worktreePath, agentSessionId)
+      } catch (error) {
+        // The thread still has to open under the folder that was asked for.
+        log.warn('Failed to stop the Codex helper filed under another folder', {
+          worktreePath,
+          otherWorktreePath: other.worktreePath,
+          agentSessionId,
+          error: error instanceof Error ? error.message : String(error)
+        })
+      }
+
+      // disconnect removes the state only after the helper stopped. When the stop threw, the
+      // state is still filed and would go on answering for the thread.
+      this.sessions.delete(key)
+      this.skillCommandsBySessionKey.delete(key)
+    }
   }
 
   async cleanup(): Promise<void> {
@@ -2388,7 +2434,11 @@ export class CodexImplementer implements AgentSdkImplementer {
   private persistActivity(session: CodexSessionState, event: CodexManagerEvent): void {
     if (!this.dbService) return
 
-    const activity = mapCodexManagerEventToActivity(session.hiveSessionId, session.threadId, event)
+    const activity = mapCodexManagerEventToActivity(
+      session.hiveSessionId,
+      session.threadId,
+      event
+    )
     if (!activity) return
 
     try {
@@ -3696,6 +3746,8 @@ export class CodexImplementer implements AgentSdkImplementer {
     }
 
     try {
+      await this.closeThreadStatesUnderOtherFolders(worktreePath, agentSessionId)
+
       const providerSession = await this.manager.startSession({
         cwd: worktreePath,
         model: resolveCodexModelSlug(persistedSession.model_id ?? this.selectedModel),

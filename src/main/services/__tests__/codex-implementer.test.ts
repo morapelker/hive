@@ -130,7 +130,10 @@ describe('CodexImplementer canonical message persistence', () => {
     impl.persistCanonicalMessages(session)
 
     expect(db.replaceSessionMessages).toHaveBeenCalledTimes(2)
-    const rows = db.replaceSessionMessages.mock.calls[1][1] as Array<{ role: string; content: string }>
+    const rows = db.replaceSessionMessages.mock.calls[1][1] as Array<{
+      role: string
+      content: string
+    }>
     expect(rows).toHaveLength(2)
     expect(rows[1]).toMatchObject({ role: 'assistant', content: 'hi there' })
   })
@@ -228,5 +231,160 @@ describe('CodexImplementer canonical message persistence', () => {
 
     expect(impl.popLastExchange(session)).toBe('revert-0')
     expect(session.messagesDirty).toBe(false)
+  })
+})
+
+const OLD_FOLDER = '/Users/me/hive-projects/app'
+const NEW_FOLDER = '/Users/me/dev/app'
+
+type ResumeInternals = {
+  manager: ReturnType<typeof installManager>
+  dbService: unknown
+  sessions: Map<string, CodexSessionState>
+  findSessionByThreadId: (threadId: string) => CodexSessionState | undefined
+}
+
+function installManager(impl: CodexImplementer) {
+  const manager = {
+    on: vi.fn(),
+    startSession: vi.fn(async (options: { cwd: string; resumeThreadId?: string }) => ({
+      provider: 'codex',
+      status: 'ready',
+      threadId: options.resumeThreadId ?? 'thread-new',
+      cwd: options.cwd
+    })),
+    stopSession: vi.fn(),
+    getSession: vi.fn(() => undefined),
+    getThreadGoal: vi.fn(async () => null),
+    readThread: vi.fn(async () => ({}))
+  }
+  ;(impl as unknown as { manager: typeof manager }).manager = manager
+  return manager
+}
+
+function setupResume(): { impl: CodexImplementer; inner: ResumeInternals } {
+  const impl = new CodexImplementer()
+  installManager(impl)
+  return { impl, inner: impl as unknown as ResumeInternals }
+}
+
+describe('CodexImplementer resume of a thread under another folder', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('reconnect under another folder stops the helper started under the old one', async () => {
+    const { impl, inner } = setupResume()
+
+    expect((await impl.reconnect(OLD_FOLDER, 'thread-1', 'session-1')).success).toBe(true)
+    expect((await impl.reconnect(NEW_FOLDER, 'thread-1', 'session-1')).success).toBe(true)
+
+    const { startSession, stopSession } = inner.manager
+    expect(stopSession).toHaveBeenCalledTimes(1)
+    expect(stopSession).toHaveBeenCalledWith('thread-1')
+    expect(startSession).toHaveBeenCalledTimes(2)
+    expect(startSession.mock.calls[1][0]).toMatchObject({
+      cwd: NEW_FOLDER,
+      resumeThreadId: 'thread-1'
+    })
+    // The old helper is stopped while it is still the one the manager has for the thread.
+    expect(stopSession.mock.invocationCallOrder[0]).toBeLessThan(
+      startSession.mock.invocationCallOrder[1]
+    )
+    expect([...inner.sessions.keys()]).toEqual([`${NEW_FOLDER}::thread-1`])
+    expect(inner.findSessionByThreadId('thread-1')?.worktreePath).toBe(NEW_FOLDER)
+  })
+
+  it('reading the messages under another folder stops the helper started under the old one', async () => {
+    const { impl, inner } = setupResume()
+    inner.sessions.set(`${OLD_FOLDER}::thread-1`, createSession({ worktreePath: OLD_FOLDER }))
+    inner.dbService = {
+      getSessionByOpenCodeSessionId: () => ({
+        id: 'session-1',
+        agent_sdk: 'codex',
+        model_id: null
+      }),
+      getSessionMessages: () => []
+    }
+
+    await impl.getMessages(NEW_FOLDER, 'thread-1')
+
+    const { startSession, stopSession } = inner.manager
+    expect(stopSession).toHaveBeenCalledTimes(1)
+    expect(stopSession).toHaveBeenCalledWith('thread-1')
+    expect(startSession).toHaveBeenCalledTimes(1)
+    expect(startSession.mock.calls[0][0]).toMatchObject({
+      cwd: NEW_FOLDER,
+      resumeThreadId: 'thread-1'
+    })
+    expect(stopSession.mock.invocationCallOrder[0]).toBeLessThan(
+      startSession.mock.invocationCallOrder[0]
+    )
+    expect([...inner.sessions.keys()]).toEqual([`${NEW_FOLDER}::thread-1`])
+    expect(inner.findSessionByThreadId('thread-1')?.worktreePath).toBe(NEW_FOLDER)
+  })
+
+  it('reconnects under the new folder when the old helper cannot be stopped', async () => {
+    const { impl, inner } = setupResume()
+    await impl.reconnect(OLD_FOLDER, 'thread-1', 'session-1')
+    inner.manager.stopSession.mockImplementation(() => {
+      throw new Error('kill failed')
+    })
+
+    const result = await impl.reconnect(NEW_FOLDER, 'thread-1', 'session-1')
+
+    expect(result.success).toBe(true)
+    expect(inner.manager.startSession).toHaveBeenCalledTimes(2)
+    expect([...inner.sessions.keys()]).toEqual([`${NEW_FOLDER}::thread-1`])
+    expect(inner.findSessionByThreadId('thread-1')?.worktreePath).toBe(NEW_FOLDER)
+  })
+
+  it('leaves a state under another folder that is in the middle of a turn', async () => {
+    const { impl, inner } = setupResume()
+    const running = createSession({ worktreePath: OLD_FOLDER, status: 'running' })
+    inner.sessions.set(`${OLD_FOLDER}::thread-1`, running)
+
+    const result = await impl.reconnect(NEW_FOLDER, 'thread-1', 'session-1')
+
+    expect(result.success).toBe(true)
+    expect(inner.manager.stopSession).not.toHaveBeenCalled()
+    expect(inner.sessions.get(`${OLD_FOLDER}::thread-1`)).toBe(running)
+    expect(inner.sessions.has(`${NEW_FOLDER}::thread-1`)).toBe(true)
+  })
+
+  it('leaves a state under another folder whose goal run waits for its next turn', async () => {
+    vi.useFakeTimers()
+    const { impl, inner } = setupResume()
+    const betweenTurns = createSession({
+      worktreePath: OLD_FOLDER,
+      goalIdleFallbackTimer: setTimeout(() => {}, 60_000)
+    })
+    inner.sessions.set(`${OLD_FOLDER}::thread-1`, betweenTurns)
+
+    const result = await impl.reconnect(NEW_FOLDER, 'thread-1', 'session-1')
+
+    expect(result.success).toBe(true)
+    expect(inner.manager.stopSession).not.toHaveBeenCalled()
+    expect(inner.sessions.get(`${OLD_FOLDER}::thread-1`)).toBe(betweenTurns)
+  })
+
+  it('leaves the states of other threads and the state under the asked folder alone', async () => {
+    const { impl, inner } = setupResume()
+    const otherThread = createSession({ threadId: 'thread-2', worktreePath: OLD_FOLDER })
+    inner.sessions.set(`${OLD_FOLDER}::thread-2`, otherThread)
+
+    await impl.reconnect(NEW_FOLDER, 'thread-1', 'session-1')
+    await impl.reconnect(NEW_FOLDER, 'thread-1', 'session-1')
+
+    expect(inner.manager.stopSession).not.toHaveBeenCalled()
+    expect(inner.manager.startSession).toHaveBeenCalledTimes(1)
+    expect([...inner.sessions.keys()]).toEqual([
+      `${OLD_FOLDER}::thread-2`,
+      `${NEW_FOLDER}::thread-1`
+    ])
   })
 })

@@ -1,8 +1,20 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { TerminalView } from '@/components/terminal/TerminalView'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
+
+const findWorktreePath = (
+  worktreesByProject: ReadonlyMap<string, readonly { id: string; path: string }[]>,
+  worktreeId: string | null
+): string | null => {
+  if (!worktreeId) return null
+  for (const worktrees of worktreesByProject.values()) {
+    const worktree = worktrees.find((candidate) => candidate.id === worktreeId)
+    if (worktree?.path) return worktree.path
+  }
+  return null
+}
 
 interface SessionTerminalViewProps {
   sessionId: string
@@ -32,34 +44,25 @@ export function SessionTerminalView({
     return null
   })
 
-  // Resolve the working directory from the session's worktree
-  const resolvedCwd = useMemo(() => {
-    if (!session) return null
+  const sessionWorktreeId = session?.worktree_id ?? null
+  const sessionConnectionId = session?.connection_id ?? null
 
-    // Direct worktree session
-    if (session.worktree_id) {
-      const worktreesByProject = useWorktreeStore.getState().worktreesByProject
-      for (const worktrees of worktreesByProject.values()) {
-        const wt = worktrees.find((w) => w.id === session.worktree_id)
-        if (wt?.path) return wt.path
-      }
-    }
+  // A connection session starts in the folder of the connection's first member.
+  const connectionWorktreeId = useConnectionStore((state) => {
+    if (!sessionConnectionId) return null
+    const connection = state.connections.find((candidate) => candidate.id === sessionConnectionId)
+    return connection?.members?.[0]?.worktree_id ?? null
+  })
 
-    // Connection session — use the first member's worktree path
-    if (session.connection_id) {
-      const connections = useConnectionStore.getState().connections
-      const connection = connections.find((c) => c.id === session.connection_id)
-      if (connection?.members?.[0]) {
-        const worktreesByProject = useWorktreeStore.getState().worktreesByProject
-        for (const worktrees of worktreesByProject.values()) {
-          const wt = worktrees.find((w) => w.id === connection.members[0].worktree_id)
-          if (wt?.path) return wt.path
-        }
-      }
-    }
-
-    return null
-  }, [session])
+  // The working directory is the folder of that worktree as the store holds it now. It is
+  // selected from the store, not read once: the rows can load after this view mounted, and a
+  // worktree's folder changes when its project is moved to the dev folder. A terminal that is
+  // started again after that must start where the project is, not in the folder it left.
+  const resolvedCwd = useWorktreeStore(
+    (state) =>
+      findWorktreePath(state.worktreesByProject, sessionWorktreeId) ??
+      findWorktreePath(state.worktreesByProject, connectionWorktreeId)
+  )
 
   const [lastKnownCwd, setLastKnownCwd] = useState<string | null>(null)
 

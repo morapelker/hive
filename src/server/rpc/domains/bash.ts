@@ -43,6 +43,11 @@ const getRunParamsSchema = z
   .strict()
 
 const runtimeByEventBus = new WeakMap<EventBus, ManagedRuntime.ManagedRuntime<Bash, never>>()
+/**
+ * The same runtimes once more, because a WeakMap cannot be listed. Held weakly here too, so
+ * that a runtime still goes when its event bus does.
+ */
+const runtimeRefs = new Set<WeakRef<ManagedRuntime.ManagedRuntime<Bash, never>>>()
 
 const makeEventBusBashRuntime = (
   eventBus: EventBus
@@ -59,7 +64,29 @@ const getEventBusRuntime = (eventBus: EventBus): ManagedRuntime.ManagedRuntime<B
   if (existing) return existing
   const runtime = makeEventBusBashRuntime(eventBus)
   runtimeByEventBus.set(eventBus, runtime)
+  runtimeRefs.add(new WeakRef(runtime))
   return runtime
+}
+
+/**
+ * The sessions that have a command started with `bash.run` running in this process, on
+ * whichever event bus it was started (the server has one, and its router always hands it in).
+ * Moving a project asks: such a command runs in the session's folder and is in no other list
+ * of what is running. Rejects when a runtime cannot be asked.
+ */
+export const runningBashSessionIds = async (): Promise<string[]> => {
+  const runtimes: ManagedRuntime.ManagedRuntime<Bash, never>[] = []
+  for (const ref of runtimeRefs) {
+    const runtime = ref.deref()
+    if (runtime === undefined) runtimeRefs.delete(ref)
+    else runtimes.push(runtime)
+  }
+  const running = await Promise.all(
+    runtimes.map((runtime) =>
+      runtime.runPromise(Effect.flatMap(Bash, (bash) => bash.runningSessionIds))
+    )
+  )
+  return [...new Set(running.flat())]
 }
 
 const runWithEventBus = async (

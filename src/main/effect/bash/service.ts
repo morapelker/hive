@@ -33,6 +33,11 @@ export class Bash extends Context.Tag('BashIsland/Bash')<
     ) => Effect.Effect<{ runId: string }, BashAlreadyRunning | BashSpawnFailed>
     readonly abort: (sessionId: string) => Effect.Effect<boolean>
     readonly getRun: (sessionId: string) => Effect.Effect<BashRunSnapshot | null>
+    /**
+     * The sessions whose command is running now. A command that exited, was stopped or was
+     * cut off at the output limit is not among them, though `getRun` still answers for it.
+     */
+    readonly runningSessionIds: Effect.Effect<readonly string[]>
     readonly killAll: Effect.Effect<void>
   }
 >() {}

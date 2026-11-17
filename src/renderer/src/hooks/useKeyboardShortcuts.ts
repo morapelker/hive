@@ -26,6 +26,8 @@ import { useTerminalTabStore } from '@/stores/useTerminalTabStore'
 import { useTerminalStore } from '@/stores/useTerminalStore'
 import { eventMatchesBinding, type KeyBinding } from '@/lib/keyboard-shortcuts'
 import { canOpenBoardNewTicket, openBoardNewTicket } from '@/lib/board-new-ticket'
+import { closeDevFolderMove } from '@/lib/dev-folder/move-projects'
+import { useDevFolderMoveStore } from '@/lib/dev-folder/store'
 import { isForceBoardMode } from '@/api/hive-enterprise/client'
 import { toast } from '@/lib/toast'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
@@ -498,6 +500,15 @@ function tryCloseOpenModal(): boolean {
   // "Go to project" switcher
   if (useProjectSwitcherStore.getState().isOpen) {
     useProjectSwitcherStore.getState().close()
+    return true
+  }
+
+  // "Move projects" dialog. It is opened from Settings and drawn over it, so it is asked first.
+  // While projects are being moved the key closes nothing: not the dialog, and not Settings or
+  // a tab behind it.
+  const movePhase = useDevFolderMoveStore.getState().phase
+  if (movePhase !== 'closed') {
+    if (movePhase !== 'running') closeDevFolderMove()
     return true
   }
 

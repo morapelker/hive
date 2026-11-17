@@ -731,6 +731,132 @@ describe('snapshot', () => {
     expect(later.sessions.find((s) => s.pid === 600)?.cpuPercent).toBe(50)
   })
 
+  describe('terminals opened or closed since the sample', () => {
+    const quiet = psOutput(baseTree())
+    const withAgent = psOutput(baseTree([{ pid: 600, ppid: APP, args: claudeArgs(UUID_A) }]))
+    const sessionIds = (snapshot: { sessions: Array<{ sessionId: string | null }> }) =>
+      snapshot.sessions.map((session) => session.sessionId)
+
+    it('does not serve the cache once a terminal was opened or closed since the sample', async () => {
+      let ptys: PtyInstanceInfo[] = []
+      const { deps, runPs, clock } = makeDeps({
+        // The priming pair, then one sample after the terminal opened and one after it closed.
+        psOutputs: [quiet, quiet, withAgent, quiet],
+        listPtys: () => ptys
+      })
+      const profiler = createSessionProfiler(deps)
+      expect(sessionIds(await profiler.getSnapshot())).toEqual([])
+      expect(runPs).toHaveBeenCalledTimes(2)
+
+      clock.now += 1_000
+      ptys = [pty(UUID_A, 600)]
+      const opened = await profiler.getSnapshot()
+      expect(runPs).toHaveBeenCalledTimes(3)
+      expect(sessionIds(opened)).toEqual([UUID_A])
+
+      // Nothing opened or closed since: cached as before.
+      clock.now += 1_000
+      expect(await profiler.getSnapshot()).toBe(opened)
+      expect(runPs).toHaveBeenCalledTimes(3)
+
+      clock.now += 1_000
+      ptys = []
+      expect(sessionIds(await profiler.getSnapshot())).toEqual([])
+      expect(runPs).toHaveBeenCalledTimes(4)
+    })
+
+    it('takes a new sample when a terminal was started again under the same id', async () => {
+      let ptys = [pty(UUID_A, 600)]
+      const { deps, runPs, clock } = makeDeps({ psOutputs: [withAgent], listPtys: () => ptys })
+      const profiler = createSessionProfiler(deps)
+      const first = await profiler.getSnapshot()
+      expect(runPs).toHaveBeenCalledTimes(2)
+
+      clock.now += 1_000
+      ptys = [pty(UUID_A, 601)]
+      expect(await profiler.getSnapshot()).not.toBe(first)
+      expect(runPs).toHaveBeenCalledTimes(3)
+    })
+
+    it('still serves the cache when the same terminals are listed in another order, or were typed in', async () => {
+      let ptys = [pty(UUID_A, 600), pty(UUID_B, 700)]
+      const { deps, runPs, clock } = makeDeps({ listPtys: () => ptys })
+      const profiler = createSessionProfiler(deps)
+      const first = await profiler.getSnapshot()
+      expect(runPs).toHaveBeenCalledTimes(2)
+
+      clock.now += 2_000
+      ptys = [
+        pty(UUID_B, 700, { lastOutputAt: clock.now }),
+        pty(UUID_A, 600, { lastInputAt: clock.now })
+      ]
+      expect(await profiler.getSnapshot()).toBe(first)
+      expect(runPs).toHaveBeenCalledTimes(2)
+    })
+
+    it('neither shares nor caches a sample that was started before a terminal was opened', async () => {
+      let ptys: PtyInstanceInfo[] = []
+      // Once held, each ps run waits until the test answers it.
+      let held: Array<(stdout: string) => void> | null = null
+      const runPs = vi.fn(
+        () =>
+          new Promise<{ stdout: string; psPid: number | null }>((resolve) => {
+            const answer = (stdout: string): void => resolve({ stdout, psPid: null })
+            if (held) held.push(answer)
+            else answer(quiet)
+          })
+      )
+      const { deps, clock } = makeDeps({ runPs, listPtys: () => ptys })
+      const profiler = createSessionProfiler(deps)
+      await profiler.getSnapshot()
+      expect(runPs).toHaveBeenCalledTimes(2)
+
+      clock.now += 10_000
+      held = []
+      const startedBefore = profiler.getSnapshot()
+      expect(runPs).toHaveBeenCalledTimes(3)
+      ptys = [pty(UUID_A, 600)]
+      const startedAfter = profiler.getSnapshot()
+      // Not the sample in flight: its ps may have run before the terminal was there.
+      expect(runPs).toHaveBeenCalledTimes(4)
+
+      held[1](withAgent)
+      const after = await startedAfter
+      expect(sessionIds(after)).toEqual([UUID_A])
+      // The earlier sample ends last, and must not replace the newer one in the cache.
+      held[0](quiet)
+      expect(sessionIds(await startedBefore)).toEqual([])
+      expect(await profiler.getSnapshot()).toBe(after)
+      expect(runPs).toHaveBeenCalledTimes(4)
+    })
+
+    it('takes a new sample when the terminal registry cannot be read', async () => {
+      const listPtys = vi.fn((): PtyInstanceInfo[] => [])
+      const { deps, runPs, clock } = makeDeps({ listPtys })
+      const profiler = createSessionProfiler(deps)
+      const first = await profiler.getSnapshot()
+      expect(runPs).toHaveBeenCalledTimes(2)
+
+      clock.now += 1_000
+      listPtys.mockImplementationOnce(() => {
+        throw new Error('registry unavailable')
+      })
+      const second = await profiler.getSnapshot()
+      expect(second).not.toBe(first)
+      expect(second.error).toBeUndefined()
+      expect(runPs).toHaveBeenCalledTimes(3)
+
+      // Unreadable again a second later: nothing says the terminals are still the same ones,
+      // so the sample taken meanwhile is not served either.
+      clock.now += 1_000
+      listPtys.mockImplementationOnce(() => {
+        throw new Error('registry unavailable')
+      })
+      expect(await profiler.getSnapshot()).not.toBe(second)
+      expect(runPs).toHaveBeenCalledTimes(4)
+    })
+  })
+
   it('re-primes when the previous sample is older than 5 minutes', async () => {
     const { deps, runPs, clock } = makeDeps()
     const profiler = createSessionProfiler(deps)

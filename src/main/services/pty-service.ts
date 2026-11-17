@@ -1,5 +1,6 @@
 import * as pty from 'node-pty'
 import { execFile } from 'node:child_process'
+import { join, sep } from 'node:path'
 import { createLogger } from './logger'
 
 const log = createLogger({ component: 'PtyService' })
@@ -503,6 +504,32 @@ class PtyService {
       })
     }
     return out
+  }
+
+  /**
+   * Folders were renamed while terminals stayed open in them. A shell goes with its folder, so
+   * each of those terminals is in the new place now, but `cwd` here is the folder it was
+   * opened in, and that is what is asked when something needs to know which project a
+   * terminal is in. Re-files every terminal that was opened in, or below, a folder that
+   * moved. Returns how many were re-filed.
+   */
+  refileMovedFolders(moves: ReadonlyArray<{ readonly from: string; readonly to: string }>): number {
+    let refiled = 0
+    for (const instance of this.ptys.values()) {
+      for (const move of moves) {
+        const below = move.from.endsWith(sep) ? move.from : move.from + sep
+        if (instance.cwd === move.from) {
+          instance.cwd = move.to
+        } else if (instance.cwd.startsWith(below)) {
+          instance.cwd = join(move.to, instance.cwd.slice(below.length))
+        } else {
+          continue
+        }
+        refiled += 1
+        break
+      }
+    }
+    return refiled
   }
 
   /**

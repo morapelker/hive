@@ -1,5 +1,13 @@
 import { EventEmitter } from 'node:events'
-import { mkdtempSync, rmSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ChildProcess } from 'node:child_process'
@@ -11,6 +19,23 @@ import { GITHUB_CLONE_PROGRESS_CHANNEL } from '../../../../shared/github-events'
 import type { ServerEvent } from '../../../../shared/rpc/protocol'
 import { makeEventBus } from '../../../events/event-bus'
 import { makeLiveGithubOpsRpcService, parseCloneProgress } from '../github-ops'
+
+// The projects of the app. The service reads them before it deletes what an unfinished clone
+// left behind, and no test here may open the database of the machine it runs on.
+const app = vi.hoisted(() => ({
+  projectPaths: [] as string[],
+  databaseIsBroken: false
+}))
+
+vi.mock('../../../../main/db', () => ({
+  getDatabase: () => {
+    if (app.databaseIsBroken) throw new Error('the database cannot be opened')
+    return {
+      getAllProjects: () =>
+        app.projectPaths.map((path, index) => ({ id: `project-${index}`, name: 'project', path }))
+    }
+  }
+}))
 
 class FakeCloneProcess extends EventEmitter {
   readonly stderr = new EventEmitter()
@@ -33,6 +58,8 @@ const makeTempDir = (): string => {
 
 afterEach(() => {
   vi.useRealTimers()
+  app.projectPaths.length = 0
+  app.databaseIsBroken = false
   for (const unsubscribe of unsubscribes.splice(0)) {
     unsubscribe()
   }
@@ -273,6 +300,107 @@ describe('githubOps.cloneRepository', () => {
 
     const secondCancel = await Effect.runPromise(service.cancelClone('op-6'))
     expect(secondCancel.success).toBe(false)
+  })
+})
+
+describe('githubOps.cloneRepository, what an unfinished clone leaves at its destination', () => {
+  /** A clone of `me/repo-a` that is running, with something already written to its folder. */
+  const startClone = async (
+    operationId: string
+  ): Promise<{
+    service: ReturnType<typeof makeLiveGithubOpsRpcService>
+    child: FakeCloneProcess
+    events: ServerEvent[]
+    parent: string
+    destPath: string
+  }> => {
+    const parent = makeTempDir()
+    const eventBus = makeEventBus()
+    const events = await collectCloneEvents(eventBus)
+    const child = new FakeCloneProcess()
+    const spawnCommand = vi.fn().mockReturnValue(child as unknown as ChildProcess)
+    const service = makeLiveGithubOpsRpcService({ eventBus, spawnCommand })
+    await Effect.runPromise(
+      service.cloneRepository({ nameWithOwner: 'me/repo-a', parentPath: parent, operationId })
+    )
+    const destPath = join(parent, 'repo-a')
+    mkdirSync(destPath)
+    writeFileSync(join(destPath, 'in-the-folder.txt'), 'something\n')
+    return { service, child, events, parent, destPath }
+  }
+
+  /** Long enough for a removal that was started to have finished. */
+  const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 150))
+
+  it('removes what a failed clone left, so a retry is not blocked', async () => {
+    const { child, destPath } = await startClone('op-left-1')
+    app.projectPaths.push('/somewhere/else/repo-a')
+
+    child.emit('close', 128)
+
+    await vi.waitFor(() => expect(existsSync(destPath)).toBe(false))
+  })
+
+  it('leaves the folder alone when a project is registered there by then', async () => {
+    const { child, events, destPath } = await startClone('op-left-2')
+    // A project was moved to the destination while the clone ran: its folder and its row.
+    app.projectPaths.push(destPath)
+
+    child.stderr.emit('data', Buffer.from('fatal: destination path already exists\n'))
+    child.emit('close', 128)
+    await settle()
+
+    expect(readdirSync(destPath)).toEqual(['in-the-folder.txt'])
+    // The member is still told that the clone failed.
+    expect(events.map((event) => event.payload)).toEqual([
+      expect.objectContaining({ operationId: 'op-left-2', type: 'error' })
+    ])
+  })
+
+  it('leaves it alone when that project is registered under another spelling of the path', async () => {
+    const { child, parent, destPath } = await startClone('op-left-3')
+    const link = `${parent}-link`
+    symlinkSync(parent, link)
+    tempDirs.push(link)
+    app.projectPaths.push(join(link, 'repo-a'))
+
+    child.emit('close', 128)
+    await settle()
+
+    expect(readdirSync(destPath)).toEqual(['in-the-folder.txt'])
+  })
+
+  it('removes what a cancelled clone left', async () => {
+    const { service, child, destPath } = await startClone('op-left-4')
+
+    await Effect.runPromise(service.cancelClone('op-left-4'))
+    child.emit('close', 1)
+
+    await vi.waitFor(() => expect(existsSync(destPath)).toBe(false))
+  })
+
+  it('leaves the folder of a cancelled clone alone when a project is registered there by then', async () => {
+    const { service, child, destPath } = await startClone('op-left-5')
+    app.projectPaths.push(destPath)
+
+    await Effect.runPromise(service.cancelClone('op-left-5'))
+    child.emit('close', 1)
+    await settle()
+
+    expect(readdirSync(destPath)).toEqual(['in-the-folder.txt'])
+  })
+
+  it('deletes nothing, and still reports the failure, when the projects cannot be read', async () => {
+    const { child, events, destPath } = await startClone('op-left-6')
+    app.databaseIsBroken = true
+
+    child.emit('close', 128)
+    await settle()
+
+    expect(readdirSync(destPath)).toEqual(['in-the-folder.txt'])
+    expect(events.map((event) => event.payload)).toEqual([
+      expect.objectContaining({ operationId: 'op-left-6', type: 'error' })
+    ])
   })
 })
 

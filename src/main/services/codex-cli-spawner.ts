@@ -186,6 +186,12 @@ export function buildCodexCliPtySpawn(input: CodexCliPtySpawnInput): CodexCliPty
   const resumeId = input.codexSessionId ?? input.session.claude_session_id
   if (resumeId && !resumeId.startsWith('pending::')) {
     args.push('resume', resumeId)
+    // A thread records the folder it last ran in. When that is not the folder it is started
+    // in now (the project was moved), codex stops on a "Working directory" prompt whose
+    // default answer is the recorded folder, which is gone. The session's folder is always
+    // the one this spawn runs in, so say so up front; this also wins over an "Always use
+    // session directory" answer saved in the user's config.toml.
+    args.push('-c', 'tui.resume_cwd="current"')
   }
 
   // Parity with claude's --dangerously-skip-permissions: no approval dialogs,
@@ -201,7 +207,10 @@ export function buildCodexCliPtySpawn(input: CodexCliPtySpawnInput): CodexCliPty
     args.push('-m', model)
     const migration = buildCodexModelMigrationOverride(
       model,
-      (input.readModelUpgradeTarget ?? readCodexModelUpgradeTarget)(model, { ...process.env, ...env })
+      (input.readModelUpgradeTarget ?? readCodexModelUpgradeTarget)(model, {
+        ...process.env,
+        ...env
+      })
     )
     if (migration) args.push('-c', migration)
   }

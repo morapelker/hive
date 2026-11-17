@@ -12,6 +12,11 @@ import { attachWebSocketRpcServer } from './rpc/ws-server'
 import { resolveStaticFile, serveStaticFile } from './static'
 import { isDesktopBackendEventMessage } from '../shared/desktop-command'
 import { perfLog } from '../main/services/perf-logging/perf-logger'
+import {
+  finishInterruptedDevFolderMove,
+  makeLiveSettingsOpsRpcService
+} from './rpc/domains/settings-ops'
+import { createRunningSessionsTracker } from './running-sessions'
 import { cleanupBranchWatchers } from '../main/services/branch-watcher'
 import { warmUpGhosttyConfig } from '../main/services/ghostty-config-store'
 import { setGitEventPublisher } from '../main/services/git-events'
@@ -22,6 +27,7 @@ import {
   cleanupMarkdownKanbanWatchers,
   setMarkdownKanbanEventPublisher
 } from '../main/services/markdown-kanban-watcher'
+import { setDevFolderMoveEventPublisher } from '../main/services/dev-folder/live-deps'
 import { getDatabase } from '../main/db'
 
 export interface StartedHiveServer {
@@ -100,7 +106,19 @@ export const startHiveServer = (
         })
       )
     )
+    // A project moved to the dev folder announces the document runs whose paths it rewrote.
+    setDevFolderMoveEventPublisher((channel, payload) =>
+      Effect.runPromise(
+        eventBus.publish({
+          channel,
+          payload
+        })
+      )
+    )
     const authSessions = makeAuthSessionManager()
+    // Which sessions this Mac's window says are running. A report lasts as long as the socket
+    // it came through (see `onSocketClosed` below).
+    const runningSessions = createRunningSessionsTracker()
     const dataProjectsService = makeLiveDataProjectsRpcService({ eventBus })
     const dataAssistantService = makeLiveDataAssistantRpcService({ eventBus })
     const dataAssistantLifecycle = dataAssistantService as {
@@ -109,8 +127,19 @@ export const startHiveServer = (
     const router = makeRpcRouter({
       eventBus,
       dataAssistant: dataAssistantService,
-      dataProjects: dataProjectsService
+      dataProjects: dataProjectsService,
+      // Moving a project to the dev folder asks which sessions this Mac's window reports as
+      // running: a project with one of them stays where it is. The same service takes the
+      // window's report.
+      settingsOps: makeLiveSettingsOpsRpcService({ activity: runningSessions })
     })
+
+    // A move to the dev folder that a quit interrupted is finished here: the database is open,
+    // the event publishers above are set, and nothing listens yet: the server is created and
+    // starts listening below. So no window reads the project while its worktree links and
+    // connection folders still name the old folder, unless finishing takes longer than the
+    // step holds the start for.
+    yield* Effect.promise(() => finishInterruptedDevFolderMove({ activity: runningSessions }))
 
     return yield* Effect.tryPromise({
       try: () =>
@@ -258,7 +287,10 @@ export const startHiveServer = (
             // upgrades so a plain browser can connect without a bootstrap token.
             authenticateToken: config.requireAuth
               ? (token) => authSessions.getWebSocketToken(token) !== null
-              : undefined
+              : undefined,
+            // What a window said was running is no longer watched by anyone once its socket
+            // is gone.
+            onSocketClosed: (socketId) => runningSessions.releaseSocket(socketId)
           })
 
           server.once('error', reject)
@@ -298,6 +330,7 @@ export const startHiveServer = (
                 setGitEventPublisher(null)
                 setWorktreeEventPublisher(null)
                 setMarkdownKanbanEventPublisher(null)
+                setDevFolderMoveEventPublisher(null)
                 if (desktopBackendEventForwarder) {
                   process.off('message', desktopBackendEventForwarder)
                   desktopBackendEventForwarder = null

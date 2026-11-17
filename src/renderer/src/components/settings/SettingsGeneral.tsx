@@ -15,6 +15,7 @@ import { isAgentSdkAvailable } from '@/lib/agent-sdk-availability'
 import { isForceBoardMode } from '@/api/hive-enterprise/client'
 import { resolveAutoPinMode } from '@/lib/auto-pin'
 import type { AutoPinMode, TicketKeyDisplay } from '@/stores/useSettingsStore'
+import { SettingsDevFolder } from './SettingsDevFolder'
 
 const TICKET_KEY_DISPLAY_OPTIONS: { value: TicketKeyDisplay; label: string; testId: string }[] =
   [
@@ -148,6 +149,9 @@ export function SettingsGeneral(): React.JSX.Element {
         <h3 className="text-base font-medium mb-1">General</h3>
         <p className="text-sm text-muted-foreground">Basic application settings</p>
       </div>
+
+      {/* Dev folder: draws nothing until the server answered with one */}
+      <SettingsDevFolder />
 
       {/* Warn before quitting */}
       <div className="flex items-center justify-between gap-4">
@@ -1025,7 +1029,8 @@ export function SettingsGeneral(): React.JSX.Element {
           Reset All to Defaults
         </Button>
         <p className="text-xs text-muted-foreground mt-1">
-          This will reset all settings, theme, and keyboard shortcuts to their defaults.
+          This will reset all settings, theme, and keyboard shortcuts to their defaults. The dev
+          folder is kept.
         </p>
       </div>
     </div>

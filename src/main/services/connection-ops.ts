@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto'
-import { join } from 'path'
+import { existsSync, lstatSync, readdirSync, readlinkSync, unlinkSync } from 'fs'
+import { join, sep } from 'path'
 import { createLogger } from './logger'
 import {
   createConnectionDir,
@@ -14,6 +15,7 @@ import {
 import type { DatabaseService } from '../db/database'
 import type { ConnectionWithMembers, Project } from '../db/types'
 import type { RecentConnectionEntry, RecentConnectionProject } from '../../shared/types/connection'
+import type { RelocationMove } from './dev-folder/types'
 
 const log = createLogger({ component: 'ConnectionOps' })
 
@@ -761,27 +763,12 @@ export async function addConnectionProjectMemberOp(
     if (memberIds.includes(memberProjectId)) return { success: true, project }
 
     // The project directory links every member root; the new one gets a free name.
-    const existingNames: string[] = []
-    const agentsMdMembers: {
-      symlinkName: string
-      projectName: string
-      branchName: string
-      worktreePath: string
-    }[] = []
-    for (const id of [...memberIds, memberProjectId]) {
-      const memberProject = db.getProject(id)
-      if (!memberProject) continue
-      const symlinkName = deriveSymlinkName(memberProject.name, existingNames)
-      existingNames.push(symlinkName)
-      if (id === memberProjectId) createSymlink(memberProject.path, join(project.path, symlinkName))
-      const defaultWorktree = db.getWorktreesByProject(id).find((w) => w.is_default)
-      agentsMdMembers.push({
-        symlinkName,
-        projectName: memberProject.name,
-        branchName: defaultWorktree?.branch_name || 'default',
-        worktreePath: memberProject.path
-      })
-    }
+    const agentsMdMembers = buildConnectionProjectAgentsMdMembers(db, [
+      ...memberIds,
+      memberProjectId
+    ])
+    const added = agentsMdMembers.find((m) => m.projectId === memberProjectId)
+    if (added) createSymlink(added.worktreePath, join(project.path, added.symlinkName))
     try {
       generateConnectionInstructions(project.path, agentsMdMembers)
     } catch (error) {
@@ -931,6 +918,39 @@ function deriveMemberSymlinkNames(db: DatabaseService, memberIds: string[]): Map
     names.set(id, name)
   }
   return names
+}
+
+/** One member as AGENTS.md / CLAUDE.md lists it, with the project it stands for. */
+type ConnectionProjectAgentsMdMember = ReturnType<typeof buildAgentsMdMembers>[number] & {
+  projectId: string
+}
+
+/**
+ * The members of a connection project as its AGENTS.md / CLAUDE.md lists them: every member
+ * project that still exists, in member order, under the link name `deriveSymlinkName` gives it
+ * in that order, with its root folder and the branch of its default worktree.
+ */
+function buildConnectionProjectAgentsMdMembers(
+  db: DatabaseService,
+  memberProjectIds: readonly string[]
+): ConnectionProjectAgentsMdMember[] {
+  const existingNames: string[] = []
+  const members: ConnectionProjectAgentsMdMember[] = []
+  for (const id of memberProjectIds) {
+    const memberProject = db.getProject(id)
+    if (!memberProject) continue
+    const symlinkName = deriveSymlinkName(memberProject.name, existingNames)
+    existingNames.push(symlinkName)
+    const defaultWorktree = db.getWorktreesByProject(id).find((w) => w.is_default)
+    members.push({
+      projectId: id,
+      symlinkName,
+      projectName: memberProject.name,
+      branchName: defaultWorktree?.branch_name || 'default',
+      worktreePath: memberProject.path
+    })
+  }
+  return members
 }
 
 // ── Connection project base instances ─────────────────────────────────
@@ -1114,4 +1134,294 @@ export async function deleteBaseInstanceForProjectOp(
     log.warn('Failed to delete connection project base instance', { projectId, error: message })
     return { success: false, error: message }
   }
+}
+
+// ── A member project that moved on disk ───────────────────────────────
+
+/** A folder of member links, and how to name it in a sentence. */
+interface ConnectionFolder {
+  readonly path: string
+  readonly label: string
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function isNotFoundError(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | null)?.code === 'ENOENT'
+}
+
+function connectionFolder(connection: ConnectionWithMembers): ConnectionFolder {
+  return {
+    path: connection.path,
+    label: `the connection "${connection.custom_name || connection.name}"`
+  }
+}
+
+function connectionProjectFolder(project: Project): ConnectionFolder {
+  return { path: project.path, label: `the connection project "${project.name}"` }
+}
+
+/**
+ * The folders of links that point into a project: every connection that has one of the
+ * project's worktrees as a member, and every connection project that lists the project as a
+ * member. Members are matched by worktree and project id, never by path: this is read after
+ * the project moved, when its rows already hold the new paths while the links still hold the
+ * old ones.
+ */
+function findConnectionFoldersOfProject(
+  db: DatabaseService,
+  projectId: string
+): { connections: ConnectionWithMembers[]; connectionProjects: Project[] } {
+  const connectionIds = new Set<string>()
+  for (const worktree of db.getWorktreesByProject(projectId)) {
+    for (const membership of db.getConnectionMembersByWorktree(worktree.id)) {
+      connectionIds.add(membership.connection_id)
+    }
+  }
+  const connections: ConnectionWithMembers[] = []
+  for (const id of connectionIds) {
+    const connection = db.getConnection(id)
+    if (connection) connections.push(connection)
+  }
+  const connectionProjects = db
+    .getAllProjects()
+    .filter(
+      (project) =>
+        project.kind === 'connection' &&
+        parseMemberProjectIds(project.member_project_ids).includes(projectId)
+    )
+  return { connections, connectionProjects }
+}
+
+/**
+ * Where a path that names a moved directory, or something inside one, is now; null when it
+ * names neither. Whole path segments are compared, so `/dev/app-2` is not inside `/dev/app`.
+ * When several old spellings match, the longest one (the most specific directory) wins.
+ */
+function swapRelocatedPath(path: string, relocations: readonly RelocationMove[]): string | null {
+  let best: { from: string; to: string } | null = null
+  for (const relocation of relocations) {
+    for (const spelling of relocation.from) {
+      const from = spelling.length > 1 && spelling.endsWith(sep) ? spelling.slice(0, -1) : spelling
+      if (!from) continue
+      if (path !== from && !path.startsWith(from + sep)) continue
+      if (!best || from.length > best.from.length) best = { from, to: relocation.to }
+    }
+  }
+  return best ? best.to + path.slice(best.from.length) : null
+}
+
+/**
+ * Replace the symlink at `linkPath` (which points at `previousTarget`) by one to `target`.
+ * Removes nothing but a symlink: the entry is checked again right before it is unlinked. When
+ * the new link cannot be made the old one is put back, so the folder keeps the entry. Returns
+ * null when the link was replaced, otherwise a sentence that says what the link is now.
+ */
+function replaceSymlink(
+  linkPath: string,
+  previousTarget: string,
+  target: string,
+  label: string
+): string | null {
+  try {
+    if (!lstatSync(linkPath).isSymbolicLink()) {
+      return `${linkPath} in ${label} is no longer a link, so it was left as it is.`
+    }
+    unlinkSync(linkPath)
+  } catch (error) {
+    return `The link ${linkPath} of ${label} still points at ${previousTarget}, where the project no longer is: ${errorText(error)}`
+  }
+  try {
+    createSymlink(target, linkPath)
+    return null
+  } catch (error) {
+    try {
+      createSymlink(previousTarget, linkPath)
+    } catch {
+      return `The link ${linkPath} of ${label} could not be made again and is now missing (it should point at ${target}): ${errorText(error)}`
+    }
+    return `The link ${linkPath} of ${label} still points at ${previousTarget}, where the project no longer is: ${errorText(error)}`
+  }
+}
+
+/**
+ * Repoint the links of connection folders at a project that has just moved on disk.
+ *
+ * A connection folder holds one symlink per member. The name of a link does not say whose it
+ * is: the link names of a connection project are derived from the member names at the time
+ * each link was made and are stored nowhere, so they stop matching once a member is renamed.
+ * Links are therefore found by what they point at. In every folder that has the project as a
+ * member, each symlink whose target is one of the old spellings of a moved directory, or lies
+ * under one, is replaced by a link of the same name to the same place under the new directory.
+ * Nothing but a symlink is ever removed, and a link that points anywhere else is left alone,
+ * so running this a second time changes nothing.
+ *
+ * Synchronous, so the caller can run it in the same tick that repointed the project's rows:
+ * neither an agent nor a board scan then finds a dangling link. Never throws: what could not
+ * be done comes back as sentences.
+ */
+export function relinkConnectionSymlinksForMovedProject(
+  db: DatabaseService,
+  projectId: string,
+  relocations: readonly RelocationMove[]
+): { relinked: number; warnings: string[] } {
+  const warnings: string[] = []
+  let relinked = 0
+  try {
+    let folders: ConnectionFolder[]
+    try {
+      const found = findConnectionFoldersOfProject(db, projectId)
+      folders = [
+        ...found.connections.map(connectionFolder),
+        ...found.connectionProjects.map(connectionProjectFolder)
+      ]
+    } catch (error) {
+      return {
+        relinked,
+        warnings: [
+          `Could not look up the connections that include this project, so their links still point at its old folder: ${errorText(error)}`
+        ]
+      }
+    }
+
+    for (const folder of folders) {
+      let names: string[]
+      try {
+        names = readdirSync(folder.path)
+      } catch (error) {
+        // A folder that is gone has no links to repoint.
+        if (!isNotFoundError(error)) {
+          warnings.push(
+            `Could not read the folder of ${folder.label} (${folder.path}), so its links were not checked: ${errorText(error)}`
+          )
+        }
+        continue
+      }
+
+      for (const name of names) {
+        const linkPath = join(folder.path, name)
+        let target: string
+        try {
+          if (!lstatSync(linkPath).isSymbolicLink()) continue
+          target = readlinkSync(linkPath)
+        } catch (error) {
+          // Removed since the folder was listed: nothing to repoint.
+          if (!isNotFoundError(error)) {
+            warnings.push(
+              `Could not read the link ${linkPath} of ${folder.label}, so it was not checked: ${errorText(error)}`
+            )
+          }
+          continue
+        }
+
+        const swapped = swapRelocatedPath(target, relocations)
+        if (swapped === null || swapped === target) continue
+        const problem = replaceSymlink(linkPath, target, swapped, folder.label)
+        if (problem) warnings.push(problem)
+        else relinked++
+      }
+    }
+  } catch (error) {
+    warnings.push(`Could not update the links of this project's connections: ${errorText(error)}`)
+  }
+
+  if (relinked > 0 || warnings.length > 0) {
+    log.info('Relinked connection folders of a moved project', {
+      projectId,
+      relinked,
+      warnings: warnings.length
+    })
+  }
+  return { relinked, warnings }
+}
+
+/**
+ * The name each link target has in a folder of links. A target that several links point at
+ * lists their names in alphabetical order. Empty when the folder cannot be read.
+ */
+function readLinkNamesByTarget(folderPath: string): Map<string, string[]> {
+  const namesByTarget = new Map<string, string[]>()
+  let names: string[]
+  try {
+    names = readdirSync(folderPath).sort()
+  } catch {
+    return namesByTarget
+  }
+  for (const name of names) {
+    try {
+      const linkPath = join(folderPath, name)
+      if (!lstatSync(linkPath).isSymbolicLink()) continue
+      const target = readlinkSync(linkPath)
+      namesByTarget.set(target, [...(namesByTarget.get(target) ?? []), name])
+    } catch {
+      // Not a link that can be read: it names no member.
+    }
+  }
+  return namesByTarget
+}
+
+/**
+ * The members a connection project's AGENTS.md / CLAUDE.md should list. The derived link name
+ * of a member is only what its link was called if the member has not been renamed since, so
+ * the name of the link that really points at the member's folder is used when there is one.
+ */
+function connectionProjectInstructionMembers(
+  db: DatabaseService,
+  project: Project
+): ConnectionProjectAgentsMdMember[] {
+  const namesByTarget = readLinkNamesByTarget(project.path)
+  return buildConnectionProjectAgentsMdMembers(
+    db,
+    parseMemberProjectIds(project.member_project_ids)
+  ).map((member) => {
+    const onDisk = namesByTarget.get(member.worktreePath) ?? []
+    if (onDisk.length === 0 || onDisk.includes(member.symlinkName)) return member
+    return { ...member, symlinkName: onDisk[0] }
+  })
+}
+
+/**
+ * Write AGENTS.md and CLAUDE.md again in every connection folder that has the project as a
+ * member (the folders `relinkConnectionSymlinksForMovedProject` visits), so that the real
+ * paths they list are the ones the database holds now. A folder that is no longer on disk is
+ * skipped. Never throws: each folder that could not be written comes back as a sentence. Safe
+ * to run twice.
+ */
+export function regenerateConnectionInstructionsForProject(
+  db: DatabaseService,
+  projectId: string
+): string[] {
+  const warnings: string[] = []
+  const regenerate = (
+    folder: ConnectionFolder,
+    members: () => Parameters<typeof generateConnectionInstructions>[1]
+  ): void => {
+    try {
+      if (!existsSync(folder.path)) return
+      generateConnectionInstructions(folder.path, members())
+    } catch (error) {
+      warnings.push(
+        `Could not rewrite AGENTS.md and CLAUDE.md of ${folder.label} (${folder.path}), so they still name the project's old folder: ${errorText(error)}`
+      )
+    }
+  }
+
+  try {
+    const found = findConnectionFoldersOfProject(db, projectId)
+    for (const connection of found.connections) {
+      regenerate(connectionFolder(connection), () => buildAgentsMdMembers(connection))
+    }
+    for (const project of found.connectionProjects) {
+      regenerate(connectionProjectFolder(project), () =>
+        connectionProjectInstructionMembers(db, project)
+      )
+    }
+  } catch (error) {
+    warnings.push(
+      `Could not look up the connections that include this project, so their AGENTS.md and CLAUDE.md still name its old folder: ${errorText(error)}`
+    )
+  }
+  return warnings
 }

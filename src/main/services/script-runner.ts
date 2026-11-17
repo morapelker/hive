@@ -516,6 +516,16 @@ export class ScriptRunner {
     return killProcessPid(pid)
   }
 
+  /**
+   * Whether a script started under this key is still alive: `script:run:<worktreeId>` for a
+   * run script, `script:setup:<worktreeId>` for a setup script. Commands run through
+   * `runAndWait` have no key and are not tracked.
+   */
+  isRunning(eventKey: string): boolean {
+    const proc = this.runningProcesses.get(eventKey)
+    return !!proc && proc.exitCode === null && proc.signalCode === null
+  }
+
   getStats(): { active: number; totalOpened: number; totalClosed: number } {
     return {
       active: this.runningProcesses.size,

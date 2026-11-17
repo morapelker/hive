@@ -1,6 +1,15 @@
 import { SETTINGS_UPDATED_CHANNEL } from '@shared/settings-events'
 import type { ServerEvent } from '@shared/rpc/protocol'
+import {
+  DEV_FOLDER_RPC,
+  type DevFolderMovePlan,
+  type DevFolderMoveResult,
+  type DevFolderState,
+  type MoveProjectToDevFolderParams,
+  type SetDevFolderResult
+} from '@shared/types/dev-folder'
 import type { DetectedApp } from '@shared/types/settings'
+import { RUNNING_SESSIONS_REPORT_RPC } from '@shared/session-running-state'
 import { getRendererRpcClient } from './rpc-client'
 
 type SettingsOperationResult = {
@@ -74,6 +83,30 @@ export const settingsApi = {
       terminalId,
       ...(customCommand === undefined ? {} : { customCommand })
     }),
+  // The dev folder (Settings › General). A caller that asks on mount checks the shape of the
+  // answer: a test double may answer something else.
+  getDevFolder: async (): Promise<DevFolderState> =>
+    getRendererRpcClient().request<DevFolderState>(DEV_FOLDER_RPC.get, {}),
+  /** `null` goes back to the default folder. A refusal resolves with its sentence in `error`. */
+  setDevFolder: async (path: string | null): Promise<SetDevFolderResult> =>
+    getRendererRpcClient().request<SetDevFolderResult>(DEV_FOLDER_RPC.set, { path }),
+  planDevFolderMove: async (): Promise<DevFolderMovePlan> =>
+    getRendererRpcClient().request<DevFolderMovePlan>(DEV_FOLDER_RPC.planMove, {}),
+  // The server refuses params with any other key, so the two are named one by one.
+  moveProjectToDevFolder: async ({
+    projectId,
+    expectedToPath
+  }: MoveProjectToDevFolderParams): Promise<DevFolderMoveResult> =>
+    getRendererRpcClient().request<DevFolderMoveResult>(DEV_FOLDER_RPC.moveProject, {
+      projectId,
+      expectedToPath
+    }),
+  /**
+   * This window's running sessions (working, or waiting on a person): the whole set each time.
+   * The backend keeps it for as long as the socket that sent it is open.
+   */
+  reportRunningSessions: async (sessionIds: readonly string[]): Promise<{ ok: true }> =>
+    getRendererRpcClient().request<{ ok: true }>(RUNNING_SESSIONS_REPORT_RPC, { sessionIds }),
   onSettingsUpdated: (callback: (data: unknown) => void): (() => void) =>
     getRendererRpcClient().subscribe(SETTINGS_UPDATED_CHANNEL, (event: ServerEvent) => {
       callback(event.payload)

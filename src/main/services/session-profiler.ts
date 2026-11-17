@@ -33,7 +33,7 @@ import {
 
 const log = createLogger({ component: 'SessionProfiler' })
 
-/** A snapshot younger than this is served from cache. */
+/** A snapshot younger than this is served from cache, until a terminal is opened or closed. */
 const SNAPSHOT_CACHE_MS = 3_000
 /** A previous CPU sample older than this is too coarse a window: re-prime instead. */
 const CPU_SAMPLE_MAX_AGE_MS = 5 * 60_000
@@ -581,8 +581,12 @@ export function createSessionProfiler(deps: SessionProfilerDeps): {
   let previousCpu: CpuSample | null = null
   let cached: SessionProfilerSnapshot | null = null
   let inFlight: { generation: number; promise: Promise<SessionProfilerSnapshot> } | null = null
-  // Bumped by kills: a snapshot started before one must not be served after it.
+  // Bumped by kills, and when a terminal was opened or closed: a snapshot started before
+  // either must not be served after it.
   let generation = 0
+  // The terminals the registry held when the snapshots of this generation were started; null
+  // before the first one, and when the registry could not be read.
+  let sampledTerminals: string | null = null
   // `pid:startedAt` of the processes of sessions stopped moments ago → session id + expiry.
   const recentlyStopped = new Map<string, { sessionId: string; until: number }>()
 
@@ -766,6 +770,29 @@ export function createSessionProfiler(deps: SessionProfilerDeps): {
     }
   }
 
+  const invalidate = (): void => {
+    generation += 1
+    cached = null
+  }
+
+  /**
+   * Which terminals the registry holds, as text: the id and pid of each, the same in whatever
+   * order they are listed and whatever was typed or printed in them since. Null when the
+   * registry cannot be read.
+   */
+  const registryTerminals = (): string | null => {
+    try {
+      return JSON.stringify(
+        deps
+          .listPtys()
+          .map((pty) => `${pty.pid}:${pty.id}`)
+          .sort()
+      )
+    } catch {
+      return null
+    }
+  }
+
   const getSnapshot = async (): Promise<SessionProfilerSnapshot> => {
     if (deps.platform === 'win32') {
       return {
@@ -776,6 +803,16 @@ export function createSessionProfiler(deps: SessionProfilerDeps): {
         sessions: [],
         totals: emptyTotals(cpuCount())
       }
+    }
+    // A snapshot only knows the agent CLIs that ran when it was started: one opened since is
+    // missing from it, one closed since is still in it. The dev folder move decides from this
+    // list whether a project is in use, and asks many times inside the cache's 3 s. So a
+    // snapshot is served only while the registry holds the terminals it was started with; a
+    // registry that cannot be read counts as changed.
+    const terminals = registryTerminals()
+    if (terminals === null || terminals !== sampledTerminals) {
+      invalidate()
+      sampledTerminals = terminals
     }
     if (cached && deps.now() - cached.sampledAt < SNAPSHOT_CACHE_MS) return cached
     if (inFlight && inFlight.generation === generation) return inFlight.promise
@@ -804,11 +841,6 @@ export function createSessionProfiler(deps: SessionProfilerDeps): {
       })
     inFlight = { generation: startedGeneration, promise }
     return promise
-  }
-
-  const invalidate = (): void => {
-    generation += 1
-    cached = null
   }
 
   const isAlive = (target: number): boolean => {
@@ -1185,7 +1217,10 @@ const getLiveProfiler = (): ReturnType<typeof createSessionProfiler> => {
   return liveProfiler
 }
 
-/** One sample of the app's process tree and its agent sessions (cached for 3 s). */
+/**
+ * One sample of the app's process tree and its agent sessions (cached for 3 s, or until a
+ * terminal is opened or closed).
+ */
 export function getSessionProfilerSnapshot(): Promise<SessionProfilerSnapshot> {
   return getLiveProfiler().getSnapshot()
 }

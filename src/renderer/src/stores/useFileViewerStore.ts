@@ -184,6 +184,12 @@ interface FileViewerState {
     oldBranch: string,
     newBranch: string
   ) => void
+  /**
+   * Close every tab `matches` picks, and nothing else: the other tabs keep their unsaved
+   * edits. What the closed tabs held (unsaved edits, the content they were opened with) goes
+   * with them.
+   */
+  closeTabsWhere: (matches: (key: string, tab: TabEntry) => boolean) => void
 
   markDirty: (path: string) => void
   markClean: (path: string) => void
@@ -268,7 +274,11 @@ export const useFileViewerStore = create<FileViewerState>((set, get) => ({
         ? `context:${state.contextEditorWorktreeId}`
         : null
       const openFiles = tabKey
-        ? (() => { const m = new Map(state.openFiles); m.delete(tabKey); return m })()
+        ? (() => {
+            const m = new Map(state.openFiles)
+            m.delete(tabKey)
+            return m
+          })()
         : state.openFiles
 
       return {
@@ -342,9 +352,8 @@ export const useFileViewerStore = create<FileViewerState>((set, get) => ({
       })
       // Increment scrollTrigger so the scroll effect re-fires even when
       // scrollToLine hasn't changed (e.g. same comment clicked twice)
-      const scrollTrigger = diff.scrollToLine != null
-        ? (state.activeDiff?.scrollTrigger ?? 0) + 1
-        : undefined
+      const scrollTrigger =
+        diff.scrollToLine != null ? (state.activeDiff?.scrollTrigger ?? 0) + 1 : undefined
       return {
         activeDiff: { ...diff, scrollTrigger },
         activeFilePath: tabKey,
@@ -485,6 +494,65 @@ export const useFileViewerStore = create<FileViewerState>((set, get) => ({
           : state.activeDiff
       if (!renamed && activeDiff === state.activeDiff) return state
       return { openFiles, activeFilePath, activeDiff }
+    })
+  },
+
+  closeTabsWhere: (matches: (key: string, tab: TabEntry) => boolean) => {
+    set((state) => {
+      const newMap = new Map<string, TabEntry>()
+      // Clean up dirty, original, and externallyChanged for closed files
+      const newDirty = new Set(state.dirtyFiles)
+      const newOriginal = new Map(state.originalContents)
+      const newExtChanged = new Set(state.externallyChanged)
+      for (const [key, tab] of state.openFiles) {
+        if (!matches(key, tab)) {
+          newMap.set(key, tab)
+          continue
+        }
+        newDirty.delete(key)
+        newOriginal.delete(key)
+        newExtChanged.delete(key)
+      }
+      if (newMap.size === state.openFiles.size) return state
+
+      // The tab on screen stays on screen. When it was closed, the last tab left takes its
+      // place, as it does when a single tab is closed.
+      const activeClosed =
+        state.activeFilePath !== null &&
+        state.openFiles.has(state.activeFilePath) &&
+        !newMap.has(state.activeFilePath)
+      const remaining = Array.from(newMap.keys())
+      const nextKey = remaining.length > 0 ? remaining[remaining.length - 1] : null
+      const nextTab = nextKey ? newMap.get(nextKey) : undefined
+      const nextDiff: ActiveDiff | null =
+        nextTab?.type === 'diff'
+          ? {
+              worktreePath: nextTab.worktreePath,
+              filePath: nextTab.filePath,
+              fileName: nextTab.fileName,
+              staged: nextTab.staged,
+              isUntracked: nextTab.isUntracked,
+              isNewFile: nextTab.isNewFile,
+              compareBranch: nextTab.compareBranch,
+              prReviewWorktreeId: nextTab.prReviewWorktreeId
+            }
+          : null
+      // Clear contextEditorWorktreeId if the context tab was closed
+      const contextTabKey = state.contextEditorWorktreeId
+        ? `context:${state.contextEditorWorktreeId}`
+        : null
+      const contextStillOpen = contextTabKey ? newMap.has(contextTabKey) : false
+      const pendingClosed = state.pendingClose !== null && !newMap.has(state.pendingClose)
+      return {
+        openFiles: newMap,
+        activeFilePath: activeClosed ? nextKey : state.activeFilePath,
+        activeDiff: activeClosed ? nextDiff : state.activeDiff,
+        contextEditorWorktreeId: contextStillOpen ? state.contextEditorWorktreeId : null,
+        dirtyFiles: newDirty,
+        originalContents: newOriginal,
+        pendingClose: pendingClosed ? null : state.pendingClose,
+        externallyChanged: newExtChanged
+      }
     })
   },
 

@@ -731,6 +731,283 @@ describe('DiscordSessionBridge managed sessions', () => {
   })
 })
 
+describe('DiscordSessionBridge after the worktree folder changed', () => {
+  const OLD_FOLDER = '/old-dev/project/worktree'
+  const NEW_FOLDER = '/new-dev/project/worktree'
+  const text = (value: string) => [{ type: 'text', text: value }]
+
+  // Finds a session by folder and id, as the Claude Code and Codex implementers do: a prompt
+  // for a session that is not filed under that folder fails with "session not found".
+  const makeFolderKeyedAgent = () => {
+    const filed = new Set<string>()
+    const key = (worktreePath: string, sessionId: string): string => `${worktreePath}::${sessionId}`
+    let connected = 0
+    return {
+      connect: vi.fn(async (worktreePath: string, _hiveSessionId: string) => {
+        const sessionId = `oc-${++connected}`
+        filed.add(key(worktreePath, sessionId))
+        return { sessionId }
+      }),
+      reconnect: vi.fn(
+        async (
+          worktreePath: string,
+          sessionId: string,
+          _hiveSessionId: string
+        ): Promise<{ success: boolean; sessionStatus?: 'idle' | 'busy' | 'retry' }> => {
+          filed.add(key(worktreePath, sessionId))
+          return { success: true, sessionStatus: 'idle' }
+        }
+      ),
+      prompt: vi.fn(async (worktreePath: string, sessionId: string, _parts: unknown) => {
+        if (!filed.has(key(worktreePath, sessionId))) {
+          throw new Error(`Prompt failed: session not found for ${worktreePath} / ${sessionId}`)
+        }
+      }),
+      abort: vi.fn(async (_worktreePath: string, _sessionId: string) => true),
+      disconnect: vi.fn(async (worktreePath: string, sessionId: string) => {
+        filed.delete(key(worktreePath, sessionId))
+      })
+    }
+  }
+
+  const setupFolderKeyedBridge = () => {
+    const db = new FakeBridgeDatabase()
+    db.resources = [makeResource()]
+    setAppSettings(db, {
+      defaultAgentSdk: 'opencode',
+      selectedModelByProvider: { opencode: BUILD_MODEL },
+      defaultModels: null
+    })
+    const agent = makeFolderKeyedAgent()
+    let listener: StreamListener | null = null
+    const bridge = new DiscordSessionBridge({
+      db: db as never,
+      openCodeService: agent,
+      subscribeToAgentEvents: (callback) => {
+        listener = callback
+        return vi.fn()
+      },
+      typingIntervalMs: 50
+    })
+    bridge.start()
+    const channel = makeChannel()
+    return {
+      db,
+      bridge,
+      agent,
+      channel,
+      message: (worktreePath: string, value: string) => ({
+        ...userMessage(channel, value),
+        worktreePath
+      }),
+      endTurn: async (sessionId = 'hive-1'): Promise<void> => {
+        listener?.({ type: 'session.idle', sessionId, data: {} })
+        await flushPromises()
+      }
+    }
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  it("reconnects the managed session under the worktree's new folder when it changed since the last message", async () => {
+    const { db, bridge, agent, channel, message, endTurn } = setupFolderKeyedBridge()
+    await bridge.handleUserMessage(message(OLD_FOLDER, 'first'))
+    await endTurn()
+
+    await bridge.handleUserMessage(message(NEW_FOLDER, 'second'))
+    await endTurn()
+    await bridge.handleUserMessage(message(NEW_FOLDER, 'third'))
+
+    expect(agent.disconnect.mock.calls).toEqual([[OLD_FOLDER, 'oc-1']])
+    expect(agent.reconnect.mock.calls).toEqual([[NEW_FOLDER, 'oc-1', 'hive-1']])
+    expect(agent.disconnect.mock.invocationCallOrder[0]).toBeLessThan(
+      agent.reconnect.mock.invocationCallOrder[0]
+    )
+    expect(agent.prompt.mock.calls.map((call) => call.slice(0, 3))).toEqual([
+      [OLD_FOLDER, 'oc-1', text('first')],
+      [NEW_FOLDER, 'oc-1', text('second')],
+      [NEW_FOLDER, 'oc-1', text('third')]
+    ])
+    expect(db.createdSessions).toHaveLength(1)
+    expect(channel.send).not.toHaveBeenCalled()
+  })
+
+  it('leaves a runtime that is busy with a turn alone and moves it once it is idle', async () => {
+    const { bridge, agent, channel, message, endTurn } = setupFolderKeyedBridge()
+    await bridge.handleUserMessage(message(OLD_FOLDER, 'first'))
+
+    await bridge.handleUserMessage(message(NEW_FOLDER, 'second'))
+
+    expect(agent.disconnect).not.toHaveBeenCalled()
+    expect(agent.reconnect).not.toHaveBeenCalled()
+    expect(agent.prompt).toHaveBeenCalledTimes(1)
+
+    // The queued message goes out where the session still is.
+    await endTurn()
+    expect(agent.prompt).toHaveBeenLastCalledWith(OLD_FOLDER, 'oc-1', text('second'), BUILD_MODEL)
+    expect(agent.disconnect).not.toHaveBeenCalled()
+
+    await endTurn()
+    await bridge.handleUserMessage(message(NEW_FOLDER, 'third'))
+
+    expect(agent.disconnect.mock.calls).toEqual([[OLD_FOLDER, 'oc-1']])
+    expect(agent.reconnect.mock.calls).toEqual([[NEW_FOLDER, 'oc-1', 'hive-1']])
+    expect(agent.prompt).toHaveBeenLastCalledWith(NEW_FOLDER, 'oc-1', text('third'), BUILD_MODEL)
+    expect(channel.send).not.toHaveBeenCalled()
+  })
+
+  it('still reconnects under the new folder when the disconnect under the old one fails', async () => {
+    const { bridge, agent, channel, message, endTurn } = setupFolderKeyedBridge()
+    await bridge.handleUserMessage(message(OLD_FOLDER, 'first'))
+    await endTurn()
+    agent.disconnect.mockRejectedValueOnce(new Error('helper already gone'))
+
+    await bridge.handleUserMessage(message(NEW_FOLDER, 'second'))
+
+    expect(agent.reconnect.mock.calls).toEqual([[NEW_FOLDER, 'oc-1', 'hive-1']])
+    expect(agent.prompt).toHaveBeenLastCalledWith(NEW_FOLDER, 'oc-1', text('second'), BUILD_MODEL)
+    expect(channel.send).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [
+      'throws',
+      (agent: ReturnType<typeof makeFolderKeyedAgent>) => {
+        agent.reconnect.mockRejectedValueOnce(new Error('agent did not start'))
+      }
+    ],
+    [
+      'fails and a new session cannot be started either',
+      (agent: ReturnType<typeof makeFolderKeyedAgent>) => {
+        agent.reconnect.mockResolvedValueOnce({ success: false })
+        agent.connect.mockRejectedValueOnce(new Error('agent did not start'))
+      }
+    ]
+  ])('tries again on the next message when the reconnect %s', async (_case, failOnce) => {
+    const { db, bridge, agent, channel, message, endTurn } = setupFolderKeyedBridge()
+    await bridge.handleUserMessage(message(OLD_FOLDER, 'first'))
+    await endTurn()
+    failOnce(agent)
+
+    await expect(bridge.handleUserMessage(message(NEW_FOLDER, 'second'))).rejects.toThrow(
+      'agent did not start'
+    )
+    expect(db.resources[0].managed_session_id).toBe('hive-1')
+
+    await bridge.handleUserMessage(message(NEW_FOLDER, 'third'))
+
+    expect(agent.reconnect).toHaveBeenCalledTimes(2)
+    expect(agent.reconnect).toHaveBeenLastCalledWith(NEW_FOLDER, 'oc-1', 'hive-1')
+    expect(agent.prompt).toHaveBeenLastCalledWith(NEW_FOLDER, 'oc-1', text('third'), BUILD_MODEL)
+    expect(channel.send).not.toHaveBeenCalled()
+  })
+
+  it('sends the text that was queued for the channel after the session moved', async () => {
+    const { bridge, agent, channel, message, endTurn } = setupFolderKeyedBridge()
+    await bridge.handleUserMessage(message(OLD_FOLDER, 'first'))
+    await endTurn()
+    agent.prompt.mockRejectedValueOnce(new Error('network down'))
+    await bridge.handleUserMessage(message(OLD_FOLDER, 'second'))
+    expect(channel.send).toHaveBeenLastCalledWith('Could not send prompt to session: network down')
+
+    await bridge.handleUserMessage(message(NEW_FOLDER, 'third'))
+    await endTurn()
+
+    expect(agent.prompt.mock.calls.slice(2).map((call) => call.slice(0, 3))).toEqual([
+      [NEW_FOLDER, 'oc-1', text('third')],
+      [NEW_FOLDER, 'oc-1', text('second')]
+    ])
+    expect(channel.send).toHaveBeenCalledTimes(1)
+  })
+
+  it('goes on in a new session, with the queued text, when the old one cannot be reconnected', async () => {
+    const { db, bridge, agent, channel, message, endTurn } = setupFolderKeyedBridge()
+    await bridge.handleUserMessage(message(OLD_FOLDER, 'first'))
+    await endTurn()
+    agent.prompt.mockRejectedValueOnce(new Error('network down'))
+    await bridge.handleUserMessage(message(OLD_FOLDER, 'second'))
+    agent.reconnect.mockResolvedValueOnce({ success: false })
+
+    await bridge.handleUserMessage(message(NEW_FOLDER, 'third'))
+
+    expect(agent.connect).toHaveBeenLastCalledWith(NEW_FOLDER, 'hive-2')
+    expect(db.resources[0].managed_session_id).toBe('hive-2')
+    expect(agent.prompt).toHaveBeenLastCalledWith(NEW_FOLDER, 'oc-2', text('third'), BUILD_MODEL)
+
+    await endTurn('hive-2')
+
+    expect(agent.prompt).toHaveBeenLastCalledWith(NEW_FOLDER, 'oc-2', text('second'), BUILD_MODEL)
+    expect(channel.send).toHaveBeenCalledTimes(1)
+  })
+
+  it('reconnects once when two messages arrive together after the folder changed', async () => {
+    const { bridge, agent, channel, message, endTurn } = setupFolderKeyedBridge()
+    await bridge.handleUserMessage(message(OLD_FOLDER, 'first'))
+    await endTurn()
+
+    await Promise.all([
+      bridge.handleUserMessage(message(NEW_FOLDER, 'second')),
+      bridge.handleUserMessage(message(NEW_FOLDER, 'third'))
+    ])
+
+    expect(agent.disconnect).toHaveBeenCalledTimes(1)
+    expect(agent.reconnect).toHaveBeenCalledTimes(1)
+    expect(agent.prompt).toHaveBeenCalledTimes(2)
+    expect(agent.prompt).toHaveBeenLastCalledWith(NEW_FOLDER, 'oc-1', text('second'), BUILD_MODEL)
+
+    await endTurn()
+
+    expect(agent.prompt).toHaveBeenLastCalledWith(NEW_FOLDER, 'oc-1', text('third'), BUILD_MODEL)
+    expect(channel.send).not.toHaveBeenCalled()
+  })
+
+  it('moves the session when the mode is changed first, and the next message does not reconnect again', async () => {
+    const { db, bridge, agent, channel, message, endTurn } = setupFolderKeyedBridge()
+    await bridge.handleUserMessage(message(OLD_FOLDER, 'first'))
+    await endTurn()
+
+    await bridge.setWorktreeMode(
+      { worktreeId: 'worktree-1', projectId: 'project-1', worktreePath: NEW_FOLDER },
+      'plan'
+    )
+    await bridge.handleUserMessage(message(NEW_FOLDER, 'second'))
+
+    expect(agent.disconnect.mock.calls).toEqual([[OLD_FOLDER, 'oc-1']])
+    expect(agent.reconnect.mock.calls).toEqual([[NEW_FOLDER, 'oc-1', 'hive-1']])
+    expect(agent.prompt).toHaveBeenLastCalledWith(
+      NEW_FOLDER,
+      'oc-1',
+      text(`${PLAN_MODE_PREFIX}second`),
+      BUILD_MODEL
+    )
+    expect(db.createdSessions).toHaveLength(1)
+    expect(channel.send).not.toHaveBeenCalled()
+  })
+
+  it('stops a turn under the folder the runtime is filed under', async () => {
+    const { bridge, agent, message } = setupFolderKeyedBridge()
+    await bridge.handleUserMessage(message(OLD_FOLDER, 'long task'))
+
+    await bridge.stopManagedSession({ worktreeId: 'worktree-1', worktreePath: NEW_FOLDER })
+
+    expect(agent.abort.mock.calls).toEqual([[OLD_FOLDER, 'oc-1']])
+  })
+
+  it('clears a session under the folder the runtime is filed under', async () => {
+    const { db, bridge, agent, message, endTurn } = setupFolderKeyedBridge()
+    await bridge.handleUserMessage(message(OLD_FOLDER, 'first'))
+    await endTurn()
+
+    await bridge.clearManagedSession({ worktreeId: 'worktree-1', worktreePath: NEW_FOLDER })
+
+    expect(agent.abort.mock.calls).toEqual([[OLD_FOLDER, 'oc-1']])
+    expect(agent.disconnect.mock.calls).toEqual([[OLD_FOLDER, 'oc-1']])
+    expect(db.resources[0].managed_session_id).toBeNull()
+  })
+})
+
 describe('DiscordSessionBridge stream delivery', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -1340,6 +1617,41 @@ describe('DiscordSessionBridge relayed CLI sessions', () => {
     expect(messages[0].content).toContain('Plan ready')
     expect(messages[0].content).toContain('1. Do the thing')
     expect(messages[0].components).toBeTruthy()
+  })
+
+  it('starts the session of a handed-off plan in the folder the worktree is in now', async () => {
+    const NEW_FOLDER = '/new-dev/project/worktree'
+    const replyRouter = { replyPlan: vi.fn(async () => undefined) }
+    const { db, bridge, openCode } = setupRelayedCliSession({ replyRouter })
+    // The runtime of a relayed session is created on its first event and keeps the folder the
+    // worktree was in then.
+    bridge.handleBackendAgentEvent({ type: 'session.idle', sessionId: 'ticket-session', data: {} })
+    await flushPromises()
+    db.worktrees[0].path = NEW_FOLDER
+
+    bridge.handleBackendAgentEvent({
+      type: 'plan.ready',
+      sessionId: 'ticket-session',
+      data: { requestId: 'req-plan-moved', plan: '1. Do the thing' }
+    })
+    await flushPromises()
+    await bridge.handleComponentInteraction({
+      isStringSelectMenu: () => false,
+      isButton: () => true,
+      customId: 'plan:req-plan-moved:handoff',
+      deferUpdate: vi.fn(async () => undefined)
+    })
+
+    expect(openCode.connect.mock.calls).toEqual([[NEW_FOLDER, 'hive-1']])
+    expect(openCode.prompt.mock.calls).toEqual([
+      [
+        NEW_FOLDER,
+        'oc-1',
+        [{ type: 'text', text: 'Implement the following plan\n1. Do the thing' }],
+        BUILD_MODEL
+      ]
+    ])
+    expect(db.resources[0].managed_session_id).toBe('hive-1')
   })
 })
 

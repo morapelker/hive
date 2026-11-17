@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import type { FlatFile } from '@/lib/file-search-utils'
+import { isSameOrInsidePath, movedPathFor, type MovedPath } from '@/lib/dev-folder/moved-paths'
 import type { FileTreeChangeEventItem } from '@shared/types/file-tree'
 import { fileTreeApi } from '@/api/file-tree-api'
 
@@ -45,6 +46,12 @@ interface FileTreeState {
   startWatching: (worktreePath: string) => Promise<void>
   stopWatching: (worktreePath: string) => Promise<void>
   handleFileChange: (worktreePath: string, events: FileTreeChangeEventItem[]) => Promise<void>
+  /**
+   * Follow worktrees whose folder moved (a project brought over to the dev folder): what the
+   * person left expanded and the filter they typed go to the new path, and what was scanned
+   * under the old path is dropped so the tree is read again where it is now.
+   */
+  rekeyWorktreePaths: (moves: readonly MovedPath[]) => void
 }
 
 // Helper to convert Set to Array for persistence
@@ -65,6 +72,77 @@ const deserializeExpandedPaths = (data: [string, string[]][]): Map<string, Set<s
   return map
 }
 
+// The expanded folders after `moves`: a worktree that moved is filed under its new path, and
+// so is every folder in its set (each entry is an absolute path inside the worktree). When
+// the new path already has a set, the two are merged, so nothing the person expanded is lost.
+// Returns the map it was given when no path in it moved; a set no move touched is kept as the
+// same object.
+const rekeyExpandedPaths = (
+  map: Map<string, Set<string>>,
+  moves: readonly MovedPath[]
+): Map<string, Set<string>> => {
+  let changed = false
+  const next = new Map<string, Set<string>>()
+  for (const [key, paths] of map) {
+    const nextKey = movedPathFor(key, moves) ?? key
+
+    let nextPaths = paths
+    for (const path of paths) {
+      if ((movedPathFor(path, moves) ?? path) === path) continue
+      nextPaths = new Set(Array.from(paths, (entry) => movedPathFor(entry, moves) ?? entry))
+      break
+    }
+    if (nextKey !== key || nextPaths !== paths) changed = true
+
+    const existing = next.get(nextKey)
+    if (existing) {
+      changed = true
+      next.set(nextKey, new Set([...existing, ...nextPaths]))
+    } else {
+      next.set(nextKey, nextPaths)
+    }
+  }
+  return changed ? next : map
+}
+
+// The filters after `moves`. The filter of a worktree that moved replaces whatever its new
+// path held: that one is what the person sees in the tree right now.
+const rekeyFilters = (
+  map: Map<string, string>,
+  moves: readonly MovedPath[]
+): Map<string, string> => {
+  let changed = false
+  const next = new Map<string, string>()
+  const moved: [string, string][] = []
+  for (const [key, filter] of map) {
+    const nextKey = movedPathFor(key, moves) ?? key
+    if (nextKey === key) {
+      next.set(key, filter)
+    } else {
+      changed = true
+      moved.push([nextKey, filter])
+    }
+  }
+  for (const [key, filter] of moved) next.set(key, filter)
+  return changed ? next : map
+}
+
+// A map without the entries of the worktrees that moved. Trees and file indexes hold the old
+// absolute path in every node, so they are not carried over: the views load them again under
+// the new path. Returns the map it was given when it holds none.
+const withoutMovedWorktrees = <T>(
+  map: Map<string, T>,
+  moves: readonly MovedPath[]
+): Map<string, T> => {
+  let next: Map<string, T> | null = null
+  for (const key of map.keys()) {
+    if (!moves.some((move) => isSameOrInsidePath(key, move.from))) continue
+    next ??= new Map(map)
+    next.delete(key)
+  }
+  return next ?? map
+}
+
 // Module-level map for onChange subscriptions with refcounting.
 // Multiple components (FileTree, SessionView) can startWatching the same path;
 // refCount ensures the watcher is only torn down when all consumers have stopped.
@@ -73,6 +151,29 @@ const watchSubscriptions = new Map<string, { unsubscribe: () => void; refCount: 
 // When a batch of file-change events exceeds this threshold (e.g. branch switch,
 // npm install), skip incremental index updates and do a full re-scan instead.
 const FULL_RESCAN_THRESHOLD = 20
+
+// Folders that moved away (a project brought over to the dev folder), newest last. The watcher
+// of a folder reports the folder's own disappearance, and that report can arrive after the
+// tree was already read at the new path: a scan of the old path then fails with "Directory
+// does not exist" and, `error` being one field for the whole store, the Files panel showed
+// that error over the folder that is there. Nothing is loaded or reported for these paths.
+//
+// Only for a minute: the late report arrives within seconds of the move, and a path that
+// stayed marked for good could never be read again in this window, also not when another
+// project is later put at the same place.
+const MOVED_AWAY_LIMIT = 2000
+const MOVED_AWAY_MS = 60_000
+let movedAwayPaths: { from: string; at: number }[] = []
+const isMovedAway = (path: string): boolean => {
+  const now = Date.now()
+  return movedAwayPaths.some(
+    (entry) => now - entry.at < MOVED_AWAY_MS && isSameOrInsidePath(path, entry.from)
+  )
+}
+
+// Names the newest `loadFileTree` call: only that one may write `error` and `isLoading`, so a
+// slower answer about another folder never replaces what the newest load said.
+let treeLoadTurn = 0
 
 export const useFileTreeStore = create<FileTreeState>()(
   persist(
@@ -88,10 +189,19 @@ export const useFileTreeStore = create<FileTreeState>()(
 
       // Load file tree for a worktree
       loadFileTree: async (worktreePath: string) => {
+        if (isMovedAway(worktreePath)) return
+        const turn = ++treeLoadTurn
         set({ isLoading: true, error: null })
         try {
           const result = await fileTreeApi.scan(worktreePath)
+          // The folder moved while it was being read: what came back is about a path that is
+          // gone, whether it is a tree or an error.
+          if (isMovedAway(worktreePath)) {
+            if (turn === treeLoadTurn) set({ isLoading: false })
+            return
+          }
           if (!result.success || !result.tree) {
+            if (turn !== treeLoadTurn) return
             set({
               error: result.error || 'Failed to load file tree',
               isLoading: false
@@ -102,9 +212,16 @@ export const useFileTreeStore = create<FileTreeState>()(
           set((state) => {
             const newMap = new Map(state.fileTreeByWorktree)
             newMap.set(worktreePath, result.tree!)
-            return { fileTreeByWorktree: newMap, isLoading: false }
+            return turn === treeLoadTurn
+              ? { fileTreeByWorktree: newMap, isLoading: false }
+              : { fileTreeByWorktree: newMap }
           })
         } catch (error) {
+          if (turn !== treeLoadTurn) return
+          if (isMovedAway(worktreePath)) {
+            set({ isLoading: false })
+            return
+          }
           set({
             error: error instanceof Error ? error.message : 'Failed to load file tree',
             isLoading: false
@@ -276,6 +393,7 @@ export const useFileTreeStore = create<FileTreeState>()(
       // Uses refcounting so multiple consumers (FileTree, SessionView) can
       // watch the same path without creating duplicate chokidar instances.
       startWatching: async (worktreePath: string) => {
+        if (isMovedAway(worktreePath)) return
         try {
           const existing = watchSubscriptions.get(worktreePath)
           if (existing) {
@@ -326,6 +444,9 @@ export const useFileTreeStore = create<FileTreeState>()(
 
       // Handle batched file change events from watcher
       handleFileChange: async (worktreePath: string, events: FileTreeChangeEventItem[]) => {
+        // The last thing the watcher of a folder that moved reports is the folder going away.
+        if (isMovedAway(worktreePath)) return
+
         // Refresh the tree display once (not per-event)
         await get().refreshFileTree(worktreePath)
 
@@ -381,6 +502,72 @@ export const useFileTreeStore = create<FileTreeState>()(
           const newMap = new Map(state.fileIndexByWorktree)
           newMap.set(worktreePath, updatedIndex)
           return { fileIndexByWorktree: newMap }
+        })
+      },
+
+      // The watch subscriptions are left alone on purpose: the views that started a watch on
+      // the old path stop it and start one on the new path when their path changes, and the
+      // counts only stay balanced when the same code does both.
+      rekeyWorktreePaths: (moves: readonly MovedPath[]) => {
+        const moved = moves.filter((move) => move.from.length > 0 && move.from !== move.to)
+        if (moved.length === 0) return
+
+        // From here on the old paths are gone: nothing is loaded for them, and what is still
+        // on its way about them is dropped. A folder that moved back is no longer "away", and
+        // neither is one that moved more than a minute ago.
+        const now = Date.now()
+        movedAwayPaths = [
+          ...movedAwayPaths.filter(
+            (entry) =>
+              now - entry.at < MOVED_AWAY_MS &&
+              !moved.some((move) => isSameOrInsidePath(move.to, entry.from))
+          ),
+          ...moved.map((move) => ({ from: move.from, at: now }))
+        ].slice(-MOVED_AWAY_LIMIT)
+
+        // Their watchers have nothing left to watch. Whoever started one stops it later by
+        // its old path and finds it gone, which `stopWatching` takes as done.
+        for (const [watched, entry] of Array.from(watchSubscriptions)) {
+          if (!isMovedAway(watched)) continue
+          watchSubscriptions.delete(watched)
+          try {
+            entry.unsubscribe()
+          } catch {
+            // The subscription is dropped either way.
+          }
+          void Promise.resolve()
+            .then(() => fileTreeApi.unwatch(watched))
+            .catch(() => undefined)
+        }
+
+        const state = get()
+        const expandedPathsByWorktree = rekeyExpandedPaths(state.expandedPathsByWorktree, moved)
+        const filterByWorktree = rekeyFilters(state.filterByWorktree, moved)
+        const fileTreeByWorktree = withoutMovedWorktrees(state.fileTreeByWorktree, moved)
+        const fileIndexByWorktree = withoutMovedWorktrees(state.fileIndexByWorktree, moved)
+        const fileIndexLoadingByWorktree = withoutMovedWorktrees(
+          state.fileIndexLoadingByWorktree,
+          moved
+        )
+
+        // Every set is written to localStorage, so a move that touched nothing held here
+        // writes nothing.
+        if (
+          expandedPathsByWorktree === state.expandedPathsByWorktree &&
+          filterByWorktree === state.filterByWorktree &&
+          fileTreeByWorktree === state.fileTreeByWorktree &&
+          fileIndexByWorktree === state.fileIndexByWorktree &&
+          fileIndexLoadingByWorktree === state.fileIndexLoadingByWorktree
+        ) {
+          return
+        }
+
+        set({
+          expandedPathsByWorktree,
+          filterByWorktree,
+          fileTreeByWorktree,
+          fileIndexByWorktree,
+          fileIndexLoadingByWorktree
         })
       }
     }),

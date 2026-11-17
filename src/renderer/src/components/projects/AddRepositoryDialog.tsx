@@ -10,6 +10,7 @@ import {
   DialogTitle
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { readExistingDevFolder } from '@/lib/dev-folder/read-dev-folder'
 import { cn } from '@/lib/utils'
 import { useProjectStore } from '@/stores'
 import { projectToast } from '@/lib/toast'
@@ -84,6 +85,21 @@ export function AddRepositoryDialog({
       stopListening()
     }
   }, [open, loadRepositories, stopListening])
+
+  // While no folder is chosen, the clone goes to the dev folder. The answer can arrive after
+  // the person picked a folder, or after the dialog closed: it only ever fills an empty
+  // field of a dialog that is still open.
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    void readExistingDevFolder().then((devFolder) => {
+      if (cancelled || !devFolder) return
+      setDestination((current) => current || devFolder)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [open])
 
   const filteredRepos = useMemo(() => {
     const query = search.trim().toLowerCase()

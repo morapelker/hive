@@ -145,6 +145,18 @@ import type {
   VoiceHistoryRow,
   VoiceHistoryRowCreate
 } from './types'
+import {
+  clearPendingDevFolderMove,
+  namesRegisteredInside,
+  readPendingDevFolderMove,
+  relocateProjectRows
+} from './relocate-project'
+import type {
+  PendingDevFolderMove,
+  RelocateProjectInput,
+  RelocateProjectResult
+} from '../services/dev-folder/types'
+import type { DocumentRunStatus } from '@shared/types/document-flow'
 
 /** Escape `%`, `_` and `\` for a LIKE pattern used with `ESCAPE '\'`. */
 function escapeLike(value: string): string {
@@ -1668,6 +1680,23 @@ export class DatabaseService implements DocumentFlowDb, DataProjectsRepository {
       : (db
           .prepare('SELECT * FROM document_runs ORDER BY created_at DESC, rowid DESC LIMIT ?')
           .all(max) as Record<string, unknown>[])
+    return rows.map((row) => this.mapDocumentRunRow(row))
+  }
+
+  /**
+   * Every run in one of `statuses`, of every project, newest first. No limit: this answers
+   * "is anything still working in this project", where a run cut off by a page size would be
+   * a wrong "no".
+   */
+  listDocumentRunsInStatuses(statuses: readonly DocumentRunStatus[]): DocumentRun[] {
+    if (statuses.length === 0) return []
+    const placeholders = statuses.map(() => '?').join(', ')
+    const rows = this.getDb()
+      .prepare(
+        `SELECT * FROM document_runs WHERE status IN (${placeholders})
+         ORDER BY created_at DESC, rowid DESC`
+      )
+      .all(...statuses) as Record<string, unknown>[]
     return rows.map((row) => this.mapDocumentRunRow(row))
   }
 
@@ -6112,6 +6141,49 @@ export class DatabaseService implements DocumentFlowDb, DataProjectsRepository {
   transaction<T>(fn: () => T): T {
     const db = this.getDb()
     return db.transaction(fn).immediate()
+  }
+
+  // ── Moving a project's folder (the dev folder's "Move projects") ─────
+  // The rewrite itself is in relocate-project.ts. None of these publish a `db:changed` event:
+  // the move publishes its own once the folder is usable again.
+
+  /**
+   * Point the project, and everything in the database that names a path inside what moved,
+   * at its new place. One immediate transaction: the write lock is held before
+   * `input.place()` puts the folders in place, and when `place()` or any statement after it
+   * throws, everything rolls back and the error is rethrown as it was, so the caller can put
+   * the folders back. Throws without changing anything when the project is gone, is a
+   * connection project, is not at `input.expectedPath`, when the new path belongs to another
+   * project, or when another project is registered in a folder that would move. No
+   * `updated_at` is touched: a path that followed its folder is not an edit.
+   */
+  relocateProject(input: RelocateProjectInput): RelocateProjectResult {
+    return withDbChangeBatch(() =>
+      this.transaction(() => {
+        const rows = relocateProjectRows(this.getDb(), input)
+        const project = this.getProject(input.projectId)
+        if (!project) throw new Error('The project no longer exists.')
+        return { project, ...rows }
+      })
+    )
+  }
+
+  /** The move whose follow-up steps are still owed, or null. A row that cannot be read is null. */
+  readPendingDevFolderMove(): PendingDevFolderMove | null {
+    return readPendingDevFolderMove(this.getDb())
+  }
+
+  /** Forget the pending move: its follow-up steps have run, or no longer apply. */
+  clearPendingDevFolderMove(): void {
+    clearPendingDevFolderMove(this.getDb())
+  }
+
+  /**
+   * Names of the other projects registered strictly below a folder (given in every spelling
+   * it is known by), themselves or through one of their active worktrees. Empty when none is.
+   */
+  namesRegisteredInside(folderSpellings: readonly string[], exceptProjectId: string): string[] {
+    return namesRegisteredInside(this.getDb(), folderSpellings, exceptProjectId)
   }
 }
 

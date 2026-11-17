@@ -54,6 +54,20 @@ export interface SyncWorktreesParams {
   projectPath: string
 }
 
+/**
+ * What only code inside the app can say about a sync. It travels next to the params and is
+ * never read from them: the request schema of `worktreeOps.sync` has no such field, so no
+ * window can set it.
+ */
+export interface SyncWorktreesInternalOptions {
+  /**
+   * The caller is the dev folder move, reconciling the project it has just moved once git's
+   * worktree links are repaired. Every other sync of that project stands back until the move
+   * is finished (see `isOwedDevFolderMove`).
+   */
+  readonly forDevFolderMove?: boolean
+}
+
 export interface DuplicateWorktreeParams {
   projectId: string
   projectPath: string
@@ -400,15 +414,48 @@ export function getOrphanedWorktreeDirReason(worktreePath: string): string | nul
   return null
 }
 
+/**
+ * Whether a dev folder move of this project still owes its follow-up steps. Between the moment
+ * the folders are in their new place and the moment git's worktree links are repaired, git
+ * lists the project's worktrees at paths that no longer exist. A sync in that window would
+ * archive their rows and `git worktree prune` would drop their registrations for good, so the
+ * repair that is still owed would find nothing to repair. The move leaves a note in the
+ * database for exactly as long as that holds.
+ *
+ * A database that cannot answer reads as "no move": a sync that needs the database fails on
+ * its own a line later.
+ */
+function isOwedDevFolderMove(svc: DatabaseService, projectId: string): boolean {
+  try {
+    if (typeof svc.readPendingDevFolderMove !== 'function') return false
+    return svc.readPendingDevFolderMove()?.projectId === projectId
+  } catch {
+    return false
+  }
+}
+
 export const syncWorktreesOpEffect = (
-  params: SyncWorktreesParams
+  params: SyncWorktreesParams,
+  internal: SyncWorktreesInternalOptions = {}
 ): Effect.Effect<SimpleResult, never, Db> =>
   toSimpleEnvelope(
     Effect.gen(function* () {
-      const gitService = createGitService(params.projectPath)
-      const normalizedProjectPath = normalizeWorktreePath(params.projectPath)
       const db = yield* Db
       const svc = yield* db.raw
+
+      // Rows and registrations are left exactly as they are: importing is skipped too, since
+      // after a move to another disk git still lists the worktrees of the old copy. Asked
+      // before git is set up for the folder: the note also waits while the disk that holds the
+      // moved folder is away, and git cannot be set up for a folder that is not there.
+      if (internal.forDevFolderMove !== true && isOwedDevFolderMove(svc, params.projectId)) {
+        log.info('Leaving worktrees as they are: a dev folder move of the project is unfinished', {
+          projectId: params.projectId
+        })
+        return
+      }
+
+      const gitService = createGitService(params.projectPath)
+      const normalizedProjectPath = normalizeWorktreePath(params.projectPath)
       const project = svc.getProject(params.projectId)
 
       const gitWorktrees = yield* Effect.tryPromise(() => gitService.listWorktrees())
@@ -854,7 +901,9 @@ export function createWorktreeOp(
   db: DatabaseService,
   params: CreateWorktreeParams
 ): Promise<WorktreeResult>
-export function createWorktreeOp(...args: LegacyOrCurrent<CreateWorktreeParams>): Promise<WorktreeResult> {
+export function createWorktreeOp(
+  ...args: LegacyOrCurrent<CreateWorktreeParams>
+): Promise<WorktreeResult> {
   const { db, params } = parseArgs(args)
   return runWithOptionalDb(createWorktreeOpEffect(params), db)
 }
@@ -864,17 +913,38 @@ export function deleteWorktreeOp(
   db: DatabaseService,
   params: DeleteWorktreeParams
 ): Promise<SimpleResult>
-export function deleteWorktreeOp(...args: LegacyOrCurrent<DeleteWorktreeParams>): Promise<SimpleResult> {
+export function deleteWorktreeOp(
+  ...args: LegacyOrCurrent<DeleteWorktreeParams>
+): Promise<SimpleResult> {
   const { db, params } = parseArgs(args)
   return runWithOptionalDb(deleteWorktreeOpEffect(params), db)
 }
 
 export function syncWorktreesOp(params: SyncWorktreesParams): Promise<SimpleResult>
+/** For a caller inside the app that has something to say about the sync (see the options). */
+export function syncWorktreesOp(
+  db: DatabaseService | undefined,
+  params: SyncWorktreesParams,
+  internal: SyncWorktreesInternalOptions
+): Promise<SimpleResult>
+// Declared last on purpose: a test double of this function is typed after the last overload.
 export function syncWorktreesOp(
   db: DatabaseService,
   params: SyncWorktreesParams
 ): Promise<SimpleResult>
-export function syncWorktreesOp(...args: LegacyOrCurrent<SyncWorktreesParams>): Promise<SimpleResult> {
+export function syncWorktreesOp(
+  ...args:
+    | LegacyOrCurrent<SyncWorktreesParams>
+    | [
+        db: DatabaseService | undefined,
+        params: SyncWorktreesParams,
+        internal: SyncWorktreesInternalOptions
+      ]
+): Promise<SimpleResult> {
+  if (args.length === 3) {
+    const [db, params, internal] = args
+    return runWithOptionalDb(syncWorktreesOpEffect(params, internal), db)
+  }
   const { db, params } = parseArgs(args)
   return runWithOptionalDb(syncWorktreesOpEffect(params), db)
 }
@@ -884,7 +954,9 @@ export function duplicateWorktreeOp(
   db: DatabaseService,
   params: DuplicateWorktreeParams
 ): Promise<WorktreeResult>
-export function duplicateWorktreeOp(...args: LegacyOrCurrent<DuplicateWorktreeParams>): Promise<WorktreeResult> {
+export function duplicateWorktreeOp(
+  ...args: LegacyOrCurrent<DuplicateWorktreeParams>
+): Promise<WorktreeResult> {
   const { db, params } = parseArgs(args)
   if (db && !hasRawDb(db)) return duplicateWorktreeOpLegacy(db, params)
   return runWithOptionalDb(duplicateWorktreeOpEffect(params), db)
@@ -895,19 +967,21 @@ export function renameWorktreeBranchOp(
   db: DatabaseService,
   params: RenameBranchParams
 ): Promise<SimpleResult>
-export function renameWorktreeBranchOp(...args: LegacyOrCurrent<RenameBranchParams>): Promise<SimpleResult> {
+export function renameWorktreeBranchOp(
+  ...args: LegacyOrCurrent<RenameBranchParams>
+): Promise<SimpleResult> {
   const { db, params } = parseArgs(args)
   return runWithOptionalDb(renameWorktreeBranchOpEffect(params), db)
 }
 
-export function createWorktreeFromBranchOp(
-  params: CreateFromBranchParams
-): Promise<WorktreeResult>
+export function createWorktreeFromBranchOp(params: CreateFromBranchParams): Promise<WorktreeResult>
 export function createWorktreeFromBranchOp(
   db: DatabaseService,
   params: CreateFromBranchParams
 ): Promise<WorktreeResult>
-export function createWorktreeFromBranchOp(...args: LegacyOrCurrent<CreateFromBranchParams>): Promise<WorktreeResult> {
+export function createWorktreeFromBranchOp(
+  ...args: LegacyOrCurrent<CreateFromBranchParams>
+): Promise<WorktreeResult> {
   const { db, params } = parseArgs(args)
   return runWithOptionalDb(createWorktreeFromBranchOpEffect(params), db)
 }

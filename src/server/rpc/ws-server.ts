@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type { IncomingMessage, Server } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { Effect } from 'effect'
@@ -24,6 +24,11 @@ interface WebSocketRpcServer {
 interface WebSocketRpcServerOptions {
   readonly path?: string
   readonly authenticateToken?: (token: string) => boolean
+  /**
+   * Called once when a socket is gone, with the id its requests were handled under
+   * (`RpcCallInfo.socketId`): what a domain kept for that socket can be let go.
+   */
+  readonly onSocketClosed?: (socketId: string) => void
 }
 
 export const attachWebSocketRpcServer = (
@@ -34,6 +39,7 @@ export const attachWebSocketRpcServer = (
 ): WebSocketRpcServer => {
   const path = typeof options === 'string' ? options : (options.path ?? '/ws')
   const authenticateToken = typeof options === 'string' ? undefined : options.authenticateToken
+  const onSocketClosed = typeof options === 'string' ? undefined : options.onSocketClosed
   const sockets = new Map<Duplex, () => void>()
   // Performance logging: open sockets and how many bytes are waiting to drain to them. A
   // growing backlog means a renderer cannot keep up with the events it is subscribed to.
@@ -87,12 +93,22 @@ export const attachWebSocketRpcServer = (
     )
 
     const subscriptions = new Map<string, () => void>()
+    // Names this socket to the handlers of its requests, for as long as it is open.
+    const socketId = randomUUID()
+    let closedReported = false
     const cleanupSocket = () => {
       for (const unsubscribe of subscriptions.values()) {
         unsubscribe()
       }
       subscriptions.clear()
       sockets.delete(socket)
+      if (closedReported) return
+      closedReported = true
+      try {
+        onSocketClosed?.(socketId)
+      } catch {
+        // Best effort: a socket close must never throw.
+      }
     }
 
     sockets.set(socket, cleanupSocket)
@@ -166,7 +182,7 @@ export const attachWebSocketRpcServer = (
           continue
         }
 
-        void Effect.runPromise(router.handle(request)).then(
+        void Effect.runPromise(router.handle(request, { socketId })).then(
           (response) => {
             if (socket.destroyed) return
             const text = JSON.stringify(response)

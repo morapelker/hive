@@ -54,6 +54,7 @@ import { ClaudeCliSessionView } from './ClaudeCliSessionView'
 import { ShellCommandSessionView } from './ShellCommandSessionView'
 import { useLatestTodoList } from './useLatestTodoList'
 import { usePRStackTopOffset } from './usePRStackTopOffset'
+import { useWorktreePathEpoch } from './useWorktreePathEpoch'
 import { useFileMentions } from '@/hooks/useFileMentions'
 import { useSessionTimer } from '@/hooks/useSessionTimer'
 import { useBashRuns } from '@/hooks/useBashRuns'
@@ -6731,6 +6732,12 @@ export function SessionView({ sessionId, isVisible = true }: SessionViewProps): 
   const isShellCommand = useSessionStore((state) =>
     isShellCommandSession(state.getSessionById(sessionId))
   )
+  // The view below reads the folder of its worktree once, when it starts, and everything it
+  // does afterwards goes to the agent registered under that folder. When the folder becomes
+  // another one (the project moved to the dev folder) the view starts over under a new key:
+  // the same path a tab switch takes, with the draft saved on the way out and the agent
+  // reconnected under the new folder on the way in.
+  const worktreePathEpoch = useWorktreePathEpoch(sessionId)
 
   if (isShellCommand) {
     return <ShellCommandSessionView sessionId={sessionId} isVisible={isVisible} />
@@ -6740,5 +6747,5 @@ export function SessionView({ sessionId, isVisible = true }: SessionViewProps): 
     return <ClaudeCliSessionView sessionId={sessionId} isVisible={isVisible} />
   }
 
-  return <LegacySessionView sessionId={sessionId} />
+  return <LegacySessionView key={worktreePathEpoch} sessionId={sessionId} />
 }

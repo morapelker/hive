@@ -707,6 +707,19 @@ export function getDataEngineService(): DataEngineService {
   return singleton
 }
 
+/**
+ * Closes the connections of one data project and forgets what was cached about it, when this
+ * process has an engine at all. For code that changes a data project's stored config without
+ * going through the `dataProjects.*` domain (a project folder that moved, and its SQLite file
+ * with it): an open connection keeps what it was opened with, and the next use has to connect
+ * again from the config as it is now. A process that never opened a data project has no
+ * connection to close, and none is made for this.
+ */
+export async function invalidateDataEngineIfLoaded(id: string): Promise<void> {
+  if (!singleton) return
+  await singleton.invalidate(id)
+}
+
 /** Tests only. */
 export async function resetDataEngineServiceForTests(): Promise<void> {
   const current = singleton

@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { existsSync, mkdirSync } from 'fs'
+import { existsSync, mkdirSync, rmSync } from 'fs'
+import { DEV_FOLDER_SETTING_KEY } from '@shared/types/dev-folder'
 import { WORKTREE_CREATED_CHANNEL } from '@shared/worktree-events'
+import { gitService } from '../effect/git/facade'
 import { DiscordService } from './discord-service'
 import { cloneRepository } from './git-repository'
 import {
@@ -8,7 +10,13 @@ import {
   detectProjectFavicon,
   detectProjectLanguage
 } from './project-ops'
-import { createWorktreeFromBranchOp, deleteWorktreeOp, syncWorktreesOp } from './worktree-ops'
+import {
+  createWorktreeFromBranchOp,
+  deleteWorktreeOp,
+  syncWorktreesOp,
+  type SimpleResult,
+  type SyncWorktreesParams
+} from './worktree-ops'
 import { createGitService } from './git-service'
 import { createPrFromWorktree } from './discord-pr-creator'
 import { pushWorktree } from './discord-push'
@@ -102,7 +110,9 @@ vi.mock('fs', async (importOriginal) => {
   return {
     ...actual,
     existsSync: vi.fn(() => false),
-    mkdirSync: vi.fn()
+    mkdirSync: vi.fn(),
+    // Never the real one: the handler deletes what a failed clone left behind.
+    rmSync: vi.fn()
   }
 })
 
@@ -113,6 +123,10 @@ vi.mock('os', async (importOriginal) => {
     homedir: vi.fn(() => '/home/test')
   }
 })
+
+vi.mock('../effect/git/facade', () => ({
+  gitService: { getRemoteUrl: vi.fn() }
+}))
 
 vi.mock('./worktree-ops', () => ({
   createWorktreeFromBranchOp: vi.fn(),
@@ -190,6 +204,13 @@ class FakeDiscordDatabase {
     project.path = data.path
     this.projects.push(project)
     return project
+  }
+
+  deleteProject(id: string): boolean {
+    const before = this.projects.length
+    this.projects = this.projects.filter((project) => project.id !== id)
+    this.activeWorktrees.delete(id)
+    return this.projects.length < before
   }
 
   updateProject(id: string, data: Partial<Project>): Project | null {
@@ -481,6 +502,46 @@ const makeAddProjectInteraction = (client: unknown, gitUrl: string) =>
     }
   })
 
+/** What `git remote get-url origin` answers per folder; a folder not listed has no origin. */
+const setOrigins = (origins: Record<string, string>): void => {
+  vi.mocked(gitService.getRemoteUrl).mockImplementation(async (repoPath) => ({
+    success: true,
+    url: origins[repoPath] ?? null,
+    remote: origins[repoPath] ? 'origin' : null
+  }))
+}
+
+/** The only paths that are on disk. */
+const setOnDisk = (...paths: string[]): void => {
+  vi.mocked(existsSync).mockImplementation((path) => paths.includes(String(path)))
+}
+
+const syncAddsMainWorktree = (db: FakeDiscordDatabase): void => {
+  // The form the handler calls, with the parameters alone.
+  const sync: (params: SyncWorktreesParams) => Promise<SimpleResult> = syncWorktreesOp
+  vi.mocked(sync).mockImplementation(async (params) => {
+    db.replaceActiveWorktrees(params.projectId, [
+      makeWorktree('w-main', params.projectId, 'main', {
+        branch_name: 'main',
+        path: params.projectPath,
+        is_default: true
+      })
+    ])
+    return { success: true }
+  })
+}
+
+const runAddProject = async (db: FakeDiscordDatabase, gitUrl: string) => {
+  const { gateway, actions } = makeGateway()
+  const service = makeService(db, gateway)
+  await service.startListening()
+  const client = discordJsMock.instances[discordJsMock.instances.length - 1]
+  const interaction = makeAddProjectInteraction(client, gitUrl)
+  client.emit('interactionCreate', interaction)
+  await flushPromises()
+  return { interaction, actions }
+}
+
 beforeEach(() => {
   discordJsMock.Client.mockClear()
   discordJsMock.instances.length = 0
@@ -493,6 +554,9 @@ beforeEach(() => {
   vi.mocked(existsSync).mockReset()
   vi.mocked(existsSync).mockReturnValue(false)
   vi.mocked(mkdirSync).mockReset()
+  vi.mocked(rmSync).mockReset()
+  vi.mocked(gitService.getRemoteUrl).mockReset()
+  vi.mocked(gitService.getRemoteUrl).mockResolvedValue({ success: true, url: null, remote: null })
   vi.mocked(createProjectWithDefaultWorktree).mockClear()
   vi.mocked(detectProjectLanguage).mockReset()
   vi.mocked(detectProjectLanguage).mockResolvedValue(null)
@@ -929,17 +993,7 @@ describe('DiscordService message listener', () => {
     configure(db)
     const { gateway, actions } = makeGateway()
     const service = makeService(db, gateway)
-
-    vi.mocked(syncWorktreesOp).mockImplementation(async (params) => {
-      db.replaceActiveWorktrees(params.projectId, [
-        makeWorktree('w-main', params.projectId, 'main', {
-          branch_name: 'main',
-          path: params.projectPath,
-          is_default: true
-        })
-      ])
-      return { success: true }
-    })
+    syncAddsMainWorktree(db)
 
     await service.startListening()
     const interaction = makeAddProjectInteraction(
@@ -1088,20 +1142,12 @@ describe('DiscordService message listener', () => {
     })
   })
 
-  it('adds an existing filesystem path to Hive and Discord without cloning over it', async () => {
+  it('adds an existing clone of the repository to Hive and Discord without cloning over it', async () => {
     const db = new FakeDiscordDatabase()
     configure(db)
     vi.mocked(existsSync).mockReturnValue(true)
-    vi.mocked(syncWorktreesOp).mockImplementation(async (params) => {
-      db.replaceActiveWorktrees(params.projectId, [
-        makeWorktree('w-main', params.projectId, 'main', {
-          branch_name: 'main',
-          path: params.projectPath,
-          is_default: true
-        })
-      ])
-      return { success: true }
-    })
+    setOrigins({ '/home/test/hive-projects/repo': 'https://github.com/example/repo.git' })
+    syncAddsMainWorktree(db)
     const { gateway, actions } = makeGateway()
     const service = makeService(db, gateway)
 
@@ -1114,7 +1160,12 @@ describe('DiscordService message listener', () => {
     discordJsMock.instances[0].emit('interactionCreate', interaction)
     await flushPromises()
 
+    expect(gitService.getRemoteUrl).toHaveBeenCalledWith(
+      '/home/test/hive-projects/repo',
+      'origin'
+    )
     expect(cloneRepository).not.toHaveBeenCalled()
+    expect(rmSync).not.toHaveBeenCalled()
     expect(createProjectWithDefaultWorktree).toHaveBeenCalledWith(db, {
       name: 'repo',
       path: '/home/test/hive-projects/repo'
@@ -1130,6 +1181,363 @@ describe('DiscordService message listener', () => {
     expect(interaction.editReply).toHaveBeenCalledWith(
       'Added existing path **repo** to Hive and provisioned its Discord channel.'
     )
+  })
+
+  describe('/add-project and the dev folder', () => {
+    const url = 'git@github.com:example/repo.git'
+    const defaultDest = '/home/test/hive-projects/repo'
+    const refusal =
+      'Could not take a project name from that git URL. It has to end in the repository ' +
+      'name, as in owner/repo.git.'
+    const setDevFolder = (db: FakeDiscordDatabase, path: string): void => {
+      db.setSetting(DEV_FOLDER_SETTING_KEY, JSON.stringify({ path, previousPaths: [] }))
+    }
+
+    it('clones into the dev folder that is set', async () => {
+      const db = new FakeDiscordDatabase()
+      configure(db)
+      setDevFolder(db, '/srv/dev')
+      syncAddsMainWorktree(db)
+
+      const { interaction, actions } = await runAddProject(db, url)
+
+      expect(mkdirSync).toHaveBeenCalledWith('/srv/dev', { recursive: true })
+      expect(cloneRepository).toHaveBeenCalledWith(url, '/srv/dev/repo')
+      expect(createProjectWithDefaultWorktree).toHaveBeenCalledWith(db, {
+        name: 'repo',
+        path: '/srv/dev/repo'
+      })
+      expect(syncWorktreesOp).toHaveBeenCalledWith({
+        projectId: 'p1',
+        projectPath: '/srv/dev/repo'
+      })
+      expect(actions).toEqual([
+        'create-category:repo:discord-1',
+        'create-channel:main:discord-1:discord-2'
+      ])
+      expect(interaction.editReply).toHaveBeenCalledWith(
+        'Added **repo** and provisioned its Discord channel.'
+      )
+    })
+
+    it('reads the dev folder for each command, so a change applies to the next one', async () => {
+      const db = new FakeDiscordDatabase()
+      configure(db)
+
+      await runAddProject(db, 'git@github.com:example/one.git')
+      setDevFolder(db, '/srv/dev')
+      await runAddProject(db, 'git@github.com:example/two.git')
+
+      expect(vi.mocked(cloneRepository).mock.calls).toEqual([
+        ['git@github.com:example/one.git', '/home/test/hive-projects/one'],
+        ['git@github.com:example/two.git', '/srv/dev/two']
+      ])
+    })
+
+    it.each([
+      ['..', 'https://github.com/example/..'],
+      ['.', 'https://github.com/example/..git'],
+      ['.git', 'https://github.com/example/.git.git'],
+      ['.GIT', 'git@github.com:example/.GIT.git'],
+      ['.hive-moving-1-abc', 'git@github.com:example/.hive-moving-1-abc.git'],
+      ['no name at all', 'https://github.com/']
+    ])('refuses a URL whose folder name would be %s and creates nothing', async (_name, gitUrl) => {
+      const db = new FakeDiscordDatabase()
+      configure(db)
+      vi.mocked(existsSync).mockReturnValue(true)
+      setOrigins({
+        '/home/test': gitUrl,
+        '/home/test/hive-projects': gitUrl,
+        '/home/test/hive-projects/.git': gitUrl,
+        '/home/test/hive-projects/.GIT': gitUrl,
+        '/home/test/hive-projects/.hive-moving-1-abc': gitUrl
+      })
+
+      const { interaction, actions } = await runAddProject(db, gitUrl)
+
+      expect(interaction.editReply).toHaveBeenCalledTimes(1)
+      expect(interaction.editReply).toHaveBeenCalledWith(refusal)
+      expect(gitService.getRemoteUrl).not.toHaveBeenCalled()
+      expect(mkdirSync).not.toHaveBeenCalled()
+      expect(cloneRepository).not.toHaveBeenCalled()
+      expect(rmSync).not.toHaveBeenCalled()
+      expect(createProjectWithDefaultWorktree).not.toHaveBeenCalled()
+      expect(db.projects).toEqual([])
+      expect(actions).toEqual([])
+    })
+
+    it.each([
+      ['.github', 'git@github.com:example/.github.git'],
+      ['.dotfiles', 'https://github.com/example/.dotfiles.git'],
+      ['.ssh', 'git@github.com:example/.ssh.git']
+    ])('clones a repository named %s under that name', async (name, gitUrl) => {
+      const db = new FakeDiscordDatabase()
+      configure(db)
+      setDevFolder(db, '/srv/dev')
+      syncAddsMainWorktree(db)
+
+      const { interaction } = await runAddProject(db, gitUrl)
+
+      expect(cloneRepository).toHaveBeenCalledWith(gitUrl, `/srv/dev/${name}`)
+      expect(createProjectWithDefaultWorktree).toHaveBeenCalledWith(db, {
+        name,
+        path: `/srv/dev/${name}`
+      })
+      expect(interaction.editReply).toHaveBeenCalledWith(
+        `Added **${name}** and provisioned its Discord channel.`
+      )
+    })
+
+    it('reuses a project found by its origin in another folder instead of cloning it again', async () => {
+      const db = new FakeDiscordDatabase()
+      configure(db)
+      setDevFolder(db, '/srv/dev')
+      const other = makeProject('p1', 'other')
+      const kept = makeProject('p2', 'renamed-here')
+      kept.path = '/home/test/hive-projects/repo-kept'
+      db.projects = [other, kept]
+      db.activeWorktrees.set('p2', [
+        makeWorktree('w-main', 'p2', 'main', { path: kept.path, is_default: true })
+      ])
+      setOrigins({
+        [other.path]: 'https://github.com/example/other.git',
+        [kept.path]: 'https://github.com/example/repo.git'
+      })
+
+      const { interaction, actions } = await runAddProject(db, url)
+
+      expect(mkdirSync).not.toHaveBeenCalled()
+      expect(cloneRepository).not.toHaveBeenCalled()
+      expect(createProjectWithDefaultWorktree).not.toHaveBeenCalled()
+      expect(syncWorktreesOp).not.toHaveBeenCalled()
+      expect(db.projects).toEqual([other, kept])
+      expect(actions).toEqual([
+        'create-category:renamed-here:discord-1',
+        'create-channel:main:discord-1:discord-2'
+      ])
+      expect(interaction.editReply).toHaveBeenCalledWith(
+        'Project **renamed-here** already exists in Hive; added it to Discord management.'
+      )
+      expect(JSON.parse(db.settings.get('discord_config') ?? '{}')).toMatchObject({
+        selectedProjectIds: ['p2']
+      })
+    })
+
+    it('does not take a project with another origin for the repository', async () => {
+      const db = new FakeDiscordDatabase()
+      configure(db)
+      const other = makeProject('p1', 'repo')
+      db.projects = [other]
+      setOrigins({ [other.path]: 'https://github.com/someone-else/repo.git' })
+
+      await runAddProject(db, url)
+
+      expect(cloneRepository).toHaveBeenCalledWith(url, defaultDest)
+      expect(db.projects.map((project) => project.path)).toEqual([other.path, defaultDest])
+    })
+
+    it('does not attach an existing folder that is a clone of another repository', async () => {
+      const db = new FakeDiscordDatabase()
+      configure(db)
+      setOnDisk(defaultDest, `${defaultDest}/.git`)
+      setOrigins({ [defaultDest]: 'git@github.com:someone-else/repo.git' })
+      syncAddsMainWorktree(db)
+
+      const { interaction, actions } = await runAddProject(db, url)
+
+      expect(cloneRepository).toHaveBeenCalledWith(url, `${defaultDest}-2`)
+      expect(createProjectWithDefaultWorktree).toHaveBeenCalledTimes(1)
+      expect(createProjectWithDefaultWorktree).toHaveBeenCalledWith(db, {
+        name: 'repo',
+        path: `${defaultDest}-2`
+      })
+      expect(syncWorktreesOp).toHaveBeenCalledWith({
+        projectId: 'p1',
+        projectPath: `${defaultDest}-2`
+      })
+      expect(db.getProjectByPath(defaultDest)).toBeNull()
+      expect(rmSync).not.toHaveBeenCalled()
+      expect(actions).toEqual([
+        'create-category:repo:discord-1',
+        'create-channel:main:discord-1:discord-2'
+      ])
+      expect(interaction.editReply).toHaveBeenCalledWith(
+        'Added **repo** and provisioned its Discord channel.'
+      )
+    })
+
+    it('does not attach an existing folder that is not a repository itself', async () => {
+      const db = new FakeDiscordDatabase()
+      configure(db)
+      // No `.git` in it: git would answer for it with the origin of a repository around it.
+      setOnDisk(defaultDest)
+      setOrigins({ [defaultDest]: url })
+
+      await runAddProject(db, url)
+
+      expect(gitService.getRemoteUrl).not.toHaveBeenCalled()
+      expect(cloneRepository).toHaveBeenCalledWith(url, `${defaultDest}-2`)
+      expect(db.projects.map((project) => project.path)).toEqual([`${defaultDest}-2`])
+    })
+
+    it.each([
+      [
+        'git reports a failure',
+        // A failed answer does not count, whatever address came with it.
+        async () => ({ success: false, url, remote: 'origin', error: 'not a git repository' })
+      ],
+      [
+        'git cannot be run',
+        async () => {
+          throw new Error('spawn git ENOENT')
+        }
+      ]
+    ])('does not attach an existing folder when %s for its origin', async (_case, answer) => {
+      const db = new FakeDiscordDatabase()
+      configure(db)
+      setOnDisk(defaultDest, `${defaultDest}/.git`)
+      vi.mocked(gitService.getRemoteUrl).mockImplementation(answer)
+
+      const { interaction } = await runAddProject(db, url)
+
+      expect(gitService.getRemoteUrl).toHaveBeenCalledWith(defaultDest, 'origin')
+      expect(cloneRepository).toHaveBeenCalledWith(url, `${defaultDest}-2`)
+      expect(db.projects.map((project) => project.path)).toEqual([`${defaultDest}-2`])
+      expect(interaction.editReply).toHaveBeenCalledWith(
+        'Added **repo** and provisioned its Discord channel.'
+      )
+    })
+
+    it('skips the path of a registered project whose folder is gone when it picks a free name', async () => {
+      const db = new FakeDiscordDatabase()
+      configure(db)
+      const gone = makeProject('p1', 'gone')
+      gone.path = `${defaultDest}-2`
+      db.projects = [gone]
+      setOnDisk(defaultDest, `${defaultDest}/.git`)
+      setOrigins({ [defaultDest]: 'git@github.com:someone-else/repo.git' })
+
+      await runAddProject(db, url)
+
+      expect(cloneRepository).toHaveBeenCalledWith(url, `${defaultDest}-3`)
+      expect(db.projects.map((project) => project.path)).toEqual([
+        `${defaultDest}-2`,
+        `${defaultDest}-3`
+      ])
+    })
+
+    it('removes what a failed clone left behind and adds nothing', async () => {
+      const db = new FakeDiscordDatabase()
+      configure(db)
+      setDevFolder(db, '/srv/dev')
+      vi.mocked(cloneRepository).mockResolvedValue({ success: false, error: 'auth failed' })
+
+      const { interaction, actions } = await runAddProject(db, url)
+
+      expect(rmSync).toHaveBeenCalledTimes(1)
+      expect(rmSync).toHaveBeenCalledWith('/srv/dev/repo', { recursive: true, force: true })
+      expect(createProjectWithDefaultWorktree).not.toHaveBeenCalled()
+      expect(db.projects).toEqual([])
+      expect(actions).toEqual([])
+      expect(interaction.editReply).toHaveBeenCalledWith('Could not clone repository: auth failed')
+    })
+
+    it('removes only its own leftover when the clone beside an occupied folder fails', async () => {
+      const db = new FakeDiscordDatabase()
+      configure(db)
+      setOnDisk(defaultDest, `${defaultDest}/.git`)
+      setOrigins({ [defaultDest]: 'git@github.com:someone-else/repo.git' })
+      vi.mocked(cloneRepository).mockResolvedValue({ success: false, error: 'auth failed' })
+
+      const { interaction } = await runAddProject(db, url)
+
+      expect(cloneRepository).toHaveBeenCalledWith(url, `${defaultDest}-2`)
+      expect(rmSync).toHaveBeenCalledTimes(1)
+      expect(rmSync).toHaveBeenCalledWith(`${defaultDest}-2`, { recursive: true, force: true })
+      expect(db.projects).toEqual([])
+      expect(interaction.editReply).toHaveBeenCalledWith('Could not clone repository: auth failed')
+    })
+
+    it('does not delete a project that was moved to the destination while the clone failed', async () => {
+      const db = new FakeDiscordDatabase()
+      configure(db)
+      vi.mocked(cloneRepository).mockImplementation(async (_url, destDir) => {
+        const moved = makeProject('p-moved', 'repo')
+        moved.path = destDir
+        db.projects = [moved]
+        return { success: false, error: 'destination path already exists' }
+      })
+
+      const { interaction } = await runAddProject(db, url)
+
+      expect(cloneRepository).toHaveBeenCalledWith(url, defaultDest)
+      expect(rmSync).not.toHaveBeenCalled()
+      expect(db.projects.map((project) => project.id)).toEqual(['p-moved'])
+      expect(interaction.editReply).toHaveBeenCalledWith(
+        'Could not clone repository: destination path already exists'
+      )
+    })
+
+    it.each([
+      [
+        'reports a failure',
+        async () => ({ success: false, error: 'git worktree list failed' }),
+        'git worktree list failed'
+      ],
+      [
+        'reports a failure without a reason',
+        async () => ({ success: false }),
+        'Failed to sync worktrees'
+      ],
+      [
+        'throws',
+        async () => {
+          throw new Error('not a git repository')
+        },
+        'not a git repository'
+      ]
+    ])(
+      'removes the project row again when the sync after creating it %s',
+      async (_case, sync, reason) => {
+        const db = new FakeDiscordDatabase()
+        configure(db)
+        vi.mocked(syncWorktreesOp).mockImplementation(sync)
+
+        const { interaction, actions } = await runAddProject(db, url)
+
+        expect(createProjectWithDefaultWorktree).toHaveBeenCalledWith(db, {
+          name: 'repo',
+          path: defaultDest
+        })
+        expect(db.projects).toEqual([])
+        expect(db.getActiveWorktreesByProject('p1')).toEqual([])
+        // The clone itself is kept: the next /add-project for this repository attaches it.
+        expect(rmSync).not.toHaveBeenCalled()
+        expect(actions).toEqual([])
+        expect(JSON.parse(db.settings.get('discord_config') ?? '{}')).toMatchObject({
+          selectedProjectIds: []
+        })
+        expect(interaction.editReply).toHaveBeenCalledWith(`Could not add project: ${reason}`)
+      }
+    )
+
+    it('names the setting when the dev folder cannot be created', async () => {
+      const db = new FakeDiscordDatabase()
+      configure(db)
+      setDevFolder(db, '/srv/dev')
+      vi.mocked(mkdirSync).mockImplementation(() => {
+        throw new Error('EACCES: permission denied')
+      })
+
+      const { interaction } = await runAddProject(db, url)
+
+      expect(cloneRepository).not.toHaveBeenCalled()
+      expect(createProjectWithDefaultWorktree).not.toHaveBeenCalled()
+      expect(interaction.editReply).toHaveBeenCalledWith(
+        'Could not add project: Could not create the dev folder set in Settings › General ' +
+          '(/srv/dev): EACCES: permission denied'
+      )
+    })
   })
 
   it('routes component interactions to the session bridge before slash command handling', async () => {

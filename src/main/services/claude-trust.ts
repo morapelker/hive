@@ -1,5 +1,5 @@
 import { existsSync } from 'fs'
-import { readFile } from 'fs/promises'
+import { lstat, readFile } from 'fs/promises'
 import { homedir } from 'os'
 import { join } from 'path'
 import type { Project } from '../db/types'
@@ -81,9 +81,7 @@ export async function trustFoldersInClaudeConfig(
   return run
 }
 
-type ConfigRead =
-  | { kind: 'ok'; config: Record<string, unknown> }
-  | { kind: 'unreadable' }
+type ConfigRead = { kind: 'ok'; config: Record<string, unknown> } | { kind: 'unreadable' }
 
 async function readClaudeConfig(configPath: string): Promise<ConfigRead> {
   if (!existsSync(configPath)) return { kind: 'ok', config: {} }
@@ -167,6 +165,147 @@ async function ensureFoldersTrusted(
   }
   log.warn('Could not confirm trust entries in claude config', { configPath, folderPaths: folders })
   return { ok: false, newlyTrusted }
+}
+
+export interface MoveFolderEntryResult {
+  /** False when the config could not be read or written; it is then as it was. */
+  ok: boolean
+  /**
+   * The new folder's entry took something from the old folder's: all of it when the new
+   * folder had no entry, otherwise the values its own entry left open.
+   */
+  copied: boolean
+  /** The old folder's entry was removed. */
+  removed: boolean
+}
+
+/**
+ * A folder the CLI has an entry for was moved: carry the entry (trust, allowed tools, MCP
+ * servers, last-run counters) over to the new path, so the CLI treats the folder there as
+ * the one it knows.
+ *
+ * When the new path has no entry, the old one is copied whole. When it has one, the two are
+ * merged key by key: a value the new path's entry holds is never replaced, and a key it
+ * lacks or holds empty (`[]`, `{}`, `false`, `null`, `''`, `0`) takes the old entry's value.
+ * An entry is at the new path already when the same folder was known by two spellings (the
+ * app trusts it under the path it stores, the CLI keeps everything else under the real
+ * path), or when a CLI that was still open in a worktree wrote its defaults there, every key
+ * present and empty.
+ *
+ * `projects[fromFolder]` is removed once nothing is at the old path any more, so that a
+ * different repository put there later does not inherit its trust; while the old folder is
+ * still on disk the entry stays. `removeOld: 'always'` removes it while the old folder is
+ * on disk too. That is for a folder that was copied to another volume: its old copy is
+ * deleted only later (or kept, when it changed in the meantime), nothing comes back to
+ * remove the entry then, and the old copy is not the project's folder any more either way.
+ *
+ * Same discipline as `trustFoldersInClaudeConfig`: queued behind this process's other
+ * writes, under the config lock, written atomically, and only when something changes (a
+ * second run changes nothing). A missing file is not created and an unparseable one is left
+ * untouched. Never rejects.
+ */
+export async function moveFolderEntryInClaudeConfig(
+  configPath: string,
+  fromFolder: string,
+  toFolder: string,
+  options?: { removeOld?: 'always' | 'when-gone' }
+): Promise<MoveFolderEntryResult> {
+  const removeOld = options?.removeOld ?? 'when-gone'
+  const run = writeChain.then(() =>
+    withClaudeConfigLock(configPath, () =>
+      moveFolderEntry(configPath, fromFolder, toFolder, removeOld)
+    )
+  )
+  writeChain = run.catch(() => undefined)
+  try {
+    return await run
+  } catch (error) {
+    log.warn('Failed to move a folder entry in claude config', {
+      configPath,
+      fromFolder,
+      toFolder,
+      error: error instanceof Error ? error.message : String(error)
+    })
+    return { ok: false, copied: false, removed: false }
+  }
+}
+
+async function isGoneFromDisk(folderPath: string): Promise<boolean> {
+  try {
+    await lstat(folderPath)
+    return false
+  } catch (error) {
+    // Only "nothing is there" counts: a folder that cannot be looked at may still exist.
+    const code = (error as NodeJS.ErrnoException).code
+    return code === 'ENOENT' || code === 'ENOTDIR'
+  }
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** A value that says nothing: what the CLI writes for a key nobody has set. */
+function isEmptyValue(value: unknown): boolean {
+  if (value === undefined || value === null) return true
+  if (value === false || value === '' || value === 0) return true
+  if (Array.isArray(value)) return value.length === 0
+  return typeof value === 'object' && Object.keys(value).length === 0
+}
+
+/**
+ * Give `entry` every value of `oldEntry` that it leaves open: a key it does not have, or
+ * one it holds empty while the old entry holds something. Returns whether anything was
+ * taken. Two empty values are left alone, so a second run takes nothing.
+ */
+function fillOpenKeys(entry: Record<string, unknown>, oldEntry: Record<string, unknown>): boolean {
+  let taken = false
+  for (const [key, oldValue] of Object.entries(oldEntry)) {
+    if (Object.hasOwn(entry, key) && (!isEmptyValue(entry[key]) || isEmptyValue(oldValue))) {
+      continue
+    }
+    entry[key] = structuredClone(oldValue)
+    taken = true
+  }
+  return taken
+}
+
+async function moveFolderEntry(
+  configPath: string,
+  fromFolder: string,
+  toFolder: string,
+  removeOld: 'always' | 'when-gone'
+): Promise<MoveFolderEntryResult> {
+  if (fromFolder === toFolder) return { ok: true, copied: false, removed: false }
+  const read = await readClaudeConfig(configPath)
+  if (read.kind !== 'ok') return { ok: false, copied: false, removed: false }
+  const config = read.config
+  const projects = projectsOf(config)
+  const entry = projects[fromFolder]
+  if (entry === undefined) return { ok: true, copied: false, removed: false }
+
+  const existing = projects[toFolder]
+  let copied = false
+  if (existing === undefined) {
+    copied = typeof entry === 'object' && entry !== null
+    if (copied) projects[toFolder] = structuredClone(entry)
+  } else if (isPlainObject(existing) && isPlainObject(entry)) {
+    copied = fillOpenKeys(existing, entry)
+  }
+  const removed = removeOld === 'always' || (await isGoneFromDisk(fromFolder))
+  if (removed) delete projects[fromFolder]
+  if (!copied && !removed) return { ok: true, copied: false, removed: false }
+
+  config.projects = projects
+  await atomicWriteJson(configPath, config, { pretty: true })
+  log.info('Moved a folder entry in claude config', {
+    configPath,
+    fromFolder,
+    toFolder,
+    copied,
+    removed
+  })
+  return { ok: true, copied, removed }
 }
 
 /**

@@ -280,10 +280,24 @@ const runLifecycle = (
         exitCode: run.exitCode
       })
 
-      runs.set(run.sessionId, run)
+      // Put back only where the session has no run: a command cut off at the output limit
+      // reads as over before its process has closed, so the session's next command may be
+      // in the map by now. Replaced by this run, that command could not be stopped and would
+      // not be listed as running.
+      if (!runs.has(run.sessionId)) runs.set(run.sessionId, run)
     })
   ).pipe(
-    Effect.catchAllCause((cause) => Effect.logError('Bash lifecycle failed', Cause.squash(cause)))
+    Effect.catchAllCause((cause) => Effect.logError('Bash lifecycle failed', Cause.squash(cause))),
+    // A lifecycle that ends early (a failure in it, an interrupt) has not set the final status,
+    // and has let go of the process on its way out. The run is over: left as running, it would
+    // keep the session from running another command and hold its project back for good.
+    Effect.ensuring(
+      Effect.sync(() => {
+        if (run.status !== 'running') return
+        run.status = 'error'
+        run.proc = undefined
+      })
+    )
   )
 
 const snapshot = (run: ActiveRun): BashRunSnapshot => ({
@@ -334,6 +348,9 @@ export const BashLive = Layer.effect(
         runs.set(sessionId, active)
         yield* Ref.set(runsRef, runs)
 
+        // However the announcement goes wrong (a listener that throws is not a typed failure):
+        // no lifecycle is started for this run, so nothing would ever take it out of the
+        // running state. It is ended and forgotten here.
         yield* send({
           type: 'start',
           sessionId,
@@ -342,11 +359,14 @@ export const BashLive = Layer.effect(
           cwd,
           startedAt
         }).pipe(
-          Effect.tapError(() => spawner.signalTree(proc, 'SIGKILL')),
-          Effect.tapError(() =>
-            Effect.sync(() => {
-              runs.delete(sessionId)
-            })
+          Effect.onError(() =>
+            spawner.signalTree(proc, 'SIGKILL').pipe(
+              Effect.ensuring(
+                Effect.sync(() => {
+                  runs.delete(sessionId)
+                })
+              )
+            )
           )
         )
 
@@ -385,6 +405,15 @@ export const BashLive = Layer.effect(
         })
       )
 
+    // By status and not by what the map holds: a finished run stays in it for `getRun`.
+    const runningSessionIds = Ref.get(runsRef).pipe(
+      Effect.map((runs) =>
+        [...runs.values()]
+          .filter((active) => active.status === 'running')
+          .map((active) => active.sessionId)
+      )
+    )
+
     const killAll = Effect.gen(function* () {
       const runs = yield* Ref.get(runsRef)
 
@@ -403,7 +432,7 @@ export const BashLive = Layer.effect(
       yield* Ref.set(runsRef, runs)
     }).pipe(Effect.withSpan('bash.killAll'))
 
-    return { run, abort, getRun, killAll }
+    return { run, abort, getRun, runningSessionIds, killAll }
   })
 )
 

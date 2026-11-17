@@ -87,6 +87,35 @@ export function releasePort(directoryPath: string): void {
 }
 
 /**
+ * A directory was moved: its port goes with it, so its dev server keeps the address it had.
+ * The old key is always dropped (the next `assignPort` would drop it anyway, as a directory
+ * that no longer exists). The new key gets the port only when it has none yet and no other
+ * directory holds that port. Returns true when the port now belongs to the new path. Never
+ * throws: a registry that cannot be read or written leaves the directory to get a new port.
+ */
+export function movePort(fromDirectoryPath: string, toDirectoryPath: string): boolean {
+  if (fromDirectoryPath === toDirectoryPath) return false
+  try {
+    const registry = loadRegistry()
+    const port = registry[fromDirectoryPath]
+    if (port === undefined) return false
+    delete registry[fromDirectoryPath]
+    const moved = registry[toDirectoryPath] === undefined && !Object.values(registry).includes(port)
+    if (moved) registry[toDirectoryPath] = port
+    saveRegistry(registry)
+    log.info('Moved port', { fromDirectoryPath, toDirectoryPath, port, moved })
+    return moved
+  } catch (error) {
+    log.warn('Failed to move port', {
+      fromDirectoryPath,
+      toDirectoryPath,
+      error: error instanceof Error ? error.message : String(error)
+    })
+    return false
+  }
+}
+
+/**
  * Get the currently assigned port for a directory, or null if none.
  */
 export function getAssignedPort(directoryPath: string): number | null {

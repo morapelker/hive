@@ -10,6 +10,7 @@ import {
   DialogTitle
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { readExistingDevFolder } from '@/lib/dev-folder/read-dev-folder'
 import { useProjectStore, useSettingsStore } from '@/stores'
 import { projectToast } from '@/lib/toast'
 import { projectApi } from '@/api/project-api'
@@ -35,6 +36,21 @@ export function CreateProjectDialog({
       setName('')
       setError(null)
       setIsCreating(false)
+    }
+  }, [open])
+
+  // With no folder remembered from an earlier project, a new one starts in the dev folder.
+  // The answer can arrive after the person picked a folder, or after the dialog closed: it
+  // only ever fills an empty field of a dialog that is still open.
+  useEffect(() => {
+    if (!open || useSettingsStore.getState().lastProjectDirectory) return
+    let cancelled = false
+    void readExistingDevFolder().then((devFolder) => {
+      if (cancelled || !devFolder) return
+      setLocation((current) => current || devFolder)
+    })
+    return () => {
+      cancelled = true
     }
   }, [open])
 
@@ -85,8 +101,8 @@ export function CreateProjectDialog({
         <DialogHeader>
           <DialogTitle>Create New Project</DialogTitle>
           <DialogDescription>
-            Choose a location and name for your new project. Hive will create the folder, initialize
-            a Git repository, and add it to your projects.
+            Choose a location and name for your new project. Hive will create the folder,
+            initialize a Git repository, and add it to your projects.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">

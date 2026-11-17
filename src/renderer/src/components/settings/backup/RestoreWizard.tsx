@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/dialog'
 import { backupApi } from '@/api/backup-api'
 import { projectApi } from '@/api/project-api'
+import { readExistingDevFolder } from '@/lib/dev-folder/read-dev-folder'
 import { useProjectStore, useTicketLabelsStore, useWorktreeStore } from '@/stores'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
@@ -184,6 +185,14 @@ export function RestoreWizard({ backup, open, onOpenChange }: RestoreWizardProps
         })
         setClassifications([])
       })
+
+    // The projects to clone go to the dev folder unless another folder is picked. The answer
+    // can arrive after the person picked one, or for a backup that is no longer the one
+    // shown: it only ever fills an empty field of the wizard it was asked for.
+    void readExistingDevFolder().then((devFolder) => {
+      if (cancelled || !devFolder) return
+      setCloneParentDir((current) => current || devFolder)
+    })
 
     return () => {
       cancelled = true

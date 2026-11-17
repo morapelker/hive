@@ -114,7 +114,9 @@ describe('buildCodexCliPtySpawn', () => {
       '-c',
       'model_reasoning_effort="high"',
       '-c',
-      expect.stringMatching(/^projects=\{"\/repo"=\{trust_level="trusted"\}.*"\/repo\/wt"=\{trust_level="trusted"\}/),
+      expect.stringMatching(
+        /^projects=\{"\/repo"=\{trust_level="trusted"\}.*"\/repo\/wt"=\{trust_level="trusted"\}/
+      ),
       '-c',
       'hooks.Stop=[…]',
       '-c',
@@ -131,12 +133,43 @@ describe('buildCodexCliPtySpawn', () => {
       pendingPrompt: 'continue',
       readModelUpgradeTarget: noUpgrade
     })
-    expect(spawn.args.slice(0, 3)).toEqual([
+    expect(spawn.args.slice(0, 5)).toEqual([
       'resume',
       '01a07dbd-6a11-7982-a2b6-ceaa43736708',
+      '-c',
+      'tui.resume_cwd="current"',
       '--dangerously-bypass-approvals-and-sandbox'
     ])
     expect(spawn.args.at(-1)).toBe('continue')
+  })
+
+  it('has a resumed thread work in the folder it is started in, not the one it recorded', () => {
+    const resumeCwd = (args: string[]): string[] =>
+      args.filter((arg) => arg.startsWith('tui.resume_cwd'))
+
+    const resumed = buildCodexCliPtySpawn({
+      session: makeSession({ claude_session_id: '01a07dbd-6a11-7982-a2b6-ceaa43736708' }),
+      worktreePath: '/dev-new/app',
+      projectPath: '/dev-new/app',
+      readModelUpgradeTarget: noUpgrade
+    })
+    expect(resumed.cwd).toBe('/dev-new/app')
+    expect(resumeCwd(resumed.args)).toEqual(['tui.resume_cwd="current"'])
+    expect(resumed.args[resumed.args.indexOf('tui.resume_cwd="current"') - 1]).toBe('-c')
+
+    // A thread that is only starting has no recorded folder to differ from.
+    const fresh = buildCodexCliPtySpawn({
+      session: makeSession(),
+      worktreePath: '/dev-new/app',
+      readModelUpgradeTarget: noUpgrade
+    })
+    expect(resumeCwd(fresh.args)).toEqual([])
+    const placeholder = buildCodexCliPtySpawn({
+      session: makeSession({ claude_session_id: 'pending::abc' }),
+      worktreePath: '/dev-new/app',
+      readModelUpgradeTarget: noUpgrade
+    })
+    expect(resumeCwd(placeholder.args)).toEqual([])
   })
 
   it('ignores a pending:: placeholder id and an explicit override wins over the row', () => {
@@ -173,7 +206,7 @@ describe('buildCodexCliPtySpawn', () => {
     expect(goal.args.some((a) => a.startsWith('/goal'))).toBe(false)
   })
 
-  it('pre-acknowledges a deprecated model\'s migration prompt so the launch is not blocked', () => {
+  it("pre-acknowledges a deprecated model's migration prompt so the launch is not blocked", () => {
     expect(buildCodexModelMigrationOverride('gpt-5.4-mini', 'gpt-6-luna')).toBe(
       'notice.model_migrations={"gpt-5.4-mini"="gpt-6-luna"}'
     )

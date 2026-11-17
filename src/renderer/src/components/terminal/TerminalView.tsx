@@ -111,10 +111,20 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
 
   const effectiveVisible = isVisible && !ghosttyOverlaySuppressed
 
+  // The folder a terminal is started in: the newest `cwd` that names a folder, read at the
+  // moment the terminal is created (mount, restart, another backend). It is deliberately not a
+  // dependency of the setup. A terminal keeps the folder it started in: when the folder of its
+  // worktree changes (the project was moved to the dev folder), setting it up again would
+  // throw away what is on screen and, for Ghostty, end the surface and what runs in it. Only a
+  // terminal that is started again starts where the project is now.
+  const startCwdRef = useRef(cwd)
+  if (cwd) startCwdRef.current = cwd
+  const startCwdKnown = Boolean(startCwdRef.current)
+
   // Always-current ref so setupTerminal (a useCallback whose deps intentionally
   // do NOT include effectiveVisible) can read the latest value when it
   // recreates the backend. Without this, a recreate that happens while the
-  // panel is collapsed (cwd change, fontSize change, backend swap, StrictMode
+  // panel is collapsed (restart, fontSize change, backend swap, StrictMode
   // double-mount) defaults the new backend's `visible` to true and pins the
   // NSView on-screen even though the UI is hidden — see GhosttyBackend.mount.
   const effectiveVisibleRef = useRef(effectiveVisible)
@@ -366,7 +376,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
       }
 
       // CRITICAL: bail out if a newer setupTerminal (StrictMode double-mount,
-      // backend swap, cwd change, or our useEffect cleanup) has superseded
+      // backend swap, restart, or our useEffect cleanup) has superseded
       // us. Without this guard, React StrictMode races two parallel
       // setupTerminal calls past the pre-await dispose check and ends up
       // creating two GhosttyBackend instances for the same terminalId. The
@@ -386,7 +396,12 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
         container,
         {
           terminalId,
-          cwd,
+          // Read by the backend when it creates the terminal. A Ghostty surface is only created
+          // once its pane has a size, which for a terminal set up while hidden is when it is
+          // first shown: until then it follows the folder of its worktree.
+          get cwd() {
+            return startCwdRef.current
+          },
           fontFamily: resolvedFontFamily ?? config.fontFamily,
           fontSize,
           cursorStyle: config.cursorStyle,
@@ -396,7 +411,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
           shiftEnterAsNewline: shiftEnterAsNewlineRef.current,
           redrawOnClear: redrawOnClearRef.current,
           // Seed visibility from the current UI state. Critical when the
-          // backend is recreated (e.g. fontSize change, cwd change, StrictMode
+          // backend is recreated (e.g. fontSize change, restart, StrictMode
           // double-mount) while the bottom panel is collapsed: defaulting to
           // `true` would pin the Ghostty NSView on-screen and no later
           // setVisible call would move it (because effectiveVisible never
@@ -415,7 +430,8 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
 
       backendRef.current = backend
     },
-    [terminalId, cwd, destroyTerminal, createTerminal, onStatusChange]
+    // `cwd` is deliberately not a dependency: see startCwdRef.
+    [terminalId, destroyTerminal, createTerminal, onStatusChange]
   )
 
   // Handle restart — destroy old PTY and re-create terminal
@@ -438,11 +454,13 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
       // Use default shell
     }
 
-    await restartTerminal(terminalId, cwd, shell)
+    // A restart starts where the project is now.
+    await restartTerminal(terminalId, startCwdRef.current, shell)
     setupTerminal(effectiveBackendType || 'xterm')
-  }, [terminalId, cwd, restartTerminal, setupTerminal, effectiveBackendType])
+  }, [terminalId, restartTerminal, setupTerminal, effectiveBackendType])
 
-  // Initialize terminal on mount, and re-create when backend setting changes
+  // Initialize terminal on mount, and re-create when backend setting changes. A terminal that
+  // was mounted before its folder was known is set up once more when the folder arrives.
   useEffect(() => {
     setupTerminal(effectiveBackendType || 'xterm')
 
@@ -461,7 +479,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
       initializedRef.current = null
       activeBackendTypeRef.current = null
     }
-  }, [setupTerminal, effectiveBackendType])
+  }, [setupTerminal, effectiveBackendType, startCwdKnown])
 
   // Apply font size changes at runtime. xterm updates in place (no PTY
   // restart, so CLI sessions keep their scrollback); Ghostty bakes the size
@@ -491,11 +509,11 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
       setExitCode(undefined)
 
       await destroyTerminal(terminalId)
-      await restartTerminal(terminalId, cwd)
+      await restartTerminal(terminalId, startCwdRef.current)
       setupTerminal('ghostty')
     }
     restart()
-  }, [ghosttyFontSize, terminalId, cwd, destroyTerminal, restartTerminal, setupTerminal])
+  }, [ghosttyFontSize, terminalId, destroyTerminal, restartTerminal, setupTerminal])
 
   // Ghostty bakes `shiftEnterAsNewline` into the surface at creation, so a
   // runtime change requires recreating it — mirror the font-size remount above.
@@ -522,11 +540,11 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
       setExitCode(undefined)
 
       await destroyTerminal(terminalId)
-      await restartTerminal(terminalId, cwd)
+      await restartTerminal(terminalId, startCwdRef.current)
       setupTerminal('ghostty')
     }
     restart()
-  }, [shiftEnterAsNewline, terminalId, cwd, destroyTerminal, restartTerminal, setupTerminal])
+  }, [shiftEnterAsNewline, terminalId, destroyTerminal, restartTerminal, setupTerminal])
 
   // Focus terminal on click
   const handleClick = useCallback(() => {

@@ -10,6 +10,8 @@ import { GITHUB_CLONE_PROGRESS_CHANNEL, type GithubCloneProgressEvent } from '@s
 import type { EventBus } from '../../events/event-bus'
 import type { RpcHandler } from '../router'
 import { isValidDirectory } from '../../../shared/fs-path-checks'
+import { getDatabase } from '../../../main/db'
+import { isRegisteredProjectFolder } from '../../../main/services/clone-destination'
 
 export interface GithubRepo {
   readonly nameWithOwner: string
@@ -162,6 +164,19 @@ export const parseCloneProgress = (
   return null
 }
 
+/**
+ * Removes what an unfinished clone left at its destination, so that a retry is not blocked.
+ * The destination was free when the clone started: a project registered there now was moved
+ * to it meanwhile and is not the clone's to delete. With nothing there the removal is not
+ * started at all: it runs a moment later, and could then meet a project that has just arrived.
+ */
+const removeCloneLeftover = (destPath: string): void => {
+  if (!existsSync(destPath)) return
+  const projects = { getAllProjects: () => getDatabase().getAllProjects() }
+  if (isRegisteredProjectFolder(projects, destPath)) return
+  void rm(destPath, { recursive: true, force: true }).catch(() => undefined)
+}
+
 export interface GithubOpsRpcServiceDependencies {
   readonly eventBus?: EventBus
   readonly runCommand?: CommandRunner
@@ -258,7 +273,7 @@ export const makeLiveGithubOpsRpcService = (
           } else {
             // destPath did not exist before this clone; git can leave partial
             // state in some failure modes, which would block a retry.
-            void rm(destPath, { recursive: true, force: true }).catch(() => undefined)
+            removeCloneLeftover(destPath)
             const detail = stderrTail.join('').trim().split('\n').slice(-5).join('\n').trim()
             publish({
               operationId,
@@ -284,7 +299,7 @@ export const makeLiveGithubOpsRpcService = (
           for (const active of activeClones.values()) {
             if (active.destPath === destPath) return
           }
-          void rm(destPath, { recursive: true, force: true }).catch(() => undefined)
+          removeCloneLeftover(destPath)
         })
         try {
           if (child.pid && process.platform !== 'win32') {
