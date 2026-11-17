@@ -4,6 +4,7 @@ import { join } from 'path'
 import { homedir } from 'os'
 import { createLogger } from './logger'
 import { readClaudeLiveKeychainRaw } from './account-store-claude'
+import { ANTHROPIC_ORGANIZATION_HEADER, parseOrganizationId } from './claude-organization-id'
 import { refreshAnthropicToken } from './oauth-anthropic'
 import type {
   ClaudeRefreshResult,
@@ -41,6 +42,18 @@ export interface ClaudeUsageFetchContext {
   caller: 'usage:fetch' | 'usage:fetchForAccount' | 'refreshAllForProvider'
   accountId?: string
   batchId?: string
+}
+
+/**
+ * What a usage poll gives back inside this process: the result the renderer
+ * knows, plus the organization the response says the polled credential's
+ * account is billed to (`anthropic-organization-id`). Only a 2xx response
+ * names one; a failed poll and a response without the header leave it out.
+ * It is for whoever knows which account was polled (the saved-account poll
+ * stores it) and is not part of what a caller hands to the renderer.
+ */
+export interface ClaudeUsageFetchResult extends UsageResult {
+  organizationUuid?: string
 }
 
 export interface ClaudeUsageOverride {
@@ -431,7 +444,7 @@ export function normalizeClaudeUsageResponse(body: unknown): UsageData | null {
 export async function fetchClaudeUsage(
   override?: ClaudeUsageOverride,
   ctx?: ClaudeUsageFetchContext
-): Promise<UsageResult> {
+): Promise<ClaudeUsageFetchResult> {
   let effectiveOverride: ClaudeUsageOverride
   let tokenSource: ClaudeTokenSource
 
@@ -519,6 +532,12 @@ export async function fetchClaudeUsage(
     }
 
     log.info('Claude usage response', responseLogData)
+    // The organization this credential's account is billed to. Read from a
+    // 2xx only: an error response carries none (or says nothing reliable).
+    const organizationUuid = parseOrganizationId(
+      response.headers.get(ANTHROPIC_ORGANIZATION_HEADER)
+    )
+    const learned = organizationUuid !== null ? { organizationUuid } : {}
     const body = (await response.json()) as unknown
     const data = normalizeClaudeUsageResponse(body)
     if (data === null) {
@@ -533,11 +552,12 @@ export async function fetchClaudeUsage(
       return {
         success: false,
         error: 'Usage API returned an unexpected body',
-        ...(rotated ? { rotated } : {})
+        ...(rotated ? { rotated } : {}),
+        ...learned
       }
     }
 
-    return { success: true, data, ...(rotated ? { rotated } : {}) }
+    return { success: true, data, ...(rotated ? { rotated } : {}), ...learned }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     log.warn('Failed to fetch Claude usage', { ...ctx, error: message, inFlight })
@@ -551,5 +571,77 @@ export async function fetchClaudeUsage(
     if (countedInFlight) {
       inFlight = Math.max(0, inFlight - 1)
     }
+  }
+}
+
+/**
+ * What asking Anthropic for an account's profile told us about its
+ * organization. `rejected`: the credential was refused (401 or 403: expired,
+ * signed out, or without the profile scope). `rate-limited`: a 429, with the
+ * server's `retry-after` in seconds when it gave one. `missing`: a 2xx whose
+ * body names no organization. `failed`: anything else (5xx, network, timeout).
+ */
+export type ClaudeProfileOrganizationResult =
+  | { ok: true; organizationUuid: string }
+  | {
+      ok: false
+      reason: 'rejected' | 'rate-limited' | 'missing' | 'failed'
+      status?: number
+      retryAfter?: number
+    }
+
+/**
+ * The organization an account is billed to, from the account's own profile
+ * (`GET /api/oauth/profile`, `organization.uuid` in the body), for an account
+ * whose usage poll has not told us. One request with the access token it is
+ * given: it never refreshes a token and never throws.
+ *
+ * The body also holds the account's email and name, so neither it nor any
+ * part of it is logged; an error body is not read at all.
+ */
+export async function fetchClaudeProfileOrganization(
+  accessToken: string
+): Promise<ClaudeProfileOrganizationResult> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 10_000)
+
+  try {
+    const response = await fetch('https://api.anthropic.com/api/oauth/profile', {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'User-Agent': CLAUDE_CLIENT_USER_AGENT,
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache'
+      },
+      signal: controller.signal
+    })
+
+    if (!response.ok) {
+      const { status } = response
+      // The error body is not read (and so never logged): let the connection go.
+      void response.body?.cancel().catch(() => undefined)
+      if (status === 429) {
+        const retryAfter = parseRetryAfter(response.headers.get('retry-after'))
+        return {
+          ok: false,
+          reason: 'rate-limited',
+          status,
+          ...(retryAfter !== undefined ? { retryAfter } : {})
+        }
+      }
+      return { ok: false, reason: status === 401 || status === 403 ? 'rejected' : 'failed', status }
+    }
+
+    const body = (await response.json()) as { organization?: { uuid?: unknown } } | null
+    const organizationUuid = parseOrganizationId(body?.organization?.uuid)
+    if (organizationUuid === null) return { ok: false, reason: 'missing', status: response.status }
+    return { ok: true, organizationUuid }
+  } catch {
+    // Network trouble, a timeout, or a body that is not JSON.
+    return { ok: false, reason: 'failed' }
+  } finally {
+    clearTimeout(timeout)
   }
 }

@@ -13,7 +13,7 @@ import {
   refreshAllForProvider
 } from './saved-usage-orchestrator'
 import { fetchOpenAIUsage } from './openai-usage-service'
-import { fetchClaudeUsage } from './usage-service'
+import { fetchClaudeUsage, type ClaudeUsageFetchResult } from './usage-service'
 import { persistRotatedLiveClaudeTokens, readClaudeLiveEmail } from './account-store-claude'
 import { listCodexAccounts, persistRotatedLiveCodexTokens } from './account-store-codex'
 import { accountLockKey, withAccountLock } from './account-lock'
@@ -108,7 +108,14 @@ export async function fetchUsageOp(): Promise<UsageResult> {
   const liveEmail = await readClaudeLiveLockEmail()
 
   const fetchAndPersist = async (): Promise<UsageResult> => {
-    const result = await fetchClaudeUsage(undefined, { caller: 'usage:fetch' })
+    // The organization the response names is not passed on: this result goes
+    // to the renderer as it is, and which account the signed-in credential
+    // belongs to is only known here from the identity file. Organizations are
+    // stored by the per-account poll and the organization learner.
+    const result: ClaudeUsageFetchResult = await fetchClaudeUsage(undefined, {
+      caller: 'usage:fetch'
+    })
+    delete result.organizationUuid
     await persistLiveClaudeRotation(result)
     return result
   }

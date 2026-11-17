@@ -49,6 +49,7 @@ import {
   type UnifiedRateLimitSnapshot,
   type UnifiedRateLimitWindow
 } from './anthropic-rate-limit-headers'
+import { ANTHROPIC_ORGANIZATION_HEADER, parseOrganizationId } from '../claude-organization-id'
 import type { LocalApiProxyExchange } from './local-api-proxy'
 
 export interface ClaudeUsageObservation {
@@ -185,13 +186,9 @@ export const HELD_ORGANIZATION_RECHECK_MS = 1_000
  */
 export const ACCOUNT_SWITCH_SETTLE_MS = 30_000
 const MAX_HELD_ORGANIZATIONS = 20
-/** The response header that names the organization a request was billed to. */
-export const ANTHROPIC_ORGANIZATION_HEADER = 'anthropic-organization-id'
-/**
- * What an organization id may look like (a uuid today). The stored value is
- * later written into the CLI's identity file, so anything else is not taken.
- */
-const ORGANIZATION_ID_PATTERN = /^[0-9a-z][0-9a-z_-]{0,127}$/
+// The header's name and what counts as an id are shared with the other
+// learners (the usage poll, the profile request): claude-organization-id.ts.
+export { ANTHROPIC_ORGANIZATION_HEADER }
 /**
  * How long after a credential was first paired with an account the pairing is
  * looked at again, to store the organization seen meanwhile. Just past
@@ -208,8 +205,7 @@ export function organizationFromResponseHeaders(
   headers: ClaudeProxyObservedExchange['responseHeaders']
 ): string | null {
   const raw = headers[ANTHROPIC_ORGANIZATION_HEADER]
-  const organization = normalizeOrgUuid(Array.isArray(raw) ? raw[0] : raw)
-  return organization !== null && ORGANIZATION_ID_PATTERN.test(organization) ? organization : null
+  return parseOrganizationId(Array.isArray(raw) ? raw[0] : raw)
 }
 
 /**

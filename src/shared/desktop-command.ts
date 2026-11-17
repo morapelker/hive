@@ -49,6 +49,7 @@ export type DesktopCommandName =
   | 'updaterInstallUpdate'
   | 'updaterSetChannel'
   | 'updaterGetVersion'
+  | 'claudeOrganizationLearned'
   | 'showPet'
   | 'hidePet'
   | 'publishPetStatus'
@@ -326,6 +327,14 @@ export type UpdaterChannel = 'stable' | 'canary'
 
 export interface UpdaterSetChannelPayload {
   readonly channel: UpdaterChannel
+}
+
+/**
+ * The child stored the organization a Claude account is billed to; main owns the live usage
+ * updater, which may be holding a reading for it (services/claude-api-proxy/claude-usage-live.ts).
+ */
+export interface ClaudeOrganizationLearnedPayload {
+  readonly email: string
 }
 
 export type PublishPetStatusPayload = PetStatusPayload
@@ -1052,6 +1061,7 @@ export type DesktopCommandRequest =
   | UpdaterInstallUpdateDesktopCommandRequest
   | UpdaterSetChannelDesktopCommandRequest
   | UpdaterGetVersionDesktopCommandRequest
+  | ClaudeOrganizationLearnedDesktopCommandRequest
   | ShowPetDesktopCommandRequest
   | HidePetDesktopCommandRequest
   | PublishPetStatusDesktopCommandRequest
@@ -1385,6 +1395,13 @@ export interface UpdaterGetVersionDesktopCommandRequest {
   readonly type: typeof DESKTOP_COMMAND_REQUEST_TYPE
   readonly id: string
   readonly command: 'updaterGetVersion'
+}
+
+export interface ClaudeOrganizationLearnedDesktopCommandRequest {
+  readonly type: typeof DESKTOP_COMMAND_REQUEST_TYPE
+  readonly id: string
+  readonly command: 'claudeOrganizationLearned'
+  readonly payload: ClaudeOrganizationLearnedPayload
 }
 
 export interface ShowPetDesktopCommandRequest {
@@ -2135,6 +2152,11 @@ export function makeDesktopCommandRequest(
 ): UpdaterGetVersionDesktopCommandRequest
 export function makeDesktopCommandRequest(
   id: string,
+  command: 'claudeOrganizationLearned',
+  payload: ClaudeOrganizationLearnedPayload
+): ClaudeOrganizationLearnedDesktopCommandRequest
+export function makeDesktopCommandRequest(
+  id: string,
   command: 'showPet'
 ): ShowPetDesktopCommandRequest
 export function makeDesktopCommandRequest(
@@ -2559,6 +2581,7 @@ export function makeDesktopCommandRequest(
     | ShowNotificationPayload
     | UpdaterCheckForUpdatePayload
     | UpdaterSetChannelPayload
+    | ClaudeOrganizationLearnedPayload
     | PublishPetStatusPayload
     | SetPetIgnoreMousePayload
     | MovePetPayload
@@ -2960,6 +2983,19 @@ export function makeDesktopCommandRequest(
       id,
       command
     } as UpdaterGetVersionDesktopCommandRequest
+  }
+
+  if (command === 'claudeOrganizationLearned') {
+    if (!payload) {
+      throw new Error('Missing claudeOrganizationLearned payload')
+    }
+
+    return {
+      type: DESKTOP_COMMAND_REQUEST_TYPE,
+      id,
+      command,
+      payload
+    } as ClaudeOrganizationLearnedDesktopCommandRequest
   }
 
   if (command === 'publishPetStatus') {
@@ -3948,6 +3984,8 @@ export const isDesktopCommandRequest = (value: unknown): value is DesktopCommand
       value.command === 'updaterInstallUpdate' ||
       (value.command === 'updaterSetChannel' && isUpdaterSetChannelPayload(value.payload)) ||
       value.command === 'updaterGetVersion' ||
+      (value.command === 'claudeOrganizationLearned' &&
+        isClaudeOrganizationLearnedPayload(value.payload)) ||
       value.command === 'showPet' ||
       value.command === 'hidePet' ||
       (value.command === 'publishPetStatus' && isPublishPetStatusPayload(value.payload)) ||
@@ -4255,6 +4293,11 @@ const isUpdaterCheckForUpdatePayload = (value: unknown): value is UpdaterCheckFo
 
 const isUpdaterSetChannelPayload = (value: unknown): value is UpdaterSetChannelPayload =>
   isRecord(value) && (value.channel === 'stable' || value.channel === 'canary')
+
+const isClaudeOrganizationLearnedPayload = (
+  value: unknown
+): value is ClaudeOrganizationLearnedPayload =>
+  isRecord(value) && typeof value.email === 'string' && value.email.length > 0
 
 const isCreateResponseLogPayload = (value: unknown): value is CreateResponseLogPayload =>
   isRecord(value) && typeof value.sessionId === 'string'

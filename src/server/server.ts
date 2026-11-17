@@ -21,6 +21,7 @@ import { cleanupBranchWatchers } from '../main/services/branch-watcher'
 import { warmUpGhosttyConfig } from '../main/services/ghostty-config-store'
 import { setGitEventPublisher } from '../main/services/git-events'
 import { setWorktreeEventPublisher } from '../main/services/worktree-events'
+import { connectClaudeOrganizationLearningInServer } from './claude-organization-forwarder'
 import { cleanupWorktreeWatchers } from '../main/services/worktree-watcher'
 import { startSessionUsageSweep } from '../main/services/usage/session-usage-service'
 import {
@@ -98,6 +99,9 @@ export const startHiveServer = (
         })
       )
     )
+    // An account's organization stored here goes to main, whose live usage updater may be
+    // waiting for it; and main's "organizations needed" asks for them to be learned.
+    connectClaudeOrganizationLearningInServer(eventBus)
     setMarkdownKanbanEventPublisher((channel, payload) =>
       Effect.runPromise(
         eventBus.publish({

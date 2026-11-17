@@ -83,6 +83,7 @@ import {
   probeClaudeApiUpstream,
   startClaudeApiProxy
 } from './services/claude-api-proxy/claude-api-proxy'
+import { connectClaudeOrganizationLearning } from './services/claude-api-proxy/claude-organization-learning'
 import { disposeClaudeUsageLiveUpdater } from './services/claude-api-proxy/claude-usage-live'
 import { startThreadpoolProbe } from './services/perf-logging/threadpool-probe'
 import { publishDesktopBackendEvent } from './desktop/backend-event-publisher'
@@ -498,6 +499,11 @@ app
     // Load full shell environment for macOS when launched from Finder/Dock/Spotlight.
     // Must run before any child process spawning (opencode, scripts, Claude Code SDK).
     loadShellEnv()
+
+    // Live usage for an organization no account is mapped to asks the server child to learn
+    // organizations, and the child says when it stored one. Connected whatever the proxy does:
+    // the live updater has other sources (a Code Mode session's debug log).
+    connectClaudeOrganizationLearning()
 
     // Route every Claude Code process through the local API proxy so the
     // subscription usage headers on each response update the usage bars in

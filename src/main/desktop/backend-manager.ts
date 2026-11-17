@@ -52,6 +52,7 @@ import { sleepNow } from '../services/sleep-now'
 import { getSessionProfilerSnapshot, killSessionProfilerTarget } from '../services/session-profiler'
 import { notificationService } from '../services/notification-service'
 import { updaterService } from '../services/updater'
+import { receiveClaudeOrganizationLearned } from '../services/usage/claude-organization-signal'
 import { appendResponseLog, createResponseLog } from '../services/response-logger'
 import { deleteAttachment, saveAttachment } from '../services/attachment-storage'
 import {
@@ -2700,6 +2701,29 @@ const handleDesktopBackendCommand = (
       sendDesktopBackendCommandResult(
         child,
         makeDesktopCommandResult(message.id, { ok: true, value: version }),
+        log
+      )
+    } catch (error) {
+      sendDesktopBackendCommandResult(
+        child,
+        makeDesktopCommandResult(message.id, {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error)
+        }),
+        log
+      )
+    }
+    return undefined
+  }
+
+  if (message.command === 'claudeOrganizationLearned') {
+    // The child stored the organization a Claude account is billed to; main owns the live usage
+    // updater, which may be holding a reading for that organization.
+    try {
+      receiveClaudeOrganizationLearned(message.payload.email)
+      sendDesktopBackendCommandResult(
+        child,
+        makeDesktopCommandResult(message.id, { ok: true }),
         log
       )
     } catch (error) {

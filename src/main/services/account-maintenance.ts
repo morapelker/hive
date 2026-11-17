@@ -5,10 +5,17 @@
  * with a low-frequency expiry watcher. Never launches a browser/login flow —
  * a refresh that needs a human to log back in is left for the renderer
  * (Phase 6) to notice via the cached account's `stale` status.
+ *
+ * It also drives the organization learner (claude-organization-learner.ts):
+ * once the launch mass refresh is over, every minute, and on request, the
+ * Claude accounts that still have no organization stored are asked for it.
+ * That runs beside the watcher, never inside a tick, so a slow request there
+ * cannot hold up a token refresh.
  */
 import { getDatabase } from '../db'
 import { listClaudeAccounts, readClaudeEffectiveBlob, type ClaudeStoreAccount } from './account-store-claude'
 import { listCodexAccounts, readCodexEffectiveAuth, type CodexStoreAccount } from './account-store-codex'
+import { getClaudeOrganizationLearner } from './claude-organization-learner'
 import { migrateSavedCredentialsToStores } from './credentials-migration'
 import { createLogger } from './logger'
 import {
@@ -269,6 +276,21 @@ async function runLaunchMassRefresh(): Promise<void> {
   }
 }
 
+/** Set while account maintenance runs: asks the organization learner for a sweep. */
+let learnOrganizations: (() => void) | null = null
+
+/**
+ * Organizations are needed now (the live usage updater in the main process
+ * saw a reading for an organization no account is mapped to): learn them for
+ * the Claude accounts that have none. Returns at once. Does nothing where
+ * account maintenance was not started (tests, the server run on its own), and
+ * nothing while the launch mass refresh is still polling every account, which
+ * teaches the same thing and is followed by a sweep of its own.
+ */
+export function requestClaudeOrganizationLearning(): void {
+  learnOrganizations?.()
+}
+
 /**
  * Starts account maintenance: fires the one-shot migration + launch mass
  * refresh (never blocking the caller), then a `setInterval` expiry watcher.
@@ -278,9 +300,23 @@ export function startAccountMaintenance(): () => void {
   const backoff = new Map<string, BackoffState>()
   let inTick = false
 
-  void runLaunchMassRefresh()
+  // The launch poll is the first teacher (it stores the organization each
+  // response names); the learner only asks for the accounts it left without.
+  let launchRefreshDone = false
+  let stopped = false
+  const sweepOrganizations = (): void => {
+    if (!launchRefreshDone || stopped) return
+    void getClaudeOrganizationLearner().sweep()
+  }
+  learnOrganizations = sweepOrganizations
+
+  void runLaunchMassRefresh().finally(() => {
+    launchRefreshDone = true
+    sweepOrganizations()
+  })
 
   const interval = setInterval(() => {
+    sweepOrganizations()
     if (inTick) {
       log.warn('Skipping account maintenance tick: previous tick is still running')
       return
@@ -296,5 +332,9 @@ export function startAccountMaintenance(): () => void {
   }, TICK_INTERVAL_MS)
   interval.unref?.()
 
-  return () => clearInterval(interval)
+  return () => {
+    stopped = true
+    clearInterval(interval)
+    if (learnOrganizations === sweepOrganizations) learnOrganizations = null
+  }
 }

@@ -207,6 +207,14 @@ vi.mock('../services/ghostty-service', () => ({
   ghosttyService: ghosttyServiceMocks
 }))
 
+const claudeOrganizationMocks = vi.hoisted(() => ({
+  receiveClaudeOrganizationLearned: vi.fn()
+}))
+
+vi.mock('../services/usage/claude-organization-signal', () => ({
+  receiveClaudeOrganizationLearned: claudeOrganizationMocks.receiveClaudeOrganizationLearned
+}))
+
 vi.mock('../services/pet-window', () => ({
   beginPetPointerInteraction: petWindowMocks.beginPetPointerInteraction,
   createPetWindow: petWindowMocks.createPetWindow,
@@ -2852,6 +2860,41 @@ describe('desktop backend manager', () => {
     expect(petWindowMocks.forwardStatusToPet).toHaveBeenCalledWith(payload)
     expect(child.send).toHaveBeenCalledWith(
       makeDesktopCommandResult('publish-pet-status-1', { ok: true }),
+      expect.any(Function)
+    )
+  })
+
+  it('hands backend claudeOrganizationLearned commands to the main-side organization intake', async () => {
+    const child = new FakeChildProcess()
+
+    await startDesktopBackend(
+      {
+        executablePath: '/electron',
+        entryPath: '/app/server.js',
+        cwd: '/app',
+        baseDir: mkdtempSync(join(tmpdir(), 'hive-backend-manager-')),
+        port: 0
+      },
+      {
+        spawnProcess: vi.fn(() => child as never),
+        fetch: vi.fn(async () => new Response('{}', { status: 200 })),
+        logger: makeLogger()
+      }
+    )
+
+    child.emit(
+      'message',
+      makeDesktopCommandRequest('claude-organization-learned-1', 'claudeOrganizationLearned', {
+        email: 'team@acme.test'
+      })
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(
+      claudeOrganizationMocks.receiveClaudeOrganizationLearned
+    ).toHaveBeenCalledExactlyOnceWith('team@acme.test')
+    expect(child.send).toHaveBeenCalledWith(
+      makeDesktopCommandResult('claude-organization-learned-1', { ok: true }),
       expect.any(Function)
     )
   })

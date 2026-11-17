@@ -13,6 +13,7 @@ import {
   type ClaudeStoreAccount
 } from './account-store-claude'
 import { accountLockKey, withAccountLock, withAccountLocks } from './account-lock'
+import { storeClaudeAccountOrganization } from './claude-organization-learner'
 import {
   addCodexAccount,
   listCodexAccounts,
@@ -452,6 +453,16 @@ export async function fetchForSavedAccount(
             )
             rotationPersistError = `failed to persist rotated tokens: ${message}`
           }
+        }
+
+        // The response named the organization this account is billed to
+        // (a 2xx only): keep it, here inside the account's lock, where a
+        // switch to this account reads it. Changes nothing about the poll.
+        if (result.organizationUuid) {
+          storeClaudeAccountOrganization(
+            { id: accountId, email: row.email },
+            result.organizationUuid
+          )
         }
 
         if (!result.success || !result.data) {
