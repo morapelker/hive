@@ -174,6 +174,12 @@ vi.mock('../services/terminal-pty-bridge', () => ({
   handleClaudeCliTerminalInput: terminalHandlerMocks.handleClaudeCliTerminalInput
 }))
 
+const claudeCliUsageLaunchMocks = vi.hoisted(() => ({
+  startClaudeCliUsageSweeps: vi.fn()
+}))
+
+vi.mock('../services/claude-cli-usage-launches-live', () => claudeCliUsageLaunchMocks)
+
 const sessionProfilerMocks = vi.hoisted(() => ({
   getSessionProfilerSnapshot: vi.fn(),
   killSessionProfilerTarget: vi.fn()
@@ -384,6 +390,27 @@ describe('desktop backend manager', () => {
       `${backend.config.httpBaseUrl}/.well-known/hive/environment`
     )
     expect(getDesktopBackendBootstrap()).toEqual(backend.bootstrap)
+  })
+
+  it('sweeps the debug logs Code Mode sessions left behind when it starts', async () => {
+    claudeCliUsageLaunchMocks.startClaudeCliUsageSweeps.mockClear()
+    const spawnProcess = vi.fn(() => new FakeChildProcess() as never)
+    const fetchImpl = vi.fn(async () => new Response('{}', { status: 200 }))
+
+    await startDesktopBackend(
+      {
+        executablePath: '/electron',
+        entryPath: '/app/server.js',
+        cwd: '/app',
+        baseDir: mkdtempSync(join(tmpdir(), 'hive-backend-manager-')),
+        port: 0
+      },
+      { spawnProcess, fetch: fetchImpl, logger: makeLogger() }
+    )
+
+    // What a crash or a force quit left on disk goes at start, and hourly from then on
+    // (claude-cli-usage-launches.ts, Code Mode T17).
+    expect(claudeCliUsageLaunchMocks.startClaudeCliUsageSweeps).toHaveBeenCalledTimes(1)
   })
 
   it("hands the backend this instance's start time, the same again after a restart", async () => {

@@ -27,7 +27,12 @@ import {
 } from './claude-cli-model-watcher'
 import { setClaudeCliPlanAutoApprove } from './claude-cli-plan-auto-approve'
 import { logClaudeBinaryVersion, resolveClaudeBinaryPath } from './claude-binary-resolver'
-import { buildClaudeCliPtySpawn } from './claude-cli-spawner'
+import { buildClaudeCliPtySpawn, type ClaudeCliUsageLaunch } from './claude-cli-spawner'
+import {
+  claudeCliUsageLaunches,
+  quitClaudeCliUsageLaunches
+} from './claude-cli-usage-launches-live'
+import type { ClaudeUsageTransport } from './claude-usage-transport'
 import { ensureProjectTrustCheck, reassertSessionFolderTrust } from './claude-trust'
 import {
   armClaudeCliLaunchWatch,
@@ -619,6 +624,8 @@ function ensureClaudeCliStatusSubscription(): void {
     if (!claudeCliSessions.has(payload.sessionId)) return
 
     claudeCliLastStatus.set(payload.sessionId, payload)
+    // A session whose usage is read from its debug log is read faster while its turn runs.
+    claudeCliUsageLaunches().noteStatus(payload.sessionId, payload.status)
     if (payload.status === 'plan_ready') {
       armClaudePlanFollowupWatcher(payload.sessionId)
       return
@@ -870,6 +877,8 @@ export async function createClaudeCliTerminal(
 ): Promise<{ success: boolean; cols?: number; rows?: number; error?: string }> {
   let pendingPrompt = opts?.pendingPrompt ?? null
   log.info('RPC: terminalOps.createClaudeCli', { sessionId, hasPrompt: !!pendingPrompt })
+  // This call prepared a usage launch (claude-cli-usage-launches.ts) whose PTY does not exist yet.
+  let usageLaunchPending = false
   try {
     const db = getDatabase()
     const session = db.getSession(sessionId)
@@ -946,6 +955,19 @@ export async function createClaudeCliTerminal(
       logClaudeBinaryVersion(claudeBinary)
     }
 
+    // Where the live usage of this process will come from: the API proxy, or, for a session
+    // that asks for Code Mode, the CLI's own debug log (claude-cli-usage-launches.ts). Decided
+    // for a process that is about to start, once: a live one keeps what it was started with,
+    // and a view mounting onto it decides nothing. Codex has no such choice.
+    //
+    // Asked before `alreadyExists` is taken, not next to the spawn: the decision reads a file,
+    // and a wait of that kind between the look at the PTY and the spawn would let two starts
+    // of one session cross there, each believing it is the one that starts the process.
+    let usageTransport: ClaudeUsageTransport | null =
+      codex || ptyService.has(sessionId)
+        ? null
+        : await claudeCliUsageLaunches().decide({ db, customProviderCommand })
+
     const alreadyExists = ptyService.has(sessionId)
     if (!codex) {
       // The claude CLI stalls a fresh spawn on its folder-trust dialog (which
@@ -959,6 +981,11 @@ export async function createClaudeCliTerminal(
     }
     const { port } = await getClaudeHookServer()
     ensureClaudeCliStatusSubscription()
+    if (!codex && usageTransport === null && !ptyService.has(sessionId)) {
+      // The process this call found is gone (closed or ended during the waits above): what
+      // is started below is a new one, and it is decided for like any other.
+      usageTransport = await claudeCliUsageLaunches().decide({ db, customProviderCommand })
+    }
 
     let spawn: {
       command: string
@@ -985,6 +1012,18 @@ export async function createClaudeCliTerminal(
       codexPromptViaPty = codexSpawn.promptViaPty
     } else {
       const hookSettingsJson = buildClaudeCliHookSettings(port, sessionId)
+      // A `debug-log` launch gets its directory and its log follower here, before the process
+      // exists. Nothing is awaited from this line to the spawn, and the PTY is looked for
+      // again: another start of this session that got ahead during the waits above owns the
+      // process, and this call then prepares nothing (it attaches, like any later view).
+      let usage: ClaudeCliUsageLaunch | null = null
+      if (usageTransport !== null && !ptyService.has(sessionId)) {
+        usage = claudeCliUsageLaunches().begin(sessionId, usageTransport, {
+          cwd: worktreePath,
+          db
+        })
+        usageLaunchPending = usage !== null
+      }
       const claudeSpawn = buildClaudeCliPtySpawn({
         session,
         worktreePath,
@@ -993,7 +1032,9 @@ export async function createClaudeCliTerminal(
         hookSettingsJson,
         db,
         customProviderCommand,
-        customProviderModels
+        customProviderModels,
+        // Only a launch off the proxy says so: without it the builder's launch is unchanged.
+        ...(usage ? { usage } : {})
       })
       spawn = claudeSpawn
       claudeResumeSessionId = claudeSpawn.resumeSessionId
@@ -1126,6 +1167,11 @@ export async function createClaudeCliTerminal(
       // What a launch off the API proxy must not inherit from the app (claude-cli-spawner.ts).
       ...(spawn.unsetEnv?.length ? { unsetEnv: spawn.unsetEnv } : {})
     })
+    if (usageLaunchPending) {
+      // The process exists: from here on its end, by whatever route, ends the usage launch.
+      usageLaunchPending = false
+      claudeCliUsageLaunches().started(sessionId)
+    }
     if (alreadyExists && pendingPrompt && wasPromptJustDelivered(sessionId, pendingPrompt)) {
       // The launch path and the mounting session view both carry the same
       // prompt; the earlier call already put it on argv (or pasted it). A
@@ -1249,6 +1295,8 @@ export async function createClaudeCliTerminal(
 
     return { success: true, cols, rows }
   } catch (error) {
+    // The process never started: nothing will end the usage launch prepared for it.
+    if (usageLaunchPending) claudeCliUsageLaunches().abandon(sessionId)
     log.error(
       'RPC: terminalOps.createClaudeCli failed',
       error instanceof Error ? error : new Error(String(error)),
@@ -1306,9 +1354,21 @@ export function cleanupTerminals(): Promise<void> {
   unsubscribeClaudeCliStatus?.()
   unsubscribeClaudeCliStatus = null
   resetAllClaudeCliTitleState()
+  // Asked before the PTYs go: which usage launches (claude-cli-usage-launches.ts) the reap
+  // below ends. One whose process was told to end earlier and may still run is not among them.
+  const endUsageLaunches = quitClaudeCliUsageLaunches()
   // HUP + bounded-grace SIGKILL sweep: awaited by the quit chain so
   // HUP-surviving agents are reaped before the process exits.
   const reaped = ptyService.destroyAllAndReap()
   ghosttyService.shutdown()
-  return reaped
+  // ...and its usage launch, once the processes are gone: the last lines of a debug log still
+  // count, and its directory is deleted only after the CLI that could bring it back has ended.
+  return reaped.then(
+    () => endUsageLaunches(true),
+    (error: unknown) => {
+      // Which processes are gone is not known: the directories stay for the next start.
+      endUsageLaunches(false)
+      throw error
+    }
+  )
 }

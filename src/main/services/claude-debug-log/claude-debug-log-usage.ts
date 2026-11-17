@@ -7,7 +7,8 @@
  *
  * One instance on purpose: all sessions share its one timer.
  *
- * Nothing registers a session yet: T17 does, from the session lifecycle.
+ * Sessions are registered and unregistered from the session lifecycle
+ * (`claude-cli-usage-launches.ts`).
  */
 import { submitClaudeUsageObservation } from '../claude-api-proxy/claude-usage-live'
 import { createLogger } from '../logger'

@@ -85,6 +85,7 @@ import {
 } from './services/claude-api-proxy/claude-api-proxy'
 import { connectClaudeOrganizationLearning } from './services/claude-api-proxy/claude-organization-learning'
 import { disposeClaudeUsageLiveUpdater } from './services/claude-api-proxy/claude-usage-live'
+import { disposeClaudeDebugLogUsageSource } from './services/claude-debug-log/claude-debug-log-usage'
 import { startThreadpoolProbe } from './services/perf-logging/threadpool-probe'
 import { publishDesktopBackendEvent } from './desktop/backend-event-publisher'
 import { createThreadpoolStallRecovery } from './services/perf-logging/threadpool-stall-recovery'
@@ -1002,6 +1003,9 @@ wireQuitCleanup({
     { name: 'updaterService', run: () => updaterService.cleanup() },
     // Terminal PTYs and Ghostty runtime
     { name: 'cleanupTerminals', run: () => cleanupTerminals() },
+    // After the terminals, which unregister their Code Mode sessions (the last lines of each
+    // debug log still count), and before the live usage updater those lines go to
+    { name: 'claudeDebugLogUsage', run: () => disposeClaudeDebugLogUsageSource() },
     { name: 'closeClaudeHookServer', run: () => closeClaudeHookServer() },
     { name: 'sessionRecovery', run: () => disposeClaudeCliSessionRecovery() },
     { name: 'closeClaudeApiProxy', run: () => closeClaudeApiProxy() },

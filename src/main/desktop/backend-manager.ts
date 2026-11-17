@@ -62,6 +62,7 @@ import {
 } from '../services/project-icons'
 import { scriptRunner } from '../services/script-runner'
 import { ptyService } from '../services/pty-service'
+import { startClaudeCliUsageSweeps } from '../services/claude-cli-usage-launches-live'
 import {
   attachShellCommandTerminal,
   getLiveShellCommandSessionIds,
@@ -585,6 +586,9 @@ export const startDesktopBackend = async (
 
   const log = deps.logger ?? defaultLog
   const headless = input.headless ?? false
+  // The debug logs of Code Mode sessions go with their session too; what a crash or a force
+  // quit left of them goes now, and every hour from here on (Code Mode T17).
+  startClaudeCliUsageSweeps()
   // HIVE_DESKTOP_BASE_DIR redirects the backend's data dir (and thus its
   // hive.db) for E2E/dev runs. `app.getPath('home')` ignores $HOME on macOS
   // (getpwuid), so without this a dev build always opens the real user DB.

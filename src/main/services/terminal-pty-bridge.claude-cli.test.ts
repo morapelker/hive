@@ -328,10 +328,13 @@ describe('Claude CLI terminal hook status wiring', () => {
       expect(lastSpawnOptions().env).toMatchObject({ ANTHROPIC_LOG: 'debug' })
     })
 
-    it('names none for a launch as the bridge asks for it today: it stays on the proxy', async () => {
+    it('names none for a launch on the proxy: the builder gets what it always got', async () => {
       await createClaudeCliTerminal('hive-session-1', { pendingPrompt: 'Implement the plan' })
 
-      // The bridge passes no usage transport, so the builder's default holds.
+      // Every launch of this file is one on the proxy (the usage launches of a test run decide
+      // nothing else), and for those the bridge passes no usage transport: the builder's
+      // default holds. What a session that asks for Code Mode gets is covered in
+      // terminal-pty-bridge.usage-launch.test.ts.
       expect(vi.mocked(buildClaudeCliPtySpawn).mock.calls.at(-1)![0]).not.toHaveProperty('usage')
       expect(lastSpawnOptions()).not.toHaveProperty('unsetEnv')
       expect((lastSpawnOptions().args as string[]).join(' ')).not.toContain('--debug')

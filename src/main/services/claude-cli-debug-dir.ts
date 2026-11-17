@@ -29,7 +29,7 @@
 // could be interleaved with a prepare would have to guess whether a directory it listed is
 // about to be used. The work is a handful of system calls.
 //
-// Nothing calls this yet: T17 wires it into the session lifecycle.
+// Called from the session lifecycle (claude-cli-usage-launches.ts).
 import { randomBytes } from 'node:crypto'
 import {
   chmodSync,
