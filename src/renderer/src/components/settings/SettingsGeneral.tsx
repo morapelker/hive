@@ -1,9 +1,11 @@
+import { useEffect, useState } from 'react'
 import { useThemeStore } from '@/stores/useThemeStore'
 import { DEFAULT_THEME_ID } from '@/lib/themes'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { RotateCcw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
 import { useShortcutStore } from '@/stores/useShortcutStore'
 import { toast } from '@/lib/toast'
 import type { UsageProvider } from '@shared/types/usage'
@@ -30,6 +32,56 @@ const AUTO_PIN_MODE_OPTIONS: { value: AutoPinMode; label: string; testId: string
   { value: 'root-branch', label: 'Root branch', testId: 'auto-pin-mode-root-branch' },
   { value: 'current-branch', label: 'Current branch', testId: 'auto-pin-mode-current-branch' }
 ]
+
+/** The setup script of every project that has none of its own (saved explicitly). */
+function DefaultSetupScriptSetting(): React.JSX.Element {
+  const saved = useSettingsStore((s) => s.defaultSetupScript) ?? ''
+  const updateSetting = useSettingsStore((s) => s.updateSetting)
+  const [draft, setDraft] = useState(saved)
+
+  useEffect(() => {
+    setDraft(saved)
+  }, [saved])
+
+  const dirty = draft.trim() !== saved
+
+  const handleSave = async (): Promise<void> => {
+    await updateSetting('defaultSetupScript', draft.trim())
+    toast.success(draft.trim() ? 'Default setup script saved' : 'Default setup script cleared')
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <label htmlFor="default-setup-script" className="text-sm font-medium">
+        Default setup script
+      </label>
+      <p className="text-xs text-muted-foreground">
+        Runs when a new worktree is initialized in any project that has no setup script of its
+        own. Each line is a separate command. A project can change it, or clear it to run
+        nothing, in its Project Settings.
+      </p>
+      <Textarea
+        id="default-setup-script"
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        placeholder={'pnpm install'}
+        rows={4}
+        className="font-mono text-sm resize-y"
+        data-testid="default-setup-script-input"
+      />
+      <div className="flex justify-end">
+        <Button
+          size="sm"
+          onClick={() => void handleSave()}
+          disabled={!dirty}
+          data-testid="default-setup-script-save"
+        >
+          Save
+        </Button>
+      </div>
+    </div>
+  )
+}
 
 export function SettingsGeneral(): React.JSX.Element {
   const { setTheme } = useThemeStore()
@@ -183,6 +235,8 @@ export function SettingsGeneral(): React.JSX.Element {
           />
         </button>
       </div>
+
+      <DefaultSetupScriptSetting />
 
       {/* Pull the base branch before a ticket moves to Done/Merged */}
       <div className="flex items-center justify-between gap-4">

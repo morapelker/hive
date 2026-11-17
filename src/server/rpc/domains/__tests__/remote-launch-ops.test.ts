@@ -117,7 +117,8 @@ function baseDeps(overrides: Partial<RemoteLaunchOpsDeps> = {}): RemoteLaunchOps
       createSession: vi.fn((_data: SessionCreate) => session({ id: 'local-session-1' })),
       updateSession: vi.fn(() => session()),
       updateProject: vi.fn(() => project()),
-      findSessionByRemoteLaunchId: vi.fn(() => null)
+      findSessionByRemoteLaunchId: vi.fn(() => null),
+      getDefaultSetupScript: vi.fn(() => null)
     },
     git: {
       getRemoteUrl: vi.fn(async () => ({ success: true, url: 'git@github.com:org/repo.git' })),
@@ -661,6 +662,57 @@ describe('remoteLaunchOps.start', () => {
     const events = stepEvents(publishProgress)
     expect(events.map(([, e]) => `${e.step}:${e.status}`)).toContain('file-transfer:done')
     expect(events.map(([, e]) => `${e.step}:${e.status}`)).toContain('setup-script:done')
+  })
+
+  it('runs the default setup script for a project that has none of its own', async () => {
+    const request = vi.fn(makeRequestMock())
+    const deps = baseDeps({
+      db: {
+        ...baseDeps().db,
+        getProject: vi.fn(() => project({ setup_script: null })),
+        getDefaultSetupScript: vi.fn(() => 'npm ci')
+      },
+      remote: {
+        isConfigured: vi.fn(() => true),
+        getUrl: vi.fn(() => 'https://remote.example.com'),
+        requestAt: vi.fn(async () => {
+          throw new Error('unstubbed remote.requestAt call')
+        }),
+        request: request as unknown as RemoteLaunchOpsDeps['remote']['request']
+      }
+    })
+    const service = makeRemoteLaunchOpsRpcService(deps)
+
+    const result = await Effect.runPromise(service.start(startParams))
+
+    expect(result.success).toBe(true)
+    const applyCall = request.mock.calls.find((call) => call[0] === 'remoteLaunchOps.applySetupPlan')
+    expect(applyCall?.[1]).toMatchObject({ steps: [{ type: 'run', command: 'npm ci' }] })
+  })
+
+  it('a cleared setup script runs nothing even when a default is set', async () => {
+    const request = vi.fn(makeRequestMock())
+    const deps = baseDeps({
+      db: {
+        ...baseDeps().db,
+        getProject: vi.fn(() => project({ setup_script: '' })),
+        getDefaultSetupScript: vi.fn(() => 'npm ci')
+      },
+      remote: {
+        isConfigured: vi.fn(() => true),
+        getUrl: vi.fn(() => 'https://remote.example.com'),
+        requestAt: vi.fn(async () => {
+          throw new Error('unstubbed remote.requestAt call')
+        }),
+        request: request as unknown as RemoteLaunchOpsDeps['remote']['request']
+      }
+    })
+    const service = makeRemoteLaunchOpsRpcService(deps)
+
+    const result = await Effect.runPromise(service.start(startParams))
+
+    expect(result.success).toBe(true)
+    expect(request.mock.calls.map((call) => call[0])).not.toContain('remoteLaunchOps.applySetupPlan')
   })
 
   it('a cp parser error fails at file-transfer before any applySetupPlan call', async () => {

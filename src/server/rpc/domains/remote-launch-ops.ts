@@ -13,6 +13,8 @@ import {
   type RemoteLaunchClaudeTmuxResult
 } from '@shared/desktop-command'
 import { parseSetupScriptPlan } from '@shared/lib/setup-script-transfers'
+import { readDefaultSetupScript, resolveSetupScript } from '@shared/lib/setup-script'
+import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
 import { canonicalizeTicketTitle } from '@shared/types/branch-utils'
 import {
   parseRemoteLaunch,
@@ -60,6 +62,8 @@ interface RemoteLaunchDb {
     data: { worktree_create_script?: string | null; auto_assign_port?: boolean }
   ) => Project | null
   findSessionByRemoteLaunchId: (launchId: string, role: 'client' | 'host') => Session | null
+  /** The app-wide default setup script (`AppSettings.defaultSetupScript`), null when unset. */
+  getDefaultSetupScript: () => string | null
 }
 
 interface RemoteLaunchGit {
@@ -356,7 +360,9 @@ async function preflightRemoteLaunch(
     result.error = result.error ?? errorMessage(error)
   }
 
-  const plan = parseSetupScriptPlan(project.setup_script)
+  const plan = parseSetupScriptPlan(
+    resolveSetupScript(project.setup_script, deps.db.getDefaultSetupScript())
+  )
   for (const entry of plan.entries) {
     if (entry.kind === 'error') {
       result.transferErrors.push(entry.reason)
@@ -389,7 +395,9 @@ async function buildSetupPlanSteps(
   deps: RemoteLaunchOpsDeps,
   project: Project
 ): Promise<{ steps: SetupPlanStep[]; problems: string[] }> {
-  const plan = parseSetupScriptPlan(project.setup_script)
+  const plan = parseSetupScriptPlan(
+    resolveSetupScript(project.setup_script, deps.db.getDefaultSetupScript())
+  )
   const steps: SetupPlanStep[] = []
   const problems: string[] = []
 
@@ -1117,7 +1125,8 @@ async function createLiveDeps(eventBus?: EventBus): Promise<RemoteLaunchOpsDeps>
       updateSession: (id, data) => db.updateSession(id, data),
       findSessionByRemoteLaunchId: (launchId, role) =>
         db.findSessionByRemoteLaunchId(launchId, role),
-      updateProject: (id, data) => db.updateProject(id, data)
+      updateProject: (id, data) => db.updateProject(id, data),
+      getDefaultSetupScript: () => readDefaultSetupScript(db.getSetting(APP_SETTINGS_DB_KEY))
     },
     git: {
       getRemoteUrl: (repoPath) => gitService.getRemoteUrl(repoPath, 'origin'),

@@ -5,6 +5,8 @@ import { Button } from '@/components/ui/button'
 import { useScriptStore } from '@/stores/useScriptStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStore, fireSetupScript } from '@/stores/useWorktreeStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
+import { resolveSetupScript } from '@shared/lib/setup-script'
 
 interface SetupTabProps {
   worktreeId: string | null
@@ -19,6 +21,8 @@ export function SetupTab({ worktreeId }: SetupTabProps): React.JSX.Element {
   const setupOutput = scriptState?.setupOutput ?? emptyOutput
   const setupRunning = scriptState?.setupRunning ?? false
   const setupError = scriptState?.setupError ?? null
+  // A project with no script of its own runs the default one.
+  const defaultSetupScript = useSettingsStore((s) => s.defaultSetupScript)
 
   // Auto-scroll to bottom on new output
   useEffect(() => {
@@ -44,11 +48,11 @@ export function SetupTab({ worktreeId }: SetupTabProps): React.JSX.Element {
     if (!worktreeId || setupRunning) return
 
     const info = getProjectAndWorktree()
-    if (!info?.project?.setup_script) return
+    if (!info || !resolveSetupScript(info.project.setup_script, defaultSetupScript)) return
 
     useScriptStore.getState().clearSetupOutput(worktreeId)
     fireSetupScript(info.project.id, worktreeId, info.worktree.path)
-  }, [worktreeId, setupRunning, getProjectAndWorktree])
+  }, [worktreeId, setupRunning, getProjectAndWorktree, defaultSetupScript])
 
   if (!worktreeId) {
     return (
@@ -59,7 +63,8 @@ export function SetupTab({ worktreeId }: SetupTabProps): React.JSX.Element {
   }
 
   const info = getProjectAndWorktree()
-  const hasSetupScript = !!info?.project?.setup_script
+  const hasSetupScript =
+    !!info && !!resolveSetupScript(info.project.setup_script, defaultSetupScript)
 
   // Determine status
   const isComplete = !setupRunning && setupOutput.length > 0 && !setupError

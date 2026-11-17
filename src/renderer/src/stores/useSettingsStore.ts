@@ -129,6 +129,11 @@ export interface AppSettings {
   autoStartSession: boolean
   autoPullBeforeWorktree: boolean
   /**
+   * Setup script of every project that never had one of its own set (`setup_script` null).
+   * A project whose script was cleared keeps running nothing. Empty: no default.
+   */
+  defaultSetupScript: string
+  /**
    * Pull a project's base branch from origin before a ticket's move to Done/Merged checks its
    * branch against it (at most once a minute per base branch). Off: no such pull at all.
    */
@@ -312,6 +317,7 @@ export interface AppSettings {
 const DEFAULT_SETTINGS: AppSettings = {
   autoStartSession: true,
   autoPullBeforeWorktree: true,
+  defaultSetupScript: '',
   autoPullOnTicketMove: true,
   warnBeforeQuitting: true,
   breedType: 'dogs',
@@ -555,6 +561,7 @@ function extractSettings(state: SettingsState): AppSettings {
   return {
     autoStartSession: state.autoStartSession,
     autoPullBeforeWorktree: state.autoPullBeforeWorktree,
+    defaultSetupScript: state.defaultSetupScript,
     autoPullOnTicketMove: state.autoPullOnTicketMove,
     warnBeforeQuitting: state.warnBeforeQuitting,
     breedType: state.breedType,
@@ -977,6 +984,7 @@ export const useSettingsStore = create<SettingsState>()(
       partialize: (state) => ({
         autoStartSession: state.autoStartSession,
         autoPullBeforeWorktree: state.autoPullBeforeWorktree,
+        defaultSetupScript: state.defaultSetupScript,
         autoPullOnTicketMove: state.autoPullOnTicketMove,
         warnBeforeQuitting: state.warnBeforeQuitting,
         breedType: state.breedType,

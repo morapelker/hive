@@ -6,7 +6,7 @@ import { useSessionStore } from './useSessionStore'
 import { useWorktreeStatusStore } from './useWorktreeStatusStore'
 import { useGitStore } from './useGitStore'
 import { useFileViewerStore } from './useFileViewerStore'
-import type { SelectedModel } from './useSettingsStore'
+import { useSettingsStore, type SelectedModel } from './useSettingsStore'
 import { toast } from '@/lib/toast'
 import { deleteBuffer } from '@/lib/output-ring-buffer'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
@@ -19,6 +19,7 @@ import { connectionApi } from '@/api/connection-api'
 import { dbApi } from '@/api/db-api'
 import { scriptApi } from '@/api/script-api'
 import { worktreeApi } from '@/api/worktree-api'
+import { resolveSetupScript } from '@shared/lib/setup-script'
 
 const inflightSync = new Map<string, Promise<void>>()
 const lastSync = new Map<string, number>()
@@ -32,9 +33,15 @@ let inflightHydrateAll: Promise<void> | null = null
  *  so output is captured even when SetupTab is not mounted. */
 export function fireSetupScript(projectId: string, worktreeId: string, cwd: string): void {
   const project = useProjectStore.getState().projects.find((p) => p.id === projectId)
-  if (!project?.setup_script) return
+  if (!project) return
+  // A project with no script of its own runs the default one (Settings > General).
+  const setupScript = resolveSetupScript(
+    project.setup_script,
+    useSettingsStore.getState().defaultSetupScript
+  )
+  if (!setupScript) return
 
-  const commands = project.setup_script
+  const commands = setupScript
     .split('\n')
     .map((l) => l.trim())
     .filter((l) => l && !l.startsWith('#'))

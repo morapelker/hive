@@ -18,6 +18,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { CustomCommandsEditor } from '@/components/custom-commands/CustomCommandsEditor'
 import { ShellCommandsEditor } from '@/components/shell-commands/ShellCommandsEditor'
 import { useProjectStore } from '@/stores/useProjectStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { LanguageIcon } from './LanguageIcon'
 import { SetupScriptSuggestionsDialog } from './SetupScriptSuggestionsDialog'
@@ -31,6 +32,7 @@ import {
   type ProjectShellCommand
 } from '@shared/lib/shell-commands'
 import { formatSelectedKanbanFolder } from './kanban-folder-paths'
+import { inheritsDefaultSetupScript } from '@shared/lib/setup-script'
 
 interface Project {
   id: string
@@ -92,7 +94,12 @@ export function ProjectSettingsDialog({
   const { updateProject, loadProjects } = useProjectStore()
   const worktreeCreateScriptContentId = useId()
 
+  const defaultSetupScript = useSettingsStore((s) => s.defaultSetupScript) ?? ''
   const [setupScript, setSetupScript] = useState('')
+  // True while the project has no setup script of its own: the field then shows the default
+  // (Settings > General) and saving leaves `setup_script` null, so the project keeps following
+  // it. Any edit — clearing the field included — makes the script the project's own.
+  const [setupScriptInherited, setSetupScriptInherited] = useState(false)
   const [runScript, setRunScript] = useState('')
   const [archiveScript, setArchiveScript] = useState('')
   const [worktreeCreateScript, setWorktreeCreateScript] = useState('')
@@ -142,7 +149,13 @@ export function ProjectSettingsDialog({
     }
 
     let cancelled = false
-    setSetupScript(initialProject.setup_script ?? '')
+    const inheritsSetupScript = inheritsDefaultSetupScript(initialProject.setup_script)
+    setSetupScriptInherited(inheritsSetupScript)
+    setSetupScript(
+      inheritsSetupScript
+        ? (useSettingsStore.getState().defaultSetupScript ?? '')
+        : (initialProject.setup_script ?? '')
+    )
     setRunScript(initialProject.run_script ?? '')
     setArchiveScript(initialProject.archive_script ?? '')
     setWorktreeCreateScript(initialProject.worktree_create_script ?? '')
@@ -310,6 +323,28 @@ export function ProjectSettingsDialog({
     return path.startsWith(projectPrefix) ? path.slice(projectPrefix.length) : path
   }
 
+  const hasDefaultSetupScript = defaultSetupScript.trim().length > 0
+
+  const editSetupScript = (value: string): void => {
+    setSetupScript(value)
+    setSetupScriptInherited(false)
+  }
+
+  const resetSetupScriptToDefault = (): void => {
+    setSetupScript(defaultSetupScript)
+    setSetupScriptInherited(true)
+  }
+
+  // null = follow the default; '' = deliberately no setup script (the default must not come
+  // back); otherwise the project's own script. An emptied field is only stored as '' when
+  // there is a default to switch off, or the project had already switched it off.
+  const setupScriptToSave = (): string | null => {
+    if (setupScriptInherited) return null
+    const trimmed = setupScript.trim()
+    if (trimmed) return trimmed
+    return hasDefaultSetupScript || initialProject?.setup_script === '' ? '' : null
+  }
+
   const handleSave = async (): Promise<void> => {
     // Half-typed rows are dropped; a filled-in row that cannot run blocks the save.
     const shellCommandsToSave = shellCommands
@@ -334,7 +369,7 @@ export function ProjectSettingsDialog({
     try {
       try {
         const success = await updateProject(project.id, {
-          setup_script: setupScript.trim() || null,
+          setup_script: setupScriptToSave(),
           run_script: runScript.trim() || null,
           archive_script: archiveScript.trim() || null,
           worktree_create_script: worktreeCreateScript.trim() || null,
@@ -630,11 +665,43 @@ export function ProjectSettingsDialog({
                 </p>
                 <Textarea
                   value={setupScript}
-                  onChange={(e) => setSetupScript(e.target.value)}
-                  placeholder={'pnpm install\npnpm run build'}
+                  onChange={(e) => editSetupScript(e.target.value)}
+                  // With a default in place an empty field means "run nothing": an example
+                  // script as the placeholder would read as if one were set.
+                  placeholder={
+                    hasDefaultSetupScript ? 'No setup script' : 'pnpm install\npnpm run build'
+                  }
                   rows={4}
                   className="font-mono text-sm resize-y"
+                  aria-label="Setup script"
+                  data-testid="project-setup-script-input"
                 />
+                {hasDefaultSetupScript && (
+                  <div
+                    className="flex items-center justify-between gap-3 text-xs text-muted-foreground"
+                    data-testid="project-setup-script-default-status"
+                  >
+                    <span>
+                      {setupScriptInherited
+                        ? 'Using the default setup script from Settings. Edit or clear it to override it for this project.'
+                        : setupScript.trim() === ''
+                          ? 'No setup script runs for this project. The default one is not used.'
+                          : 'Overrides the default setup script for this project.'}
+                    </span>
+                    {!setupScriptInherited && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 shrink-0 px-2 text-xs"
+                        onClick={resetSetupScriptToDefault}
+                        data-testid="project-setup-script-reset"
+                      >
+                        Use default
+                      </Button>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Run Script */}
@@ -770,7 +837,7 @@ export function ProjectSettingsDialog({
         onOpenChange={setSuggestionsOpen}
         items={suggestions}
         currentValue={setupScript}
-        onApply={setSetupScript}
+        onApply={editSetupScript}
       />
     </>
   )
