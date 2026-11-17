@@ -402,6 +402,19 @@ export async function isClaudeAccountManaged(email: string): Promise<boolean> {
   return findNumByEmail(await readSequence(), email) !== null
 }
 
+/**
+ * When the managed index last changed (sequence.json `lastUpdated`, epoch ms).
+ * `switchClaudeAccount` stamps it as its last step, in whichever process the
+ * switch ran, so this is "the last switch made through the index was no later
+ * than this". Adding or removing an account stamps it as well: it can name a
+ * moment later than the last switch, never an earlier one. A stamp that cannot
+ * be read as a date counts as now. One small file read, no Keychain traffic.
+ */
+export async function readClaudeAccountIndexUpdatedAt(): Promise<number> {
+  const updatedAt = Date.parse((await readSequence()).lastUpdated)
+  return Number.isFinite(updatedAt) ? updatedAt : Date.now()
+}
+
 /** List all managed Claude accounts, in sequence.json's `sequence` order. */
 export async function listClaudeAccounts(): Promise<ClaudeStoreAccount[]> {
   if (listCache !== null && listCache.expiresAt > Date.now()) {

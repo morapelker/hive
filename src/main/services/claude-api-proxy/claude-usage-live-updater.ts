@@ -21,13 +21,21 @@
  *
  * Updates for one credential are coalesced (leading + trailing edge) because
  * a session with parallel subagents can answer several requests per second.
+ *
+ * A source that cannot see the credential (the CLI's debug log masks it) names
+ * the organization the response was billed to instead. Such an observation is
+ * placed through the organization stored per account, and only through it:
+ * one account → it is credited; none → the newest reading for that
+ * organization is held for a minute while organizations are learned; several
+ * (seats of one team) → only the signed-in one, and only when no account
+ * switch is recent. Anything else is dropped, never guessed.
  */
 import {
   CLAUDE_LIVE_USAGE_CHANNEL,
   type ClaudeLiveUsagePayload
 } from '@shared/types/claude-live-usage'
 import type { AnthropicRateLimitWindow, UsageData } from '@shared/types/usage'
-import type { SavedUsageAccount } from '../../db/types'
+import { normalizeOrgUuid, type SavedUsageAccount } from '../../db/types'
 import {
   extractClaudeAccountUuid,
   mergeUnifiedSnapshotIntoUsage,
@@ -43,8 +51,21 @@ export interface ClaudeUsageObservation {
   credentialFingerprint: string | null
   /** The uuid the client reported in the body; may lag an account switch. */
   accountUuid: string | null
+  /**
+   * The organization the response says it was billed to
+   * (`anthropic-organization-id`). It decides the account only when there is
+   * no credential fingerprint: the observation is then placed through the
+   * organization stored per account and never through `accountUuid`.
+   */
+  organizationUuid?: string | null
   snapshot: UnifiedRateLimitSnapshot
   observedAt: number
+}
+
+/** A saved account and the organization stored for it (null: not learned yet). */
+export interface ClaudeAccountOrganization {
+  email: string
+  organizationUuid: string | null
 }
 
 /** What the updater needs to know about each managed account. */
@@ -88,6 +109,25 @@ export interface ClaudeUsageLiveUpdaterDeps {
    */
   writeLiveUsage: (email: string, usage: UsageData) => SavedUsageAccount
   publish: (channel: string, payload: ClaudeLiveUsagePayload) => Promise<boolean> | boolean
+  /**
+   * Every saved account with its stored organization, read fresh. Only
+   * organization-identified observations use it; without it they all count as
+   * unknown. Several accounts may carry the same organization.
+   */
+  listAccountOrganizations?: () =>
+    ClaudeAccountOrganization[] | Promise<ClaudeAccountOrganization[]>
+  /**
+   * When the signed-in account last changed (epoch ms), or null when no change
+   * is on record. May report a later moment than the real one, never an
+   * earlier one. Only consulted for an organization several accounts share.
+   */
+  readLastAccountSwitchAt?: () => number | null | Promise<number | null>
+  /**
+   * A reading arrived for an organization no account is mapped to: ask for
+   * organizations to be learned for the accounts that have none. Called at
+   * most once a minute per organization; must return at once.
+   */
+  requestOrganizations?: () => void
   log: {
     debug: (message: string, data?: Record<string, unknown>) => void
     info: (message: string, data?: Record<string, unknown>) => void
@@ -120,6 +160,17 @@ const FORCED_RESCAN_MIN_INTERVAL_MS = 10_000
 /** Re-log an unattributable request at most this often. */
 const UNRESOLVED_LOG_TTL_MS = 10 * 60_000
 const MAX_CACHED_RESOLUTIONS = 500
+/** How long a reading for an organization nobody is mapped to waits for a mapping. */
+export const UNKNOWN_ORGANIZATION_HOLD_MS = 60_000
+/** How often held readings are checked against the stored organizations. */
+export const HELD_ORGANIZATION_RECHECK_MS = 1_000
+/**
+ * After an account switch, a request still in flight is billed to the account
+ * just left. Between accounts of one organization nothing tells the two apart
+ * for this long, so nothing is attributed to either.
+ */
+export const ACCOUNT_SWITCH_SETTLE_MS = 30_000
+const MAX_HELD_ORGANIZATIONS = 20
 
 /**
  * Pure: the usage observation an exchange carries, or null when it carries
@@ -190,10 +241,31 @@ export function isLiveAccountEmail(email: string, live: ClaudeLiveIdentity): boo
   return live.email !== null && live.email.toLowerCase() === email
 }
 
+/**
+ * Whether the observation is identified by its organization: no credential to
+ * go by and an organization given. A credential, when there is one, decides.
+ */
+function identifiedByOrganization(observation: ClaudeUsageObservation): boolean {
+  return (
+    observation.credentialFingerprint === null &&
+    observation.organizationUuid !== undefined &&
+    observation.organizationUuid !== null
+  )
+}
+
 function coalesceKey(observation: ClaudeUsageObservation): string {
-  return observation.credentialFingerprint !== null
-    ? `token:${observation.credentialFingerprint}`
-    : `uuid:${observation.accountUuid}`
+  if (observation.credentialFingerprint !== null) {
+    return `token:${observation.credentialFingerprint}`
+  }
+  if (identifiedByOrganization(observation)) {
+    return `org:${normalizeOrgUuid(observation.organizationUuid) ?? ''}`
+  }
+  return `uuid:${observation.accountUuid}`
+}
+
+/** Enough of an organization id to recognise it in a log line. */
+function shortOrganization(organization: string): string {
+  return organization.slice(0, 8)
 }
 
 interface PendingAccount {
@@ -208,7 +280,23 @@ interface CachedResolution {
   misses?: number
 }
 
-type Attribution = { email: string; via: 'token' | 'reported-uuid' }
+type Attribution = { email: string; via: 'token' | 'reported-uuid' | 'organization' }
+
+/** A reading waiting for its organization to be mapped to an account. */
+interface HeldObservation {
+  observation: ClaudeUsageObservation
+  /** When the updater received it (its own clock): the hold runs from here. */
+  receivedAt: number
+  /** When learning was last asked for on behalf of this organization. */
+  requestedAt: number
+}
+
+type OrganizationResolution =
+  | { kind: 'attributed'; email: string }
+  /** No managed account is mapped to it (yet). */
+  | { kind: 'unknown' }
+  /** Several accounts share it and nothing says which one was billed. */
+  | { kind: 'ambiguous'; reason: 'not-signed-in' | 'recent-switch' }
 
 export class ClaudeUsageLiveUpdater {
   private readonly deps: ClaudeUsageLiveUpdaterDeps
@@ -217,6 +305,12 @@ export class ClaudeUsageLiveUpdater {
   private readonly uuidOwners = new Map<string, CachedResolution>()
   private readonly unresolvedLoggedAt = new Map<string, number>()
   private readonly announced = new Set<string>()
+  /** By organization: the newest reading no account could be found for. */
+  private readonly held = new Map<string, HeldObservation>()
+  private heldTimer: unknown = null
+  /** The signed-in email as last read, and when it was seen to have changed. */
+  private lastSeenLiveEmail: string | null = null
+  private liveChangeSeenAt: number | null = null
   private lastForcedRescanAt = 0
   private chain: Promise<void> = Promise.resolve()
 
@@ -273,14 +367,17 @@ export class ClaudeUsageLiveUpdater {
   }
 
   private enqueue(observation: ClaudeUsageObservation): void {
-    this.chain = this.chain
-      .then(() => this.apply(observation))
-      .catch((error) => {
-        this.deps.log.warn('Failed to apply live Claude usage update', {
-          accountUuid: observation.accountUuid,
-          error: error instanceof Error ? error.message : String(error)
-        })
+    this.run(() => this.apply(observation), observation.accountUuid)
+  }
+
+  /** One at a time, in order: a failure is logged and the next task still runs. */
+  private run(task: () => Promise<void>, accountUuid: string | null): void {
+    this.chain = this.chain.then(task).catch((error) => {
+      this.deps.log.warn('Failed to apply live Claude usage update', {
+        accountUuid,
+        error: error instanceof Error ? error.message : String(error)
       })
+    })
   }
 
   /** Resolves once every observation handed in so far has been applied. */
@@ -290,12 +387,17 @@ export class ClaudeUsageLiveUpdater {
 
   dispose(): void {
     for (const pending of this.pending.values()) {
-      if (pending.timer !== null) {
-        if (this.deps.clearTimer) this.deps.clearTimer(pending.timer)
-        else clearTimeout(pending.timer as ReturnType<typeof setTimeout>)
-      }
+      if (pending.timer !== null) this.cancel(pending.timer)
     }
     this.pending.clear()
+    if (this.heldTimer !== null) this.cancel(this.heldTimer)
+    this.heldTimer = null
+    this.held.clear()
+  }
+
+  private cancel(timer: unknown): void {
+    if (this.deps.clearTimer) this.deps.clearTimer(timer)
+    else clearTimeout(timer as ReturnType<typeof setTimeout>)
   }
 
   private remember(
@@ -494,17 +596,42 @@ export class ClaudeUsageLiveUpdater {
     return null
   }
 
-  private async apply(observation: ClaudeUsageObservation): Promise<void> {
-    // Read fresh every time: an account switch rewrites this file before the
-    // switch reports success, so it is the race-free source of "who is live".
+  /**
+   * The identity file, read fresh every time: an account switch rewrites it
+   * before the switch reports success, so it is the race-free source of "who
+   * is live". A change of the signed-in email between two reads is a switch
+   * this updater saw for itself, whoever made it.
+   */
+  private async readLive(): Promise<ClaudeLiveIdentity> {
     const live = await this.deps.readLiveIdentity()
+    const email = live.email ? live.email.toLowerCase() : null
+    if (email !== null) {
+      if (this.lastSeenLiveEmail !== null && this.lastSeenLiveEmail !== email) {
+        this.liveChangeSeenAt = this.now()
+      }
+      this.lastSeenLiveEmail = email
+    }
+    return live
+  }
+
+  /** Whether to log about `key` now: at most once per `UNRESOLVED_LOG_TTL_MS`. */
+  private shouldLogUnresolved(key: string): boolean {
+    const loggedAt = this.unresolvedLoggedAt.get(key)
+    if (loggedAt !== undefined && this.now() - loggedAt <= UNRESOLVED_LOG_TTL_MS) return false
+    if (this.unresolvedLoggedAt.size >= MAX_CACHED_RESOLUTIONS) this.unresolvedLoggedAt.clear()
+    this.unresolvedLoggedAt.set(key, this.now())
+    return true
+  }
+
+  private async apply(observation: ClaudeUsageObservation): Promise<void> {
+    const live = await this.readLive()
+    if (identifiedByOrganization(observation)) {
+      await this.applyByOrganization(observation, live)
+      return
+    }
     const attribution = await this.attribute(observation, live)
     if (attribution === null) {
-      const key = coalesceKey(observation)
-      const loggedAt = this.unresolvedLoggedAt.get(key)
-      if (loggedAt === undefined || this.now() - loggedAt > UNRESOLVED_LOG_TTL_MS) {
-        if (this.unresolvedLoggedAt.size >= MAX_CACHED_RESOLUTIONS) this.unresolvedLoggedAt.clear()
-        this.unresolvedLoggedAt.set(key, this.now())
+      if (this.shouldLogUnresolved(coalesceKey(observation))) {
         this.deps.log.info('Live Claude usage for an account this app does not manage; ignoring', {
           accountUuid: observation.accountUuid,
           hasCredential: observation.credentialFingerprint !== null
@@ -512,6 +639,236 @@ export class ClaudeUsageLiveUpdater {
       }
       return
     }
+    await this.commit(observation, attribution, live)
+  }
+
+  /**
+   * An observation that names only the organization it was billed to. The
+   * account the client reported is never consulted, even when it is set and
+   * belongs to a managed account: it is what goes stale across a switch.
+   */
+  private async applyByOrganization(
+    observation: ClaudeUsageObservation,
+    live: ClaudeLiveIdentity
+  ): Promise<void> {
+    const organization = normalizeOrgUuid(observation.organizationUuid)
+    if (organization === null) return
+
+    // Only the newest reading for an organization matters, wherever it waits.
+    const waiting = this.heldFor(organization)
+    const latest =
+      waiting !== null && waiting.observation.observedAt > observation.observedAt
+        ? waiting.observation
+        : observation
+
+    const resolution = await this.resolveOrganization(organization, latest, live)
+    if (resolution.kind === 'unknown') {
+      this.hold(organization, latest)
+      return
+    }
+    // The organization is mapped now, so nothing stays held for it: the newest
+    // reading is settled here and an older one must not be applied after it.
+    this.held.delete(organization)
+    await this.settleByOrganization(organization, latest, resolution, live)
+  }
+
+  private async settleByOrganization(
+    organization: string,
+    observation: ClaudeUsageObservation,
+    resolution: Exclude<OrganizationResolution, { kind: 'unknown' }>,
+    live: ClaudeLiveIdentity
+  ): Promise<void> {
+    if (resolution.kind === 'ambiguous') {
+      if (this.shouldLogUnresolved(`shared:${organization}`)) {
+        this.deps.log.info(
+          'Live Claude usage for an organization several accounts share; not attributed',
+          { organization: shortOrganization(organization), reason: resolution.reason }
+        )
+      }
+      return
+    }
+    await this.commit(observation, { email: resolution.email, via: 'organization' }, live)
+  }
+
+  /**
+   * The managed account an organization's reading belongs to, from the
+   * organizations stored per account. Read fresh each time (a database read,
+   * no Keychain traffic) so a mapping counts the moment it is stored.
+   */
+  private async resolveOrganization(
+    organization: string,
+    observation: ClaudeUsageObservation,
+    live: ClaudeLiveIdentity
+  ): Promise<OrganizationResolution> {
+    const stored = this.deps.listAccountOrganizations
+      ? await this.deps.listAccountOrganizations()
+      : []
+    const candidates = new Set<string>()
+    for (const account of stored) {
+      if (account.email && normalizeOrgUuid(account.organizationUuid) === organization) {
+        candidates.add(account.email.toLowerCase())
+      }
+    }
+    // A row can outlive its account; only accounts still managed count.
+    const emails: string[] = []
+    for (const email of candidates) {
+      if (await this.deps.isAccountManaged(email)) emails.push(email)
+    }
+    if (emails.length === 0) return { kind: 'unknown' }
+    if (emails.length === 1) return { kind: 'attributed', email: emails[0] }
+
+    // Seats of one team: the organization alone cannot say which was billed.
+    // The signed-in one is the only candidate, and only once a switch is far
+    // enough behind that no request of the previous account is still answering.
+    const liveEmail = live.email ? live.email.toLowerCase() : null
+    if (liveEmail === null || !emails.includes(liveEmail)) {
+      return { kind: 'ambiguous', reason: 'not-signed-in' }
+    }
+    if (await this.switchedRecently(observation)) {
+      return { kind: 'ambiguous', reason: 'recent-switch' }
+    }
+    return { kind: 'attributed', email: liveEmail }
+  }
+
+  /**
+   * Whether an account switch is too close to this reading to trust "the
+   * signed-in account". Measured from the reading's own time: one that
+   * predates the switch (read late from a log) belongs to the account left.
+   */
+  private async switchedRecently(observation: ClaudeUsageObservation): Promise<boolean> {
+    const recorded = this.deps.readLastAccountSwitchAt
+      ? await this.deps.readLastAccountSwitchAt()
+      : null
+    const lastSwitchAt = Math.max(recorded ?? -Infinity, this.liveChangeSeenAt ?? -Infinity)
+    const readingAt = Math.min(observation.observedAt, this.now())
+    return readingAt - lastSwitchAt < ACCOUNT_SWITCH_SETTLE_MS
+  }
+
+  /** The reading held for `organization`, unless its minute is over. */
+  private heldFor(organization: string): HeldObservation | null {
+    const entry = this.held.get(organization)
+    if (entry === undefined) return null
+    if (this.now() - entry.receivedAt > UNKNOWN_ORGANIZATION_HOLD_MS) {
+      this.expire(organization)
+      return null
+    }
+    return entry
+  }
+
+  /**
+   * Keep `observation` as the one reading held for its organization (unless a
+   * newer one already is), ask for organizations to be learned, and make sure
+   * the held readings are looked at again.
+   */
+  private hold(organization: string, observation: ClaudeUsageObservation): void {
+    const existing = this.held.get(organization)
+    if (existing !== undefined && existing.observation === observation) return
+    if (existing === undefined && this.held.size >= MAX_HELD_ORGANIZATIONS) {
+      // Oldest first (insertion order): an organization nobody ever maps.
+      const oldest = this.held.keys().next().value
+      if (oldest !== undefined) this.held.delete(oldest)
+    }
+    const now = this.now()
+    const entry: HeldObservation = {
+      observation,
+      receivedAt: now,
+      requestedAt: existing?.requestedAt ?? -Infinity
+    }
+    this.held.set(organization, entry)
+    if (now - entry.requestedAt >= UNKNOWN_ORGANIZATION_HOLD_MS) {
+      entry.requestedAt = now
+      try {
+        this.deps.requestOrganizations?.()
+      } catch (error) {
+        this.deps.log.warn('Failed to ask for Claude account organizations', {
+          error: error instanceof Error ? error.message : String(error)
+        })
+      }
+    }
+    this.armHeldTimer()
+  }
+
+  private expire(organization: string): void {
+    this.held.delete(organization)
+    if (this.shouldLogUnresolved(`org:${organization}`)) {
+      this.deps.log.info(
+        'Live Claude usage for an organization no managed account is mapped to; dropped',
+        { organization: shortOrganization(organization) }
+      )
+    }
+  }
+
+  private armHeldTimer(): void {
+    if (this.heldTimer !== null || this.held.size === 0) return
+    let delay = HELD_ORGANIZATION_RECHECK_MS
+    const now = this.now()
+    for (const entry of this.held.values()) {
+      delay = Math.min(delay, entry.receivedAt + UNKNOWN_ORGANIZATION_HOLD_MS - now)
+    }
+    this.heldTimer = this.schedule(
+      () => {
+        this.heldTimer = null
+        this.run(async () => {
+          try {
+            await this.retryHeld()
+          } finally {
+            this.armHeldTimer()
+          }
+        }, null)
+      },
+      Math.max(0, delay)
+    )
+  }
+
+  /**
+   * Organizations were just stored (or may have been): look at the held
+   * readings now instead of at the next periodic check. Cheap when nothing is
+   * held.
+   */
+  organizationsLearned(): void {
+    if (this.held.size === 0) return
+    this.run(() => this.retryHeld(), null)
+  }
+
+  /**
+   * Give every held reading another try: applied (once: it leaves the hold
+   * first) when its organization is mapped by now, dropped when its minute is
+   * over, kept otherwise.
+   */
+  private async retryHeld(): Promise<void> {
+    if (this.held.size === 0) return
+    const live = await this.readLive()
+    for (const [organization, entry] of [...this.held]) {
+      if (this.held.get(organization) !== entry) continue
+      const waited = this.now() - entry.receivedAt
+      if (waited > UNKNOWN_ORGANIZATION_HOLD_MS) {
+        this.expire(organization)
+        continue
+      }
+      // The check that falls on the deadline is the last chance.
+      const lastChance = waited >= UNKNOWN_ORGANIZATION_HOLD_MS
+      let resolution: OrganizationResolution
+      try {
+        resolution = await this.resolveOrganization(organization, entry.observation, live)
+      } catch (error) {
+        if (lastChance && this.held.get(organization) === entry) this.expire(organization)
+        throw error
+      }
+      if (this.held.get(organization) !== entry) continue
+      if (resolution.kind === 'unknown') {
+        if (lastChance) this.expire(organization)
+        continue
+      }
+      this.held.delete(organization)
+      await this.settleByOrganization(organization, entry.observation, resolution, live)
+    }
+  }
+
+  private async commit(
+    observation: ClaudeUsageObservation,
+    attribution: Attribution,
+    live: ClaudeLiveIdentity
+  ): Promise<void> {
     const { email } = attribution
 
     const previousRow = this.deps.readUsageRow(email)
