@@ -17,7 +17,7 @@ vi.mock('./useSettingsStore', () => ({
   useSettingsStore: { getState: () => ({ followUpTriggerColumn: 'done' }) }
 }))
 
-import { useKanbanStore, transitionSortKey } from './useKanbanStore'
+import { useKanbanStore, isTransitionSortOn, transitionSortKey } from './useKanbanStore'
 
 const PROJECT_ID = 'proj-1'
 
@@ -92,6 +92,25 @@ describe('setTransitionSort', () => {
   })
 })
 
+describe('isTransitionSortOn', () => {
+  it('is on for a column whose toggle was never touched', () => {
+    expect(isTransitionSortOn({}, PROJECT_ID, 'todo')).toBe(true)
+    expect(isTransitionSortOn({}, '', 'in_progress')).toBe(true)
+  })
+
+  it('is off only for the board and column it was turned off on', () => {
+    const toggles = { [transitionSortKey(PROJECT_ID, 'todo')]: false }
+    expect(isTransitionSortOn(toggles, PROJECT_ID, 'todo')).toBe(false)
+    expect(isTransitionSortOn(toggles, PROJECT_ID, 'review')).toBe(true)
+    expect(isTransitionSortOn(toggles, '', 'todo')).toBe(true)
+  })
+
+  it('stays on when turned back on', () => {
+    const toggles = { [transitionSortKey(PROJECT_ID, 'todo')]: true }
+    expect(isTransitionSortOn(toggles, PROJECT_ID, 'todo')).toBe(true)
+  })
+})
+
 describe('getTicketsByColumn — transition sort toggle', () => {
   const seedTodo = (): void =>
     seed([
@@ -112,8 +131,18 @@ describe('getTicketsByColumn — transition sort toggle', () => {
       })
     ])
 
-  it('sorts by sort_order when the toggle is off', () => {
+  it('sorts by latest transition first by default', () => {
     seedTodo()
+    const ids = useKanbanStore
+      .getState()
+      .getTicketsByColumn(PROJECT_ID, 'todo')
+      .map((t) => t.id)
+    expect(ids).toEqual(['newest', 'middle', 'oldest'])
+  })
+
+  it('sorts by sort_order once the toggle is turned off', () => {
+    seedTodo()
+    useKanbanStore.getState().setTransitionSort(PROJECT_ID, 'todo', false)
     const ids = useKanbanStore
       .getState()
       .getTicketsByColumn(PROJECT_ID, 'todo')
@@ -121,8 +150,9 @@ describe('getTicketsByColumn — transition sort toggle', () => {
     expect(ids).toEqual(['oldest', 'middle', 'newest'])
   })
 
-  it('sorts by latest transition first when the toggle is on', () => {
+  it('sorts by latest transition first when the toggle is turned back on', () => {
     seedTodo()
+    useKanbanStore.getState().setTransitionSort(PROJECT_ID, 'todo', false)
     useKanbanStore.getState().setTransitionSort(PROJECT_ID, 'todo', true)
     const ids = useKanbanStore
       .getState()
@@ -227,14 +257,40 @@ describe('getTicketsByColumn — orchestrator tickets first', () => {
     }
   )
 
+  it('puts orchestrator tickets first by default', () => {
+    seedColumn('in_progress')
+    expect(idsIn('in_progress')).toEqual(['run-new', 'run-old', 'normal-new', 'normal-old'])
+  })
+
   it('leaves manual order alone when the toggle is off', () => {
     seedColumn('in_progress')
+    useKanbanStore.getState().setTransitionSort(PROJECT_ID, 'in_progress', false)
     expect(idsIn('in_progress')).toEqual(['normal-new', 'run-old', 'normal-old', 'run-new'])
   })
 
   it('sorts other columns by time only', () => {
     seedColumn('done')
     expect(idsIn('done')).toEqual(['normal-new', 'run-new', 'normal-old', 'run-old'])
+  })
+})
+
+describe('computeSortOrder — on a column listed by transition', () => {
+  // The getter lists a sorted column newest transition first, which is not sort_order order
+  const listed = (): KanbanTicket[] => {
+    seed([
+      makeTicket({ id: 'a', sort_order: 5, column_changed_at: '2026-03-01T00:00:00.000Z' }),
+      makeTicket({ id: 'b', sort_order: -2, column_changed_at: '2026-02-01T00:00:00.000Z' }),
+      makeTicket({ id: 'c', sort_order: 9, column_changed_at: '2026-01-01T00:00:00.000Z' })
+    ])
+    return useKanbanStore.getState().getTicketsByColumn(PROJECT_ID, 'todo')
+  }
+
+  it('puts a ticket above every manual position at the top', () => {
+    expect(useKanbanStore.getState().computeSortOrder(listed(), 0)).toBe(-3)
+  })
+
+  it('puts a ticket below every manual position at the end', () => {
+    expect(useKanbanStore.getState().computeSortOrder(listed(), 3)).toBe(10)
   })
 })
 

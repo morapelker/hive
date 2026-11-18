@@ -179,6 +179,7 @@ describe('duplicate markdown card renderer identity', () => {
     )
     useKanbanStore.setState({
       tickets: new Map(),
+      transitionSortByColumn: {},
       markdownDiagnostics: new Map([
         [
           'proj-1',
@@ -607,6 +608,9 @@ describe('duplicate markdown card renderer identity', () => {
       }),
       makeTicket({ id: 'later', project_id: 'proj-2', title: 'Project 2 Later', sort_order: 200 })
     ]
+    // A column can only be reordered by hand once its transition sort is turned off
+    // ('' keys the pinned board)
+    useKanbanStore.setState({ transitionSortByColumn: { ':todo': false } })
     const { container } = render(
       <TooltipProvider>
         <KanbanColumn column="todo" projectId="" tickets={tickets} isPinnedMode />

@@ -39,7 +39,7 @@ import {
   isLayoutAnimationSuppressed,
   parseTicketKey,
   ticketKey,
-  transitionSortKey,
+  isTransitionSortOn,
   isSessionSharedWithLiveTicket
 } from '@/stores/useKanbanStore'
 import type { MarkdownCardPlaceholder } from '@/stores/useKanbanStore'
@@ -236,12 +236,12 @@ export function KanbanColumn({
   const isSingleProjectBoard = !!projectId && !connectionId && !isPinnedMode
   // A document run's ticket has no session to tile
   const hasTileableTickets = tickets.some((t) => !isDocumentRunTicket(t))
-  // Done and Merged are always date-sorted; other columns opt in via the
-  // per-column transition-sort toggle (persisted, '' key on multi-project boards)
+  // Done and Merged are always date-sorted; other columns are too unless their
+  // per-column transition-sort toggle was turned off (persisted, '' key on multi-project boards)
   const isForcedDateSorted = isDoneColumn || isMergedColumn
   const transitionSortOn = useKanbanStore(
     useCallback(
-      (state) => state.transitionSortByColumn[transitionSortKey(projectId, column)] ?? false,
+      (state) => isTransitionSortOn(state.transitionSortByColumn, projectId, column),
       [projectId, column]
     )
   )

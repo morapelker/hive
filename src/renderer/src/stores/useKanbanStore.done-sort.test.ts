@@ -71,11 +71,11 @@ function seed(tickets: KanbanTicket[]): void {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  useKanbanStore.setState({ tickets: new Map() })
+  useKanbanStore.setState({ tickets: new Map(), transitionSortByColumn: {} })
 })
 
 afterEach(() => {
-  useKanbanStore.setState({ tickets: new Map() })
+  useKanbanStore.setState({ tickets: new Map(), transitionSortByColumn: {} })
 })
 
 describe('getTicketsByColumn — done column is date-sorted', () => {
@@ -93,7 +93,8 @@ describe('getTicketsByColumn — done column is date-sorted', () => {
     expect(ids).toEqual(['newest', 'middle', 'old'])
   })
 
-  it('still sorts other columns by sort_order', () => {
+  it('still sorts other columns by sort_order once their sort is turned off', () => {
+    useKanbanStore.getState().setTransitionSort(PROJECT_ID, 'todo', false)
     seed([
       makeTicket({ id: 'b', column: 'todo', sort_order: 1, updated_at: '2026-03-01T00:00:00.000Z' }),
       makeTicket({ id: 'a', column: 'todo', sort_order: 0, updated_at: '2026-01-01T00:00:00.000Z' })

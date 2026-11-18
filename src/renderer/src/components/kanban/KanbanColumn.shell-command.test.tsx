@@ -451,7 +451,8 @@ describe('dropping a shell-command ticket on another column', () => {
 
   it('does not run one that is only reordered inside To Do', async () => {
     const reorderTicket = vi.fn()
-    useKanbanStore.setState({ reorderTicket })
+    // A column can only be reordered by hand once its transition sort is turned off
+    useKanbanStore.setState({ reorderTicket, transitionSortByColumn: { 'proj-1:todo': false } })
     const ticket = makeShellTicket()
 
     await drop(ticket, 'todo', { columnTickets: [ticket] })

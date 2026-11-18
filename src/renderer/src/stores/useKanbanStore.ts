@@ -199,6 +199,14 @@ export const transitionSortFor = (
 export const transitionSortKey = (projectId: string, column: KanbanTicketColumn): string =>
   `${projectId}:${column}`
 
+// Whether the transition-sort toggle of a column is on. Columns are sorted by default:
+// only a toggle explicitly turned off (a persisted `false`) leaves a column in manual order
+export const isTransitionSortOn = (
+  transitionSortByColumn: Readonly<Record<string, boolean>>,
+  projectId: string,
+  column: KanbanTicketColumn
+): boolean => transitionSortByColumn[transitionSortKey(projectId, column)] ?? true
+
 // ── Closing a ticket's session ───────────────────────────────────
 /** Done and merged: a ticket's work is over there, and the move in closes its session. */
 function isTerminalColumn(
@@ -740,7 +748,10 @@ interface KanbanState {
   isBoardViewActive: boolean
   /** Per-project simple mode toggle — persisted to localStorage */
   simpleModeByProject: Record<string, boolean>
-  /** Per-board+column "sort by latest transition" toggle (transitionSortKey) — persisted */
+  /**
+   * Per-board+column "sort by latest transition" toggle (transitionSortKey) — persisted.
+   * A missing key means sorted (the default); read it through isTransitionSortOn
+   */
   transitionSortByColumn: Record<string, boolean>
   /** Project chosen the last time a ticket was created from the pinned board — persisted */
   pinnedBoardLastCreateProjectId: string | null
@@ -2561,7 +2572,7 @@ export const useKanbanStore = create<KanbanState>()(
         const tickets = get().tickets.get(projectId) ?? []
         const sortByTransition =
           isDateSortedColumn(column) ||
-          (get().transitionSortByColumn[transitionSortKey(projectId, column)] ?? false)
+          isTransitionSortOn(get().transitionSortByColumn, projectId, column)
         return tickets
           .filter((t) => t.column === column && !t.archived_at)
           .sort(
@@ -2673,8 +2684,7 @@ export const useKanbanStore = create<KanbanState>()(
         const projectIds = get().getConnectionProjectIds(connectionId)
         const merged = projectIds.flatMap((pid) => get().getTicketsByColumn(pid, column))
         const sortByTransition =
-          isDateSortedColumn(column) ||
-          (get().transitionSortByColumn[transitionSortKey('', column)] ?? false)
+          isDateSortedColumn(column) || isTransitionSortOn(get().transitionSortByColumn, '', column)
         merged.sort(
           sortByTransition ? transitionSortFor(column) : (a, b) => a.sort_order - b.sort_order
         )
@@ -2815,8 +2825,7 @@ export const useKanbanStore = create<KanbanState>()(
         const projectIds = [...usePinnedStore.getState().pinnedProjectIds]
         const merged = projectIds.flatMap((pid) => get().getTicketsByColumn(pid, column))
         const sortByTransition =
-          isDateSortedColumn(column) ||
-          (get().transitionSortByColumn[transitionSortKey('', column)] ?? false)
+          isDateSortedColumn(column) || isTransitionSortOn(get().transitionSortByColumn, '', column)
         merged.sort(
           sortByTransition ? transitionSortFor(column) : (a, b) => a.sort_order - b.sort_order
         )
@@ -2934,14 +2943,15 @@ export const useKanbanStore = create<KanbanState>()(
       computeSortOrder: (tickets: KanbanTicket[], targetIndex: number): number => {
         if (tickets.length === 0) return 0
 
-        // Insert at beginning
+        // Insert at beginning: above every ticket's manual position. Not tickets[0]: a column
+        // sorted by transition (the default) lists its tickets in another order than sort_order
         if (targetIndex <= 0) {
-          return tickets[0].sort_order - 1
+          return tickets.reduce((min, t) => Math.min(min, t.sort_order), Infinity) - 1
         }
 
-        // Insert at end
+        // Insert at end: below every ticket's manual position
         if (targetIndex >= tickets.length) {
-          return tickets[tickets.length - 1].sort_order + 1
+          return tickets.reduce((max, t) => Math.max(max, t.sort_order), -Infinity) + 1
         }
 
         // Insert between
