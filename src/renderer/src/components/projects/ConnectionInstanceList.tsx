@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
-import { useConnectionStore } from '@/stores'
 import { sortInstancesBaseLast } from '@/lib/connection-project'
+import { useSidebarConnections } from '@/lib/connection-archive'
 import { ConnectionItem } from '@/components/connections/ConnectionItem'
 import { ManageConnectionWorktreesDialog } from '@/components/connections/ManageConnectionWorktreesDialog'
 
@@ -17,7 +17,8 @@ interface ConnectionInstanceListProps {
 export function ConnectionInstanceList({
   projectId
 }: ConnectionInstanceListProps): React.JSX.Element {
-  const connections = useConnectionStore((s) => s.connections)
+  // An instance being archived keeps its row until the last of its worktrees is gone
+  const connections = useSidebarConnections()
   const instances = useMemo(
     () => sortInstancesBaseLast(connections.filter((c) => c.saved_project_id === projectId)),
     [connections, projectId]

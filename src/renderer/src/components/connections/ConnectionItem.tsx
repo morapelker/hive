@@ -9,6 +9,7 @@ import {
   FileText,
   FolderPlus,
   Link,
+  Loader2,
   MoreHorizontal,
   Pencil,
   Pin,
@@ -69,12 +70,14 @@ import {
   CARD_TITLE_ROW_LEFT,
   CARD_TITLE_UNREAD,
   MICRO_BADGE_PRIMARY,
+  STATUS_GLYPH_BOX,
   SidebarAgentRow,
   WorkspaceCardSurface,
   getFlushWorktreeCardPaddingLeft,
   type AgentDotState
 } from '@/components/sidebar'
 import { baseInstanceLabel, isBaseInstance } from '@/lib/connection-project'
+import { connectionArchiveLabel } from '@/lib/connection-archive'
 import { ArchiveConfirmDialog } from '@/components/worktrees/ArchiveConfirmDialog'
 import type { DiffStatFile } from '@/components/worktrees/DirtyFilesConfirmDialog'
 import { toast, clipboardToast } from '@/lib/toast'
@@ -139,8 +142,28 @@ function statusToDotState(status: string | null): AgentDotState {
   }
 }
 
-/** Orca status lane: 20px slot, 12px StatusIndicator glyph, amber unread overlay dot. */
-function StatusLane({ status }: { status: string | null }): React.JSX.Element {
+/**
+ * Orca status lane: 20px slot, 12px StatusIndicator glyph, amber unread overlay dot. While
+ * the connection is being archived: the spinner an archiving worktree row shows.
+ */
+function StatusLane({
+  status,
+  archiving = false
+}: {
+  status: string | null
+  archiving?: boolean
+}): React.JSX.Element {
+  if (archiving) {
+    return (
+      <div className={CARD_LANE}>
+        <span className={CARD_LANE_SLOT}>
+          <span className={STATUS_GLYPH_BOX}>
+            <Loader2 className="size-3 animate-spin text-muted-foreground" />
+          </span>
+        </span>
+      </div>
+    )
+  }
   const unread = status === 'unread'
   return (
     <div className={CARD_LANE}>
@@ -233,9 +256,15 @@ export function ConnectionItem({
   // fixed members, never archived/deleted/renamed, labelled by its branches.
   const isBase = isBaseInstance(connection)
 
+  // Set while the connection's worktrees are being archived ("Archive All" here, or the Done
+  // dialog of a ticket): the row is dimmed and reads "Archiving x/y" until it is gone
+  const archiveProgress = useConnectionStore((s) => s.archivingConnections[connection.id])
+  const isArchiving = !!archiveProgress
+
   // Derive display status text (state colour lives in the orca AgentStateDot glyphs)
-  const displayStatus =
-    connectionStatus === 'answering'
+  const displayStatus = archiveProgress
+    ? connectionArchiveLabel(archiveProgress)
+    : connectionStatus === 'answering'
       ? 'Answer questions'
       : connectionStatus === 'command_approval'
         ? 'Approve command'
@@ -398,23 +427,29 @@ export function ConnectionItem({
 
   const doArchiveAll = useCallback(async (): Promise<void> => {
     setIsArchivingAll(true)
+    const members = getArchivableMembers()
+    // "Archiving x/y" on the row, which stays until the last member is gone
+    const { beginConnectionArchive, advanceConnectionArchive, endConnectionArchive } =
+      useConnectionStore.getState()
+    beginConnectionArchive(connection.id, members.length)
     try {
       const projects = useProjectStore.getState().projects
       const archiveWorktree = useWorktreeStore.getState().archiveWorktree
       let failures = 0
-      for (const member of getArchivableMembers()) {
+      for (const member of members) {
         const project = projects.find((p) => p.id === member.project_id)
-        if (!project) {
+        if (project) {
+          const result = await archiveWorktree(
+            member.worktree_id,
+            member.worktree_path,
+            member.worktree_branch,
+            project.path
+          )
+          if (!result.success) failures++
+        } else {
           failures++
-          continue
         }
-        const result = await archiveWorktree(
-          member.worktree_id,
-          member.worktree_path,
-          member.worktree_branch,
-          project.path
-        )
-        if (!result.success) failures++
+        advanceConnectionArchive(connection.id)
       }
 
       if (failures > 0) {
@@ -434,12 +469,13 @@ export function ConnectionItem({
         toast.success('Connection worktrees archived')
       }
     } finally {
+      endConnectionArchive(connection.id)
       setIsArchivingAll(false)
     }
   }, [connection.id, getArchivableMembers])
 
   const handleArchiveAll = useCallback(async (): Promise<void> => {
-    if (isArchivingAll) return
+    if (isArchivingAll || isArchiving) return
     const dirtyFiles: DiffStatFile[] = []
     for (const member of getArchivableMembers()) {
       try {
@@ -459,7 +495,7 @@ export function ConnectionItem({
       return
     }
     doArchiveAll()
-  }, [isArchivingAll, getArchivableMembers, doArchiveAll])
+  }, [isArchivingAll, isArchiving, getArchivableMembers, doArchiveAll])
 
   const handleArchiveAllConfirm = useCallback((): void => {
     setArchiveAllConfirmOpen(false)
@@ -573,7 +609,7 @@ export function ConnectionItem({
           <ContextMenuSeparator />
           <ContextMenuItem
             onClick={handleArchiveAll}
-            disabled={isArchivingAll}
+            disabled={isArchivingAll || isArchiving}
             className="text-destructive focus:text-destructive focus:bg-destructive/10"
           >
             <Archive className="h-4 w-4 mr-2" />
@@ -595,16 +631,17 @@ export function ConnectionItem({
     <WorkspaceCardSurface
       active={isSelected ? 'primary' : false}
       renaming={isRenaming}
-      className="group/worktree-card"
+      className={cn('group/worktree-card', isArchiving && 'opacity-50 pointer-events-none')}
       style={{ paddingLeft: getFlushWorktreeCardPaddingLeft(0) }}
       onClick={handleClick}
       onMouseEnter={sidebarHover.onMouseEnter}
       onMouseLeave={sidebarHover.onMouseLeave}
       data-testid={`connection-item-${connection.id}`}
       data-connection-base={isBase ? '' : undefined}
+      data-connection-archiving={isArchiving ? '' : undefined}
     >
       <div className={cn(CARD_PARENT_ROW, CARD_PARENT_ROW_ALIGN)}>
-        <StatusLane status={connectionStatus} />
+        <StatusLane status={connectionStatus} archiving={isArchiving} />
 
         <div className={cn(CARD_CONTENT_COLUMN, CARD_CONTENT_COLUMN_OVERFLOW_VISIBLE)}>
           {/* Title row: connection color dot / link glyph + name (or inline rename) + hover actions */}
@@ -819,7 +856,7 @@ export function ConnectionItem({
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
                           onClick={handleArchiveAll}
-                          disabled={isArchivingAll}
+                          disabled={isArchivingAll || isArchiving}
                           className="text-destructive focus:text-destructive focus:bg-destructive/10"
                         >
                           <Archive className="h-4 w-4 mr-2" />
@@ -844,7 +881,12 @@ export function ConnectionItem({
           {!isRenaming && (
             <div className={cn(AGENT_LIST, AGENT_LIST_AFTER_TITLE)} data-compact-agent-list="true">
               <SidebarAgentRow
-                leading={<AgentStateDot state={statusToDotState(connectionStatus)} size="sm" />}
+                leading={
+                  <AgentStateDot
+                    state={isArchiving ? 'idle' : statusToDotState(connectionStatus)}
+                    size="sm"
+                  />
+                }
                 label={<span data-testid="connection-status-text">{displayStatus}</span>}
               />
             </div>

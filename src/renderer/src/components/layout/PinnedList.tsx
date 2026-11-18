@@ -12,6 +12,7 @@ import {
   FileText,
   GitBranchPlus,
   Link,
+  Loader2,
   MoreHorizontal,
   Pencil,
   Pin,
@@ -92,6 +93,7 @@ import {
   CARD_TITLE_ROW_LEFT,
   MICRO_BADGE_PRIMARY,
   SECTION_HEADER_ICON,
+  STATUS_GLYPH_BOX,
   SidebarAgentRow,
   SidebarSectionHeader,
   WorkspaceCardSurface,
@@ -99,6 +101,7 @@ import {
   type AgentDotState
 } from '@/components/sidebar'
 import { baseInstanceLabel, isBaseInstance } from '@/lib/connection-project'
+import { connectionArchiveLabel } from '@/lib/connection-archive'
 import { ArchiveConfirmDialog } from '@/components/worktrees/ArchiveConfirmDialog'
 import { RemoveWorktreeConfirmDialog } from '@/components/worktrees/RemoveWorktreeConfirmDialog'
 import {
@@ -230,8 +233,28 @@ function statusLabel(status: string | null): string {
   }
 }
 
-/** Orca status lane: 20px slot, 12px StatusIndicator glyph, amber unread overlay dot. */
-function StatusLane({ status }: { status: string | null }): React.JSX.Element {
+/**
+ * Orca status lane: 20px slot, 12px StatusIndicator glyph, amber unread overlay dot. While a
+ * connection is being archived: the spinner an archiving worktree row shows.
+ */
+function StatusLane({
+  status,
+  archiving = false
+}: {
+  status: string | null
+  archiving?: boolean
+}): React.JSX.Element {
+  if (archiving) {
+    return (
+      <div className={CARD_LANE}>
+        <span className={CARD_LANE_SLOT}>
+          <span className={STATUS_GLYPH_BOX}>
+            <Loader2 className="size-3 animate-spin text-muted-foreground" />
+          </span>
+        </span>
+      </div>
+    )
+  }
   const unread = status === 'unread'
   return (
     <div className={CARD_LANE}>
@@ -1079,7 +1102,15 @@ function PinnedConnectionItem({
   const connectionStatus = useWorktreeStatusStore((s) => s.getConnectionStatus(connectionId))
   const isSelected = selectedConnectionId === connectionId
 
-  const connection = useConnectionStore((s) => s.connections.find((c) => c.id === connectionId))
+  // While the connection's worktrees are being archived the row is dimmed, reads "Archiving
+  // x/y" and shows the connection as it stood when the archive began (its members leave it
+  // one by one and the last one takes the connection with it)
+  const archiveProgress = useConnectionStore((s) => s.archivingConnections[connectionId])
+  const isArchiving = !!archiveProgress
+  const liveConnection = useConnectionStore((s) =>
+    s.connections.find((c) => c.id === connectionId)
+  )
+  const connection = archiveProgress?.connection ?? liveConnection
 
   // The connection project this instance belongs to (null for ad-hoc connections)
   const savedProjectId = connection?.saved_project_id ?? null
@@ -1236,7 +1267,9 @@ function PinnedConnectionItem({
   // branch") so it's clear which connection project the card belongs to.
   const baseProjectName = isBase ? (connectionProject?.name ?? null) : null
 
-  const displayStatus = statusLabel(connectionStatus)
+  const displayStatus = archiveProgress
+    ? connectionArchiveLabel(archiveProgress)
+    : statusLabel(connectionStatus)
   const isUnread = connectionStatus === 'unread'
 
   const handleClick = (): void => {
@@ -1332,15 +1365,16 @@ function PinnedConnectionItem({
         <WorkspaceCardSurface
           active={isSelected ? 'primary' : false}
           renaming={isRenaming}
-          className="group/worktree-card"
+          className={cn('group/worktree-card', isArchiving && 'opacity-50 pointer-events-none')}
           style={{ paddingLeft: getFlushWorktreeCardPaddingLeft(0) }}
           onClick={handleClick}
           onMouseEnter={sidebarHover.onMouseEnter}
           onMouseLeave={sidebarHover.onMouseLeave}
           data-testid={`pinned-connection-${connectionId}`}
+          data-connection-archiving={isArchiving ? '' : undefined}
         >
           <div className={cn(CARD_PARENT_ROW, CARD_PARENT_ROW_ALIGN)}>
-            <StatusLane status={connectionStatus} />
+            <StatusLane status={connectionStatus} archiving={isArchiving} />
 
             <div className={cn(CARD_CONTENT_COLUMN, CARD_CONTENT_COLUMN_OVERFLOW_VISIBLE)}>
               {/* Title row: connection color dot / link glyph + name (or inline rename) + hover actions */}
@@ -1468,7 +1502,12 @@ function PinnedConnectionItem({
                   data-compact-agent-list="true"
                 >
                   <SidebarAgentRow
-                    leading={<AgentStateDot state={statusToDotState(connectionStatus)} size="sm" />}
+                    leading={
+                      <AgentStateDot
+                        state={isArchiving ? 'idle' : statusToDotState(connectionStatus)}
+                        size="sm"
+                      />
+                    }
                     label={<span data-testid="pinned-status-text">{displayStatus}</span>}
                     secondary={(hasCustomName || isBase) && projectNames ? projectNames : undefined}
                     trailing={

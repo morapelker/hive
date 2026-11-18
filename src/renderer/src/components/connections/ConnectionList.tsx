@@ -9,11 +9,13 @@ import {
   SECTION_HEADER_WRAPPER_STICKY_TOP,
   SidebarSectionHeader
 } from '@/components/sidebar'
+import { useSidebarConnections } from '@/lib/connection-archive'
 import { ConnectionItem } from './ConnectionItem'
 import { ManageConnectionWorktreesDialog } from './ManageConnectionWorktreesDialog'
 
 export function ConnectionList(): React.JSX.Element | null {
-  const connections = useConnectionStore((s) => s.connections)
+  // A connection being archived keeps its row until the last of its worktrees is gone
+  const connections = useSidebarConnections()
   const loadConnections = useConnectionStore((s) => s.loadConnections)
   const [isCollapsed, setIsCollapsed] = useState(false)
 

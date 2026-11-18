@@ -59,9 +59,26 @@ export interface Connection {
   members: ConnectionMemberEnriched[]
 }
 
+/**
+ * A connection whose worktrees are being archived as one batch. Each member is detached from
+ * the connection as its archive starts and the last detach deletes the connection, so the
+ * sidebar draws the row from `connection` (how it stood when the batch began) until the batch
+ * ends. Display only: `connections` stays what the server says.
+ */
+export interface ConnectionArchiveProgress {
+  /** Members whose archive has ended, whether it worked or not. */
+  done: number
+  total: number
+  connection: Connection
+  /** Where the row sat in `connections`: it keeps its place once the connection is deleted. */
+  index: number
+}
+
 interface ConnectionState {
   // Data
   connections: Connection[]
+  /** Connections being archived, by id. Not persisted. */
+  archivingConnections: Record<string, ConnectionArchiveProgress>
   isLoading: boolean
   error: string | null
   loaded: boolean
@@ -114,6 +131,11 @@ interface ConnectionState {
   // Rename
   renameConnection: (connectionId: string, customName: string | null) => Promise<void>
 
+  // Archive progress ("Archiving x/y" on the sidebar row). No-ops for an unknown connection.
+  beginConnectionArchive: (connectionId: string, total: number) => void
+  advanceConnectionArchive: (connectionId: string) => void
+  endConnectionArchive: (connectionId: string) => void
+
   // Connection Mode Actions
   enterConnectionMode: (sourceWorktreeId: string) => void
   exitConnectionMode: () => void
@@ -126,6 +148,7 @@ export const useConnectionStore = create<ConnectionState>()(
     (set, get) => ({
       // Initial state
       connections: [],
+      archivingConnections: {},
       isLoading: false,
       error: null,
       loaded: false,
@@ -552,6 +575,41 @@ export const useConnectionStore = create<ConnectionState>()(
         } catch {
           set({ connectionModeSubmitting: false })
         }
+      },
+
+      beginConnectionArchive: (connectionId: string, total: number) => {
+        set((state) => {
+          const index = state.connections.findIndex((c) => c.id === connectionId)
+          if (index < 0 || total <= 0) return state
+          return {
+            archivingConnections: {
+              ...state.archivingConnections,
+              [connectionId]: { done: 0, total, connection: state.connections[index], index }
+            }
+          }
+        })
+      },
+
+      advanceConnectionArchive: (connectionId: string) => {
+        set((state) => {
+          const progress = state.archivingConnections[connectionId]
+          if (!progress) return state
+          return {
+            archivingConnections: {
+              ...state.archivingConnections,
+              [connectionId]: { ...progress, done: Math.min(progress.done + 1, progress.total) }
+            }
+          }
+        })
+      },
+
+      endConnectionArchive: (connectionId: string) => {
+        set((state) => {
+          if (!state.archivingConnections[connectionId]) return state
+          const archivingConnections = { ...state.archivingConnections }
+          delete archivingConnections[connectionId]
+          return { archivingConnections }
+        })
       },
 
       selectConnection: (id: string | null, opts?: { gitView?: ConnectionGitView }) => {

@@ -26,6 +26,7 @@ import { Loader2, GitMerge, GitCommit, Archive, AlertTriangle } from 'lucide-rea
 import { dbApi } from '@/api/db-api'
 import { gitApi } from '@/api/git-api'
 import { cn } from '@/lib/utils'
+import { trackConnectionArchives } from '@/lib/connection-archive'
 import { findCarriedRunTickets } from '@/lib/document-flow/carried-tickets'
 import { runItemOfTicket } from '@/lib/document-flow/ticket-run-membership'
 import { runKindNoun } from '@/components/document-flow/document-flow-ui'
@@ -1027,25 +1028,32 @@ export function MergeOnDoneDialog() {
     }
 
     void (async () => {
-      await closeInstanceSessions(connectionId)
-      const store = useWorktreeStore.getState()
-      let archived = 0
-      for (const target of archiveTargets) {
-        try {
-          const result = await store.archiveWorktree(
-            target.worktreeId,
-            target.worktreePath,
-            target.branch,
-            target.projectPath
-          )
-          if (result.success) archived += 1
-          else toast.error(`Failed to archive ${target.branch}: ${result.error}`)
-        } catch (err) {
-          toast.error(`Archive failed: ${err instanceof Error ? err.message : String(err)}`)
+      // A connection that goes away with these worktrees reads "Archiving x/y" in the sidebar
+      const progress = trackConnectionArchives(archiveTargets.map((t) => t.worktreeId))
+      try {
+        await closeInstanceSessions(connectionId)
+        const store = useWorktreeStore.getState()
+        let archived = 0
+        for (const target of archiveTargets) {
+          try {
+            const result = await store.archiveWorktree(
+              target.worktreeId,
+              target.worktreePath,
+              target.branch,
+              target.projectPath
+            )
+            if (result.success) archived += 1
+            else toast.error(`Failed to archive ${target.branch}: ${result.error}`)
+          } catch (err) {
+            toast.error(`Archive failed: ${err instanceof Error ? err.message : String(err)}`)
+          }
+          progress.settled(target.worktreeId)
         }
+        if (archived === 1 && archiveTargets.length === 1) toast.success('Worktree archived')
+        else if (archived > 0) toast.success(`${archived} worktree${archived !== 1 ? 's' : ''} archived`)
+      } finally {
+        progress.end()
       }
-      if (archived === 1 && archiveTargets.length === 1) toast.success('Worktree archived')
-      else if (archived > 0) toast.success(`${archived} worktree${archived !== 1 ? 's' : ''} archived`)
     })()
   }, [resolved, runEntry, pendingIdentity, completeDoneMove])
 
@@ -1225,6 +1233,8 @@ export function MergeOnDoneDialog() {
     }
 
     const store = useWorktreeStore.getState()
+    // A connection that goes away with these worktrees reads "Archiving x/y" in the sidebar
+    const progress = trackConnectionArchives(groups.flat().map((t) => t.worktreeId))
     const archiveGroup = async (
       group: ArchiveTarget[]
     ): Promise<({ branch: string; error: string | null | undefined } | null)[]> => {
@@ -1236,6 +1246,7 @@ export function MergeOnDoneDialog() {
       )
       if (dirtyNow.some(Boolean)) {
         keptForMerge.push(...group.filter((_, i) => dirtyNow[i]).map((t) => t.branch))
+        progress.release(group.map((t) => t.worktreeId))
         return group.map(() => null)
       }
       const results: ({ branch: string; error: string | null | undefined } | null)[] = []
@@ -1251,12 +1262,17 @@ export function MergeOnDoneDialog() {
         } catch (err) {
           results.push({ branch: t.branch, error: err instanceof Error ? err.message : String(err) })
         }
+        progress.settled(t.worktreeId)
       }
       return results
     }
     void (async () => {
-      for (const connectionId of connectionIds) await closeInstanceSessions(connectionId)
-      return (await Promise.all(groups.map(archiveGroup))).flat()
+      try {
+        for (const connectionId of connectionIds) await closeInstanceSessions(connectionId)
+        return (await Promise.all(groups.map(archiveGroup))).flat()
+      } finally {
+        progress.end()
+      }
     })().then((results) => {
       if (keptForMerge.length > 0) {
         toast.warning(
