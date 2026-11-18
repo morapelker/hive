@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from 'react'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useDocumentFlowStore, type OpenWizardOptions } from '@/stores/useDocumentFlowStore'
+import { usePrdFlowStore } from '@/stores/usePrdFlowStore'
 
 /** The little a connection row needs to expose to offer "Implement Document…". */
 export interface ImplementDocumentConnection {
@@ -18,6 +19,8 @@ export interface ImplementDocumentEntry {
   open: () => Promise<void>
   /** "Orchestrate tickets…": the wizard on the project's board tickets. */
   orchestrate: () => Promise<void>
+  /** "New PRD → orchestrator ticket…": the form of the PRD flow, for the project. */
+  prd: () => Promise<void>
 }
 
 const ORCHESTRATE: OpenWizardOptions = { source: 'tickets' }
@@ -34,7 +37,8 @@ export function distinctMemberProjectCount(connection: ImplementDocumentConnecti
  * project — the run needs a project to own its tickets, integration instance and report.
  * "Orchestrate tickets…" sits next to it with the same gating and the same promotion: the
  * wizard then starts on the project's board tickets (an ad-hoc connection's new project has
- * none yet, and the picker says so).
+ * none yet, and the picker says so). "New PRD → orchestrator ticket…" is the third of them:
+ * the form of the PRD flow opens for the same project, saved first in the same way.
  */
 export function useImplementDocumentEntry(
   connection: ImplementDocumentConnection | null | undefined
@@ -49,13 +53,9 @@ export function useImplementDocumentEntry(
   )
   const available = savedProjectId !== null || memberProjectCount >= 2
 
-  const openWizard = useCallback(
-    async (options?: OpenWizardOptions): Promise<void> => {
-      // The document path's call stays exactly `openWizard(projectId)`
-      const show = (projectId: string): void =>
-        options
-          ? useDocumentFlowStore.getState().openWizard(projectId, null, options)
-          : useDocumentFlowStore.getState().openWizard(projectId)
+  // Runs `show` on the connection's project, saving an ad-hoc connection as a project first.
+  const onProject = useCallback(
+    async (show: (projectId: string) => void): Promise<void> => {
       if (!connection || !available) return
       if (savedProjectId) {
         show(savedProjectId)
@@ -73,8 +73,22 @@ export function useImplementDocumentEntry(
     },
     [connection, available, savedProjectId, busy, saveConnectionAsProject]
   )
-  const open = useCallback(() => openWizard(), [openWizard])
-  const orchestrate = useCallback(() => openWizard(ORCHESTRATE), [openWizard])
+  // The document path's call stays exactly `openWizard(projectId)`
+  const open = useCallback(
+    () => onProject((projectId) => useDocumentFlowStore.getState().openWizard(projectId)),
+    [onProject]
+  )
+  const orchestrate = useCallback(
+    () =>
+      onProject((projectId) =>
+        useDocumentFlowStore.getState().openWizard(projectId, null, ORCHESTRATE)
+      ),
+    [onProject]
+  )
+  const prd = useCallback(
+    () => onProject((projectId) => usePrdFlowStore.getState().openDialog(projectId)),
+    [onProject]
+  )
 
-  return { available, busy, open, orchestrate }
+  return { available, busy, open, orchestrate, prd }
 }

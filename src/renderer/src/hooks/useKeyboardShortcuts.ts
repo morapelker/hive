@@ -20,6 +20,7 @@ import { useWorktreeStore, getOrderedProjectWorktrees } from '@/stores/useWorktr
 import { useScriptStore, fireRunScript, killRunScript } from '@/stores/useScriptStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
+import { usePrdFlowStore } from '@/stores/usePrdFlowStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useTerminalTabStore } from '@/stores/useTerminalTabStore'
 import { useTerminalStore } from '@/stores/useTerminalStore'
@@ -517,6 +518,16 @@ function tryCloseOpenModal(): boolean {
   }
   if (documentFlow.wizard.open) {
     documentFlow.closeWizard()
+    return true
+  }
+
+  // "New PRD → orchestrator ticket" form. While its "Start" is in flight the key closes
+  // nothing, as Esc does not: not the form, which is about to say whether the flow started,
+  // and not a tab behind it.
+  if (usePrdFlowStore.getState().dialog.open) {
+    if (!document.querySelector('[data-testid="prd-flow-dialog"][data-starting]')) {
+      usePrdFlowStore.getState().closeDialog()
+    }
     return true
   }
 

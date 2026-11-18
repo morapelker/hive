@@ -126,6 +126,102 @@ describe('recording the session state from published statuses', () => {
     ])
   })
 
+  it('records a turn the person interrupted as ended, without a text of its own', () => {
+    publishClaudeCliStatus({ sessionId: SESSION, status: 'working' })
+    publishClaudeCliStatus({
+      sessionId: SESSION,
+      status: 'completed',
+      metadata: { reason: 'user_interrupt' }
+    })
+
+    expect(recorded()).toEqual([
+      expect.objectContaining({ state: 'working' }),
+      {
+        session_id: SESSION,
+        state: 'ended',
+        completion: null,
+        api_error: null,
+        hook_event: 'Interrupt'
+      }
+    ])
+  })
+
+  it.each(['permission', 'answering'] as const)(
+    'records the interrupt of a session that was waiting on %s over the block',
+    (status) => {
+      publishClaudeCliStatus({ sessionId: SESSION, status, metadata: { toolName: 'Bash' } })
+      publishClaudeCliStatus({
+        sessionId: SESSION,
+        status: 'completed',
+        metadata: { reason: 'user_interrupt' }
+      })
+
+      expect(recorded()).toEqual([
+        expect.objectContaining({ state: 'blocked', hook_event: status }),
+        expect.objectContaining({ state: 'ended', hook_event: 'Interrupt' })
+      ])
+    }
+  )
+
+  it('records working again when the session goes on after an interrupt', () => {
+    publishClaudeCliStatus({ sessionId: SESSION, status: 'working' })
+    publishClaudeCliStatus({
+      sessionId: SESSION,
+      status: 'completed',
+      metadata: { reason: 'user_interrupt' }
+    })
+    publishClaudeCliStatus({
+      sessionId: SESSION,
+      status: 'working',
+      metadata: { hookEventName: 'PostToolUse', toolName: 'Bash' }
+    })
+
+    expect(recorded().map((input) => (input as { state: string }).state)).toEqual([
+      'working',
+      'ended',
+      'working'
+    ])
+  })
+
+  it.each([undefined, 'pty_exit', 'deferred_completion_watchdog', 'codex_title_ready'])(
+    'records nothing for a turn end whose reason is %s',
+    (reason) => {
+      publishClaudeCliStatus({
+        sessionId: SESSION,
+        status: 'completed',
+        metadata: reason ? { reason } : {}
+      })
+
+      expect(recorded()).toEqual([])
+    }
+  )
+
+  it('leaves an interrupt that a hook reported to the hook, which records it with its text', () => {
+    publishClaudeCliStatus({ sessionId: SESSION, status: 'working' })
+    publishClaudeCliStatus({
+      sessionId: SESSION,
+      status: 'completed',
+      metadata: { hookEventName: 'Stop', reason: 'user_interrupt' }
+    })
+
+    expect(recorded()).toEqual([expect.objectContaining({ state: 'working' })])
+  })
+
+  it('keeps the recorded turn end when a session that had already ended is stopped', () => {
+    publishClaudeCliStatus({
+      sessionId: SESSION,
+      status: 'completed',
+      metadata: { hookEventName: 'Stop', completion: 'completed' }
+    })
+    publishClaudeCliStatus({
+      sessionId: SESSION,
+      status: 'completed',
+      metadata: { reason: 'user_interrupt' }
+    })
+
+    expect(recorded()).toEqual([])
+  })
+
   it('ignores statuses that say nothing about the turn', () => {
     publishClaudeCliStatus({ sessionId: SESSION, status: 'unread' })
 

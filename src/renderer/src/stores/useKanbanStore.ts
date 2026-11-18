@@ -17,6 +17,7 @@ import {
   registerKanbanRenameSync,
   registerKanbanModelSync,
   isTicketHeldByDocumentUpdate,
+  isTicketHeldByPrdFlow,
   isTicketHeldByRun,
   isTicketInDocumentUpdateLane,
   leaveDataProjectThen,
@@ -782,7 +783,8 @@ interface KanbanState {
   setRenameTicketRef: (ref: TicketRef | null) => void
   setBoardTelegramTarget: (target: BoardTelegramTarget | null) => void
   clearBoardTelegramTarget: () => void
-  loadTickets: (projectId: string) => Promise<void>
+  /** `rethrow`: a read that failed throws instead of leaving the board as it was. */
+  loadTickets: (projectId: string, options?: { rethrow?: boolean }) => Promise<void>
   loadTicketsWithArchiveVisibility: (projectId: string, includeArchived: boolean) => Promise<void>
   reconcileFinishedSessions: (projectId: string) => void
   createTicket: (projectId: string, data: KanbanTicketCreate) => Promise<KanbanTicket>
@@ -1164,9 +1166,10 @@ export const useKanbanStore = create<KanbanState>()(
       },
 
       // ── loadTickets ──────────────────────────────────────────────
-      loadTickets: async (projectId: string) => {
+      loadTickets: async (projectId: string, options?: { rethrow?: boolean }) => {
         set({ isLoading: true })
         const labelEdits = beginTicketLoad()
+        let read = false
         try {
           const includeArchived = get().showArchivedByProject[projectId] ?? false
           const { tickets, diagnostics } = await loadProjectTicketsSnapshot(
@@ -1190,12 +1193,14 @@ export const useKanbanStore = create<KanbanState>()(
               isLoading: false
             }
           })
+          read = true
           // Load dependencies for this project
           get().loadDependencies(projectId)
           // Recover any finished-session moves dropped before this load
           get().reconcileFinishedSessions(projectId)
-        } catch {
+        } catch (error) {
           set({ isLoading: false })
+          if (options?.rethrow && !read) throw error
         } finally {
           labelEdits.end()
         }
@@ -1267,9 +1272,9 @@ export const useKanbanStore = create<KanbanState>()(
             implementHandled.add(projectId)
             recoveredImplement.add(ticket.current_session_id)
           }
-          // Its session works on the run's document, not on the ticket: it stays where it is
-          // (see syncTicketWithSession)
-          if (isTicketHeldByDocumentUpdate(ticket.id)) continue
+          // Its session works on the run's document, not on the ticket, or a PRD flow that is
+          // on has another prompt for it: it stays where it is (see syncTicketWithSession)
+          if (isTicketHeldByDocumentUpdate(ticket.id) || isTicketHeldByPrdFlow(ticket.id)) continue
           if (ticket.column === 'in_progress') {
             // Only act on positive "finished" evidence — never on progressing/
             // asking/no-status, so we don't yank not-yet-started or actively-
@@ -2106,6 +2111,13 @@ export const useKanbanStore = create<KanbanState>()(
             // the run's, not the ticket's. No session event moves it, in any column,
             // until the update is over; the run puts it back in Merged then.
             const heldByDocumentUpdate = isTicketHeldByDocumentUpdate(ticket.id)
+            // A ticket whose PRD flow is on ("New PRD → orchestrator ticket…") is held as well:
+            // the flow prompts its session twice, for the PRD and then for the tasks document,
+            // and the turn that ends in between is not the end of the ticket's work. It stays
+            // In Progress, and the flow moves it itself: back to In Progress with a prompt, to
+            // Review once it is over or needs the person. A flow that needs attention holds
+            // nothing.
+            const held = heldByDocumentUpdate || isTicketHeldByPrdFlow(ticket.id)
             switch (event.type) {
               case 'session_completed': {
                 // Claude CLI sessions say whether the turn ended with a real
@@ -2136,7 +2148,7 @@ export const useKanbanStore = create<KanbanState>()(
                   // invariant: in_progress ⇔ a running progress bar or a paused one).
                   // Move is idempotent; entering review drops awaiting_completion.
                   if (
-                    !heldByDocumentUpdate &&
+                    !held &&
                     ticket.column !== 'review' &&
                     ticket.column !== 'done' &&
                     ticket.column !== 'merged'
@@ -2188,7 +2200,7 @@ export const useKanbanStore = create<KanbanState>()(
                 // land here when its completion is rerouted to plan_ready by a stale
                 // lastSendMode, so the move must not be gated on mode.
                 if (
-                  !heldByDocumentUpdate &&
+                  !held &&
                   ticket.column !== 'review' &&
                   ticket.column !== 'done' &&
                   ticket.column !== 'merged'
@@ -2210,7 +2222,7 @@ export const useKanbanStore = create<KanbanState>()(
                     .catch(() => {})
                 }
                 if (
-                  !heldByDocumentUpdate &&
+                  !held &&
                   ticket.column !== 'in_progress' &&
                   ticket.column !== 'done' &&
                   ticket.column !== 'merged'
@@ -2274,7 +2286,7 @@ export const useKanbanStore = create<KanbanState>()(
                 // their explicit send stamps. Other columns keep moving via
                 // session_working as before.
                 if (
-                  !heldByDocumentUpdate &&
+                  !held &&
                   (ticket.column === 'done' || ticket.column === 'merged') &&
                   !ticket.auto_approve_plan &&
                   !ticket.archived_at
@@ -2296,7 +2308,7 @@ export const useKanbanStore = create<KanbanState>()(
 
               case 'session_error': {
                 // Error requires user attention — move to review if currently in_progress
-                if (!heldByDocumentUpdate && ticket.column === 'in_progress') {
+                if (!held && ticket.column === 'in_progress') {
                   get()
                     .moveTicket(ticket.id, projectId, 'review', ticket.sort_order)
                     .catch(() => {})
@@ -2330,7 +2342,7 @@ export const useKanbanStore = create<KanbanState>()(
                   (ticket.column === 'done' || ticket.column === 'merged') &&
                   !ticket.archived_at
                 if (ticket.column === 'todo' || ticket.column === 'review' || reopenedByFollowup) {
-                  if (!heldByDocumentUpdate) {
+                  if (!held) {
                     get()
                       .moveTicket(ticket.id, projectId, 'in_progress', ticket.sort_order)
                       .catch(() => {})

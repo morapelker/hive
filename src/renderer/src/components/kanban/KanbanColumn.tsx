@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useLayoutEffect } from 'react'
 import { motion } from 'motion/react'
-import { AlertTriangle, ArrowDownWideNarrow, ChevronRight, ChevronDown, FileText, LayoutGrid, Plus, Zap, Archive, Workflow } from 'lucide-react'
+import { AlertTriangle, ArrowDownWideNarrow, ChevronRight, ChevronDown, FileText, LayoutGrid, Plus, ScrollText, Zap, Archive, Workflow } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { openTiledInProgressSessions } from '@/lib/tiled-sessions'
 import { toast } from '@/lib/toast'
@@ -10,6 +10,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip
 import { KanbanTicketCard } from '@/components/kanban/KanbanTicketCard'
 import { documentRunTicketDropRefusal } from '@/components/document-flow/document-flow-ui'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
+import { usePrdFlowStore } from '@/stores/usePrdFlowStore'
 import { documentFlowApi } from '@/api/document-flow-api'
 import { TicketCreateModal } from '@/components/kanban/TicketCreateModal'
 import { registerBoardNewTicket } from '@/lib/board-new-ticket'
@@ -1342,6 +1343,18 @@ export function KanbanColumn({
               >
                 <Workflow className="h-3.5 w-3.5" />
                 New orchestrator from tickets…
+              </ContextMenuItem>
+            )}
+            {/* The PRD flow ends in an orchestrator, so it is one project's too: its form asks
+                for a name and a prompt, and the ticket it makes lands on this board */}
+            {isSingleProjectBoard && (
+              <ContextMenuItem
+                data-testid="ctx-new-prd-flow"
+                onClick={() => usePrdFlowStore.getState().openDialog(projectId)}
+                className="gap-2"
+              >
+                <ScrollText className="h-3.5 w-3.5" />
+                New PRD → orchestrator ticket…
               </ContextMenuItem>
             )}
           </ContextMenuContent>

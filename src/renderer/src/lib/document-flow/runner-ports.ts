@@ -224,14 +224,14 @@ async function readSdkFinalMessage(sessionId: string): Promise<string | null> {
   return null
 }
 
-async function isSessionClosed(sessionId: string): Promise<boolean> {
+export async function isSessionClosed(sessionId: string): Promise<boolean> {
   const row =
     useSessionStore.getState().getSessionById(sessionId) ??
     (await dbApi.session.get<Session>(sessionId))
   return row?.status === 'completed'
 }
 
-async function isSessionStarted(sessionId: string): Promise<boolean> {
+export async function isSessionStarted(sessionId: string): Promise<boolean> {
   const found = await findSessionById(sessionId)
   if (!found) return false
   if (!isAgentCli(found.session.agent_sdk)) {

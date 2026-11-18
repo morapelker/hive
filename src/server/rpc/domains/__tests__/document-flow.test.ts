@@ -64,6 +64,7 @@ const API_METHODS = [
   'start',
   'claimRunner',
   'sessionTurn',
+  'appStartedAt',
   'classify',
   'prepareMerge',
   'merge',
@@ -100,6 +101,7 @@ function makeService(overrides: Partial<DocumentFlowRpcService> = {}): DocumentF
     claimRunner: () =>
       Effect.succeed({ owned: true, ownerClientId: 'c1', serverStartedAt: '2026-10-05' }),
     sessionTurn: () => Effect.succeed(null),
+    appStartedAt: () => Effect.succeed('2026-10-05T08:00:00.000Z'),
     classify: () => Effect.succeed(verdict),
     prepareMerge: () =>
       Effect.succeed({
@@ -331,6 +333,24 @@ describe('documentFlow RPC handlers', () => {
       suggestVerifyCommand: ['project-1'],
       retryExtraction: [{ runId: 'run-1', generation: null }]
     })
+  })
+
+  it('answers when the app started from the service, with no params or an empty object, and refuses anything else', async () => {
+    const appStartedAt = vi.fn(() => Effect.succeed('2026-10-05T08:00:00.000Z'))
+    const service = makeService({ appStartedAt })
+
+    // The renderer API sends an empty object; a caller with nothing to say sends nothing.
+    await expect(call(service, 'appStartedAt', {})).resolves.toBe('2026-10-05T08:00:00.000Z')
+    await expect(call(service, 'appStartedAt', undefined)).resolves.toBe('2026-10-05T08:00:00.000Z')
+    await expect(call(service, 'appStartedAt', null)).resolves.toBe('2026-10-05T08:00:00.000Z')
+    expect(appStartedAt.mock.calls).toEqual([[], [], []])
+
+    // The start is the app instance's, not a session's or a run's: there is nothing to ask by.
+    await rejectsValidation(service, 'appStartedAt', { sessionId: 'session-1' })
+    await rejectsValidation(service, 'appStartedAt', { runId: 'run-1' })
+    await rejectsValidation(service, 'appStartedAt', 'now')
+    await rejectsValidation(service, 'appStartedAt', [])
+    expect(appStartedAt).toHaveBeenCalledTimes(3)
   })
 
   it('hands the add-member params to the service, and refuses a bad branch or extra fields', async () => {

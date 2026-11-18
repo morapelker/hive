@@ -146,6 +146,13 @@ export const documentFlowApi = {
     request('sessionTurn', { sessionId }),
 
   /**
+   * When the app instance that owns the sessions started (an ISO date). A PRD flow ("New PRD →
+   * orchestrator ticket…") uses it to tell a session that died with the app from a live one: a
+   * session last prompted before this moment has no process left to answer.
+   */
+  appStartedAt: (): Promise<string> => request('appStartedAt', {}),
+
+  /**
    * Judge the item's session's final message with the generation model and store the verdict.
    * `finalMessage` is supplied by the renderer for SDK sessions; CLI sessions are read
    * server-side (Stop-hook capture, then the transcript).

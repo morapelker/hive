@@ -43,7 +43,9 @@ import {
   Bot,
   Star,
   Hourglass,
-  Pencil
+  Pencil,
+  RotateCw,
+  ScrollText
 } from 'lucide-react'
 import { CheckeredFlagIcon } from './CheckeredFlagIcon'
 import { EliteDragonIcon, type EliteDragonLook } from './EliteDragonIcon'
@@ -153,6 +155,13 @@ import {
   orchestratorLaunchRefusal
 } from '@/lib/document-flow/ticket-run-membership'
 import { TicketOrchestratorSubmenu } from './TicketOrchestratorMenu'
+// "New PRD → orchestrator ticket…" (lib/prd-flow): the card of the ticket whose session writes
+// the PRD and then the tasks document wears the flow's pill, with "Retry" beside it once the
+// flow stopped, and offers "Retry PRD flow" and "Cancel PRD flow" in its menu.
+import { TicketPrdFlowMenuItems } from './TicketPrdFlowMenu'
+import { prdFlowPill } from '@/components/prd-flow/prd-flow-pill'
+import { retryPrdFlow } from '@/lib/prd-flow/actions'
+import { useTicketPrdFlow } from '@/stores/usePrdFlowStore'
 import { useRunCheckouts } from './useRunCheckouts'
 import { copyTicketLabelsForNewTicket, ticketLabelsOf } from '@shared/lib/ticket-labels'
 import { DocumentRunTicketBody } from '@/components/document-flow/DocumentRunTicketBody'
@@ -164,7 +173,7 @@ import {
   documentRunTicketToneClass,
   useDocumentRunTicket
 } from '@/components/document-flow/useDocumentRunTicket'
-import { isUnlaunchedCardPhase } from '@/components/document-flow/document-flow-ui'
+import { isUnlaunchedCardPhase, tonePillClass } from '@/components/document-flow/document-flow-ui'
 import { isActiveRunStatus } from '@/components/document-flow/document-flow-ui'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import {
@@ -278,6 +287,9 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   // but it shows the run and opens the run dashboard; it has no session to launch or continue.
   const documentRunId = documentRunIdOf(ticket)
   const isDocumentRunTicket = documentRunId !== null
+  // The ticket's PRD flow: this app keeps it on this Mac, by the ticket's id.
+  const prdFlow = useTicketPrdFlow(ticket.id)
+  const prdPill = prdFlowPill(prdFlow)
   const documentRunView = useDocumentRunTicket(documentRunId, ticket.column)
   const documentRunToneClass = documentRunView ? documentRunTicketToneClass(documentRunView) : null
   // The PRs from the run's integration branch(es) into their base; nothing for a remote ticket
@@ -1994,7 +2006,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             )}
 
             {/* Badges + progress row */}
-            {(hasAttachments || hasNote || worktreeName || queuedBranchLabel || projectTag || connectionName || ticket.plan_ready || isError || launchStall || isInMergeQueue || rightAlignedSlot || isArchived || isBlocked || blockingDiagnostic || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram || ticket.goal_mode || ticket.auto_approve_plan || activeRemoteLaunch || showModelBadge || backgroundWork || docEditQueueTooltip) && (
+            {(hasAttachments || hasNote || worktreeName || queuedBranchLabel || projectTag || connectionName || ticket.plan_ready || isError || launchStall || isInMergeQueue || rightAlignedSlot || isArchived || isBlocked || blockingDiagnostic || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram || ticket.goal_mode || ticket.auto_approve_plan || activeRemoteLaunch || showModelBadge || backgroundWork || docEditQueueTooltip || prdPill) && (
               <div className="mt-1.5 flex flex-wrap items-center gap-1">
                 {/* Archived badge */}
                 {isArchived && (
@@ -2012,6 +2024,39 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                     <RadioTower className="h-2.5 w-2.5" />
                     Remote
                   </span>
+                )}
+                {/* PRD flow pill: the step the ticket's flow is at, and "Retry" once it stopped */}
+                {prdFlow && prdPill && (
+                  <>
+                    <span
+                      data-testid="ticket-prd-flow-pill"
+                      data-stage={prdFlow.stage}
+                      data-status={prdFlow.status}
+                      title={prdPill.hint}
+                      className={tonePillClass(prdPill.tone)}
+                    >
+                      <ScrollText className="h-2.5 w-2.5" />
+                      {prdPill.label}
+                    </span>
+                    {prdPill.canRetry && (
+                      <button
+                        type="button"
+                        data-testid="ticket-prd-flow-retry"
+                        title="Continue the PRD flow where it stopped"
+                        className={cn(
+                          ticketPillClass,
+                          'hover:bg-accent hover:text-foreground transition-colors'
+                        )}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          void retryPrdFlow(ticket.id)
+                        }}
+                      >
+                        <RotateCw className="h-2.5 w-2.5" />
+                        Retry
+                      </button>
+                    )}
+                  </>
                 )}
                 {isForwardedToTelegram && (
                   <span
@@ -2755,6 +2800,10 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             </ContextMenuItem>
           )}
 
+          {/* PRD flow: "Retry PRD flow" once the ticket's flow stopped, "Cancel PRD flow" while
+              it has one */}
+          <TicketPrdFlowMenuItems ticket={ticket} />
+
           {/* Jump to session — only for flow tickets with reachable session */}
           {isFlowTicket && !(connectionSession && !connectionName) && (
             <ContextMenuItem
@@ -2979,11 +3028,15 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             {!isExternalTicket && !isMarkedShellCommandTicket && (
               <ContextMenuItem
                 data-testid="ctx-move-to-project"
-                onClick={() => setShowMoveToProject(true)}
+                disabled={prdFlow !== null}
+                onSelect={() => setShowMoveToProject(true)}
                 className="gap-2"
               >
                 <FolderInput className="h-3.5 w-3.5" />
                 Move to project…
+                {prdFlow && (
+                  <span className="text-muted-foreground">{' · cancel its PRD flow first'}</span>
+                )}
               </ContextMenuItem>
             )}
             </>

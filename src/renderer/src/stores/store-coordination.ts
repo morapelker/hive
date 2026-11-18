@@ -265,3 +265,26 @@ export function registerTicketRunHold(fn: TicketRunHoldFn): void {
 export function isTicketHeldByRun(ticketId: string): boolean {
   return _ticketRunHold?.(ticketId) ?? false
 }
+// ── Kanban ↔ PRD flows: tickets whose session writes a PRD and then its tasks document ──
+// "New PRD → orchestrator ticket…" (lib/prd-flow) starts one session on a ticket and prompts it
+// twice: for <PREFIX>_PRD.html, then for <PREFIX>_TASKS.html. Between the two prompts the turn
+// has ended, but the ticket's work has not: it stays In Progress, with no unread mark and no
+// "ready for review" notification, until the flow is over or needs the person (the flow moves it
+// to Review itself then). The PRD flow store registers the lookup over its flows, which it
+// reads from localStorage as it is created: the answer is there before any session status is.
+type PrdFlowHoldFn = (ticketId: string) => boolean
+
+let _prdFlowHold: PrdFlowHoldFn | null = null
+
+export function registerPrdFlowHold(fn: PrdFlowHoldFn): void {
+  _prdFlowHold = fn
+}
+
+/**
+ * A PRD flow that is on holds the ticket In Progress: what its session does between the flow's
+ * prompts must not move it. False until the PRD flow store registers its lookup.
+ */
+export function isTicketHeldByPrdFlow(ticketId: string): boolean {
+  return _prdFlowHold?.(ticketId) ?? false
+}
+

@@ -17,6 +17,7 @@ import {
   Pin,
   PinOff,
   Plus,
+  ScrollText,
   Settings2,
   Terminal,
   Ticket,
@@ -1206,7 +1207,8 @@ function PinnedConnectionItem({
     setManageConnectionId(connectionId)
   }, [connectionId])
 
-  // "Implement Document…" (and "Orchestrate tickets…" next to it) on the connection's
+  // "Implement Document…" (with "Orchestrate tickets…" and "New PRD → orchestrator ticket…"
+  // next to it) on the connection's
   // project; an ad-hoc connection is saved as a project first (same >=2-member bar as "Save
   // as Project")
   const implementDocument = useImplementDocumentEntry(connection)
@@ -1279,6 +1281,16 @@ function PinnedConnectionItem({
         >
           <Workflow className="h-4 w-4 mr-2" />
           Orchestrate tickets…
+        </MenuItem>
+      )}
+      {implementDocument.available && (
+        <MenuItem
+          data-testid="prd-flow-pinned-connection-menu-item"
+          onClick={() => void implementDocument.prd()}
+          disabled={implementDocument.busy}
+        >
+          <ScrollText className="h-4 w-4 mr-2" />
+          New PRD → orchestrator ticket…
         </MenuItem>
       )}
       <MenuSeparator />

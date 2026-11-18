@@ -31,6 +31,7 @@ import { useKeepAwake } from '@/hooks/useKeepAwake'
 import { useSleepWhenIdle } from '@/hooks/useSleepWhenIdle'
 import { useAccountScheduleRunner } from '@/hooks/useAccountScheduleRunner'
 import { useDocumentFlowRunner } from '@/hooks/useDocumentFlowRunner'
+import { usePrdFlowDriver } from '@/hooks/usePrdFlowDriver'
 import { ErrorBoundary, ErrorFallback } from '@/components/error'
 import { CreatePRModal } from '@/components/pr/CreatePRModal'
 import { ConnectionPRModal } from '@/components/pr/ConnectionPRModal'
@@ -59,6 +60,7 @@ import { MAX_ATTACHMENTS, isImageMime } from '@/lib/file-attachment-utils'
 import type { AttachmentInput } from '@/components/sessions/AttachmentPreview'
 import { QuitConfirmationOverlay } from './QuitConfirmationOverlay'
 import { DataProjectDialogs } from '@/components/data-projects/wizard/DataProjectDialogs'
+import { PrdFlowDialog } from '@/components/prd-flow/PrdFlowDialog'
 
 function GlobalProjectSettings(): React.JSX.Element | null {
   const settingsProjectId = useProjectStore((s) => s.settingsProjectId)
@@ -175,6 +177,8 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
   useAccountScheduleRunner()
   // Keep document runs in sync with the server and drive the launched runs this client owns
   useDocumentFlowRunner()
+  // Move the PRD flows of this window along: PRD, tasks document, orchestrator ticket
+  usePrdFlowDriver()
 
   // Drag-and-drop from Finder
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
@@ -360,6 +364,11 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
           </ErrorBoundary>
           <ErrorBoundary componentName="DocumentRunsIndicator" fallback={null}>
             <DocumentRunsIndicator />
+          </ErrorBoundary>
+          {/* "New PRD → orchestrator ticket…": the form, opened from the To Do column header,
+              the command palette or a connection row's menu. */}
+          <ErrorBoundary componentName="PrdFlowDialog" fallback={null}>
+            <PrdFlowDialog />
           </ErrorBoundary>
           <AgentSetupGuard />
           <ErrorBoundary componentName="ForceUpdateModal" fallback={null}>

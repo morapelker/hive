@@ -53,6 +53,7 @@ export { usePinnedStore } from './usePinnedStore'
 export { useFavoriteTicketsStore } from './useFavoriteTicketsStore'
 export { useTicketLabelsStore, type TicketLabelDialog } from './useTicketLabelsStore'
 export { useDocumentFlowStore } from './useDocumentFlowStore'
+export { usePrdFlowStore } from './usePrdFlowStore'
 export {
   useUsageStore,
   type UsageData,

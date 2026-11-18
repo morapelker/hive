@@ -750,6 +750,40 @@ describe('claimRunner', () => {
   })
 })
 
+describe('appStartedAt', () => {
+  it("answers this server's own start while the app's was not handed down", () => {
+    const started = harness.service.appStartedAt()
+
+    expect(new Date(started).toISOString()).toBe(started)
+    // One stamp for as long as this process lives, and the one a claimed lease reports.
+    expect(harness.service.appStartedAt()).toBe(started)
+    const { run } = seedRun(harness, { run: { status: 'running' } })
+    expect(harness.service.claimRunner(run.id, 'client-a').serverStartedAt).toBe(started)
+  })
+
+  it("answers the app's own start time once it was stamped, not this child's", () => {
+    const ownStart = harness.service.appStartedAt()
+    // The sessions live in the main process: a session prompted before it started is gone,
+    // whatever this server child did since.
+    harness.overrides.getAppStartedAt = () => '2026-10-05T08:00:00.000Z'
+
+    expect(harness.service.appStartedAt()).toBe('2026-10-05T08:00:00.000Z')
+    expect(ownStart).not.toBe('2026-10-05T08:00:00.000Z')
+    const { run } = seedRun(harness, { run: { status: 'running' } })
+    expect(harness.service.claimRunner(run.id, 'client-a').serverStartedAt).toBe(
+      '2026-10-05T08:00:00.000Z'
+    )
+  })
+
+  it('reads the stamp anew on every call: a start stamped after this server came up is answered', () => {
+    harness.overrides.getAppStartedAt = () => '2026-10-05T08:00:00.000Z'
+    expect(harness.service.appStartedAt()).toBe('2026-10-05T08:00:00.000Z')
+
+    harness.overrides.getAppStartedAt = () => '2026-10-05T09:30:00.000Z'
+    expect(harness.service.appStartedAt()).toBe('2026-10-05T09:30:00.000Z')
+  })
+})
+
 describe('sessionTurn', () => {
   it('returns the recorded turn end of a session, or null', () => {
     harness.db.upsertSessionFinalMessage({

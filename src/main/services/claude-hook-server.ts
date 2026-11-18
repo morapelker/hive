@@ -429,7 +429,8 @@ export function captureClaudeCliSessionId(
 
 // Statuses a document run must learn about even when no window was watching: the agent
 // stopped for the user, or got back to work. Turn ends are recorded where the Stop hooks are
-// handled, together with the final message.
+// handled, together with the final message; a turn the person interrupted has no hook, and is
+// recorded here.
 const BLOCKED_STATUSES: ReadonlySet<SessionStatusType> = new Set<SessionStatusType>([
   'answering',
   'permission',
@@ -441,6 +442,8 @@ const WORKING_STATUSES: ReadonlySet<SessionStatusType> = new Set<SessionStatusTy
   'planning'
 ])
 const WORKING_HOOK_EVENT = 'Working'
+// The `hook_event` of a turn the person stopped, as codex's Interrupt hook records it too.
+const INTERRUPT_HOOK_EVENT = 'Interrupt'
 // What was last written per session, so working ⇄ planning and repeated blocks do not
 // touch the database; a 'completed' publish ends the sequence (its Stop records itself).
 const lastRecordedTurnState = new Map<string, string>()
@@ -449,6 +452,20 @@ function recordSessionTurnState(payload: ClaudeCliStatusPayload): void {
   const { sessionId, status } = payload
   if (status === 'completed') {
     lastRecordedTurnState.delete(sessionId)
+    // Claude fires no Stop hook for a turn the person interrupts: the PTY bridge publishes the
+    // end from the keypress (or the profiler's Stop) instead, and nothing else would record
+    // it. The row would go on saying "working", and whoever reads it after a reload would wait
+    // for a turn that is over. The text of the last turn end is kept: this turn produced none.
+    // An interrupt that came from a hook (codex) is recorded where that hook is handled.
+    if (payload.metadata?.reason === 'user_interrupt' && !payload.metadata.hookEventName) {
+      recordSessionFinalMessage({
+        session_id: sessionId,
+        state: 'ended',
+        completion: null,
+        api_error: null,
+        hook_event: INTERRUPT_HOOK_EVENT
+      })
+    }
     return
   }
   const blocked = BLOCKED_STATUSES.has(status)

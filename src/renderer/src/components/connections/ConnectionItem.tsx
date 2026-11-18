@@ -13,6 +13,7 @@ import {
   Pencil,
   Pin,
   PinOff,
+  ScrollText,
   Settings2,
   Terminal,
   Trash2,
@@ -183,6 +184,7 @@ export function ConnectionItem({
   // "Implement Document…": a document run on this connection's project (an ad-hoc
   // connection is promoted with "Save as Project" first, so it needs >=2 members too).
   // "Orchestrate tickets…" next to it: an orchestrator from the project's board tickets.
+  // "New PRD → orchestrator ticket…" after those: the PRD flow's form, for the same project.
   const implementDocument = useImplementDocumentEntry(connection)
 
   // "Duplicate": a new connection from the same projects, on new worktrees
@@ -539,6 +541,16 @@ export function ConnectionItem({
           Orchestrate tickets…
         </ContextMenuItem>
       )}
+      {implementDocument.available && (
+        <ContextMenuItem
+          data-testid="prd-flow-connection-menu-item"
+          onClick={() => void implementDocument.prd()}
+          disabled={implementDocument.busy}
+        >
+          <ScrollText className="h-4 w-4 mr-2" />
+          New PRD → orchestrator ticket…
+        </ContextMenuItem>
+      )}
       <ContextMenuSeparator />
       <ContextMenuItem onClick={handleOpenInTerminal}>
         <Terminal className="h-4 w-4 mr-2" />
@@ -773,6 +785,16 @@ export function ConnectionItem({
                       >
                         <Workflow className="h-4 w-4 mr-2" />
                         Orchestrate tickets…
+                      </DropdownMenuItem>
+                    )}
+                    {implementDocument.available && (
+                      <DropdownMenuItem
+                        data-testid="prd-flow-connection-menu-item"
+                        onClick={() => void implementDocument.prd()}
+                        disabled={implementDocument.busy}
+                      >
+                        <ScrollText className="h-4 w-4 mr-2" />
+                        New PRD → orchestrator ticket…
                       </DropdownMenuItem>
                     )}
                     <DropdownMenuSeparator />

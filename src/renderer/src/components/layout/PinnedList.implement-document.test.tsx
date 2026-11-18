@@ -19,6 +19,7 @@ import { PinnedList } from './PinnedList'
 import { usePinnedStore } from '@/stores/usePinnedStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
+import { usePrdFlowStore } from '@/stores/usePrdFlowStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 
@@ -108,6 +109,7 @@ const originalMatches = Element.prototype.matches
 
 const initialFlowState = useDocumentFlowStore.getState()
 const initialConnectionState = useConnectionStore.getState()
+const initialPrdFlowState = usePrdFlowStore.getState()
 
 beforeAll(() => {
   Element.prototype.matches = function (this: Element, selectors: string): boolean {
@@ -151,6 +153,7 @@ describe('PinnedList implement document', () => {
     resetRendererRpcClientForTests()
     useDocumentFlowStore.setState(initialFlowState, true)
     useConnectionStore.setState(initialConnectionState, true)
+    usePrdFlowStore.setState(initialPrdFlowState, true)
   })
 
   async function renderList(): Promise<void> {
@@ -250,6 +253,50 @@ describe('PinnedList implement document', () => {
     })
   })
 
+  // "New PRD → orchestrator ticket…" is the third item of the same group: its own form
+  // (PrdFlowDialog, through usePrdFlowStore), not the wizard.
+  it('offers "New PRD → orchestrator ticket…" right after "Orchestrate tickets…", which opens the PRD form for a pinned instance\'s connection project', async () => {
+    await renderList()
+
+    fireEvent.contextMenu(screen.getByTestId('pinned-connection-conn-base'))
+    const names = menuItemNames()
+    expect(names[names.indexOf('Orchestrate tickets…') + 1]).toBe('New PRD → orchestrator ticket…')
+    fireEvent.click(screen.getByTestId('prd-flow-pinned-connection-menu-item'))
+
+    expect(usePrdFlowStore.getState().dialog).toEqual({ open: true, projectId: 'proj-conn' })
+    expect(useDocumentFlowStore.getState().wizard.open).toBe(false)
+  })
+
+  it('saves a pinned ad-hoc connection as a project, then opens the PRD form for it', async () => {
+    const saveConnectionAsProject = vi.fn(async () => 'proj-new')
+    useConnectionStore.setState({ saveConnectionAsProject })
+    await renderList()
+
+    fireEvent.contextMenu(screen.getByTestId('pinned-connection-conn-adhoc'))
+    // Nothing opens before the connection is a project
+    expect(usePrdFlowStore.getState().dialog.open).toBe(false)
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('prd-flow-pinned-connection-menu-item'))
+    })
+
+    expect(saveConnectionAsProject).toHaveBeenCalledExactlyOnceWith('conn-adhoc')
+    expect(usePrdFlowStore.getState().dialog).toEqual({ open: true, projectId: 'proj-new' })
+    expect(useDocumentFlowStore.getState().wizard.open).toBe(false)
+  })
+
+  it('opens no PRD form when saving the pinned ad-hoc connection fails', async () => {
+    useConnectionStore.setState({ saveConnectionAsProject: async () => null })
+    await renderList()
+
+    fireEvent.contextMenu(screen.getByTestId('pinned-connection-conn-adhoc'))
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('prd-flow-pinned-connection-menu-item'))
+    })
+
+    expect(usePrdFlowStore.getState().dialog).toEqual({ open: false, projectId: null })
+    expect(useDocumentFlowStore.getState().wizard.open).toBe(false)
+  })
+
   it('has no such item on a pinned ad-hoc connection within a single project', async () => {
     const single = {
       ...adHocConnection,
@@ -264,5 +311,7 @@ describe('PinnedList implement document', () => {
     expect(names.length).toBeGreaterThan(0)
     expect(names).not.toContain('Implement Document…')
     expect(names).not.toContain('Orchestrate tickets…')
+    expect(names).not.toContain('New PRD → orchestrator ticket…')
+    expect(screen.queryByTestId('prd-flow-pinned-connection-menu-item')).toBeNull()
   })
 })

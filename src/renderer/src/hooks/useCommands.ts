@@ -15,6 +15,7 @@ import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { BOARD_TAB_ID } from '@/stores/useSessionStore'
 import { useGitStore } from '@/stores/useGitStore'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
+import { usePrdFlowStore } from '@/stores/usePrdFlowStore'
 import { useShortcutStore } from '@/stores/useShortcutStore'
 import { useProjectSwitcherStore } from '@/stores/useProjectSwitcherStore'
 import { leaveDataProjectThen, useDataProjectStore } from '@/stores/useDataProjectStore'
@@ -100,6 +101,12 @@ export function useCommands() {
       : undefined
     const documentFlowProjectId =
       selectedProject?.id ?? selectedConnection?.saved_project_id ?? null
+    // "New PRD → orchestrator ticket…" is for what is on screen. Selecting a connection row
+    // leaves the git project that was selected before it selected, and the main pane shows
+    // the connection then: the connection decides, and an ad-hoc one has no project.
+    const prdFlowProjectId = selectedConnectionId
+      ? (selectedConnection?.saved_project_id ?? null)
+      : (selectedProject?.id ?? null)
 
     const dataProjectChildren = (): Command[] =>
       dataProjects.map((project) => ({
@@ -307,6 +314,21 @@ export function useCommands() {
           closeCommandPalette()
         },
         isEnabled: () => documentFlowProjectId !== null
+      },
+      {
+        id: 'action:prd-flow',
+        label: 'New PRD → orchestrator ticket…',
+        description:
+          'Describe what to build: a session writes the PRD and the tasks document, which becomes an orchestrator ticket',
+        category: 'action',
+        icon: 'FileText',
+        keywords: ['prd', 'tasks', 'orchestrator', 'document', 'spec', 'plan', 'ticket'],
+        action: () => {
+          if (!prdFlowProjectId) return
+          usePrdFlowStore.getState().openDialog(prdFlowProjectId)
+          closeCommandPalette()
+        },
+        isEnabled: () => prdFlowProjectId !== null
       },
       {
         id: 'action:document-runs',

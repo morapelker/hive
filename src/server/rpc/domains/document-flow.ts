@@ -110,6 +110,8 @@ export interface DocumentFlowRpcService {
   readonly addMember: (params: DocumentFlowAddMemberParams) => Rpc<DocumentRunDetail>
   readonly claimRunner: (runId: string, clientId: string) => Rpc<DocumentRunnerClaim>
   readonly sessionTurn: (sessionId: string) => Rpc<SessionFinalMessage | null>
+  /** When the app instance that owns the sessions started (an ISO date). */
+  readonly appStartedAt: () => Rpc<string>
   readonly classify: (params: DocumentFlowClassifyParams) => Rpc<DocumentRunVerdict>
   readonly prepareMerge: (runId: string, itemId: string) => Rpc<DocumentMergeCheckResult>
   readonly merge: (runId: string, itemId: string) => Rpc<DocumentMergeResult>
@@ -337,6 +339,8 @@ const updateItemParamsSchema = z
   .strict()
 const claimRunnerParamsSchema = z.object({ runId: idSchema, clientId: idSchema }).strict()
 const sessionTurnParamsSchema = z.object({ sessionId: idSchema }).strict()
+/** A read that takes nothing: no params at all, or an empty object. */
+const emptyParamsSchema = z.union([z.object({}).strict(), z.undefined(), z.null()])
 const classifyParamsSchema = z
   .object({ runId: idSchema, itemId: idSchema, finalMessage: z.string().nullable().optional() })
   .strict() satisfies z.ZodType<DocumentFlowClassifyParams>
@@ -393,6 +397,7 @@ export const makeLiveDocumentFlowRpcService = (eventBus?: EventBus): DocumentFlo
     addMember: ({ runId, ...params }) => call((service) => service.addMember(runId, params)),
     claimRunner: (runId, clientId) => call((service) => service.claimRunner(runId, clientId)),
     sessionTurn: (sessionId) => call((service) => service.sessionTurn(sessionId)),
+    appStartedAt: () => call((service) => service.appStartedAt()),
     classify: (params) => call((service) => service.classify(params)),
     prepareMerge: (runId, itemId) => call((service) => service.prepareMerge(runId, itemId)),
     merge: (runId, itemId) => call((service) => service.merge(runId, itemId)),
@@ -491,6 +496,9 @@ export const makeDocumentFlowRpcHandlers = (
       'documentFlow.sessionTurn',
       handle(sessionTurnParamsSchema, ({ sessionId }) => service.sessionTurn(sessionId))
     ],
+    // Asked by this Mac's own window only (it is on no remote-access tier): a PRD flow tells a
+    // session that died with the app from a live one by it.
+    ['documentFlow.appStartedAt', handle(emptyParamsSchema, () => service.appStartedAt())],
     ['documentFlow.classify', handle(classifyParamsSchema, (params) => service.classify(params))],
     [
       'documentFlow.prepareMerge',
@@ -526,10 +534,7 @@ export const makeDocumentFlowRpcHandlers = (
       )
     ],
     ['documentFlow.delete', handle(runIdParamsSchema, ({ runId }) => service.delete(runId))],
-    [
-      'documentFlow.duplicate',
-      handle(runIdParamsSchema, ({ runId }) => service.duplicate(runId))
-    ],
+    ['documentFlow.duplicate', handle(runIdParamsSchema, ({ runId }) => service.duplicate(runId))],
     ['documentFlow.logEvent', handle(logEventParamsSchema, (params) => service.logEvent(params))],
     [
       'documentFlow.suggestVerifyCommand',

@@ -958,6 +958,15 @@ export class DocumentFlowService {
     return this.db.getSessionFinalMessage(sessionId)
   }
 
+  /**
+   * When the app instance that owns the sessions started (an ISO date): Electron main's own
+   * start where it was handed down, else this server child's. A session last prompted before
+   * it died with the app that ran it, which is how a PRD flow tells it from a live one.
+   */
+  appStartedAt(): string {
+    return this.deps.getAppStartedAt?.() ?? SERVER_STARTED_AT
+  }
+
   // ── Extraction ────────────────────────────────────────────────────────────
 
   async createRun(params: {
@@ -3358,7 +3367,7 @@ export class DocumentFlowService {
     // The row as it is now: the reconcile's snapshot may predate a session started since.
     const run = this.db.getDocumentRun(snapshot.id) ?? snapshot
     if (!run.migration_session_id) return run
-    const appStartedAt = this.deps.getAppStartedAt?.() ?? SERVER_STARTED_AT
+    const appStartedAt = this.appStartedAt()
     if (run.migration_started_at && run.migration_started_at >= appStartedAt) return run
     const owner = run.migration_owner_pid
     const alive = this.deps.isProcessAlive ?? isProcessAlive
@@ -3397,7 +3406,7 @@ export class DocumentFlowService {
     )
     // A renewed lease changes nothing anyone displays; a new owner does.
     if (claim.ownerClientId !== run.runner_client_id) this.publishRun(run)
-    return { ...claim, serverStartedAt: this.deps.getAppStartedAt?.() ?? SERVER_STARTED_AT }
+    return { ...claim, serverStartedAt: this.appStartedAt() }
   }
 
   // ── Classification ────────────────────────────────────────────────────────
