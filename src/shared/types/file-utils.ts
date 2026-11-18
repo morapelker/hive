@@ -23,6 +23,11 @@ export function isSvgFile(filePath: string): boolean {
   return getExtension(filePath) === '.svg'
 }
 
+export function isHtmlFile(filePath: string): boolean {
+  const extension = getExtension(filePath)
+  return extension === '.html' || extension === '.htm'
+}
+
 export function isBinaryImageFile(filePath: string): boolean {
   return isImageFile(filePath) && !isSvgFile(filePath)
 }

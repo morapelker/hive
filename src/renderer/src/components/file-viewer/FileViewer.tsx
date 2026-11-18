@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { Loader2 } from 'lucide-react'
 import { CodeMirrorEditor } from './CodeMirrorEditor'
 import { ImagePreview, SvgPreview } from './ImagePreview'
+import { HtmlPreview } from './HtmlPreview'
 import { UnsavedChangesDialog } from './UnsavedChangesDialog'
 import { ExternalChangesBanner } from './ExternalChangesBanner'
 import { MarkdownRenderer } from '@/components/sessions/MarkdownRenderer'
@@ -10,7 +11,12 @@ import { toast } from '@/lib/toast'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useGitStore } from '@/stores/useGitStore'
-import { isBinaryImageFile, isSvgFile, getImageMimeType } from '@shared/types/file-utils'
+import {
+  isBinaryImageFile,
+  isHtmlFile,
+  isSvgFile,
+  getImageMimeType
+} from '@shared/types/file-utils'
 import { svgToDataUri } from '@/lib/svg-utils'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { fileApi } from '@/api/file-api'
@@ -46,9 +52,10 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
   const isMarkdown = isMarkdownFile(filePath)
   const isBinaryImage = isBinaryImageFile(filePath)
   const isSvg = isSvgFile(filePath)
-  const [viewMode, setViewMode] = useState<'preview' | 'source'>(
-    isMarkdown || isSvg ? 'preview' : 'source'
-  )
+  const isHtml = isHtmlFile(filePath)
+  // The kinds of file that open rendered, with the source one click away.
+  const hasPreview = isMarkdown || isSvg || isHtml
+  const [viewMode, setViewMode] = useState<'preview' | 'source'>(hasPreview ? 'preview' : 'source')
 
   // Load file content
   useEffect(() => {
@@ -235,6 +242,8 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
   const handleReload = useCallback(async () => {
     const result = unwrapEnvelope(await fileApi.readFile(filePath))
     if (result.success && result.content !== undefined) {
+      // The disk's text replaces the edits: the editor and the preview both read this ref first.
+      latestContentRef.current = null
       setContent(result.content)
       if (isSvg) {
         const uri = svgToDataUri(result.content)
@@ -262,7 +271,7 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
 
   // Reset view mode when file changes
   useEffect(() => {
-    if (isMarkdownFile(filePath) || isSvgFile(filePath)) {
+    if (isMarkdownFile(filePath) || isSvgFile(filePath) || isHtmlFile(filePath)) {
       setViewMode('preview')
     } else {
       setViewMode('source')
@@ -323,7 +332,7 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
       {/* File path bar */}
       <div className="px-3 py-1.5 text-xs text-muted-foreground border-b border-border bg-muted/30 flex items-center justify-between">
         <span className="truncate">{filePath}</span>
-        {(isMarkdown || isSvg) && (
+        {hasPreview && (
           <div className="flex items-center gap-1 shrink-0 ml-2">
             <button
               onClick={() => setViewMode('source')}
@@ -370,10 +379,18 @@ export function FileViewer({ filePath }: FileViewerProps): React.JSX.Element {
         >
           <MarkdownRenderer content={latestContentRef.current ?? content!} />
         </div>
+      ) : viewMode === 'preview' && isHtml ? (
+        <HtmlPreview
+          html={latestContentRef.current ?? content!}
+          filePath={filePath}
+          fileName={fileName}
+        />
       ) : (
         <CodeMirrorEditor
           key={`${filePath}-${reloadKey}`}
-          content={content!}
+          // Unsaved edits first: the editor is mounted again each time the source is shown
+          // after a preview, and must come back with what was typed, not with the disk's text.
+          content={latestContentRef.current ?? content!}
           filePath={filePath}
           onContentChange={handleContentChange}
           onSave={handleSave}
