@@ -222,9 +222,12 @@ export const SIDEBAR_HEADER_FILTER_DOT =
 // Section headers (worktree-list/rows/SectionHeader.tsx, ProjectHeaderActions.tsx)
 // ───────────────────────────────────────────────────────────────────────────
 
-/** SectionHeader.tsx:227 — the h-7 header row. */
-export const SECTION_HEADER_ROW =
-  'group relative flex h-7 w-full items-center gap-1.5 pr-2 text-left transition-all'
+/**
+ * SectionHeader.tsx:227 — the h-7 header row.
+ * Why no `transition-all` (orca has it): there is one of these rows per project, and with
+ * hundreds of them every row the pointer crossed started 150 ms of animated frames.
+ */
+export const SECTION_HEADER_ROW = 'group relative flex h-7 w-full items-center gap-1.5 pr-2 text-left'
 /** SectionHeader.tsx:228 */
 export const SECTION_HEADER_ROW_CLICKABLE = 'cursor-pointer'
 /** SectionHeader.tsx:230 — reveal highlight. */
@@ -260,9 +263,19 @@ export const SECTION_HEADER_LABEL_WRAP = 'min-w-0 flex-1'
 export const SECTION_HEADER_LABEL_ROW = 'flex min-w-0 items-center gap-1.5'
 /** SectionHeader.tsx:325 */
 export const SECTION_HEADER_LABEL = 'min-w-0 truncate text-[13px] font-semibold leading-none'
-/** ProjectHeaderActions.tsx:10-18 — hover-reveal actions cluster (absolute on hover-capable devices). */
+/**
+ * ProjectHeaderActions.tsx:10-18 — hover-reveal actions cluster (absolute on hover-capable devices).
+ *
+ * Why `can-hover:hidden` (orca only fades it with opacity): an invisible cluster is still an
+ * absolute, stacked box the browser hit-tests and paints, once per project row. Out of the
+ * render tree, only the row under the pointer has one, and it shows at once instead of
+ * fading in. It is rendered again (still invisible until focused, as before) while the
+ * keyboard is moving the focus through the sidebar, so its buttons stay reachable with Tab:
+ * see the `sidebar-keyboard` variant in globals.css. A caller that forces the cluster
+ * visible adds `can-hover:flex`.
+ */
 export const SECTION_HEADER_ACTIONS =
-  'flex shrink-0 cursor-pointer items-center gap-0.5 self-stretch can-hover:absolute can-hover:right-1 can-hover:top-1/2 can-hover:z-10 can-hover:-translate-y-1/2 can-hover:rounded-md can-hover:bg-worktree-sidebar can-hover:pl-1 can-hover:pointer-events-none can-hover:opacity-0 can-hover:transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100 has-[button[data-state=open]]:pointer-events-auto has-[button[data-state=open]]:opacity-100'
+  'flex shrink-0 cursor-pointer items-center gap-0.5 self-stretch can-hover:hidden can-hover:absolute can-hover:right-1 can-hover:top-1/2 can-hover:z-10 can-hover:-translate-y-1/2 can-hover:rounded-md can-hover:bg-worktree-sidebar can-hover:pl-1 can-hover:pointer-events-none can-hover:opacity-0 can-hover:group-hover:flex can-hover:has-[:focus-visible]:flex can-hover:has-[button[data-state=open]]:flex can-hover:sidebar-keyboard:flex group-hover:pointer-events-auto group-hover:opacity-100 has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100 has-[button[data-state=open]]:pointer-events-auto has-[button[data-state=open]]:opacity-100'
 /** SectionHeader.tsx:337 — chevron hit box. */
 export const SECTION_HEADER_CHEVRON_BOX =
   'flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground'
@@ -272,8 +285,12 @@ export const SECTION_HEADER_CHEVRON_COLLAPSED = '-rotate-90'
 /** repo-header-action-button-class.ts:1-2 — width-collapsing reveal for header action buttons. */
 export const SECTION_HEADER_ACTION_REVEAL =
   'min-w-0 max-w-0 -ml-1.5 overflow-hidden opacity-0 focus:ml-0 focus:max-w-5 focus:opacity-100 group-hover:ml-0 group-hover:max-w-5 group-hover:opacity-100'
-/** repo-header-action-button-class.ts:4 */
-export const SECTION_HEADER_ACTION_BUTTON = `size-5 shrink-0 ${SECTION_HEADER_ACTION_REVEAL} rounded-md text-muted-foreground transition-[margin,max-width,opacity,background-color,color] hover:bg-accent/70 hover:text-foreground data-[state=open]:ml-0 data-[state=open]:max-w-5 data-[state=open]:opacity-100`
+/**
+ * repo-header-action-button-class.ts:4
+ * Why margin, max-width and opacity are not animated (orca animates them): the width
+ * animation laid the row out again on every frame of each hover.
+ */
+export const SECTION_HEADER_ACTION_BUTTON = `size-5 shrink-0 ${SECTION_HEADER_ACTION_REVEAL} rounded-md text-muted-foreground transition-[background-color,color] hover:bg-accent/70 hover:text-foreground data-[state=open]:ml-0 data-[state=open]:max-w-5 data-[state=open]:opacity-100`
 /** group-keys.ts:70-90 / workspace-status.ts — header icon tones. */
 export const SECTION_TONE_NEUTRAL = 'text-foreground'
 export const SECTION_TONE_MUTED = 'text-muted-foreground'

@@ -56,18 +56,6 @@ export interface TicketRef {
 
 export type TicketKey = string
 
-// Sidebar entity currently under the pointer. Board cards linked to it get a
-// highlight ring (see `isTicketLinkedToSidebarTarget`).
-export type SidebarHoverTarget =
-  | { kind: 'project'; id: string }
-  // Worktree hover highlights project-wide: `projectId` is the owning project,
-  // resolved at hover time (null when the worktree store can't resolve it).
-  | { kind: 'worktree'; id: string; projectId: string | null }
-  // Connection hover highlights its connection project's whole board: `projectId`
-  // is the saved connection project the connection is an instance of (null for an
-  // ad-hoc connection, which only matches through sessions / member worktrees).
-  | { kind: 'connection'; id: string; projectId: string | null }
-
 export interface MarkdownCardPlaceholder {
   projectId: string
   filePath: string
@@ -944,10 +932,6 @@ interface KanbanState {
   dependencyMode: { active: boolean; sourceTicketId: string | null; sourceProjectId?: string | null } | null
   hoveredBlockedTicketKey: TicketKey | null
 
-  // ── Sidebar hover → board highlight ────────────────────────────────
-  hoveredSidebarTarget: SidebarHoverTarget | null
-  setHoveredSidebarTarget: (target: SidebarHoverTarget | null) => void
-
   // ── Dependency actions ─────────────────────────────────────────────
   loadDependencies: (projectId: string) => Promise<void>
   addDependency: (dependent: TicketRef, blocker: TicketRef) => Promise<{ success: boolean; error?: string }>
@@ -1122,7 +1106,6 @@ export const useKanbanStore = create<KanbanState>()(
       dependencyMap: new Map(),
       dependencyMode: null,
       hoveredBlockedTicketKey: null,
-      hoveredSidebarTarget: null,
 
       // ── setSelectedTicketId ────────────────────────────────────────
       setSelectedTicketId: (_id: null) => {
@@ -3054,23 +3037,6 @@ export const useKanbanStore = create<KanbanState>()(
       // ── setHoveredBlockedTicketRef ──────────────────────────────────
       setHoveredBlockedTicketRef: (ref: TicketRef | null) => {
         set({ hoveredBlockedTicketKey: ref ? ticketRefKey(ref) : null })
-      },
-
-      // ── setHoveredSidebarTarget ─────────────────────────────────────
-      setHoveredSidebarTarget: (target: SidebarHoverTarget | null) => {
-        const current = get().hoveredSidebarTarget
-        if (current === target) return
-        if (
-          current &&
-          target &&
-          current.kind === target.kind &&
-          current.id === target.id &&
-          (current.kind === 'project' ? null : current.projectId) ===
-            (target.kind === 'project' ? null : target.projectId)
-        ) {
-          return
-        }
-        set({ hoveredSidebarTarget: target })
       }
     }),
     {

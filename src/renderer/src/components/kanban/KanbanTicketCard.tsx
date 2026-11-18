@@ -64,6 +64,7 @@ import { MoveToProjectModal } from './MoveToProjectModal'
 import { cn, parseColorQuad } from '@/lib/utils'
 import { visibleTicketTitle } from '@/lib/ticket-key-display'
 import { isTicketLinkedToSidebarTarget } from '@/lib/sidebar-hover-highlight'
+import { useSidebarHoverStore } from '@/stores/useSidebarHoverStore'
 import { extractSnippet, normalizeSearchText, stripMarkdown } from '@/lib/board-search'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { opencodeApi } from '@/api/opencode-api'
@@ -432,7 +433,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   // ticket belongs to that project / the worktree's project / the connection
   // project the connection is an instance of (or, when the project could not be
   // resolved, runs or is queued to run on that worktree).
-  const isLinkedToHoveredSidebarProjectOrWorktree = useKanbanStore(
+  const isLinkedToHoveredSidebarProjectOrWorktree = useSidebarHoverStore(
     useCallback(
       (state) =>
         isTicketLinkedToSidebarTarget(
@@ -446,7 +447,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       [ticket.project_id, ticket.worktree_id, ticket.pending_launch_config]
     )
   )
-  const hoveredSidebarConnectionId = useKanbanStore((state) =>
+  const hoveredSidebarConnectionId = useSidebarHoverStore((state) =>
     state.hoveredSidebarTarget?.kind === 'connection' ? state.hoveredSidebarTarget.id : null
   )
   // A hovered connection also links tickets whose session runs inside it …

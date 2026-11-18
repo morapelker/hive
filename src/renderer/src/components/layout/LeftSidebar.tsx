@@ -248,6 +248,7 @@ export function LeftSidebar(): React.JSX.Element {
         )}
         style={{ width: leftSidebarWidth }}
         data-testid="left-sidebar"
+        data-sidebar-keyboard-scope=""
         data-width={leftSidebarWidth}
         role="navigation"
         aria-label="Projects and worktrees"

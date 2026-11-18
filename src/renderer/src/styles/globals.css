@@ -14,6 +14,14 @@
    (orca main.css:33) */
 @custom-variant can-hover (@media (hover: hover));
 
+/* Why: the sidebar's hover-revealed action clusters are out of the render tree until their
+   row is hovered (SECTION_HEADER_ACTIONS in orca-sidebar.ts), which would also take their
+   buttons out of the Tab order. While the keyboard has put a visible focus on a control in
+   the sidebar they are rendered again, so Tab still walks through them. Text fields are left
+   out: they show a visible focus on every click, and typing in the project filter must not
+   bring every cluster back. */
+@custom-variant sidebar-keyboard ([data-sidebar-keyboard-scope]:has(:focus-visible:not(input):not(textarea)) &);
+
 [data-meta-held='true'] .run-url:hover {
   text-decoration: underline;
   text-underline-offset: 2px;

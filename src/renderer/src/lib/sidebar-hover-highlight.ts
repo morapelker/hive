@@ -1,5 +1,5 @@
 import type { KanbanTicket } from '../../../main/db/types'
-import type { SidebarHoverTarget } from '@/stores/useKanbanStore'
+import type { SidebarHoverTarget } from '@/stores/useSidebarHoverStore'
 
 /** Worktree a queued ticket will launch on (`pending_launch_config.worktree`), if any. */
 export function getQueuedWorktreeId(ticket: Pick<KanbanTicket, 'pending_launch_config'>): string | null {

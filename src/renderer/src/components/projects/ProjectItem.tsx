@@ -651,14 +651,16 @@ export const ProjectItem = memo(function ProjectItem({
 
                 {/* Header actions — orca ProjectHeaderActions: hover-revealed overlay on the
                     right edge (chevron + create), painted on the header fill so it can
-                    cover a long title without reserving width. */}
+                    cover a long title without reserving width. Not rendered at all until
+                    the row is hovered (SECTION_HEADER_ACTIONS), unless forced visible. */}
                 {!isEditing && (
                   <div
                     data-project-header-actions=""
                     className={cn(
                       SECTION_HEADER_ACTIONS,
                       isSelected && 'can-hover:bg-worktree-sidebar-accent',
-                      forceActionsVisible && 'can-hover:pointer-events-auto can-hover:opacity-100'
+                      forceActionsVisible &&
+                        'can-hover:flex can-hover:pointer-events-auto can-hover:opacity-100'
                     )}
                   >
                     {/* Plus Hint Badge (filter mode with the search field focused, or vim normal) */}

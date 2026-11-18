@@ -2,6 +2,7 @@ import { act, renderHook } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useSidebarHoverHighlight } from '../useSidebarHoverHighlight'
 import { useKanbanStore } from '@/stores/useKanbanStore'
+import { useSidebarHoverStore } from '@/stores/useSidebarHoverStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
@@ -11,11 +12,8 @@ type StoreConnection = ReturnType<typeof useConnectionStore.getState>['connectio
 
 describe('useSidebarHoverHighlight', () => {
   afterEach(() => {
-    useKanbanStore.setState({
-      hoveredSidebarTarget: null,
-      isBoardViewActive: false,
-      isPinnedBoardActive: false
-    })
+    useSidebarHoverStore.setState({ hoveredSidebarTarget: null })
+    useKanbanStore.setState({ isBoardViewActive: false, isPinnedBoardActive: false })
     useSessionStore.setState({ sessionsByConnection: new Map() })
     useWorktreeStore.setState({ worktreesByProject: new Map() })
     useConnectionStore.setState({ connections: [] })
@@ -26,14 +24,30 @@ describe('useSidebarHoverHighlight', () => {
     const { result } = renderHook(() => useSidebarHoverHighlight('worktree', 'wt1'))
 
     act(() => result.current.onMouseEnter())
-    expect(useKanbanStore.getState().hoveredSidebarTarget).toEqual({
+    expect(useSidebarHoverStore.getState().hoveredSidebarTarget).toEqual({
       kind: 'worktree',
       id: 'wt1',
       projectId: null
     })
 
     act(() => result.current.onMouseLeave())
-    expect(useKanbanStore.getState().hoveredSidebarTarget).toBeNull()
+    expect(useSidebarHoverStore.getState().hoveredSidebarTarget).toBeNull()
+  })
+
+  it('leaves the kanban store alone: no notification and no localStorage write per hover', () => {
+    // The kanban store is persisted (every set is saved) and has many subscribers; a hover
+    // happens on every row the pointer crosses.
+    const kanbanListener = vi.fn()
+    const unsubscribe = useKanbanStore.subscribe(kanbanListener)
+    const setItem = vi.spyOn(Storage.prototype, 'setItem')
+    const { result } = renderHook(() => useSidebarHoverHighlight('project', 'p1'))
+
+    act(() => result.current.onMouseEnter())
+    act(() => result.current.onMouseLeave())
+    unsubscribe()
+
+    expect(kanbanListener).not.toHaveBeenCalled()
+    expect(setItem).not.toHaveBeenCalled()
   })
 
   it('resolves the worktree’s project so the highlight is worktree-agnostic', () => {
@@ -43,7 +57,7 @@ describe('useSidebarHoverHighlight', () => {
     const { result } = renderHook(() => useSidebarHoverHighlight('worktree', 'wt1'))
 
     act(() => result.current.onMouseEnter())
-    expect(useKanbanStore.getState().hoveredSidebarTarget).toEqual({
+    expect(useSidebarHoverStore.getState().hoveredSidebarTarget).toEqual({
       kind: 'worktree',
       id: 'wt1',
       projectId: 'p1'
@@ -57,7 +71,7 @@ describe('useSidebarHoverHighlight', () => {
     const { result } = renderHook(() => useSidebarHoverHighlight('connection', 'c1'))
 
     act(() => result.current.onMouseEnter())
-    expect(useKanbanStore.getState().hoveredSidebarTarget).toEqual({
+    expect(useSidebarHoverStore.getState().hoveredSidebarTarget).toEqual({
       kind: 'connection',
       id: 'c1',
       projectId: 'conn-project'
@@ -72,7 +86,7 @@ describe('useSidebarHoverHighlight', () => {
     act(() => b.result.current.onMouseEnter())
     // Leave events can arrive out of order; the stale card must not wipe the new target
     act(() => a.result.current.onMouseLeave())
-    expect(useKanbanStore.getState().hoveredSidebarTarget).toEqual({
+    expect(useSidebarHoverStore.getState().hoveredSidebarTarget).toEqual({
       kind: 'connection',
       id: 'c1',
       projectId: null
@@ -83,15 +97,15 @@ describe('useSidebarHoverHighlight', () => {
     const { result, unmount } = renderHook(() => useSidebarHoverHighlight('worktree', 'wt1'))
     act(() => result.current.onMouseEnter())
     unmount()
-    expect(useKanbanStore.getState().hoveredSidebarTarget).toBeNull()
+    expect(useSidebarHoverStore.getState().hoveredSidebarTarget).toBeNull()
   })
 
   it('keeps the same store reference when re-entering the same card', () => {
     const { result } = renderHook(() => useSidebarHoverHighlight('worktree', 'wt1'))
     act(() => result.current.onMouseEnter())
-    const first = useKanbanStore.getState().hoveredSidebarTarget
+    const first = useSidebarHoverStore.getState().hoveredSidebarTarget
     act(() => result.current.onMouseEnter())
-    expect(useKanbanStore.getState().hoveredSidebarTarget).toBe(first)
+    expect(useSidebarHoverStore.getState().hoveredSidebarTarget).toBe(first)
   })
 
   it('background-loads connection sessions once while a board is open', () => {
@@ -117,7 +131,7 @@ describe('useSidebarHoverHighlight', () => {
 
     act(() => result.current.onMouseEnter())
     expect(load).not.toHaveBeenCalled()
-    expect(useKanbanStore.getState().hoveredSidebarTarget).toEqual({
+    expect(useSidebarHoverStore.getState().hoveredSidebarTarget).toEqual({
       kind: 'connection',
       id: 'c1',
       projectId: null

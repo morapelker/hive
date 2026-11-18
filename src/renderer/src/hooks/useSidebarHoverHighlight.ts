@@ -1,6 +1,7 @@
 import { useCallback, useEffect } from 'react'
 import { useKanbanStore } from '@/stores/useKanbanStore'
-import type { SidebarHoverTarget } from '@/stores/useKanbanStore'
+import { useSidebarHoverStore } from '@/stores/useSidebarHoverStore'
+import type { SidebarHoverTarget } from '@/stores/useSidebarHoverStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { resolveConnectionSavedProjectId } from '@/stores/store-coordination'
@@ -32,17 +33,17 @@ export function useSidebarHoverHighlight(
   id: string
 ): SidebarHoverHandlers {
   const onMouseEnter = useCallback(() => {
-    const kanban = useKanbanStore.getState()
     const target: SidebarHoverTarget =
       kind === 'worktree'
         ? { kind, id, projectId: findWorktreeProjectId(id) }
         : kind === 'connection'
           ? { kind, id, projectId: resolveConnectionSavedProjectId(id) }
           : { kind, id }
-    kanban.setHoveredSidebarTarget(target)
+    useSidebarHoverStore.getState().setHoveredSidebarTarget(target)
     // Connection tickets are linked through their session, and connection
     // sessions are only loaded once a connection is opened. While a board is
     // showing, fetch them in the background so the highlight can resolve.
+    const kanban = useKanbanStore.getState()
     if (kind === 'connection' && (kanban.isBoardViewActive || kanban.isPinnedBoardActive)) {
       const sessions = useSessionStore.getState()
       if (!sessions.sessionsByConnection.has(id)) {
@@ -52,7 +53,7 @@ export function useSidebarHoverHighlight(
   }, [kind, id])
 
   const onMouseLeave = useCallback(() => {
-    const state = useKanbanStore.getState()
+    const state = useSidebarHoverStore.getState()
     const current = state.hoveredSidebarTarget
     if (current && current.kind === kind && current.id === id) {
       state.setHoveredSidebarTarget(null)

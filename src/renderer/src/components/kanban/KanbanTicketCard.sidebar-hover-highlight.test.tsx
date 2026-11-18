@@ -1,8 +1,8 @@
 import { act, cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { KanbanTicketCard } from './KanbanTicketCard'
-import { useKanbanStore } from '@/stores/useKanbanStore'
-import type { SidebarHoverTarget } from '@/stores/useKanbanStore'
+import { useSidebarHoverStore } from '@/stores/useSidebarHoverStore'
+import type { SidebarHoverTarget } from '@/stores/useSidebarHoverStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import type { Session } from '@/stores/useSessionStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
@@ -55,13 +55,13 @@ const HIGHLIGHT_ATTR = 'data-sidebar-hover-highlight'
 type StoreConnection = ReturnType<typeof useConnectionStore.getState>['connections'][number]
 
 const hover = (target: SidebarHoverTarget | null): void => {
-  act(() => useKanbanStore.getState().setHoveredSidebarTarget(target))
+  act(() => useSidebarHoverStore.getState().setHoveredSidebarTarget(target))
 }
 
 describe('KanbanTicketCard sidebar hover highlight', () => {
   afterEach(() => {
     cleanup()
-    useKanbanStore.setState({ hoveredSidebarTarget: null })
+    useSidebarHoverStore.setState({ hoveredSidebarTarget: null })
     useSessionStore.setState({ sessionsByConnection: new Map() })
     useConnectionStore.setState({ connections: [] })
   })
