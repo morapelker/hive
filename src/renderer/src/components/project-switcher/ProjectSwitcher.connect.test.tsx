@@ -1,0 +1,668 @@
+// Picking several projects in the "Go to project" switcher: Shift+Enter (or a Shift+click)
+// picks the highlighted project instead of opening it, the picked ones stay on top, and plain
+// Enter then connects them together with the project it is pressed on. The creation itself is
+// the store's quickCreateConnection (tested with lib/connection-create); here it is a stand-in
+// the tests drive step by step. Its glue is tested in connect-switcher-projects.test.ts.
+
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('@/components/projects/LanguageIcon', () => ({
+  LanguageIcon: () => <span data-testid="language-icon" />
+}))
+vi.mock('@/components/data-projects/DataProjectIcon', () => ({
+  DataProjectIcon: () => <span data-testid="data-project-icon" />
+}))
+const toastMock = vi.hoisted(() => ({
+  success: vi.fn(),
+  error: vi.fn(),
+  warning: vi.fn(),
+  info: vi.fn()
+}))
+vi.mock('@/lib/toast', () => ({ toast: toastMock, gitToast: {} }))
+
+import { setRendererRpcClient } from '@/api/rpc-client'
+import { useProjectSwitcherStore } from '@/stores/useProjectSwitcherStore'
+import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
+import { useProjectStore } from '@/stores/useProjectStore'
+import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { useConnectionStore, type QuickCreateConnectionOptions } from '@/stores/useConnectionStore'
+import { usePinnedStore } from '@/stores/usePinnedStore'
+import { useKanbanStore } from '@/stores/useKanbanStore'
+import { useSessionStore } from '@/stores/useSessionStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
+import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
+import { useDataProjectStore } from '@/stores/useDataProjectStore'
+import { sampleDataProject, sampleGitProject } from '@/components/data-projects/data-project.sample'
+import { ProjectSwitcher } from './ProjectSwitcher'
+
+const NOW = Date.UTC(2026, 5, 15, 12, 0, 0)
+const minutesAgo = (minutes: number): string => new Date(NOW - minutes * 60_000).toISOString()
+
+/** name → minutes since it was last opened; the array order is the sidebar order. */
+const GIT_PROJECTS: [name: string, openedMinutesAgo: number][] = [
+  ['ads-api', 500],
+  ['checkout-api', 9000],
+  ['ledger-api', 40],
+  ['ledger-core', 3],
+  ['ledger-worker', 200],
+  ['orders-web', 8000],
+  ['pricing-api', 60],
+  ['returns-web', 30],
+  ['search-worker', 20],
+  ['seller-ios', 10]
+]
+
+/** A member as the switcher hands it to quickCreateConnection: the folder is not shortened. */
+const member = (name: string): { id: string; name: string; path: string } => ({
+  id: name,
+  name,
+  path: `/Users/ana/code/${name}`
+})
+
+const worktree = (id: string, projectId: string): never =>
+  ({ id, project_id: projectId, name: id, path: `/repo/${projectId}`, is_default: true }) as never
+
+const realQuickCreateConnection = useConnectionStore.getState().quickCreateConnection
+
+function seedStores(): void {
+  useProjectStore.setState({
+    projects: [
+      ...GIT_PROJECTS.map(([name, minutes], i) =>
+        sampleGitProject(name, i, {
+          path: `/Users/ana/code/${name}`,
+          last_accessed_at: minutesAgo(minutes)
+        })
+      ),
+      sampleGitProject('checkout-stack', 20, {
+        kind: 'connection',
+        path: '/Users/ana/.hive/connections/checkout-stack',
+        last_accessed_at: minutesAgo(7000)
+      })
+    ] as never,
+    selectedProjectId: null,
+    expandedProjectIds: new Set()
+  })
+  useDataProjectStore.getState().reset()
+  useDataProjectStore.setState({
+    projects: [
+      sampleDataProject({
+        id: 'fixtures-db',
+        name: 'fixtures-db',
+        engine: 'sqlite',
+        config: { filePath: '/Users/ana/data/fixtures.sqlite' },
+        sortOrder: 21,
+        lastAccessedAt: minutesAgo(6000)
+      })
+    ]
+  })
+  useWorktreeStore.setState({
+    worktreesByProject: new Map([
+      // Pinned section order: orders-web first, then checkout-api.
+      ['orders-web', [worktree('wt-orders', 'orders-web')]],
+      ['checkout-api', [worktree('wt-checkout', 'checkout-api')]]
+    ]),
+    selectedWorktreeId: null,
+    hydrateAllWorktrees: vi.fn(async () => {})
+  })
+  usePinnedStore.setState({
+    pinnedWorktreeIds: new Set(['wt-orders', 'wt-checkout']),
+    pinnedConnectionIds: new Set(),
+    pinnedProjectIds: new Set(['orders-web', 'checkout-api']),
+    loaded: true
+  })
+  useConnectionStore.setState({ connections: [], selectedConnectionId: null })
+  useKanbanStore.setState({ isPinnedBoardActive: false, isPinnedBoardBehindSession: false })
+  useSessionStore.setState({ sessionsByWorktree: new Map(), sessionsByConnection: new Map() })
+  useWorktreeStatusStore.setState({ sessionStatuses: {} })
+  useCommandPaletteStore.setState({ isOpen: false })
+  useSettingsStore.setState({ vimModeEnabled: false })
+}
+
+function openSwitcher(): HTMLInputElement {
+  render(<ProjectSwitcher />)
+  act(() => useProjectSwitcherStore.getState().open())
+  return screen.getByTestId('project-switcher-input') as HTMLInputElement
+}
+
+const nameOf = (row: HTMLElement): string =>
+  within(row).getByTestId('project-switcher-row-name').textContent ?? ''
+
+/** Every row, the picked ones first. */
+const rowNames = (): string[] => screen.queryAllByTestId('project-switcher-row').map(nameOf)
+
+/** The rows that stay on top: the projects picked so far. */
+const pickedNames = (): string[] => {
+  const group = screen.queryByTestId('project-switcher-selected')
+  return group ? within(group).getAllByTestId('project-switcher-row').map(nameOf) : []
+}
+
+/** The rows of the list under the picked ones. */
+const listNames = (): string[] =>
+  within(screen.getByTestId('project-switcher-list'))
+    .queryAllByTestId('project-switcher-row')
+    .map(nameOf)
+
+const activeRowName = (): string | null => {
+  const active = screen
+    .queryAllByTestId('project-switcher-row')
+    .filter((row) => row.getAttribute('aria-selected') === 'true')
+  expect(active.length).toBeLessThanOrEqual(1)
+  return active[0] ? nameOf(active[0]) : null
+}
+
+const rowOf = (name: string): HTMLElement => {
+  const row = screen.getAllByTestId('project-switcher-row').find((r) => nameOf(r) === name)
+  if (!row) throw new Error(`No row for ${name}`)
+  return row
+}
+
+const hint = (id: 'enter' | 'select' | 'pin'): string | null =>
+  screen.queryByTestId(`project-switcher-${id}-hint`)?.textContent ?? null
+
+const type = (input: HTMLInputElement, value: string): void => {
+  fireEvent.change(input, { target: { value } })
+}
+
+const press = (input: HTMLElement, key: string, init: KeyboardEventInit = {}): void => {
+  fireEvent.keyDown(input, { key, ...init })
+}
+
+/** Types a project's name and picks it with Shift+Enter. */
+const pick = (input: HTMLInputElement, name: string): void => {
+  type(input, name)
+  expect(activeRowName()).toBe(name)
+  press(input, 'Enter', { shiftKey: true })
+}
+
+/** A quickCreateConnection the test drives step by step: `finish` ends it with a result. */
+function controllableCreate(): {
+  quickCreateConnection: ReturnType<typeof vi.fn>
+  options: (call?: number) => QuickCreateConnectionOptions
+  finish: (connectionId: string | null) => Promise<void>
+} {
+  const finishers: Array<(id: string | null) => void> = []
+  const quickCreateConnection = vi.fn(
+    () =>
+      new Promise<string | null>((resolve) => {
+        finishers.push(resolve)
+      })
+  )
+  useConnectionStore.setState({ quickCreateConnection } as never)
+  return {
+    quickCreateConnection,
+    options: (call = 0) => quickCreateConnection.mock.calls[call][1 as never],
+    finish: async (connectionId) => {
+      await act(async () => {
+        finishers.shift()?.(connectionId)
+      })
+    }
+  }
+}
+
+const createTask = (projectId: string): HTMLElement =>
+  screen.getByTestId(`project-switcher-create-task-worktree-${projectId}`)
+
+const expectNothingOpened = (): void => {
+  expect(useProjectStore.getState().selectedProjectId).toBeNull()
+  expect(useWorktreeStore.getState().selectedWorktreeId).toBeNull()
+  expect(useConnectionStore.getState().selectedConnectionId).toBeNull()
+  expect(useDataProjectStore.getState().selectedDataProjectId).toBeNull()
+}
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(NOW)
+  setRendererRpcClient({
+    request: (async () => undefined) as never,
+    subscribe: () => () => {}
+  })
+  seedStores()
+})
+
+afterEach(() => {
+  act(() => useProjectSwitcherStore.getState().close())
+  cleanup()
+  vi.useRealTimers()
+  useConnectionStore.setState({ quickCreateConnection: realQuickCreateConnection })
+})
+
+describe('Shift+Enter', () => {
+  it('picks the highlighted project, clears the field, and opens nothing', () => {
+    const create = controllableCreate()
+    const input = openSwitcher()
+    type(input, 'ledger-co')
+    press(input, 'Enter', { shiftKey: true })
+
+    expect(screen.getByTestId('project-switcher')).toBeInTheDocument()
+    expect(input.value).toBe('')
+    expect(document.activeElement).toBe(input)
+    expect(input.placeholder).toBe('Add another project…')
+    expect(pickedNames()).toEqual(['ledger-core'])
+    expect(screen.getByTestId('project-switcher-group-selected').textContent).toBe(
+      'New connection1'
+    )
+    expectNothingOpened()
+    expect(create.quickCreateConnection).not.toHaveBeenCalled()
+  })
+
+  it('keeps the picked project on top and lists the others that can join under it', () => {
+    const input = openSwitcher()
+    pick(input, 'ledger-core')
+
+    // The groups of what is left. A connection project and a database cannot be members.
+    expect(rowNames()).toEqual([
+      'ledger-core',
+      'orders-web',
+      'checkout-api',
+      'seller-ios',
+      'search-worker',
+      'returns-web',
+      'ledger-api',
+      'pricing-api',
+      'ledger-worker',
+      'ads-api'
+    ])
+    expect(screen.getByTestId('project-switcher-group-pinned').textContent).toBe('Pinned2')
+    expect(screen.getByTestId('project-switcher-group-recent').textContent).toBe('Recent5')
+    expect(screen.getByTestId('project-switcher-group-all').textContent).toBe('All projects2')
+    expect(screen.getByTestId('project-switcher-count').textContent).toBe('9 projects')
+    // Ready for the next one: the highlight is on the first project left, not on the picked.
+    expect(activeRowName()).toBe('orders-web')
+  })
+
+  it('keeps the picked projects in view while the next one is typed', () => {
+    const input = openSwitcher()
+    pick(input, 'ledger-core')
+    type(input, 'ledg')
+
+    expect(pickedNames()).toEqual(['ledger-core'])
+    // The picked project is not offered a second time.
+    expect(listNames()).toEqual(['ledger-api', 'ledger-worker'])
+    expect(screen.getByTestId('project-switcher-count').textContent).toBe('2 of 9')
+    expect(activeRowName()).toBe('ledger-api')
+    // The picked rows are outside the list that scrolls.
+    expect(
+      screen
+        .getByTestId('project-switcher-list')
+        .contains(screen.getByTestId('project-switcher-selected'))
+    ).toBe(false)
+  })
+
+  it('picks several, in the order they were picked', () => {
+    const input = openSwitcher()
+    pick(input, 'seller-ios')
+    pick(input, 'ads-api')
+    pick(input, 'ledger-core')
+    expect(pickedNames()).toEqual(['seller-ios', 'ads-api', 'ledger-core'])
+    expect(screen.getByTestId('project-switcher-group-selected').textContent).toBe(
+      'New connection3'
+    )
+    expect(input.value).toBe('')
+    expectNothingOpened()
+  })
+
+  it('takes a picked project out again, and the highlight goes back into the list with it', () => {
+    const input = openSwitcher()
+    pick(input, 'seller-ios')
+    pick(input, 'ads-api')
+    press(input, 'ArrowUp')
+    expect(activeRowName()).toBe('ads-api')
+    press(input, 'ArrowUp')
+    expect(activeRowName()).toBe('seller-ios')
+
+    press(input, 'Enter', { shiftKey: true })
+    expect(pickedNames()).toEqual(['ads-api'])
+    expect(listNames()).toContain('seller-ios')
+    expect(activeRowName()).toBe('seller-ios')
+
+    // The last one out: the switcher is as it was before anything was picked.
+    fireEvent.mouseMove(rowOf('ads-api'))
+    expect(activeRowName()).toBe('ads-api')
+    press(input, 'Enter', { shiftKey: true })
+    expect(screen.queryByTestId('project-switcher-selected')).toBeNull()
+    expect(input.placeholder).toBe('Go to project…')
+    expect(rowNames()).toContain('checkout-stack')
+    expect(rowNames()).toContain('fixtures-db')
+    expect(screen.getByTestId('project-switcher-count').textContent).toBe('12 projects')
+  })
+
+  it('does nothing on a connection project or a database', () => {
+    const input = openSwitcher()
+    for (const name of ['checkout-stack', 'fixtures-db']) {
+      type(input, name)
+      expect(activeRowName()).toBe(name)
+      expect(hint('select')).toBeNull()
+      press(input, 'Enter', { shiftKey: true })
+      expect(input.value).toBe(name)
+      expect(screen.queryByTestId('project-switcher-selected')).toBeNull()
+    }
+    expectNothingOpened()
+    expect(screen.getByTestId('project-switcher')).toBeInTheDocument()
+  })
+
+  it('does nothing with another modifier, with no result, or while the key is held', () => {
+    const input = openSwitcher()
+    for (const modifier of ['altKey', 'ctrlKey'] as const) {
+      press(input, 'Enter', { shiftKey: true, [modifier]: true })
+    }
+    expect(screen.queryByTestId('project-switcher-selected')).toBeNull()
+
+    type(input, 'zzqq')
+    press(input, 'Enter', { shiftKey: true })
+    expect(screen.queryByTestId('project-switcher-selected')).toBeNull()
+
+    // A held Shift+Enter picks one project, not the list from the top down.
+    type(input, '')
+    press(input, 'Enter', { shiftKey: true })
+    press(input, 'Enter', { shiftKey: true, repeat: true })
+    press(input, 'Enter', { shiftKey: true, repeat: true })
+    expect(pickedNames()).toEqual(['orders-web'])
+  })
+
+  it('never reaches the app shortcuts', () => {
+    const seen: string[] = []
+    const appShortcuts = (event: KeyboardEvent): void => {
+      seen.push(event.key)
+    }
+    document.addEventListener('keydown', appShortcuts, true)
+    try {
+      const input = openSwitcher()
+      press(input, 'Enter', { shiftKey: true })
+      expect(pickedNames()).toEqual(['orders-web'])
+      expect(seen).toEqual([])
+    } finally {
+      document.removeEventListener('keydown', appShortcuts, true)
+    }
+  })
+
+  it('starts with nothing picked the next time the switcher is opened', () => {
+    const input = openSwitcher()
+    pick(input, 'seller-ios')
+    press(input, 'Escape')
+    expect(screen.queryByTestId('project-switcher')).toBeNull()
+    expectNothingOpened()
+
+    act(() => useProjectSwitcherStore.getState().open())
+    expect(screen.queryByTestId('project-switcher-selected')).toBeNull()
+    expect(rowNames()).toContain('checkout-stack')
+  })
+})
+
+describe('Enter with projects picked', () => {
+  it('connects the picked projects and the highlighted one, in that order', async () => {
+    const create = controllableCreate()
+    const input = openSwitcher()
+    pick(input, 'seller-ios')
+    pick(input, 'ads-api')
+    type(input, 'ledger-co')
+    press(input, 'Enter')
+
+    expect(create.quickCreateConnection).toHaveBeenCalledTimes(1)
+    expect(create.quickCreateConnection.mock.calls[0][0 as never]).toEqual([
+      member('seller-ios'),
+      member('ads-api'),
+      member('ledger-core')
+    ])
+    // No "pull" decision of its own: the "auto-pull before worktree" setting decides.
+    expect(create.options()).not.toHaveProperty('autoPull')
+    // Nothing is opened as a project.
+    expect(useProjectStore.getState().selectedProjectId).toBeNull()
+
+    await create.finish('conn-1')
+    expect(screen.queryByTestId('project-switcher')).toBeNull()
+  })
+
+  it('shows each step while the connection is created, then closes', async () => {
+    const create = controllableCreate()
+    const input = openSwitcher()
+    pick(input, 'seller-ios')
+    type(input, 'ads')
+    press(input, 'Enter')
+
+    const progress = screen.getByTestId('project-switcher-create-progress')
+    expect(
+      within(progress)
+        .getAllByRole('listitem')
+        .map((li) => li.textContent)
+    ).toEqual(['Create worktree in seller-ios', 'Create worktree in ads-api'])
+    expect(createTask('seller-ios')).toHaveAttribute('data-status', 'pending')
+    expect(screen.queryAllByTestId('project-switcher-row')).toHaveLength(0)
+    expect(input.placeholder).toBe('Creating the connection…')
+    expect(input.value).toBe('')
+
+    act(() => {
+      create
+        .options()
+        .onProgress?.({ projectId: 'seller-ios', step: 'worktree', status: 'running' })
+    })
+    expect(createTask('seller-ios')).toHaveAttribute('data-status', 'running')
+    expect(createTask('ads-api')).toHaveAttribute('data-status', 'pending')
+    act(() => {
+      create.options().onProgress?.({ projectId: 'seller-ios', step: 'worktree', status: 'done' })
+      create.options().onProgress?.({ projectId: 'ads-api', step: 'worktree', status: 'running' })
+    })
+    expect(createTask('seller-ios')).toHaveAttribute('data-status', 'done')
+    expect(createTask('ads-api')).toHaveAttribute('data-status', 'running')
+
+    await create.finish('conn-1')
+    expect(screen.queryByTestId('project-switcher')).toBeNull()
+  })
+
+  it('ignores Enter and typing while the connection is created', async () => {
+    const create = controllableCreate()
+    const input = openSwitcher()
+    pick(input, 'seller-ios')
+    type(input, 'ads')
+    press(input, 'Enter')
+
+    press(input, 'Enter')
+    press(input, 'Enter', { shiftKey: true })
+    press(input, 'ArrowDown')
+    type(input, 'ledger')
+    expect(create.quickCreateConnection).toHaveBeenCalledTimes(1)
+    expect(input.value).toBe('')
+    expect(screen.getByTestId('project-switcher-create-progress')).toBeInTheDocument()
+    await create.finish('conn-1')
+  })
+
+  it('connects exactly the picked projects when it is pressed on one of them', async () => {
+    const create = controllableCreate()
+    const input = openSwitcher()
+    pick(input, 'seller-ios')
+    pick(input, 'ads-api')
+    press(input, 'ArrowUp')
+    expect(activeRowName()).toBe('ads-api')
+    expect(hint('enter')).toBe('↵ connect 2 projects')
+    press(input, 'Enter')
+
+    expect(create.quickCreateConnection.mock.calls[0][0 as never]).toEqual([
+      member('seller-ios'),
+      member('ads-api')
+    ])
+    await create.finish('conn-1')
+  })
+
+  it('opens the project when it is the only one picked and Enter is pressed on it', () => {
+    const create = controllableCreate()
+    const input = openSwitcher()
+    pick(input, 'seller-ios')
+    press(input, 'ArrowUp')
+    expect(activeRowName()).toBe('seller-ios')
+    expect(hint('enter')).toBe('↵ open')
+    press(input, 'Enter')
+
+    expect(create.quickCreateConnection).not.toHaveBeenCalled()
+    expect(useProjectStore.getState().selectedProjectId).toBe('seller-ios')
+    expect(screen.queryByTestId('project-switcher')).toBeNull()
+  })
+
+  it('connects nothing when the text typed matches no project', () => {
+    const create = controllableCreate()
+    const input = openSwitcher()
+    pick(input, 'seller-ios')
+    pick(input, 'ads-api')
+    type(input, 'zzqq')
+
+    expect(screen.getByTestId('project-switcher-empty').textContent).toBe(
+      'No project matches “zzqq”'
+    )
+    expect(pickedNames()).toEqual(['seller-ios', 'ads-api'])
+    expect(activeRowName()).toBeNull()
+    expect(input.getAttribute('aria-activedescendant')).toBeNull()
+    press(input, 'Enter')
+    press(input, 'ArrowDown')
+    press(input, 'Enter')
+    expect(create.quickCreateConnection).not.toHaveBeenCalled()
+    expect(screen.getByTestId('project-switcher')).toBeInTheDocument()
+
+    // The picked projects are above: the arrow reaches them.
+    press(input, 'ArrowUp')
+    expect(activeRowName()).toBe('ads-api')
+  })
+
+  it('does not connect from an Enter held since the pick before it', () => {
+    const create = controllableCreate()
+    const input = openSwitcher()
+    pick(input, 'seller-ios')
+    press(input, 'Enter', { repeat: true })
+    expect(create.quickCreateConnection).not.toHaveBeenCalled()
+    expect(pickedNames()).toEqual(['seller-ios'])
+  })
+
+  it('leaves the Pinned Board for the new connection', async () => {
+    useKanbanStore.setState({ isPinnedBoardActive: true, isPinnedBoardBehindSession: false })
+    const create = controllableCreate()
+    const input = openSwitcher()
+    pick(input, 'seller-ios')
+    type(input, 'ads')
+    press(input, 'Enter')
+    expect(useKanbanStore.getState().isPinnedBoardActive).toBe(true)
+    await create.finish('conn-1')
+    expect(useKanbanStore.getState().isPinnedBoardActive).toBe(false)
+  })
+})
+
+describe('when the connection is not created', () => {
+  it('comes back to the picker with every project still picked and says why', async () => {
+    const create = controllableCreate()
+    const input = openSwitcher()
+    pick(input, 'seller-ios')
+    type(input, 'ads')
+    press(input, 'Enter')
+    act(() => {
+      create.options().onError?.('Failed to create worktree in "ads-api": disk full')
+    })
+    await create.finish(null)
+
+    expect(screen.getByTestId('project-switcher')).toBeInTheDocument()
+    expect(screen.queryByTestId('project-switcher-create-progress')).toBeNull()
+    const alert = screen.getByRole('alert')
+    expect(alert.textContent).toContain('Connection not created')
+    expect(alert.textContent).toContain('Failed to create worktree in "ads-api": disk full')
+    // The project Enter was pressed on is picked too: the same Enter tries again.
+    expect(pickedNames()).toEqual(['seller-ios', 'ads-api'])
+    expect(activeRowName()).toBe('ads-api')
+    expect(toastMock.error).not.toHaveBeenCalled()
+    expect(useKanbanStore.getState().isPinnedBoardActive).toBe(false)
+
+    press(input, 'Enter')
+    expect(create.quickCreateConnection).toHaveBeenCalledTimes(2)
+    expect(create.quickCreateConnection.mock.calls[1][0 as never]).toEqual([
+      member('seller-ios'),
+      member('ads-api')
+    ])
+    expect(screen.queryByRole('alert')).toBeNull()
+    await create.finish('conn-2')
+    expect(screen.queryByTestId('project-switcher')).toBeNull()
+  })
+
+  it('drops the reason once the picked projects change', async () => {
+    const create = controllableCreate()
+    const input = openSwitcher()
+    pick(input, 'seller-ios')
+    type(input, 'ads')
+    press(input, 'Enter')
+    act(() => create.options().onError?.('disk full'))
+    await create.finish(null)
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+
+    pick(input, 'ledger-core')
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(pickedNames()).toEqual(['seller-ios', 'ads-api', 'ledger-core'])
+  })
+
+  it('says it in a toast when the switcher was closed meanwhile', async () => {
+    const create = controllableCreate()
+    const input = openSwitcher()
+    pick(input, 'seller-ios')
+    type(input, 'ads')
+    press(input, 'Enter')
+    press(input, 'Escape')
+    expect(screen.queryByTestId('project-switcher')).toBeNull()
+
+    act(() => create.options().onError?.('disk full'))
+    await create.finish(null)
+    expect(toastMock.error).toHaveBeenCalledWith('disk full')
+    expect(screen.queryByTestId('project-switcher')).toBeNull()
+  })
+})
+
+describe('the mouse', () => {
+  it('picks with a Shift+click and connects with a plain click', async () => {
+    const create = controllableCreate()
+    openSwitcher()
+    fireEvent.click(rowOf('seller-ios'), { shiftKey: true })
+    expect(pickedNames()).toEqual(['seller-ios'])
+    expect(screen.getByTestId('project-switcher')).toBeInTheDocument()
+    expectNothingOpened()
+
+    fireEvent.click(rowOf('pricing-api'))
+    expect(create.quickCreateConnection.mock.calls[0][0 as never]).toEqual([
+      member('seller-ios'),
+      member('pricing-api')
+    ])
+    await create.finish('conn-1')
+  })
+
+  it('takes a picked project out with its remove button, which replaces the pin button', () => {
+    const create = controllableCreate()
+    const input = openSwitcher()
+    pick(input, 'seller-ios')
+    pick(input, 'ads-api')
+
+    const picked = rowOf('seller-ios')
+    expect(within(picked).queryByTestId('project-switcher-row-pin')).toBeNull()
+    const remove = within(picked).getByTestId('project-switcher-row-deselect')
+    expect(remove).toHaveAccessibleName('Remove from the new connection: seller-ios')
+    expect(within(rowOf('ledger-core')).queryByTestId('project-switcher-row-deselect')).toBeNull()
+
+    fireEvent.click(remove)
+    expect(pickedNames()).toEqual(['ads-api'])
+    expect(within(rowOf('seller-ios')).getByTestId('project-switcher-row-pin')).toBeInTheDocument()
+    expect(create.quickCreateConnection).not.toHaveBeenCalled()
+    expect(screen.getByTestId('project-switcher')).toBeInTheDocument()
+  })
+})
+
+describe('the footer hints', () => {
+  it('say what Enter and Shift+Enter do on the highlighted row', () => {
+    const input = openSwitcher()
+    expect(hint('enter')).toBe('↵ open')
+    expect(hint('select')).toBe('⇧↵ pick several')
+
+    pick(input, 'seller-ios')
+    // On a project that is not picked yet.
+    expect(hint('enter')).toBe('↵ connect 2 projects')
+    expect(hint('select')).toBe('⇧↵ add another')
+    expect(hint('pin')).toBe('⌘↵ unpin')
+
+    pick(input, 'ads-api')
+    expect(hint('enter')).toBe('↵ connect 3 projects')
+    press(input, 'ArrowUp')
+    // On a picked one.
+    expect(hint('enter')).toBe('↵ connect 2 projects')
+    expect(hint('select')).toBe('⇧↵ remove')
+  })
+})

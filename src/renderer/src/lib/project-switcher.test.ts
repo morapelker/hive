@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  MATCH_KIND,
   MATCH_TIER,
   formatOpenedAge,
   groupSwitcherProjects,
@@ -89,7 +90,8 @@ describe('matchText', () => {
 })
 
 describe('rankSwitcherProjects', () => {
-  it('ranks exact, then prefix, then word start, then inside a word, then scattered', () => {
+  it('ranks projects opened at the same time by how closely the text matches', () => {
+    // Exact, then prefix, then word start, then inside a word, then scattered.
     const projects = [
       project('alpha-beta-pilot'), // scattered: a…p…i
       project('rapids'), // inside a word
@@ -106,13 +108,13 @@ describe('rankSwitcherProjects', () => {
     ])
   })
 
-  it('puts a tighter scattered match before a looser one', () => {
+  it('puts a tighter scattered match before a looser one opened at the same time', () => {
     const projects = [project('l-o-n-g-e-d-g'), project('lxexdxg')]
     // "ledg": gaps of 3 in "lxexdxg", more in the other.
     expect(rankedNames(projects, 'ledg')).toEqual(['lxexdxg', 'l-o-n-g-e-d-g'])
   })
 
-  it('breaks a tie between equally good matches by the more recently opened', () => {
+  it('lists the more recently opened project first among names the text starts', () => {
     const projects = [
       project('ledger-api', 100),
       project('ledger-worker', 300),
@@ -121,12 +123,65 @@ describe('rankSwitcherProjects', () => {
     expect(rankedNames(projects, 'ledg')).toEqual(['ledger-worker', 'ledger-core', 'ledger-api'])
   })
 
-  it('never lets recency beat a better match', () => {
-    const projects = [project('old-ledger', 999), project('ledger-api', 1)]
-    expect(rankedNames(projects, 'ledg')).toEqual(['ledger-api', 'old-ledger'])
+  it('lets recency decide between the start of the name and the start of a later word', () => {
+    // "pa" starts "paste-typer" and only a later word of "tedooo-pa", which was opened last.
+    const projects = [
+      project('paste-typer', 100),
+      project('pa-tools', 50),
+      project('tedooo-pa', 900),
+      project('checkoutPages', 400)
+    ]
+    expect(rankedNames(projects, 'pa')).toEqual([
+      'tedooo-pa',
+      'checkoutPages',
+      'paste-typer',
+      'pa-tools'
+    ])
+    expect(rankSwitcherProjects(projects, 'pa').map((m) => m.score)).toEqual([
+      MATCH_KIND.start,
+      MATCH_KIND.start,
+      MATCH_KIND.start,
+      MATCH_KIND.start
+    ])
   })
 
-  it('keeps the given (sidebar) order between equal matches opened at the same time', () => {
+  it('keeps an exact name on top, whatever was opened last', () => {
+    const projects = [project('api-gateway', 900), project('checkout-api', 800), project('api', 1)]
+    expect(rankedNames(projects, 'api')).toEqual(['api', 'api-gateway', 'checkout-api'])
+  })
+
+  it('ranks a run inside a word below every start, and scattered letters below both', () => {
+    const projects = [
+      project('p-x-a', 999), // scattered
+      project('company-site', 900), // inside a word
+      project('spare-parts', 800), // inside "spare" comes first, but "parts" starts a word
+      project('paste-typer', 1)
+    ]
+    expect(rankedNames(projects, 'pa')).toEqual([
+      'spare-parts',
+      'paste-typer',
+      'company-site',
+      'p-x-a'
+    ])
+  })
+
+  it('lists the more recently opened first inside each of those kinds too', () => {
+    const inside = [project('rapids', 1), project('company-site', 2), project('escape', 3)]
+    expect(rankedNames(inside, 'ap')).toEqual(['escape', 'rapids'])
+    expect(rankedNames(inside, 'pa')).toEqual(['company-site'])
+
+    // A looser scattered match opened last is above a tighter one opened long ago.
+    const scattered = [project('lxexdxg', 1), project('l-o-n-g-e-d-g', 2)]
+    expect(rankedNames(scattered, 'ledg')).toEqual(['l-o-n-g-e-d-g', 'lxexdxg'])
+
+    const paths = [
+      project('billing', 1, { path: '~/work/payments/billing' }),
+      project('invoices', 2, { path: '~/work/payments/invoices' })
+    ]
+    expect(rankedNames(paths, 'pay')).toEqual(['invoices', 'billing'])
+  })
+
+  it('keeps the given (sidebar) order between equally close matches opened at the same time', () => {
     const projects = [project('ledger-b', 5), project('ledger-a', 5)]
     expect(rankedNames(projects, 'ledger')).toEqual(['ledger-b', 'ledger-a'])
   })

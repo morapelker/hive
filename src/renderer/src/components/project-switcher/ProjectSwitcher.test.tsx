@@ -1,7 +1,8 @@
 // The "Go to project" switcher: what it lists, how the keys and the mouse work, and what
 // opening a project does. The ranking and grouping rules have their own tests
 // (lib/project-switcher.test.ts); here they are checked through the rendered overlay.
-// Pinning from the switcher is in ProjectSwitcher.pin.test.tsx.
+// Pinning from the switcher is in ProjectSwitcher.pin.test.tsx; picking several projects to
+// connect (Shift+Enter) in ProjectSwitcher.connect.test.tsx.
 
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -326,7 +327,7 @@ describe('with text typed', () => {
 
     expect(screen.queryByTestId('project-switcher-group-pinned')).toBeNull()
     expect(screen.getByTestId('project-switcher-count').textContent).toBe('3 of 12')
-    // Equally good (prefix) matches: the more recently opened first.
+    // The more recently opened first.
     expect(rowNames()).toEqual(['ledger-core', 'ledger-api', 'ledger-worker'])
     for (const row of screen.getAllByTestId('project-switcher-row')) {
       const marks = [...row.querySelectorAll('mark')].map((m) => m.textContent)
@@ -334,13 +335,31 @@ describe('with text typed', () => {
     }
   })
 
-  it('ranks a better match above a more recent one and highlights scattered letters', () => {
+  it('lists the matches in the order of the recent projects', () => {
     render(<ProjectSwitcher />)
     const input = openSwitcher()
     type(input, 'api')
     // "ads-api", "checkout-api", "ledger-api", "pricing-api": "api" starts a word in each,
     // so the most recently opened leads. No other name or path has the letters.
     expect(rowNames()).toEqual(['ledger-api', 'pricing-api', 'ads-api', 'checkout-api'])
+
+    // "a" starts the name of "ads-api" and only a later word of the three opened after it:
+    // they come first all the same. Then the names with an "a" inside a word.
+    type(input, 'a')
+    expect(rowNames()).toEqual([
+      'ledger-api',
+      'pricing-api',
+      'ads-api',
+      'checkout-api',
+      'search-worker',
+      'checkout-stack'
+    ])
+    expect(activeRowName()).toBe('ledger-api')
+  })
+
+  it('highlights scattered letters', () => {
+    render(<ProjectSwitcher />)
+    const input = openSwitcher()
 
     type(input, 'lgwk')
     expect(rowNames()).toEqual(['ledger-worker'])
@@ -444,11 +463,12 @@ describe('keys and mouse', () => {
     expect(activeRowName()).toBe('seller-ios')
   })
 
-  // Cmd+Enter pins instead of opening: ProjectSwitcher.pin.test.tsx.
+  // Cmd+Enter pins instead of opening: ProjectSwitcher.pin.test.tsx. Shift+Enter picks the
+  // project as one of several: ProjectSwitcher.connect.test.tsx.
   it('opens nothing on Enter with a modifier or with no result', () => {
     render(<ProjectSwitcher />)
     const input = openSwitcher()
-    for (const modifier of ['metaKey', 'ctrlKey', 'altKey', 'shiftKey'] as const) {
+    for (const modifier of ['metaKey', 'ctrlKey', 'altKey'] as const) {
       press(input, 'Enter', { [modifier]: true })
       expect(useProjectStore.getState().selectedProjectId).toBeNull()
       expect(screen.getByTestId('project-switcher')).toBeInTheDocument()

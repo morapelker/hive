@@ -1,15 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import {
-  CheckCircle2,
-  Circle,
-  Link,
-  Loader2,
-  Search,
-  StickyNote,
-  Trash2,
-  X,
-  XCircle
-} from 'lucide-react'
+import { Link, Loader2, Search, StickyNote, Trash2, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { subsequenceMatch } from '@/lib/subsequence-match'
 import {
@@ -34,8 +24,14 @@ import { useConnectionStore, useProjectStore } from '@/stores'
 import { connectionApi } from '@/api/connection-api'
 import { toast } from '@/lib/toast'
 import { formatRelativeTime } from '@/lib/format-utils'
-import type { ConnectionCreateProgress, ConnectionCreateStep } from '@/lib/connection-create'
 import type { RecentConnectionEntry, RecentConnectionProject } from '@shared/types/connection'
+import { CreateTaskIcon } from './CreateTaskIcon'
+import {
+  applyCreateProgress,
+  createTaskLabel,
+  planCreateTasks,
+  type CreateTask
+} from './connection-create-tasks'
 
 interface RecentConnectionsDialogProps {
   open: boolean
@@ -45,42 +41,6 @@ interface RecentConnectionsDialogProps {
 // Row id for the pinned "create from selected projects" row, which has no
 // backing recent-connection entry.
 const SELECTED_COMBO_ID = '__selected-projects__'
-
-/** One line of the checklist shown while a connection is being created. */
-interface CreateTask {
-  projectId: string
-  projectName: string
-  step: ConnectionCreateStep
-  status: 'pending' | ConnectionCreateProgress['status']
-}
-
-/**
- * What creating a connection over `projects` will do, in the order it is done: every pull
- * first (when asked to pull), then every worktree.
- */
-function planCreateTasks(projects: RecentConnectionProject[], autoPull: boolean): CreateTask[] {
-  const tasksFor = (step: ConnectionCreateStep): CreateTask[] =>
-    projects.map((project) => ({
-      projectId: project.id,
-      projectName: project.name,
-      step,
-      status: 'pending'
-    }))
-  return [...(autoPull ? tasksFor('pull') : []), ...tasksFor('worktree')]
-}
-
-function CreateTaskIcon({ status }: { status: CreateTask['status'] }): React.JSX.Element {
-  switch (status) {
-    case 'running':
-      return <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
-    case 'done':
-      return <CheckCircle2 className="h-4 w-4 shrink-0 text-green-500" />
-    case 'failed':
-      return <XCircle className="h-4 w-4 shrink-0 text-destructive" />
-    default:
-      return <Circle className="h-4 w-4 shrink-0 text-muted-foreground/50" />
-  }
-}
 
 export function RecentConnectionsDialog({
   open,
@@ -287,13 +247,7 @@ export function RecentConnectionsDialog({
     try {
       const id = await quickCreateConnection(projects, {
         autoPull,
-        onProgress: ({ projectId, step, status }) =>
-          setCreateTasks(
-            (tasks) =>
-              tasks?.map((task) =>
-                task.projectId === projectId && task.step === step ? { ...task, status } : task
-              ) ?? null
-          ),
+        onProgress: (progress) => setCreateTasks((tasks) => applyCreateProgress(tasks, progress)),
         onError: setCreateError
       })
       if (id) {
@@ -429,9 +383,7 @@ export function RecentConnectionsDialog({
                   <span
                     className={cn('truncate', task.status === 'pending' && 'text-muted-foreground')}
                   >
-                    {task.step === 'pull'
-                      ? `Pull ${task.projectName} from origin`
-                      : `Create worktree in ${task.projectName}`}
+                    {createTaskLabel(task)}
                   </span>
                 </li>
               ))}

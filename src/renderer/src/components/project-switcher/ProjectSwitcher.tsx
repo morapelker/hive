@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Link, Pin, Search } from 'lucide-react'
+import { Link, Pin, Search, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { isMac } from '@/lib/platform'
 import { useGhosttySuppression } from '@/hooks/useGhosttySuppression'
@@ -10,13 +10,22 @@ import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { LanguageIcon } from '@/components/projects/LanguageIcon'
 import { DataProjectIcon } from '@/components/data-projects/DataProjectIcon'
 import { AgentStateDot } from '@/components/sidebar/AgentStateDot'
+import { CreateTaskIcon } from '@/components/connections/CreateTaskIcon'
+import {
+  applyCreateProgress,
+  createTaskLabel,
+  planCreateTasks,
+  type CreateTask
+} from '@/components/connections/connection-create-tasks'
 import { toHighlightRuns } from '@/lib/highlight-runs'
+import { toast } from '@/lib/toast'
 import {
   formatOpenedAge,
   groupSwitcherProjects,
   rankSwitcherProjects,
   type SwitcherAgentState
 } from '@/lib/project-switcher'
+import { canConnectSwitcherProject, connectSwitcherProjects } from './connect-switcher-projects'
 import { openSwitcherProject } from './open-switcher-project'
 import { setSwitcherProjectPinned, switcherPinLabel } from './pin-switcher-project'
 import { useSwitcherProjects, type SwitcherItem } from './useSwitcherProjects'
@@ -36,6 +45,16 @@ import { useSwitcherProjects, type SwitcherItem } from './useSwitcherProjects'
 // opening it: the switcher stays open, so several projects can be pinned in a row. The
 // highlight belongs to a project, not to a position: when a pin moves the project to another
 // group, the highlight goes with it.
+//
+// Shift+Enter (or a Shift+click) picks the highlighted project as one of several instead of
+// opening it: the query is cleared, the project moves to the "New connection" rows that stay
+// on top of the list whatever is typed or scrolled, and the next one can be looked for.
+// Shift+Enter on a picked project takes it out again. Once a project is picked, plain Enter (or
+// a click) on a row ends the picking: the picked projects and that one are connected, as the
+// New Connection dialog would (connect-switcher-projects) — a new worktree in each, one
+// connection over them, selected. The list is replaced by the steps while that runs; when it
+// fails the picker comes back, the projects still picked, with the reason above them. Only git
+// projects can be picked, so while any is, connection projects and databases are not listed.
 
 type GroupId = 'pinned' | 'recent' | 'all'
 
@@ -57,6 +76,15 @@ const NO_INDICES: number[] = []
 
 const KBD_CLASS = 'rounded-md border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[10px]'
 
+const NO_ITEMS: SwitcherItem[] = []
+
+/** The key that picks the highlighted project as one of several, as the footer shows it. */
+const SELECT_KEY_LABEL = '⇧↵'
+
+/** Shift+Enter, and no other modifier. */
+const isSelectChord = (event: KeyboardEvent): boolean =>
+  event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey
+
 /** The key that pins the highlighted project, as the footer and the pin buttons show it. */
 const pinKeyLabel = (): string => (isMac() ? '⌘↵' : 'ctrl ↵')
 
@@ -69,11 +97,35 @@ const isPinChord = (event: KeyboardEvent): boolean =>
 interface Highlight {
   /** The highlighted position, used while `key` is not in the list. */
   index: number
-  /** The highlighted project. null: the position alone decides (first result, a new query). */
+  /** The highlighted project. null: the first result (the switcher just opened, a new query). */
   key: string | null
 }
 
 const FIRST_ROW: Highlight = { index: 0, key: null }
+
+/**
+ * The highlighted row's index in `rows`, -1 for none. `firstResult` is where the results
+ * start: the rows before it are the projects picked for a connection.
+ *
+ * The highlight stays on its project when the rows move (a pin changes the project's group, a
+ * pick moves it to the top). When that project left the list (removed while the switcher is
+ * open), the position decides, held inside the list. Without a project it is the first result;
+ * when there is none, the last picked project, but only with nothing typed: after a query that
+ * matched nothing, Enter must not connect what is picked.
+ */
+function resolveHighlight(
+  rows: readonly SwitcherRow[],
+  highlight: Highlight,
+  firstResult: number,
+  searching: boolean
+): number {
+  if (highlight.key !== null) {
+    const byKey = rows.findIndex((row) => row.item.key === highlight.key)
+    return byKey !== -1 ? byKey : Math.min(highlight.index, rows.length - 1)
+  }
+  if (firstResult < rows.length) return firstResult
+  return searching ? -1 : rows.length - 1
+}
 
 function Highlighted({
   text,
@@ -131,13 +183,17 @@ interface SwitcherRowViewProps {
   index: number
   active: boolean
   searching: boolean
+  /** One of the projects picked for a connection: a row of the group on top. */
+  selected: boolean
   pinned: boolean
   worktreeCount: number
   agentState: SwitcherAgentState | undefined
   age: string
   onHover: (index: number) => void
-  onOpen: (item: SwitcherItem) => void
+  /** A click on the row. `asOneOfSeveral`: with Shift held, the click picks like Shift+Enter. */
+  onChoose: (item: SwitcherItem, asOneOfSeveral: boolean) => void
   onTogglePin: (item: SwitcherItem, pinned: boolean) => void
+  onDeselect: (item: SwitcherItem) => void
 }
 
 const SwitcherRowView = memo(function SwitcherRowView({
@@ -145,13 +201,15 @@ const SwitcherRowView = memo(function SwitcherRowView({
   index,
   active,
   searching,
+  selected,
   pinned,
   worktreeCount,
   agentState,
   age,
   onHover,
-  onOpen,
-  onTogglePin
+  onChoose,
+  onTogglePin,
+  onDeselect
 }: SwitcherRowViewProps): React.JSX.Element {
   const { item } = row
   const countNoun = item.kind === 'connection' ? 'connection' : 'worktree'
@@ -164,10 +222,11 @@ const SwitcherRowView = memo(function SwitcherRowView({
       data-testid="project-switcher-row"
       data-project-key={item.key}
       data-active={active ? 'true' : undefined}
+      data-picked={selected ? 'true' : undefined}
       // Hover follows real pointer movement only: rows scrolling under a resting pointer
       // (arrow keys) must not take the highlight.
       onMouseMove={() => onHover(index)}
-      onClick={() => onOpen(item)}
+      onClick={(event) => onChoose(item, event.shiftKey)}
       className={cn(
         'group/row flex h-8 cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-[13px]',
         // Off-screen rows of a 400-project list skip layout and paint.
@@ -222,37 +281,55 @@ const SwitcherRowView = memo(function SwitcherRowView({
           {age}
         </span>
       )}
-      {/* Pins or unpins without opening the project. A pinned row always shows it (filled:
-          the pinned marker); the others on the highlighted row and under the pointer. */}
-      <button
-        type="button"
-        // The field keeps the focus (the panel's onMouseDown); Tab never lands here.
-        tabIndex={-1}
-        data-testid="project-switcher-row-pin"
-        data-pinned={pinned ? 'true' : 'false'}
-        aria-label={`${pinLabel}: ${item.name}`}
-        title={`${pinLabel} (${pinKeyLabel()})`}
-        onClick={(event) => {
-          event.stopPropagation()
-          onTogglePin(item, !pinned)
-        }}
-        className={cn(
-          '-mr-1 flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground',
-          'hover:bg-foreground/10 hover:text-foreground',
-          !pinned && !active && 'opacity-0 group-hover/row:opacity-100'
-        )}
-      >
-        {pinned ? (
-          <Pin
-            data-testid="project-switcher-row-pinned"
-            role="img"
-            aria-label="Pinned"
-            className="size-3 fill-current"
-          />
-        ) : (
-          <Pin aria-hidden="true" className="size-3" />
-        )}
-      </button>
+      {/* A picked project's button takes it out of the new connection. */}
+      {selected ? (
+        <button
+          type="button"
+          tabIndex={-1}
+          data-testid="project-switcher-row-deselect"
+          aria-label={`Remove from the new connection: ${item.name}`}
+          title={`Remove from the new connection (${SELECT_KEY_LABEL})`}
+          onClick={(event) => {
+            event.stopPropagation()
+            onDeselect(item)
+          }}
+          className="-mr-1 flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
+        >
+          <X aria-hidden="true" className="size-3" />
+        </button>
+      ) : (
+        // Pins or unpins without opening the project. A pinned row always shows it (filled:
+        // the pinned marker); the others on the highlighted row and under the pointer.
+        <button
+          type="button"
+          // The field keeps the focus (the panel's onMouseDown); Tab never lands here.
+          tabIndex={-1}
+          data-testid="project-switcher-row-pin"
+          data-pinned={pinned ? 'true' : 'false'}
+          aria-label={`${pinLabel}: ${item.name}`}
+          title={`${pinLabel} (${pinKeyLabel()})`}
+          onClick={(event) => {
+            event.stopPropagation()
+            onTogglePin(item, !pinned)
+          }}
+          className={cn(
+            '-mr-1 flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground',
+            'hover:bg-foreground/10 hover:text-foreground',
+            !pinned && !active && 'opacity-0 group-hover/row:opacity-100'
+          )}
+        >
+          {pinned ? (
+            <Pin
+              data-testid="project-switcher-row-pinned"
+              role="img"
+              aria-label="Pinned"
+              className="size-3 fill-current"
+            />
+          ) : (
+            <Pin aria-hidden="true" className="size-3" />
+          )}
+        </button>
+      )}
     </div>
   )
 })
@@ -264,41 +341,78 @@ function ProjectSwitcherPanel(): React.JSX.Element {
 
   const [query, setQuery] = useState('')
   const [highlight, setHighlight] = useState<Highlight>(FIRST_ROW)
+  // The projects picked with Shift+Enter, in the order they were picked.
+  const [selectedKeys, setSelectedKeys] = useState<string[]>([])
+  // The steps of the connection being created; null whenever the picker is showing.
+  const [createTasks, setCreateTasks] = useState<CreateTask[] | null>(null)
+  // Why the last attempt created nothing, shown over the picker it came back to.
+  const [createError, setCreateError] = useState<string | null>(null)
   // One "now" for the whole time the overlay is open: ages do not tick while reading.
   const [now] = useState(() => Date.now())
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
   const searching = query.trim().length > 0
+  const creating = createTasks !== null
   const pinnedSet = useMemo(() => new Set(pinnedKeys), [pinnedKeys])
 
-  const rows = useMemo<SwitcherRow[]>(() => {
-    if (searching) {
-      return rankSwitcherProjects(items, query).map((match) => ({
-        item: match.project,
-        nameIndices: match.nameIndices,
-        pathIndices: match.pathIndices
-      }))
-    }
-    const groups = groupSwitcherProjects(items, pinnedKeys)
-    return (['pinned', 'recent', 'all'] as const).flatMap((id) =>
-      groups[id].map((item, i) => ({
-        item,
-        nameIndices: NO_INDICES,
-        pathIndices: NO_INDICES,
-        groupStart: i === 0 ? { id, count: groups[id].length } : undefined
-      }))
-    )
-  }, [items, pinnedKeys, query, searching])
+  // A picked project that was removed while the switcher is open is no longer picked.
+  const selectedItems = useMemo(() => {
+    if (selectedKeys.length === 0) return NO_ITEMS
+    const byKey = new Map(items.map((item) => [item.key, item]))
+    return selectedKeys.flatMap((key) => {
+      const item = byKey.get(key)
+      return item && canConnectSwitcherProject(item) ? [item] : []
+    })
+  }, [items, selectedKeys])
+  const selectedSet = useMemo(() => new Set(selectedItems.map((item) => item.key)), [selectedItems])
+  const selecting = selectedItems.length > 0
+  /** Where the results start in `rows`: the picked projects come first. */
+  const firstResult = selectedItems.length
 
-  // The highlight stays on its project when the rows move (a pin changes the project's group).
-  // Without one, or when it left the list (removed while the switcher is open), the position
-  // decides, held inside the list.
-  const highlighted = useMemo(() => {
-    const byKey =
-      highlight.key === null ? -1 : rows.findIndex((row) => row.item.key === highlight.key)
-    return byKey !== -1 ? byKey : Math.min(highlight.index, Math.max(0, rows.length - 1))
-  }, [rows, highlight])
+  // What can still be chosen. Once a project is picked: the others that can join it.
+  const candidates = useMemo(
+    () =>
+      selecting
+        ? items.filter((item) => canConnectSwitcherProject(item) && !selectedSet.has(item.key))
+        : items,
+    [items, selecting, selectedSet]
+  )
+
+  const rows = useMemo<SwitcherRow[]>(() => {
+    const picked = selectedItems.map((item) => ({
+      item,
+      nameIndices: NO_INDICES,
+      pathIndices: NO_INDICES
+    }))
+    if (searching) {
+      return [
+        ...picked,
+        ...rankSwitcherProjects(candidates, query).map((match) => ({
+          item: match.project,
+          nameIndices: match.nameIndices,
+          pathIndices: match.pathIndices
+        }))
+      ]
+    }
+    const groups = groupSwitcherProjects(candidates, pinnedKeys)
+    return [
+      ...picked,
+      ...(['pinned', 'recent', 'all'] as const).flatMap((id) =>
+        groups[id].map((item, i) => ({
+          item,
+          nameIndices: NO_INDICES,
+          pathIndices: NO_INDICES,
+          groupStart: i === 0 ? { id, count: groups[id].length } : undefined
+        }))
+      )
+    ]
+  }, [selectedItems, candidates, pinnedKeys, query, searching])
+
+  const highlighted = useMemo(
+    () => resolveHighlight(rows, highlight, firstResult, searching),
+    [rows, highlight, firstResult, searching]
+  )
 
   // The sidebar loads every project's worktrees when it mounts. Opened with the sidebar
   // collapsed since launch, the counts and pinned order need the same one query.
@@ -310,17 +424,18 @@ function ProjectSwitcherPanel(): React.JSX.Element {
     inputRef.current?.focus({ preventScroll: true })
   }, [])
 
-  // Keep the highlight in view; at the first row also show the heading above it.
+  // Keep the highlight in view; at the first result also show the heading above it.
   useLayoutEffect(() => {
     const list = listRef.current
-    if (!list) return
-    if (highlighted === 0) {
+    if (!list || highlighted < 0) return
+    if (highlighted === firstResult) {
       list.scrollTop = 0
       return
     }
-    const row = list.querySelector<HTMLElement>(`#project-switcher-option-${highlighted}`)
+    // A picked row is outside the list, in the group above it.
+    const row = document.getElementById(`project-switcher-option-${highlighted}`)
     row?.scrollIntoView?.({ block: 'nearest' })
-  }, [highlighted, rows])
+  }, [highlighted, firstResult, rows])
 
   const open = useCallback(
     (item: SwitcherItem): void => {
@@ -330,9 +445,72 @@ function ProjectSwitcherPanel(): React.JSX.Element {
     [close]
   )
 
+  // The connection is created whether or not the switcher is still open to show it: closed
+  // meanwhile (Escape, another overlay), a failure is said in a toast instead.
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
+
+  const connect = useCallback(
+    (members: SwitcherItem[]): void => {
+      const projects = members.flatMap((item) =>
+        item.kind === 'git'
+          ? [{ id: item.source.id, name: item.source.name, path: item.source.path }]
+          : []
+      )
+      // Should it fail, the picker comes back with every member picked and the highlight on
+      // the last one: Enter tries the same projects again.
+      setSelectedKeys(members.map((item) => item.key))
+      setQuery('')
+      setHighlight({ index: members.length - 1, key: members[members.length - 1].key })
+      setCreateError(null)
+      setCreateTasks(planCreateTasks(projects, false))
+      void connectSwitcherProjects(projects, {
+        onProgress: (progress) => {
+          if (mounted.current) setCreateTasks((tasks) => applyCreateProgress(tasks, progress))
+        },
+        onError: (error) => {
+          if (mounted.current) setCreateError(error)
+          else toast.error(error)
+        }
+      }).then((connectionId) => {
+        if (!mounted.current) return
+        if (connectionId) close()
+        else setCreateTasks(null)
+      })
+    },
+    [close]
+  )
+
   // Read through a ref so the window listener is attached once per open.
-  const latest = useRef({ rows, highlighted, pinnedSet, open, close })
-  latest.current = { rows, highlighted, pinnedSet, open, close }
+  const latest = useRef({
+    rows,
+    highlighted,
+    pinnedSet,
+    selectedItems,
+    selectedSet,
+    creating,
+    query,
+    open,
+    connect,
+    close
+  })
+  latest.current = {
+    rows,
+    highlighted,
+    pinnedSet,
+    selectedItems,
+    selectedSet,
+    creating,
+    query,
+    open,
+    connect,
+    close
+  }
 
   const highlightRow = useCallback((index: number): void => {
     const row = latest.current.rows[index]
@@ -348,9 +526,49 @@ function ProjectSwitcherPanel(): React.JSX.Element {
     void setSwitcherProjectPinned(item, pinned)
   }, [])
 
+  // Shift+Enter, a Shift+click, a picked row's remove button. Nothing is opened and the
+  // switcher stays open.
+  const toggleSelected = useCallback((item: SwitcherItem): void => {
+    const { rows, selectedSet, creating } = latest.current
+    if (creating || !canConnectSwitcherProject(item)) return
+    setCreateError(null)
+    if (selectedSet.has(item.key)) {
+      setSelectedKeys((keys) => keys.filter((key) => key !== item.key))
+      // The highlight goes back into the list with the project.
+      const index = rows.findIndex((row) => row.item.key === item.key)
+      setHighlight({ index: Math.max(0, index), key: item.key })
+      return
+    }
+    setSelectedKeys((keys) => (keys.includes(item.key) ? keys : [...keys, item.key]))
+    // Ready for the next project: an empty field, the highlight on the first one left.
+    setQuery('')
+    setHighlight(FIRST_ROW)
+  }, [])
+
+  // Plain Enter or a click. With projects picked it ends the picking: they are connected,
+  // together with this one. A single project (the only picked one, chosen itself) is opened.
+  const choose = useCallback((item: SwitcherItem): void => {
+    const { selectedItems, selectedSet, creating, open, connect } = latest.current
+    if (creating) return
+    const members =
+      selectedItems.length === 0 || selectedSet.has(item.key)
+        ? selectedItems
+        : [...selectedItems, item]
+    if (members.length < 2) open(item)
+    else connect(members)
+  }, [])
+
+  const chooseOrSelect = useCallback(
+    (item: SwitcherItem, asOneOfSeveral: boolean): void => {
+      if (asOneOfSeveral) toggleSelected(item)
+      else choose(item)
+    },
+    [choose, toggleSelected]
+  )
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
-      const { rows, highlighted, pinnedSet, open, close } = latest.current
+      const { rows, highlighted, pinnedSet, creating, close } = latest.current
       const swallow = (): void => {
         event.preventDefault()
         event.stopImmediatePropagation()
@@ -367,22 +585,38 @@ function ProjectSwitcherPanel(): React.JSX.Element {
       }
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         swallow()
+        if (creating || rows.length === 0) return
         const step = event.key === 'ArrowDown' ? 1 : -1
+        // Nothing highlighted: a query matched nothing under the picked projects, which are
+        // above.
+        if (highlighted < 0) {
+          if (step === -1) highlightRow(rows.length - 1)
+          return
+        }
         highlightRow(Math.max(0, Math.min(rows.length - 1, highlighted + step)))
         return
       }
       if (event.key === 'Enter') {
         swallow()
-        const row = rows[highlighted]
-        if (!row) return
+        const row = rows[highlighted] as SwitcherRow | undefined
+        if (creating || !row) return
         // Cmd+Enter pins or unpins. A held key does not flip the pin back and forth.
         if (isPinChord(event)) {
           if (!event.repeat) togglePin(row.item, !pinnedSet.has(row.item.key))
           return
         }
-        // Plain Enter opens. With any other modifier it does nothing here.
+        // Shift+Enter picks the project as one of several, or takes a picked one out. A held
+        // key does not go on to pick the next ones.
+        if (isSelectChord(event)) {
+          if (!event.repeat) toggleSelected(row.item)
+          return
+        }
+        // Plain Enter opens, or connects what is picked. With any other modifier it does
+        // nothing here.
         if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return
-        open(row.item)
+        // Held from the Shift+Enter before it, Enter does not go on to connect.
+        if (event.repeat && latest.current.selectedItems.length > 0) return
+        choose(row.item)
         return
       }
       if (event.key === 'Tab') {
@@ -399,15 +633,40 @@ function ProjectSwitcherPanel(): React.JSX.Element {
     }
     window.addEventListener('keydown', onKeyDown, true)
     return () => window.removeEventListener('keydown', onKeyDown, true)
-  }, [highlightRow, togglePin])
+  }, [highlightRow, togglePin, toggleSelected, choose])
 
   const highlightedRow = rows[highlighted] as SwitcherRow | undefined
+  const highlightedSelected = !!highlightedRow && selectedSet.has(highlightedRow.item.key)
+  /** How many projects Enter on the highlighted row connects; under 2 it opens the row. */
+  const connectCount = !highlightedRow
+    ? 0
+    : selectedItems.length + (selecting && !highlightedSelected ? 1 : 0)
+  const resultCount = rows.length - firstResult
 
   const handleQueryChange = (event: React.ChangeEvent<HTMLInputElement>): void => {
+    if (creating) return
     setQuery(event.target.value)
     // The first result is highlighted after every keystroke.
     setHighlight(FIRST_ROW)
   }
+
+  const renderRow = (row: SwitcherRow, index: number): React.JSX.Element => (
+    <SwitcherRowView
+      row={row}
+      index={index}
+      active={index === highlighted}
+      searching={searching}
+      selected={index < firstResult}
+      pinned={pinnedSet.has(row.item.key)}
+      worktreeCount={worktreeCounts.get(row.item.key) ?? 0}
+      agentState={agentStates.get(row.item.key)}
+      age={formatOpenedAge(row.item.lastOpenedAt, now)}
+      onHover={highlightRow}
+      onChoose={chooseOrSelect}
+      onTogglePin={togglePin}
+      onDeselect={toggleSelected}
+    />
+  )
 
   return (
     <>
@@ -431,23 +690,36 @@ function ProjectSwitcherPanel(): React.JSX.Element {
           if (event.target !== inputRef.current) event.preventDefault()
         }}
       >
-        <div className="flex flex-col overflow-hidden rounded-[11px] border border-black/14 bg-[rgba(255,255,255,0.82)] shadow-[0_16px_36px_rgba(0,0,0,0.24),inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-2xl dark:border-white/14 dark:bg-[rgba(0,0,0,0.72)]">
-          <div className="flex items-center gap-2 border-b border-border px-3">
+        {/* The panel starts 14% down: held inside the window, the list gives up its height to
+            the picked projects and an error above it, and the footer stays in view. */}
+        <div className="flex max-h-[calc(86vh-1.5rem)] flex-col overflow-hidden rounded-[11px] border border-black/14 bg-[rgba(255,255,255,0.82)] shadow-[0_16px_36px_rgba(0,0,0,0.24),inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-2xl dark:border-white/14 dark:bg-[rgba(0,0,0,0.72)]">
+          <div className="flex shrink-0 items-center gap-2 border-b border-border px-3">
             <Search className="size-4 shrink-0 text-muted-foreground" />
             <input
               ref={inputRef}
               type="text"
               value={query}
               onChange={handleQueryChange}
-              placeholder="Go to project…"
+              readOnly={creating}
+              placeholder={
+                creating
+                  ? 'Creating the connection…'
+                  : selecting
+                    ? 'Add another project…'
+                    : 'Go to project…'
+              }
               className="h-10 min-w-0 flex-1 border-0 bg-transparent text-[13px] outline-none placeholder:text-muted-foreground"
               role="combobox"
               aria-label="Go to project"
               aria-expanded="true"
-              aria-controls="project-switcher-list"
+              aria-controls={
+                selecting && !creating
+                  ? 'project-switcher-selected project-switcher-list'
+                  : 'project-switcher-list'
+              }
               aria-autocomplete="list"
               aria-activedescendant={
-                rows.length > 0 ? `project-switcher-option-${highlighted}` : undefined
+                !creating && highlightedRow ? `project-switcher-option-${highlighted}` : undefined
               }
               autoComplete="off"
               autoCorrect="off"
@@ -455,77 +727,149 @@ function ProjectSwitcherPanel(): React.JSX.Element {
               spellCheck={false}
               data-testid="project-switcher-input"
             />
-            <span
-              className="shrink-0 text-[11px] tabular-nums text-muted-foreground"
-              data-testid="project-switcher-count"
-              aria-live="polite"
-            >
-              {searching
-                ? `${rows.length} of ${items.length}`
-                : `${items.length} ${items.length === 1 ? 'project' : 'projects'}`}
-            </span>
-          </div>
-
-          <div
-            ref={listRef}
-            id="project-switcher-list"
-            role="listbox"
-            aria-label="Projects"
-            className="max-h-[min(60vh,30rem)] overflow-y-auto p-1.5"
-            data-testid="project-switcher-list"
-          >
-            {rows.length === 0 && (
-              <div
-                className="px-3 py-6 text-center text-[13px] text-muted-foreground"
-                data-testid="project-switcher-empty"
+            {!creating && (
+              <span
+                className="shrink-0 text-[11px] tabular-nums text-muted-foreground"
+                data-testid="project-switcher-count"
+                aria-live="polite"
               >
-                {searching ? `No project matches “${query.trim()}”` : 'No projects yet'}
-              </div>
+                {searching
+                  ? `${resultCount} of ${candidates.length}`
+                  : `${candidates.length} ${candidates.length === 1 ? 'project' : 'projects'}`}
+              </span>
             )}
-            {rows.map((row, index) => (
-              <div key={row.item.key} role="presentation">
-                {row.groupStart && (
-                  <div
-                    role="presentation"
-                    className={cn(
-                      'flex items-center gap-1.5 px-2.5 pb-1 text-[11px] font-medium text-muted-foreground',
-                      index === 0 ? 'pt-1' : 'pt-3'
-                    )}
-                    data-testid={`project-switcher-group-${row.groupStart.id}`}
-                  >
-                    <span>{GROUP_LABELS[row.groupStart.id]}</span>
-                    <span className="tabular-nums opacity-70">{row.groupStart.count}</span>
-                  </div>
-                )}
-                <SwitcherRowView
-                  row={row}
-                  index={index}
-                  active={index === highlighted}
-                  searching={searching}
-                  pinned={pinnedSet.has(row.item.key)}
-                  worktreeCount={worktreeCounts.get(row.item.key) ?? 0}
-                  agentState={agentStates.get(row.item.key)}
-                  age={formatOpenedAge(row.item.lastOpenedAt, now)}
-                  onHover={highlightRow}
-                  onOpen={open}
-                  onTogglePin={togglePin}
-                />
-              </div>
-            ))}
           </div>
 
-          <div className="flex items-center gap-4 border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
-            <span>
-              <kbd className={KBD_CLASS}>↑↓</kbd> navigate
-            </span>
-            <span>
-              <kbd className={KBD_CLASS}>↵</kbd> open
-            </span>
-            {highlightedRow && (
-              <span data-testid="project-switcher-pin-hint">
-                <kbd className={KBD_CLASS}>{pinKeyLabel()}</kbd>{' '}
-                {pinnedSet.has(highlightedRow.item.key) ? 'unpin' : 'pin'}
+          {createError && !creating && (
+            <div
+              role="alert"
+              className="shrink-0 border-b border-border bg-destructive/10 px-4 py-2 text-[12px] text-destructive"
+              data-testid="project-switcher-create-error"
+            >
+              <div className="font-medium">Connection not created</div>
+              <div className="whitespace-pre-wrap break-words">{createError}</div>
+            </div>
+          )}
+
+          {createTasks && (
+            <ul
+              className="max-h-[min(60vh,30rem)] min-h-0 overflow-y-auto p-1.5"
+              aria-live="polite"
+              data-testid="project-switcher-create-progress"
+            >
+              {createTasks.map((task) => (
+                <li
+                  key={`${task.step}-${task.projectId}`}
+                  className="flex h-8 items-center gap-2.5 px-2.5 text-[13px]"
+                  data-testid={`project-switcher-create-task-${task.step}-${task.projectId}`}
+                  data-status={task.status}
+                >
+                  <CreateTaskIcon status={task.status} />
+                  <span
+                    className={cn('truncate', task.status === 'pending' && 'text-muted-foreground')}
+                  >
+                    {createTaskLabel(task)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {/* The picked projects: above the list, so they stay in view whatever is typed or
+              scrolled. */}
+          {selecting && !creating && (
+            <div
+              id="project-switcher-selected"
+              role="listbox"
+              aria-label="Projects of the new connection"
+              className="max-h-[9.5rem] shrink-0 overflow-y-auto border-b border-border p-1.5"
+              data-testid="project-switcher-selected"
+            >
+              <div
+                role="presentation"
+                className="flex items-center gap-1.5 px-2.5 pb-1 pt-1 text-[11px] font-medium text-muted-foreground"
+                data-testid="project-switcher-group-selected"
+              >
+                <span>New connection</span>
+                <span className="tabular-nums opacity-70">{selectedItems.length}</span>
+              </div>
+              {rows.slice(0, firstResult).map((row, index) => (
+                <div key={row.item.key} role="presentation">
+                  {renderRow(row, index)}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {!creating && (
+            <div
+              ref={listRef}
+              id="project-switcher-list"
+              role="listbox"
+              aria-label="Projects"
+              className="max-h-[min(60vh,30rem)] min-h-0 overflow-y-auto p-1.5"
+              data-testid="project-switcher-list"
+            >
+              {resultCount === 0 && (
+                <div
+                  className="px-3 py-6 text-center text-[13px] text-muted-foreground"
+                  data-testid="project-switcher-empty"
+                >
+                  {searching
+                    ? `No project matches “${query.trim()}”`
+                    : selecting
+                      ? 'No other project to add'
+                      : 'No projects yet'}
+                </div>
+              )}
+              {rows.slice(firstResult).map((row, i) => (
+                <div key={row.item.key} role="presentation">
+                  {row.groupStart && (
+                    <div
+                      role="presentation"
+                      className={cn(
+                        'flex items-center gap-1.5 px-2.5 pb-1 text-[11px] font-medium text-muted-foreground',
+                        i === 0 ? 'pt-1' : 'pt-3'
+                      )}
+                      data-testid={`project-switcher-group-${row.groupStart.id}`}
+                    >
+                      <span>{GROUP_LABELS[row.groupStart.id]}</span>
+                      <span className="tabular-nums opacity-70">{row.groupStart.count}</span>
+                    </div>
+                  )}
+                  {renderRow(row, firstResult + i)}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="flex shrink-0 items-center gap-4 border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
+            {creating ? (
+              <span data-testid="project-switcher-creating-hint">
+                Creating a worktree in each project, then the connection
               </span>
+            ) : (
+              <>
+                <span>
+                  <kbd className={KBD_CLASS}>↑↓</kbd> navigate
+                </span>
+                <span data-testid="project-switcher-enter-hint">
+                  <kbd className={KBD_CLASS}>↵</kbd>{' '}
+                  {connectCount >= 2 ? `connect ${connectCount} projects` : 'open'}
+                </span>
+                {highlightedRow && canConnectSwitcherProject(highlightedRow.item) && (
+                  <span data-testid="project-switcher-select-hint">
+                    <kbd className={KBD_CLASS}>{SELECT_KEY_LABEL}</kbd>{' '}
+                    {highlightedSelected ? 'remove' : selecting ? 'add another' : 'pick several'}
+                  </span>
+                )}
+                {highlightedRow && (
+                  <span data-testid="project-switcher-pin-hint">
+                    <kbd className={KBD_CLASS}>{pinKeyLabel()}</kbd>{' '}
+                    {pinnedSet.has(highlightedRow.item.key) ? 'unpin' : 'pin'}
+                  </span>
+                )}
+              </>
             )}
             <span>
               <kbd className={KBD_CLASS}>esc</kbd> close

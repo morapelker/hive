@@ -1,5 +1,7 @@
 // The rules of the "Go to project" switcher, free of React and stores: which projects it
-// lists in which group when nothing is typed, and how a typed query ranks them.
+// lists in which group when nothing is typed, and how a typed query ranks them. In both, the
+// more recently opened project comes first: text typed narrows the list to the projects it
+// matches, and only sorts them by how it matches in broad kinds (rankSwitcherProjects).
 
 export type SwitcherProjectKind = 'git' | 'connection' | 'data'
 
@@ -131,7 +133,7 @@ export function pinnedSwitcherKeys(input: {
 // Text typed: one ranked list
 // ---------------------------------------------------------------------------------------------
 
-/** How well a query matches a text, best first. Equal quality means equal tier and gaps. */
+/** How a query matches a text, closest first. Equally close means equal tier and gaps. */
 export const MATCH_TIER = {
   exact: 0,
   prefix: 1,
@@ -215,12 +217,38 @@ export function matchText(query: string, text: string): TextMatch | null {
   return { tier: MATCH_TIER.scattered, gaps: bestSpan - letters.length, indices: best }
 }
 
+/**
+ * The kinds of match the ranking tells apart, best first. Within a kind the more recently
+ * opened project comes first, so the kinds are few and broad: text that starts the name and
+ * text that starts a later word of it are the same kind ("pa" finds "tedooo-pa", opened today,
+ * above "paste-typer", opened last month).
+ */
+export const MATCH_KIND = {
+  /** The text is the whole name. */
+  exact: 0,
+  /** The text starts the name or a word of it. */
+  start: 1,
+  /** The text is a run of characters inside a word. */
+  inside: 2,
+  /** The characters appear in order with others between them. */
+  scattered: 3
+} as const
+
+function kindOf(tier: number): number {
+  if (tier === MATCH_TIER.exact) return MATCH_KIND.exact
+  if (tier === MATCH_TIER.prefix || tier === MATCH_TIER.word) return MATCH_KIND.start
+  return tier === MATCH_TIER.substring ? MATCH_KIND.inside : MATCH_KIND.scattered
+}
+
 /** A path match always ranks below every name match. */
-const PATH_TIER_OFFSET = 10
+const PATH_KIND_OFFSET = 10
 
 export interface SwitcherMatch<P> {
   project: P
-  /** Lower is better. Equal scores are equally good matches. */
+  /**
+   * The kind of match (MATCH_KIND; a path match is PATH_KIND_OFFSET higher). Lower is better;
+   * equal scores are ordered by when the projects were last opened.
+   */
   score: number
   /** Matched characters of the name; empty when only the path matched. */
   nameIndices: number[]
@@ -228,14 +256,20 @@ export interface SwitcherMatch<P> {
   pathIndices: number[]
 }
 
-const scoreOf = (match: TextMatch, offset = 0): number =>
-  (match.tier + offset) * 1000 + Math.min(match.gaps, 999)
+/** How exactly the text matched, to order projects of one kind opened at the same time. */
+const closenessOf = (match: TextMatch): number => match.tier * 1000 + Math.min(match.gaps, 999)
 
 /**
- * The projects matching `query`, best first. The name decides; the path only counts when the
- * name does not match, and then only as a run of characters or a tight scattered match (a
- * long path would otherwise match almost any few letters). Between equally good matches the
- * more recently opened project comes first, then the sidebar order.
+ * The projects matching `query`, in the order of the recent projects: within a kind of match
+ * (MATCH_KIND) the more recently opened project comes first, whatever the finer difference
+ * between the matches. An exact name leads, then names the text starts (or a word of them),
+ * then a run inside a word, then scattered letters. The name decides; the path only counts
+ * when the name does not match, and then only as a run of characters or a tight scattered
+ * match (a long path would otherwise match almost any few letters).
+ *
+ * Projects of one kind opened at the same time (never opened, mostly) are ordered by the
+ * closer match: a prefix before a later word, a tighter scattered match before a looser one.
+ * The sidebar order settles what is left.
  */
 export function rankSwitcherProjects<P extends SwitcherProject>(
   projects: readonly P[],
@@ -246,32 +280,43 @@ export function rankSwitcherProjects<P extends SwitcherProject>(
     return projects.map((project) => ({ project, score: 0, nameIndices: [], pathIndices: [] }))
 
   const letters = q.replace(/\s+/g, '').length
-  const matches: SwitcherMatch<P>[] = []
+  const found: { match: SwitcherMatch<P>; closeness: number }[] = []
   for (const project of projects) {
     const nameMatch = matchText(q, project.name)
     if (nameMatch) {
-      matches.push({
-        project,
-        score: scoreOf(nameMatch),
-        nameIndices: nameMatch.indices,
-        pathIndices: []
+      found.push({
+        match: {
+          project,
+          score: kindOf(nameMatch.tier),
+          nameIndices: nameMatch.indices,
+          pathIndices: []
+        },
+        closeness: closenessOf(nameMatch)
       })
       continue
     }
     const pathMatch = matchText(q, project.path)
     if (pathMatch && pathMatch.gaps <= letters) {
-      matches.push({
-        project,
-        score: scoreOf(pathMatch, PATH_TIER_OFFSET),
-        nameIndices: [],
-        pathIndices: pathMatch.indices
+      found.push({
+        match: {
+          project,
+          score: kindOf(pathMatch.tier) + PATH_KIND_OFFSET,
+          nameIndices: [],
+          pathIndices: pathMatch.indices
+        },
+        closeness: closenessOf(pathMatch)
       })
     }
   }
-  // Stable sort: the sidebar order settles what score and recency leave equal.
-  return matches.sort(
-    (a, b) => a.score - b.score || b.project.lastOpenedAt - a.project.lastOpenedAt
-  )
+  // Stable sort: the sidebar order settles what kind, recency and closeness leave equal.
+  return found
+    .sort(
+      (a, b) =>
+        a.match.score - b.match.score ||
+        b.match.project.lastOpenedAt - a.match.project.lastOpenedAt ||
+        a.closeness - b.closeness
+    )
+    .map(({ match }) => match)
 }
 
 // ---------------------------------------------------------------------------------------------
