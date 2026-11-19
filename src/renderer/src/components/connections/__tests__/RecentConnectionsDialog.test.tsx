@@ -321,18 +321,63 @@ describe('RecentConnectionsDialog pinned selection row', () => {
     expect(screen.getByTestId('recent-connection-row-e3')).toBeInTheDocument()
   })
 
-  it('drops the synthetic selection when the combination gains an exact match', async () => {
+  it('moves the selection to the exact match when the combination gains one', async () => {
+    const quickCreateConnection = vi.fn().mockResolvedValue('conn-1')
+    useConnectionStore.setState({ quickCreateConnection } as never)
     await renderDialog()
 
     await userEvent.click(screen.getByTestId('recent-connections-project-option-proj-a'))
     await userEvent.click(screen.getByTestId('recent-connections-project-option-proj-b'))
     await userEvent.click(screen.getByTestId('recent-connections-project-option-proj-c'))
-    await userEvent.click(screen.getByTestId('recent-connection-row-selected-combo'))
 
     // Deselect gamma: alpha+beta matches e1 exactly, so the synthetic row vanishes
+    // and e1 -- now the first row -- is the one Create uses
     await userEvent.click(screen.getByTestId('recent-connections-project-option-proj-c'))
 
     expect(screen.queryByTestId('recent-connection-row-selected-combo')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('recent-connections-create-button'))
+    await waitFor(() => expect(quickCreateConnection).toHaveBeenCalledWith([alpha, beta]))
+  })
+
+  it('pre-selects the new-combination row once 2+ projects are picked', async () => {
+    const quickCreateConnection = vi.fn().mockResolvedValue('conn-1')
+    useConnectionStore.setState({ quickCreateConnection } as never)
+    await renderDialog()
+
+    await userEvent.click(screen.getByTestId('recent-connections-project-option-proj-a'))
     expect(screen.getByTestId('recent-connections-create-button')).toBeDisabled()
+
+    await userEvent.click(screen.getByTestId('recent-connections-project-option-proj-b'))
+    await userEvent.click(screen.getByTestId('recent-connections-project-option-proj-c'))
+
+    // No click on the row: Create already targets the selected combination
+    await userEvent.click(screen.getByTestId('recent-connections-create-button'))
+    await waitFor(() => expect(quickCreateConnection).toHaveBeenCalledWith([alpha, beta, gamma]))
+  })
+
+  it('pre-selects the matching recent connection when the picked projects match one', async () => {
+    const quickCreateConnection = vi.fn().mockResolvedValue('conn-1')
+    useConnectionStore.setState({ quickCreateConnection } as never)
+    await renderDialog()
+
+    await userEvent.click(screen.getByTestId('recent-connections-project-option-proj-b'))
+    await userEvent.click(screen.getByTestId('recent-connections-project-option-proj-c'))
+
+    await userEvent.click(screen.getByTestId('recent-connections-create-button'))
+    await waitFor(() => expect(quickCreateConnection).toHaveBeenCalledWith([beta, gamma]))
+  })
+
+  it('keeps a row the user clicks after picking projects', async () => {
+    const quickCreateConnection = vi.fn().mockResolvedValue('conn-1')
+    useConnectionStore.setState({ quickCreateConnection } as never)
+    await renderDialog([...entries, entry('e4', [alpha, beta, gamma])])
+
+    await userEvent.click(screen.getByTestId('recent-connections-project-option-proj-a'))
+    await userEvent.click(screen.getByTestId('recent-connections-project-option-proj-b'))
+    // alpha+beta pre-selects e1; the user picks the alpha+beta+gamma row instead
+    await userEvent.click(screen.getByTestId('recent-connection-row-e4'))
+
+    await userEvent.click(screen.getByTestId('recent-connections-create-button'))
+    await waitFor(() => expect(quickCreateConnection).toHaveBeenCalledWith([alpha, beta, gamma]))
   })
 })

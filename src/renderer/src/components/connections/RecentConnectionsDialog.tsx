@@ -202,6 +202,19 @@ export function RecentConnectionsDialog({
     }
   }, [displayEntries, selectedId, showSelectionRow])
 
+  // Picking 2+ projects pre-selects the first row (exactly that combination), so Create
+  // works without an extra click. Re-runs only when the picked projects change, so a
+  // row the user clicks afterwards stays selected.
+  const selectionKey = useMemo(
+    () => Array.from(selectedProjectIds).sort().join(','),
+    [selectedProjectIds]
+  )
+  const selectionRowId =
+    selectedProjects.length >= 2 ? (exactSelectionEntry?.id ?? SELECTED_COMBO_ID) : null
+  useEffect(() => {
+    if (selectionRowId) setSelectedId(selectionRowId)
+  }, [selectionKey, selectionRowId])
+
   // Focus the note input when it appears (deferred to run after the context menu closes)
   useEffect(() => {
     if (!editingNoteId) return
