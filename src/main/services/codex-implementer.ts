@@ -3858,7 +3858,9 @@ export class CodexImplementer implements AgentSdkImplementer {
           this.sendToRenderer(WORKTREE_BRANCH_RENAMED_CHANNEL, {
             worktreeId: worktree.id,
             newBranch: result.newBranch,
-            worktreePath: worktree.path
+            worktreePath: worktree.path,
+            oldBranch: result.oldBranch,
+            projectId: result.projectId
           })
           log.info('applyGeneratedTitle: auto-renamed branch', {
             oldBranch: worktree.branch_name,
@@ -3896,7 +3898,9 @@ export class CodexImplementer implements AgentSdkImplementer {
           this.sendToRenderer(WORKTREE_BRANCH_RENAMED_CHANNEL, {
             worktreeId: memberWorktree.id,
             newBranch: result.newBranch,
-            worktreePath: memberWorktree.path
+            worktreePath: memberWorktree.path,
+            oldBranch: result.oldBranch,
+            projectId: result.projectId
           })
           log.info('applyGeneratedTitle: auto-renamed connection member', {
             connectionId: dbSession.connection_id,

@@ -129,6 +129,12 @@ interface GitStoreState {
 
   // Diff branch comparison actions
   setSelectedDiffBranch: (worktreePath: string, branch: string) => void
+  renameBranchSelections: (
+    projectId: string,
+    worktreePaths: ReadonlySet<string>,
+    oldBranch: string,
+    newBranch: string
+  ) => void
 
   // Create PR modal actions
   setCreatePRModalOpen: (
@@ -639,6 +645,37 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
       const newMap = new Map(state.selectedDiffBranch)
       newMap.set(worktreePath, branch)
       return { selectedDiffBranch: newMap }
+    })
+  },
+
+  // A branch was renamed in the repository of a project: every remembered choice of that
+  // branch (merge source, compare branch) follows it. A choice left on the old name would be
+  // offered, and handed to git, although no such branch exists any more.
+  renameBranchSelections: (projectId, worktreePaths, oldBranch, newBranch) => {
+    set((state) => {
+      const renameByPath = (selection: Map<string, string>): Map<string, string> => {
+        let next: Map<string, string> | null = null
+        for (const [worktreePath, branch] of selection) {
+          if (branch !== oldBranch || !worktreePaths.has(worktreePath)) continue
+          next ??= new Map(selection)
+          next.set(worktreePath, newBranch)
+        }
+        return next ?? selection
+      }
+      const selectedMergeBranch = renameByPath(state.selectedMergeBranch)
+      const selectedDiffBranch = renameByPath(state.selectedDiffBranch)
+      const defaultMergeBranch =
+        state.defaultMergeBranch.get(projectId) === oldBranch
+          ? new Map(state.defaultMergeBranch).set(projectId, newBranch)
+          : state.defaultMergeBranch
+      if (
+        selectedMergeBranch === state.selectedMergeBranch &&
+        selectedDiffBranch === state.selectedDiffBranch &&
+        defaultMergeBranch === state.defaultMergeBranch
+      ) {
+        return state
+      }
+      return { selectedMergeBranch, selectedDiffBranch, defaultMergeBranch }
     })
   },
 

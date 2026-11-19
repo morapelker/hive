@@ -1174,9 +1174,23 @@ const make = Effect.gen(function* () {
     branch: {
       exists: branchExists,
       rename: (_repoPath, worktreePath, oldBranch, newBranch) =>
-        writeOp(worktreePath, `git branch -m ${oldBranch} ${newBranch}`, (git) =>
-          git.branch(['-m', oldBranch, newBranch]).then(() => ({ success: true as const }))
-        ),
+        writeOp(worktreePath, `git branch -m ${oldBranch} ${newBranch}`, async (git) => {
+          await git.branch(['-m', oldBranch, newBranch])
+          // `git branch -m` carries the upstream over, so the renamed branch would go on
+          // tracking the remote branch of its old name: ahead/behind stay compared with it
+          // and a push (always to the branch's own name) never becomes the upstream. Without
+          // an upstream the next push sets it. An upstream of another name was chosen by
+          // someone and is kept. Best effort: the rename itself has happened.
+          try {
+            const upstream = (await git.raw(['config', '--get', `branch.${newBranch}.merge`])).trim()
+            if (upstream === `refs/heads/${oldBranch}`) {
+              await git.raw(['branch', '--unset-upstream', newBranch])
+            }
+          } catch {
+            // No upstream configured (git config exits 1), or it could not be changed
+          }
+          return { success: true as const }
+        }),
       delete: (repoPath, branchName) =>
         writeOp(repoPath, `git branch -D ${branchName}`, (git) =>
           git.branch(['-D', branchName]).then(() => ({ success: true as const }))

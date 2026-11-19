@@ -182,7 +182,9 @@ export async function applyClaudeCliTitle({
           emitWorktreeBranchRenamed({
             worktreeId: worktree.id,
             newBranch: result.newBranch,
-            worktreePath: worktree.path
+            worktreePath: worktree.path,
+            oldBranch: result.oldBranch,
+            projectId: result.projectId
           })
         } else if (result.error) {
           log.warn('branch rename failed', { sessionId, error: result.error })
@@ -216,7 +218,9 @@ export async function applyClaudeCliTitle({
           emitWorktreeBranchRenamed({
             worktreeId: memberWt.id,
             newBranch: result.newBranch,
-            worktreePath: memberWt.path
+            worktreePath: memberWt.path,
+            oldBranch: result.oldBranch,
+            projectId: result.projectId
           })
         }
       } catch (err) {

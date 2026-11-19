@@ -665,11 +665,17 @@ export const makeLiveDbRpcService = (): DbRpcService => ({
       },
       catch: (cause) => cause
     }),
+  // The three reads below hand out branch names that the caller goes on to compare, merge and
+  // archive with, so each row first follows its checkout (see worktree-branch-reconcile): a
+  // branch renamed in a terminal is seen here even when nothing was watching the worktree.
   getWorktree: (id) =>
     Effect.tryPromise({
       try: async () => {
         const { getDatabase } = await import('../../../main/db')
-        return getDatabase().getWorktree(id)
+        const { readWithLiveBranches } =
+          await import('../../../main/services/worktree-branch-reconcile')
+        const db = getDatabase()
+        return readWithLiveBranches(db, () => db.getWorktree(id))
       },
       catch: (cause) => cause
     }),
@@ -677,7 +683,10 @@ export const makeLiveDbRpcService = (): DbRpcService => ({
     Effect.tryPromise({
       try: async () => {
         const { getDatabase } = await import('../../../main/db')
-        return getDatabase().getWorktreesByProject(projectId)
+        const { readWithLiveBranches } =
+          await import('../../../main/services/worktree-branch-reconcile')
+        const db = getDatabase()
+        return readWithLiveBranches(db, () => db.getWorktreesByProject(projectId))
       },
       catch: (cause) => cause
     }),
@@ -685,7 +694,10 @@ export const makeLiveDbRpcService = (): DbRpcService => ({
     Effect.tryPromise({
       try: async () => {
         const { getDatabase } = await import('../../../main/db')
-        return getDatabase().getActiveWorktreesByProject(projectId)
+        const { readWithLiveBranches } =
+          await import('../../../main/services/worktree-branch-reconcile')
+        const db = getDatabase()
+        return readWithLiveBranches(db, () => db.getActiveWorktreesByProject(projectId))
       },
       catch: (cause) => cause
     }),

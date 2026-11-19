@@ -2354,7 +2354,9 @@ describe('renderer API cleanup', () => {
     expect(handlerStart).toBeGreaterThan(-1)
     expect(handlerEnd).toBeGreaterThan(handlerStart)
     expect(source).toContain("import { projectApi } from '@/api/project-api'")
-    expect(handlerSource).toContain('projectApi.openPath(uri).catch(console.error)')
+    // The handler hands the link to openTerminalLink, which opens a file path through projectApi
+    expect(handlerSource).toContain('openTerminalLink(uri)')
+    expect(source).toContain('projectApi.openPath(uri).catch(console.error)')
     expect(handlerSource).not.toContain('window.projectOps.openPath')
     expect(handlerSource).not.toContain('then(unwrapEnvelope)')
   })
@@ -19867,8 +19869,14 @@ describe('renderer API cleanup', () => {
       path.resolve(__dirname, '../../src/renderer/src/hooks/useOpenCodeGlobalListener.ts'),
       'utf-8'
     )
+    // The listener hands every event to applyBranchRenamed (lib/branch-rename.ts), which
+    // updates the stores that hold the branch's name.
+    const handlerSource = fs.readFileSync(
+      path.resolve(__dirname, '../../src/renderer/src/lib/branch-rename.ts'),
+      'utf-8'
+    )
     const effectStart = source.indexOf(
-      'const unsubscribe = worktreeApi.onBranchRenamed((data) => {'
+      'const unsubscribe = worktreeApi.onBranchRenamed(applyBranchRenamed)'
     )
     const effectEnd = source.indexOf('return unsubscribe', effectStart)
     const subscriptionSource = source.slice(effectStart, effectEnd)
@@ -19876,11 +19884,12 @@ describe('renderer API cleanup', () => {
     expect(effectStart).toBeGreaterThan(-1)
     expect(effectEnd).toBeGreaterThan(effectStart)
     expect(source).toContain("import { worktreeApi } from '@/api/worktree-api'")
-    expect(subscriptionSource).toContain('const { worktreeId, newBranch, worktreePath } = data')
-    expect(subscriptionSource).toContain(
-      'useWorktreeStore.getState().updateWorktreeBranch(worktreeId, newBranch)'
+    expect(handlerSource).toContain(
+      'const { worktreeId, newBranch, worktreePath, oldBranch } = event'
     )
+    expect(handlerSource).toContain('worktreeStore.updateWorktreeBranch(worktreeId, newBranch)')
     expect(subscriptionSource).not.toContain('window.worktreeOps')
+    expect(handlerSource).not.toContain('window.worktreeOps')
   })
 
   it('removes the old worktree:branchRenamed IPC event bridge', () => {

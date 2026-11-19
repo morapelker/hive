@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils'
 import { useGitStore } from '@/stores/useGitStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { gitApi } from '@/api/git-api'
+import { worktreeApi } from '@/api/worktree-api'
 import {
   BranchDiffFileRow,
   BranchSelectDropdown,
@@ -72,6 +73,15 @@ export function BranchDiffView({ worktreePath }: BranchDiffViewProps): React.JSX
   useEffect(() => {
     loadBranches()
   }, [loadBranches])
+
+  // A branch renamed in the repository changes the list. (The remembered selection follows
+  // the rename in the store; the list is otherwise only loaded when the worktree changes.)
+  useEffect(() => {
+    if (!worktreePath) return
+    return worktreeApi.onBranchRenamed(() => {
+      void loadBranches()
+    })
+  }, [worktreePath, loadBranches])
 
   // Load files when selected branch changes
   useEffect(() => {

@@ -285,7 +285,20 @@ describe('Session 4: Auto-Rename Branch on First Title', () => {
       const content = fs.readFileSync(hookPath, 'utf-8')
 
       expect(content).toContain('onBranchRenamed')
-      expect(content).toContain('updateWorktreeBranch')
+      // The listener hands the event to applyBranchRenamed, which updates the stores
+      expect(content).toContain('applyBranchRenamed')
+      const handlerPath = path.join(
+        __dirname,
+        '..',
+        '..',
+        '..',
+        'src',
+        'renderer',
+        'src',
+        'lib',
+        'branch-rename.ts'
+      )
+      expect(fs.readFileSync(handlerPath, 'utf-8')).toContain('updateWorktreeBranch')
     })
 
     test('useOpenCodeGlobalListener subscribes to worktree:created', () => {

@@ -1822,6 +1822,101 @@ export class DatabaseService implements DocumentFlowDb, DataProjectsRepository {
     return this.getDocumentRunItem(id)
   }
 
+  /**
+   * A branch was renamed in git: the names document runs keep of it follow. A run stores the
+   * branches it works with as text (its base and integration branch, each ticket's branch) and
+   * checks them against what is checked out before it merges, so a copy left on the old name
+   * stops the run with "has branch X checked out, not Y".
+   *
+   * `worktreeId` is the worktree whose branch was renamed: a ticket's branch and an
+   * integration branch are only rewritten on the rows of that worktree. A base branch is a
+   * branch of the repository, so it is rewritten on every run of `projectId` that names it.
+   * Returns the ids of the runs that were touched.
+   */
+  renameBranchInDocumentRuns(rename: {
+    projectId: string
+    worktreeId: string
+    oldBranch: string
+    newBranch: string
+  }): string[] {
+    const { projectId, worktreeId, oldBranch, newBranch } = rename
+    if (!oldBranch || !newBranch || oldBranch === newBranch) return []
+    const db = this.getDb()
+    const touched = new Set<string>()
+
+    const itemRows = db
+      .prepare(
+        `SELECT id, run_id FROM document_run_items
+          WHERE (worktree_id = ? AND branch_name = ?) OR instr(COALESCE(members, ''), ?) > 0`
+      )
+      .all(worktreeId, oldBranch, worktreeId) as { id: string; run_id: string }[]
+    for (const row of itemRows) {
+      const item = this.getDocumentRunItem(row.id)
+      if (!item) continue
+      const patch: DocumentRunItemRowPatch = {}
+      if (item.worktree_id === worktreeId && item.branch_name === oldBranch) {
+        patch.branch_name = newBranch
+      }
+      if (item.members?.some((m) => m.worktree_id === worktreeId && m.branch_name === oldBranch)) {
+        patch.members = item.members.map((m) =>
+          m.worktree_id === worktreeId && m.branch_name === oldBranch
+            ? { ...m, branch_name: newBranch }
+            : m
+        )
+        // The item's own name is the one its members share (the first member's otherwise)
+        patch.branch_name = patch.members[0].branch_name
+      }
+      if (Object.keys(patch).length === 0) continue
+      this.updateDocumentRunItem(item.id, patch)
+      touched.add(row.run_id)
+    }
+
+    const runRows = db
+      .prepare(
+        `SELECT id FROM document_runs
+          WHERE integration_worktree_id = ?
+             OR (project_id = ? AND base_branch = ?)
+             OR instr(COALESCE(members, ''), ?) > 0
+             OR instr(COALESCE(members, ''), ?) > 0`
+      )
+      .all(worktreeId, projectId, oldBranch, worktreeId, projectId) as { id: string }[]
+    for (const row of runRows) {
+      const run = this.getDocumentRun(row.id)
+      if (!run) continue
+      const patch: DocumentRunRowPatch = {}
+      if (run.members) {
+        const members = run.members.map((m) => {
+          const integration =
+            m.integration_worktree_id === worktreeId && m.integration_branch === oldBranch
+          const base = m.project_id === projectId && m.base_branch === oldBranch
+          if (!integration && !base) return m
+          return {
+            ...m,
+            ...(integration ? { integration_branch: newBranch } : {}),
+            ...(base ? { base_branch: newBranch } : {})
+          }
+        })
+        if (members.some((m, index) => m !== run.members?.[index])) {
+          patch.members = members
+          // A connection run's own integration branch is the name its members share (the
+          // first member's otherwise); its base branch is a label and is left as written
+          patch.integration_branch = members[0].integration_branch
+        }
+      } else {
+        if (run.integration_worktree_id === worktreeId && run.integration_branch === oldBranch) {
+          patch.integration_branch = newBranch
+        }
+        if (run.project_id === projectId && run.base_branch === oldBranch) {
+          patch.base_branch = newBranch
+        }
+      }
+      if (Object.keys(patch).length === 0) continue
+      this.updateDocumentRun(run.id, patch)
+      touched.add(run.id)
+    }
+    return [...touched]
+  }
+
   appendDocumentRunEvent(data: DocumentRunEventCreate): DocumentRunEvent {
     const db = this.getDb()
     const result = db
@@ -3029,6 +3124,88 @@ export class DatabaseService implements DocumentFlowDb, DataProjectsRepository {
       .run(baseBranch, id)
     if (result.changes > 0) emitDbChanged({ entity: 'worktree', op: 'update', id, projectId })
     return result.changes > 0
+  }
+
+  /**
+   * A branch of the project's repository changed its name: every active worktree that is
+   * merged into (and compared with) the old name follows it to the new one. Returns the ids of
+   * the worktrees that were re-pointed. Like `setWorktreeBaseBranch`, kept out of
+   * `WorktreeUpdate` and the RPC: only a rename the app saw or found in git may do this.
+   */
+  repointWorktreeBaseBranch(projectId: string, oldBranch: string, newBranch: string): string[] {
+    if (!oldBranch || !newBranch || oldBranch === newBranch) return []
+    const db = this.getDb()
+    const ids = (
+      db
+        .prepare(
+          "SELECT id FROM worktrees WHERE project_id = ? AND status = 'active' AND base_branch = ?"
+        )
+        .all(projectId, oldBranch) as { id: string }[]
+    ).map((row) => row.id)
+    if (ids.length === 0) return ids
+    db.prepare(
+      "UPDATE worktrees SET base_branch = ? WHERE project_id = ? AND status = 'active' AND base_branch = ?"
+    ).run(newBranch, projectId, oldBranch)
+    for (const id of ids) emitDbChanged({ entity: 'worktree', op: 'update', id, projectId })
+    return ids
+  }
+
+  /**
+   * A branch of the project's repository changed its name: the launches queued behind a
+   * dependency that would cut their worktree from the old name are re-aimed at the new one
+   * (`pending_launch_config.worktree.sourceBranch`, on board tickets and markdown cards).
+   * Returns how many were rewritten.
+   */
+  renameBranchInPendingLaunches(projectId: string, oldBranch: string, newBranch: string): number {
+    if (!oldBranch || !newBranch || oldBranch === newBranch) return 0
+    const db = this.getDb()
+    const rewrite = (raw: string): string | null => {
+      try {
+        const config = JSON.parse(raw) as { worktree?: { type?: string; sourceBranch?: string } }
+        if (config.worktree?.type !== 'new' || config.worktree.sourceBranch !== oldBranch) {
+          return null
+        }
+        return JSON.stringify({
+          ...config,
+          worktree: { ...config.worktree, sourceBranch: newBranch }
+        })
+      } catch {
+        return null
+      }
+    }
+
+    let rewritten = 0
+    const tickets = db
+      .prepare(
+        `SELECT id, pending_launch_config FROM kanban_tickets
+          WHERE project_id = ? AND instr(COALESCE(pending_launch_config, ''), ?) > 0`
+      )
+      .all(projectId, oldBranch) as { id: string; pending_launch_config: string }[]
+    for (const ticket of tickets) {
+      const next = rewrite(ticket.pending_launch_config)
+      if (next === null) continue
+      db.prepare('UPDATE kanban_tickets SET pending_launch_config = ? WHERE id = ?').run(
+        next,
+        ticket.id
+      )
+      rewritten++
+    }
+    const cards = db
+      .prepare(
+        `SELECT card_id, pending_launch_config FROM markdown_kanban_card_state
+          WHERE project_id = ? AND instr(COALESCE(pending_launch_config, ''), ?) > 0`
+      )
+      .all(projectId, oldBranch) as { card_id: string; pending_launch_config: string }[]
+    for (const card of cards) {
+      const next = rewrite(card.pending_launch_config)
+      if (next === null) continue
+      db.prepare(
+        'UPDATE markdown_kanban_card_state SET pending_launch_config = ? WHERE project_id = ? AND card_id = ?'
+      ).run(next, projectId, card.card_id)
+      rewritten++
+    }
+    if (rewritten > 0) emitDbChanged({ entity: 'ticket', op: 'batch', id: null, projectId })
+    return rewritten
   }
 
   touchWorktree(id: string): void {

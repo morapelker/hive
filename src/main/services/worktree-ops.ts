@@ -12,11 +12,18 @@ import { getRuntime as getDbRuntime } from '../effect/db/runtime'
 import { Db } from '../effect/db/service'
 import { type BreedType } from './breed-names'
 import { emitGitBranchChanged } from './git-events'
+import { readHeadBranch } from './git-head'
 import { createGitService, isAutoNamedBranch } from './git-service'
 import { createLogger } from './logger'
 import { isSameOrAncestorPath, normalizeWorktreePath } from './path-utils'
 import { assignPort, releasePort } from './port-registry'
 import { scriptRunner } from './script-runner'
+import {
+  healStaleBaseBranches,
+  reconcileWorktreeBranch,
+  recordBranchRename,
+  worktreeNameForBranch
+} from './worktree-branch-reconcile'
 import { emitWorktreeBranchRenamed } from './worktree-events'
 
 const log = createLogger({ component: 'WorktreeOps' })
@@ -345,10 +352,16 @@ export const deleteWorktreeOpEffect = (
 
       const gitService = createGitService(params.projectPath)
       // A detached-HEAD worktree has no branch: archiving it is just removing it.
+      // The branch to delete is the one the checkout is on, read before the checkout goes:
+      // the caller's name is a copy, and after a rename it names a branch that is gone, so
+      // the renamed branch would be left behind.
+      const branchName = params.branchName
+        ? (readHeadBranch(params.worktreePath, { linkedOnly: true }) ?? params.branchName)
+        : ''
       const result =
-        params.archive && params.branchName
+        params.archive && branchName
           ? yield* Effect.tryPromise(() =>
-              gitService.archiveWorktree(params.worktreePath, params.branchName)
+              gitService.archiveWorktree(params.worktreePath, branchName)
             )
           : yield* Effect.tryPromise(() => gitService.removeWorktree(params.worktreePath))
 
@@ -506,22 +519,23 @@ export const syncWorktreesOpEffect = (
         }
 
         const gitBranch = gitBranchByPath.get(normalizedDbWorktreePath)
-        if (gitBranch !== undefined && gitBranch !== dbWorktree.branch_name) {
-          log.info('Branch renamed externally, updating DB', {
+        if (gitBranch === undefined) continue
+        if (gitBranch && gitBranch !== dbWorktree.branch_name) {
+          // On another branch than recorded (renamed or switched outside the app): the row
+          // follows, and a rename takes the worktrees based on the old name with it.
+          yield* Effect.tryPromise(() =>
+            reconcileWorktreeBranch(svc, dbWorktree, { liveBranch: gitBranch })
+          )
+        } else if (gitBranch !== dbWorktree.branch_name) {
+          // Detached HEAD: the row keeps no branch. Its display name is left alone — a HEAD
+          // that is detached for the length of a rebase comes back to the same branch, and a
+          // name replaced meanwhile would never follow a branch again.
+          log.info('Worktree HEAD is detached, clearing its branch in the DB', {
             worktreeId: dbWorktree.id,
-            oldBranch: dbWorktree.branch_name,
-            newBranch: gitBranch
+            oldBranch: dbWorktree.branch_name
           })
-          const nameMatchesBranch = dbWorktree.name === dbWorktree.branch_name
-          const worktreeName = dbWorktree.name.toLowerCase()
-          const isAutoName = isAutoNamedBranch(worktreeName)
-          const shouldUpdateName = nameMatchesBranch || isAutoName
-          const syncedName = getImportedWorktreeName(gitBranch, dbWorktree.path)
-          yield* worktreeRepo.update(dbWorktree.id, {
-            branch_name: gitBranch,
-            ...(shouldUpdateName ? { name: syncedName } : {})
-          })
-        } else if (gitBranch !== undefined && dbWorktree.name !== dbWorktree.branch_name) {
+          yield* worktreeRepo.update(dbWorktree.id, { branch_name: gitBranch })
+        } else if (dbWorktree.name !== dbWorktree.branch_name) {
           const isAutoName = isAutoNamedBranch(dbWorktree.name.toLowerCase())
           if (isAutoName) {
             const healedName = getImportedWorktreeName(dbWorktree.branch_name, dbWorktree.path)
@@ -529,6 +543,21 @@ export const syncWorktreesOpEffect = (
           }
         }
       }
+
+      // Bases that went stale through a rename nobody saw (the app was closed, or the rename
+      // predates the app keeping bases in step). Never fails the sync.
+      yield* Effect.tryPromise(() =>
+        healStaleBaseBranches(svc, params.projectId, params.projectPath)
+      ).pipe(
+        Effect.catchAll((error) =>
+          Effect.sync(() =>
+            log.warn('Could not check the base branches of the project', {
+              projectId: params.projectId,
+              error: error instanceof Error ? error.message : String(error)
+            })
+          )
+        )
+      )
 
       yield* Effect.tryPromise(() => gitService.pruneWorktrees())
     }),
@@ -613,35 +642,54 @@ export const renameWorktreeBranchOpEffect = (
         oldBranch: params.oldBranch,
         newBranch: params.newBranch
       })
-      if (!params.oldBranch) {
+      const db = yield* Db
+      const svc = yield* db.raw
+
+      // The caller's `oldBranch` is the renderer's copy of the name. Bring the row up to date
+      // first (a rename made outside the app re-points its dependents here), then rename the
+      // branch the checkout is really on: `git branch -m` of a name that is gone only fails.
+      const recorded = yield* worktreeRepo.get(params.worktreeId)
+      const worktree = recorded
+        ? yield* Effect.tryPromise(() => reconcileWorktreeBranch(svc, recorded))
+        : null
+      const oldBranch =
+        readHeadBranch(params.worktreePath, { linkedOnly: !recorded?.is_default }) ??
+        params.oldBranch
+      if (!oldBranch) {
         return yield* Effect.fail(new Error('Detached HEAD worktrees cannot be renamed'))
       }
 
-      const gitService = createGitService(params.worktreePath)
-      const result = yield* Effect.tryPromise(() =>
-        gitService.renameBranch(params.worktreePath, params.oldBranch, params.newBranch)
-      )
-      if (!result.success) {
-        return yield* Effect.fail(new Error(result.error || 'Rename failed'))
+      if (oldBranch !== params.newBranch) {
+        const gitService = createGitService(params.worktreePath)
+        const result = yield* Effect.tryPromise(() =>
+          gitService.renameBranch(params.worktreePath, oldBranch, params.newBranch)
+        )
+        if (!result.success) {
+          return yield* Effect.fail(new Error(result.error || 'Rename failed'))
+        }
       }
 
-      const worktree = yield* worktreeRepo.get(params.worktreeId)
-      const nameMatchesBranch = worktree?.name === params.oldBranch
-      const isAutoName = worktree ? isAutoNamedBranch(worktree.name.toLowerCase()) : false
-      const shouldUpdateName = nameMatchesBranch || isAutoName
-
+      const name = worktree ? worktreeNameForBranch(worktree, params.newBranch) : undefined
       yield* worktreeRepo.update(params.worktreeId, {
         branch_name: params.newBranch,
         branch_renamed: 1,
-        ...(shouldUpdateName
-          ? { name: getImportedWorktreeName(params.newBranch, params.worktreePath) }
-          : {})
+        ...(name !== undefined ? { name } : {})
       })
+      if (worktree) {
+        recordBranchRename(svc, {
+          projectId: worktree.project_id,
+          worktreeId: worktree.id,
+          oldBranch,
+          newBranch: params.newBranch
+        })
+      }
 
       emitWorktreeBranchRenamed({
         worktreeId: params.worktreeId,
         newBranch: params.newBranch,
-        worktreePath: params.worktreePath
+        worktreePath: params.worktreePath,
+        oldBranch,
+        ...(worktree ? { projectId: worktree.project_id } : {})
       })
       emitGitBranchChanged({ worktreePath: params.worktreePath })
     }),

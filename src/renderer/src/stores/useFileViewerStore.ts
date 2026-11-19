@@ -174,6 +174,16 @@ interface FileViewerState {
   activateDiffTab: (tabKey: string) => void
   closeOtherFiles: (keepKey: string) => void
   closeFilesToRight: (fromKey: string) => void
+  /**
+   * A branch was renamed in the repository of `worktreePaths`: the diff tabs that compare with
+   * it by its old name compare with the new one from here on, in place and in the same order.
+   * A tab left on the old name would ask git for a branch that no longer exists.
+   */
+  renameCompareBranch: (
+    worktreePaths: ReadonlySet<string>,
+    oldBranch: string,
+    newBranch: string
+  ) => void
 
   markDirty: (path: string) => void
   markClean: (path: string) => void
@@ -447,6 +457,34 @@ export const useFileViewerStore = create<FileViewerState>((set, get) => ({
         originalContents: newOriginal,
         externallyChanged: newExtChanged
       }
+    })
+  },
+
+  renameCompareBranch: (worktreePaths, oldBranch, newBranch) => {
+    set((state) => {
+      const compares = (diff: { worktreePath: string; compareBranch?: string }): boolean =>
+        diff.compareBranch === oldBranch && worktreePaths.has(diff.worktreePath)
+
+      let activeFilePath = state.activeFilePath
+      let renamed = false
+      const openFiles = new Map<string, TabEntry>()
+      for (const [key, tab] of state.openFiles) {
+        if (tab.type !== 'diff' || !compares(tab)) {
+          openFiles.set(key, tab)
+          continue
+        }
+        const next: DiffTab = { ...tab, compareBranch: newBranch }
+        const nextKey = diffTabKey(next)
+        openFiles.set(nextKey, next)
+        if (activeFilePath === key) activeFilePath = nextKey
+        renamed = true
+      }
+      const activeDiff =
+        state.activeDiff && compares(state.activeDiff)
+          ? { ...state.activeDiff, compareBranch: newBranch }
+          : state.activeDiff
+      if (!renamed && activeDiff === state.activeDiff) return state
+      return { openFiles, activeFilePath, activeDiff }
     })
   },
 

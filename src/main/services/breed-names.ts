@@ -284,6 +284,18 @@ export const LEGACY_CITY_NAMES = [
 ]
 
 /**
+ * Check if a branch name is an auto-generated name (breed or legacy city name).
+ * Matches exact names and suffixed variants like `golden-retriever-2` or `tokyo-v3`.
+ */
+export function isAutoNamedBranch(branchName: string): boolean {
+  const lower = branchName.toLowerCase()
+  return (
+    ALL_BREED_NAMES.some((b) => b === lower || new RegExp(`^${b}-(?:v)?\\d+$`).test(lower)) ||
+    LEGACY_CITY_NAMES.some((c) => c === lower || new RegExp(`^${c}-(?:v)?\\d+$`).test(lower))
+  )
+}
+
+/**
  * Get a random breed name from the list
  */
 export function getRandomBreedName(breedType: BreedType = 'dogs'): string {

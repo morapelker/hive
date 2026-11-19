@@ -25,6 +25,50 @@ const inflightSync = new Map<string, Promise<void>>()
 const lastSync = new Map<string, number>()
 const inflightLoad = new Map<string, Promise<void>>()
 const lastLoad = new Map<string, number>()
+// A forced load or sync that arrives while another one of the same project is running must
+// not be answered with that one: it started before whatever the caller wants to see (a branch
+// renamed a moment ago) and would hand back the old state. One rerun is queued behind it,
+// shared by every forced caller that arrives meanwhile.
+const queuedLoad = new Map<string, Promise<void>>()
+const queuedSync = new Map<string, Promise<void>>()
+
+const queueBehind = (
+  queue: Map<string, Promise<void>>,
+  running: Map<string, Promise<void>>,
+  projectId: string,
+  inflight: Promise<void>,
+  rerun: () => Promise<void>
+): Promise<void> => {
+  const queued = queue.get(projectId)
+  if (queued) return queued
+  const next = inflight.then(() => {
+    queue.delete(projectId)
+    // It has settled: whatever the map says, it is not running any more. Left in place, the
+    // rerun would find it and queue behind it again, forever.
+    if (running.get(projectId) === inflight) running.delete(projectId)
+    return rerun()
+  })
+  queue.set(projectId, next)
+  return next
+}
+
+/**
+ * Records `promise` as the one running for `projectId` until it settles. The entry is removed
+ * from outside the promise, never by its own `finally`: a body that fails before its first
+ * `await` runs its `finally` before the promise exists, and would leave the entry behind for
+ * good.
+ */
+const trackInflight = (
+  running: Map<string, Promise<void>>,
+  projectId: string,
+  promise: Promise<void>
+): Promise<void> => {
+  running.set(projectId, promise)
+  void promise.finally(() => {
+    if (running.get(projectId) === promise) running.delete(projectId)
+  })
+  return promise
+}
 const SYNC_TTL_MS = 10_000
 const LOAD_TTL_MS = 10_000
 let inflightHydrateAll: Promise<void> | null = null
@@ -384,7 +428,12 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
   // Load worktrees for a project from database
   loadWorktrees: async (projectId: string, opts?: { force?: boolean }) => {
     const inflight = inflightLoad.get(projectId)
-    if (inflight) return inflight
+    if (inflight) {
+      if (!opts?.force) return inflight
+      return queueBehind(queuedLoad, inflightLoad, projectId, inflight, () =>
+        get().loadWorktrees(projectId, opts)
+      )
+    }
 
     const lastProjectLoad = lastLoad.get(projectId)
     if (
@@ -416,11 +465,9 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
           error: error instanceof Error ? error.message : 'Failed to load worktrees',
           isLoading: false
         })
-      } finally {
-        inflightLoad.delete(projectId)
       }
     })()
-    inflightLoad.set(projectId, promise)
+    trackInflight(inflightLoad, projectId, promise)
     return promise
   },
 
@@ -862,7 +909,12 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
   // Sync worktrees with actual git state
   syncWorktrees: async (projectId: string, projectPath: string, opts?: { force?: boolean }) => {
     const inflight = inflightSync.get(projectId)
-    if (inflight) return inflight
+    if (inflight) {
+      if (!opts?.force) return inflight
+      return queueBehind(queuedSync, inflightSync, projectId, inflight, () =>
+        get().syncWorktrees(projectId, projectPath, opts)
+      )
+    }
 
     const lastProjectSync = lastSync.get(projectId)
     if (
@@ -881,12 +933,9 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
         lastSync.set(projectId, Date.now())
       } catch {
         // Ignore sync errors
-      } finally {
-        inflightSync.delete(projectId)
       }
     })()
-    inflightSync.set(projectId, promise)
-    return promise
+    return trackInflight(inflightSync, projectId, promise)
   },
 
   // Get worktrees for a specific project (applies custom order if available)
@@ -974,14 +1023,20 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     })
   },
 
-  // Update a worktree's branch name (and display name) in the store (after rename)
+  // Update a worktree's branch name in the store (after rename). The display name follows
+  // while it is the branch's name, as it does in the database; a name the user chose stays.
   updateWorktreeBranch: (worktreeId: string, newBranch: string) => {
     set((state) => {
       const newMap = new Map(state.worktreesByProject)
       for (const [projectId, worktrees] of newMap.entries()) {
         const updated = worktrees.map((w) =>
-          w.id === worktreeId
-            ? { ...w, name: newBranch, branch_name: newBranch, branch_renamed: 1 }
+          w.id === worktreeId && w.branch_name !== newBranch
+            ? {
+                ...w,
+                name: w.name === w.branch_name ? newBranch : w.name,
+                branch_name: newBranch,
+                branch_renamed: 1
+              }
             : w
         )
         if (updated.some((w, i) => w !== worktrees[i])) {

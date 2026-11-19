@@ -2,12 +2,10 @@ import simpleGit, { type SimpleGit } from 'simple-git'
 import { homedir } from 'os'
 import { join, basename } from 'path'
 import { existsSync, mkdirSync } from 'fs'
-import {
-  ALL_BREED_NAMES,
-  LEGACY_CITY_NAMES,
-  type BreedType
-} from './breed-names'
+import { isAutoNamedBranch, type BreedType } from './breed-names'
 import { gitService as gitEffectService } from '../effect/git/facade'
+import { readHeadBranch } from './git-head'
+import { recordBranchRename, type BranchRenameDb } from './worktree-branch-reconcile'
 
 export interface WorktreeInfo {
   path: string
@@ -473,17 +471,8 @@ export function canonicalizeBranchName(title: string): string {
 export { canonicalizeTicketTitle } from '@shared/types/branch-utils'
 export { normalizeBranchDisplayName, parseWorktreeForBranch } from '@shared/git-output'
 
-/**
- * Check if a branch name is an auto-generated name (breed or legacy city name).
- * Matches exact names and suffixed variants like `golden-retriever-2` or `tokyo-v3`.
- */
-export function isAutoNamedBranch(branchName: string): boolean {
-  const lower = branchName.toLowerCase()
-  return (
-    ALL_BREED_NAMES.some((b) => b === lower || new RegExp(`^${b}-(?:v)?\\d+$`).test(lower)) ||
-    LEGACY_CITY_NAMES.some((c) => c === lower || new RegExp(`^${c}-(?:v)?\\d+$`).test(lower))
-  )
-}
+// Defined next to the names it knows; re-exported here, where its callers have always found it
+export { isAutoNamedBranch }
 
 // ── Auto-rename helper ──────────────────────────────────────────
 
@@ -492,18 +481,26 @@ export interface AutoRenameParams {
   worktreePath: string
   currentBranchName: string
   sessionTitle: string
-  /** Minimal DB interface — only needs updateWorktree */
+  /**
+   * Minimal DB interface. Only `updateWorktree` is required; given the rest (the database
+   * service has it all) a rename also reaches every other copy of the old name, see
+   * `recordBranchRename`.
+   */
   db: {
     updateWorktree(
       id: string,
       data: { name?: string; branch_name?: string; branch_renamed?: number }
     ): unknown
-  }
+    getWorktree?(id: string): { project_id: string } | null
+  } & BranchRenameDb
 }
 
 export interface AutoRenameResult {
   renamed: boolean
   newBranch?: string
+  /** With `renamed`: the name the branch had, and the project of the worktree when known. */
+  oldBranch?: string
+  projectId?: string
   error?: string
   skipped?: 'not-auto-named' | 'same-name' | 'all-variants-taken' | 'empty-canonical'
 }
@@ -516,7 +513,11 @@ export interface AutoRenameResult {
 export async function autoRenameWorktreeBranch(
   params: AutoRenameParams
 ): Promise<AutoRenameResult> {
-  const { worktreeId, worktreePath, currentBranchName, sessionTitle, db } = params
+  const { worktreeId, worktreePath, sessionTitle, db } = params
+  // The caller's name comes from the database; the checkout says which branch there is to
+  // rename. They differ after a rename the database has not caught up with, and `git branch
+  // -m` of a name that is gone would fail and mark the worktree as renamed for good.
+  const currentBranchName = readHeadBranch(worktreePath) ?? params.currentBranchName
 
   if (!isAutoNamedBranch(currentBranchName)) {
     return { renamed: false, skipped: 'not-auto-named' }
@@ -558,7 +559,18 @@ export async function autoRenameWorktreeBranch(
       branch_name: targetBranch,
       branch_renamed: 1
     })
-    return { renamed: true, newBranch: targetBranch }
+    // Everything that still names the placeholder branch follows: worktrees cut from it
+    // before it got its real name would otherwise merge into a branch that is gone
+    const projectId = db.getWorktree?.(worktreeId)?.project_id
+    if (projectId) {
+      recordBranchRename(db, {
+        projectId,
+        worktreeId,
+        oldBranch: currentBranchName,
+        newBranch: targetBranch
+      })
+    }
+    return { renamed: true, newBranch: targetBranch, oldBranch: currentBranchName, projectId }
   } else {
     db.updateWorktree(worktreeId, { branch_renamed: 1 })
     return { renamed: false, error: renameResult.error }

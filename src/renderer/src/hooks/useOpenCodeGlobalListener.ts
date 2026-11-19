@@ -2,7 +2,6 @@ import { useEffect } from 'react'
 import { useSessionStore } from '@/stores/useSessionStore'
 import type { CodexThreadGoal } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
-import { useGitStore } from '@/stores/useGitStore'
 import {
   markNextWorkingStatusExplicit,
   useWorktreeStatusStore,
@@ -27,6 +26,7 @@ import {
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { extractSessionErrorMessage } from '@/lib/session-error-message'
 import { checkAutoApprove } from '@/lib/permissionUtils'
+import { applyBranchRenamed } from '@/lib/branch-rename'
 import { isPlanLike } from '@/lib/constants'
 import { shouldPreserveBlockingSessionStatus } from '@/lib/session-status-guards'
 import { handleSessionIdleFollowUp } from '@/lib/session-follow-up-dispatch'
@@ -235,15 +235,10 @@ function restoreSessionRunningStatus(sessionId: string, modeOverride?: 'build' |
 export function useOpenCodeGlobalListener(): void {
   // Listen for branch auto-rename events from the main process
   useEffect(() => {
-    const unsubscribe = worktreeApi.onBranchRenamed((data) => {
-      const { worktreeId, newBranch, worktreePath } = data
-      useWorktreeStore.getState().updateWorktreeBranch(worktreeId, newBranch)
-      // The displayed name prefers the live branch info from the git store —
-      // refresh it so the rename shows without waiting for a watcher event.
-      if (worktreePath) {
-        void useGitStore.getState().loadBranchInfo(worktreePath, { force: true })
-      }
-    })
+    // Every rename the main process makes or finds (in-app rename, auto-rename from the
+    // session title, a branch renamed in a terminal) arrives here: all stores that hold the
+    // branch's name follow it.
+    const unsubscribe = worktreeApi.onBranchRenamed(applyBranchRenamed)
 
     return unsubscribe
   }, [])
