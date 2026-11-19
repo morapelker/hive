@@ -132,6 +132,19 @@ export function useCommands() {
         }
       },
       {
+        id: 'connection:recent',
+        label: 'Recent Connections',
+        description: 'Create a connection from recent or selected projects',
+        category: 'navigation',
+        icon: 'Link',
+        shortcut: getDisplayString('connection:recent'),
+        keywords: ['connection', 'connect', 'recent', 'create', 'new'],
+        action: () => {
+          closeCommandPalette()
+          useConnectionStore.getState().setRecentConnectionsDialogOpen(true)
+        }
+      },
+      {
         id: 'nav:switch-project',
         label: 'Switch to Project',
         description: 'Navigate to a different project',

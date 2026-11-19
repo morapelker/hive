@@ -381,3 +381,90 @@ describe('RecentConnectionsDialog pinned selection row', () => {
     await waitFor(() => expect(quickCreateConnection).toHaveBeenCalledWith([alpha, beta, gamma]))
   })
 })
+
+describe('RecentConnectionsDialog keyboard flow', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setStoreProjects([])
+  })
+
+  it('selects the first match while typing and creates it with Enter', async () => {
+    const quickCreateConnection = vi.fn().mockResolvedValue('conn-1')
+    useConnectionStore.setState({ quickCreateConnection } as never)
+    await renderDialog()
+
+    const filter = screen.getByTestId('recent-connections-filter')
+    expect(filter).toHaveFocus()
+    await userEvent.type(filter, 'gamma')
+    expect(screen.getByTestId('recent-connections-create-button')).toBeEnabled()
+
+    await userEvent.keyboard('{Enter}')
+    expect(quickCreateConnection).toHaveBeenCalledWith([alpha, gamma])
+  })
+
+  it('moves the row selection with the arrow keys', async () => {
+    const quickCreateConnection = vi.fn().mockResolvedValue('conn-1')
+    useConnectionStore.setState({ quickCreateConnection } as never)
+    await renderDialog()
+
+    screen.getByTestId('recent-connections-filter').focus()
+    await userEvent.keyboard('{ArrowDown}{ArrowDown}{ArrowDown}{ArrowUp}{Enter}')
+    expect(quickCreateConnection).toHaveBeenCalledWith([alpha, gamma])
+  })
+
+  it('picks projects with Enter in the project filter and creates on Enter', async () => {
+    const quickCreateConnection = vi.fn().mockResolvedValue('conn-1')
+    useConnectionStore.setState({ quickCreateConnection } as never)
+    setStoreProjects([alpha, beta, gamma])
+    await renderDialog([])
+
+    const projectFilter = screen.getByTestId('recent-connections-project-filter')
+    await userEvent.click(projectFilter)
+    await userEvent.type(projectFilter, 'beta{Enter}')
+    expect(projectFilter).toHaveValue('')
+    await userEvent.type(projectFilter, 'gam{Enter}')
+    expect(screen.getByTestId('recent-connection-row-selected-combo')).toBeInTheDocument()
+
+    await userEvent.keyboard('{Enter}')
+    expect(quickCreateConnection).toHaveBeenCalledWith([beta, gamma])
+  })
+
+  it('removes the last picked project with Backspace on an empty project filter', async () => {
+    await renderDialog()
+
+    const projectFilter = screen.getByTestId('recent-connections-project-filter')
+    await userEvent.click(projectFilter)
+    await userEvent.type(projectFilter, 'alpha{Enter}beta{Enter}')
+    expect(screen.getByTestId('recent-connections-selected-chip-proj-b')).toBeInTheDocument()
+
+    await userEvent.keyboard('{Backspace}')
+    expect(screen.queryByTestId('recent-connections-selected-chip-proj-b')).not.toBeInTheDocument()
+    expect(screen.getByTestId('recent-connections-selected-chip-proj-a')).toBeInTheDocument()
+  })
+
+  it('moves the project cursor with the arrow keys', async () => {
+    await renderDialog()
+
+    const projectFilter = screen.getByTestId('recent-connections-project-filter')
+    await userEvent.click(projectFilter)
+    await userEvent.keyboard('{ArrowDown}{Enter}')
+    // Sorted by name: alpha-service, beta-web, gamma-api
+    expect(screen.getByTestId('recent-connections-selected-chip-proj-b')).toBeInTheDocument()
+  })
+
+  it('opts out of the global Tab / Shift+Tab mode toggle so Shift+Tab moves focus', async () => {
+    await renderDialog()
+    expect(screen.getByTestId('recent-connections-dialog')).toHaveAttribute('data-tab-navigates')
+  })
+
+  it('creates with Cmd+Enter from anywhere in the dialog', async () => {
+    const quickCreateConnection = vi.fn().mockResolvedValue('conn-1')
+    useConnectionStore.setState({ quickCreateConnection } as never)
+    await renderDialog()
+
+    await userEvent.click(screen.getByTestId('recent-connection-row-e3'))
+    await userEvent.click(screen.getByTestId('recent-connections-project-filter'))
+    await userEvent.keyboard('{Meta>}{Enter}{/Meta}')
+    expect(quickCreateConnection).toHaveBeenCalledWith([beta, gamma])
+  })
+})

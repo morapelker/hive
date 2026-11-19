@@ -13,6 +13,7 @@ import { SettingsModal } from '@/components/settings'
 import { AgentSetupGuard } from '@/components/setup'
 import { HelpOverlay } from '@/components/ui/HelpOverlay'
 import { FileSearchDialog } from '@/components/file-search'
+import { RecentConnectionsDialogHost } from '@/components/connections/RecentConnectionsDialogHost'
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
 import { useVimNavigation } from '@/hooks/useVimNavigation'
 import { useOpenCodeGlobalListener } from '@/hooks/useOpenCodeGlobalListener'
@@ -331,6 +332,9 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
           </ErrorBoundary>
           <ErrorBoundary componentName="FileSearchDialog" fallback={null}>
             <FileSearchDialog />
+          </ErrorBoundary>
+          <ErrorBoundary componentName="RecentConnectionsDialog" fallback={null}>
+            <RecentConnectionsDialogHost />
           </ErrorBoundary>
           <GlobalProjectSettings />
           {createPRWorktreeId && createPRWorktreePath && (

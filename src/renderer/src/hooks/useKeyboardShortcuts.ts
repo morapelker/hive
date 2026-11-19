@@ -1038,6 +1038,16 @@ function getShortcutHandlers(
       }
     },
     {
+      id: 'connection:recent',
+      binding: getEffectiveBinding('connection:recent'),
+      allowInInput: true,
+      handler: () => {
+        const { recentConnectionsDialogOpen, setRecentConnectionsDialogOpen } =
+          useConnectionStore.getState()
+        setRecentConnectionsDialogOpen(!recentConnectionsDialogOpen)
+      }
+    },
+    {
       id: 'connection:rename',
       binding: getEffectiveBinding('connection:rename'),
       allowInInput: true,
