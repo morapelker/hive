@@ -272,6 +272,33 @@ describe('RecentConnectionsDialog pinned selection row', () => {
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
+  it('passes the typed connection name to quickCreateConnection', async () => {
+    const quickCreateConnection = vi.fn().mockResolvedValue('conn-1')
+    useConnectionStore.setState({ quickCreateConnection } as never)
+
+    vi.mocked(connectionApi.getRecentConnections).mockResolvedValue({
+      success: true,
+      entries
+    })
+    render(<RecentConnectionsDialog open onOpenChange={vi.fn()} />)
+    await waitFor(() =>
+      expect(screen.queryByTestId('recent-connections-loading')).not.toBeInTheDocument()
+    )
+
+    await userEvent.click(screen.getByTestId('recent-connections-project-option-proj-a'))
+    await userEvent.click(screen.getByTestId('recent-connections-project-option-proj-b'))
+    await userEvent.click(screen.getByTestId('recent-connections-project-option-proj-c'))
+    await userEvent.click(screen.getByTestId('recent-connection-row-selected-combo'))
+    await userEvent.type(screen.getByTestId('recent-connections-name-input'), '  Checkout flow  ')
+    await userEvent.click(screen.getByTestId('recent-connections-create-button'))
+
+    await waitFor(() =>
+      expect(quickCreateConnection).toHaveBeenCalledWith([alpha, beta, gamma], {
+        customName: 'Checkout flow'
+      })
+    )
+  })
+
   it('pins the exact matching entry first instead of a synthetic row', async () => {
     await renderDialog()
 
