@@ -27,6 +27,7 @@ import { assessConnectionMembers } from '@/lib/connection-merge'
 import { getSessionSignal } from '@/lib/document-flow/session-signal'
 import { runItemOfTicket, runTitle } from '@/lib/document-flow/ticket-run-membership'
 import { runOwnsItsTickets } from '@shared/document-flow/ticket-runs'
+import { commitsToMerge } from '@shared/git-merge-status'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import {
   useKanbanStore,
@@ -97,8 +98,9 @@ async function classifyBranch(args: {
     throw new Error(`${args.branch}: ${error}`)
   }
   if (statuses?.files?.some((file) => file.status === 'C')) return { kind: 'markers' }
-  if (!dirty && stat.commitsAhead === 0) return { kind: 'clean' }
-  if (args.landed && stat.commitsAhead === 0) return { kind: 'leftovers' }
+  const toMerge = commitsToMerge(stat)
+  if (!dirty && toMerge === 0) return { kind: 'clean' }
+  if (args.landed && toMerge === 0) return { kind: 'leftovers' }
   return { kind: 'work' }
 }
 

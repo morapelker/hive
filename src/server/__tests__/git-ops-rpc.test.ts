@@ -694,8 +694,53 @@ describe('git ops RPC domain', () => {
       filesChanged: 1,
       insertions: 1,
       deletions: 0,
-      commitsAhead: 1
+      commitsAhead: 1,
+      contentMerged: false
     })
+  })
+
+  it('reports a squash-merged branch as content-merged, its commits still counted', async () => {
+    const dir = makeTempDir()
+    git(dir, ['init'])
+    git(dir, ['config', 'user.email', 'hive@example.test'])
+    git(dir, ['config', 'user.name', 'Hive Test'])
+    writeFileSync(join(dir, 'tracked.txt'), 'original\n')
+    git(dir, ['add', 'tracked.txt'])
+    git(dir, ['commit', '-m', 'initial'])
+    git(dir, ['branch', '-M', 'main'])
+    git(dir, ['checkout', '-b', 'feature'])
+    writeFileSync(join(dir, 'feature.txt'), 'feature\n')
+    git(dir, ['add', 'feature.txt'])
+    git(dir, ['commit', '-m', 'add feature'])
+    writeFileSync(join(dir, 'tracked.txt'), 'changed\n')
+    git(dir, ['commit', '-am', 'change tracked'])
+    git(dir, ['checkout', 'main'])
+    git(dir, ['merge', '--squash', 'feature'])
+    git(dir, ['commit', '-m', 'feature (#1)'])
+    writeFileSync(join(dir, 'later.txt'), 'later\n')
+    git(dir, ['add', 'later.txt'])
+    git(dir, ['commit', '-m', 'main moves on'])
+    git(dir, ['checkout', 'feature'])
+
+    const service = makeLiveGitOpsRpcService()
+
+    await expect(Effect.runPromise(service.branchDiffShortStat(dir, 'main'))).resolves.toEqual({
+      success: true,
+      filesChanged: 2,
+      insertions: 2,
+      deletions: 1,
+      commitsAhead: 2,
+      contentMerged: true
+    })
+
+    // One more commit on the branch: there is something to merge again
+    writeFileSync(join(dir, 'extra.txt'), 'extra\n')
+    git(dir, ['add', 'extra.txt'])
+    git(dir, ['commit', '-m', 'one more thing'])
+
+    await expect(
+      Effect.runPromise(service.branchDiffShortStat(dir, 'main'))
+    ).resolves.toMatchObject({ success: true, commitsAhead: 3, contentMerged: false })
   })
 
   it('returns tracked and untracked file diffs from a git worktree', async () => {
@@ -1438,18 +1483,47 @@ describe('git ops RPC domain', () => {
     const service = makeLiveGitOpsRpcService()
     await expect(Effect.runPromise(service.isBranchMerged(dir, 'feature'))).resolves.toEqual({
       success: true,
-      isMerged: false
+      isMerged: false,
+      contentMerged: false
     })
 
     git(dir, ['merge', 'feature'])
 
     await expect(Effect.runPromise(service.isBranchMerged(dir, 'feature'))).resolves.toEqual({
       success: true,
-      isMerged: true
+      isMerged: true,
+      contentMerged: false
     })
     await expect(Effect.runPromise(service.isBranchMerged(dir, 'missing'))).resolves.toEqual({
       success: true,
-      isMerged: false
+      isMerged: false,
+      contentMerged: false
+    })
+  })
+
+  it('reports a squash-merged branch as content-merged into HEAD, not as merged', async () => {
+    const dir = makeTempDir()
+    git(dir, ['init'])
+    git(dir, ['config', 'user.email', 'hive@example.test'])
+    git(dir, ['config', 'user.name', 'Hive Test'])
+    writeFileSync(join(dir, 'tracked.txt'), 'initial\n')
+    git(dir, ['add', 'tracked.txt'])
+    git(dir, ['commit', '-m', 'initial'])
+    git(dir, ['branch', '-M', 'main'])
+    git(dir, ['checkout', '-b', 'feature'])
+    writeFileSync(join(dir, 'feature.txt'), 'feature\n')
+    git(dir, ['add', 'feature.txt'])
+    git(dir, ['commit', '-m', 'feature'])
+    git(dir, ['checkout', 'main'])
+    git(dir, ['merge', '--squash', 'feature'])
+    git(dir, ['commit', '-m', 'feature (#1)'])
+
+    const service = makeLiveGitOpsRpcService()
+
+    await expect(Effect.runPromise(service.isBranchMerged(dir, 'feature'))).resolves.toEqual({
+      success: true,
+      isMerged: false,
+      contentMerged: true
     })
   })
 

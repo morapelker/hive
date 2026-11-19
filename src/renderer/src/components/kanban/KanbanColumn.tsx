@@ -67,6 +67,7 @@ import { queueArchiveOverride } from '@/lib/archive-override'
 import { pullBaseBranches } from '@/lib/base-branch-pull'
 import { orchestratorLaunchRefusal } from '@/lib/document-flow/ticket-run-membership'
 import type { DocumentRun } from '@shared/types/document-flow'
+import { commitsToMerge } from '@shared/git-merge-status'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { dbApi } from '@/api/db-api'
 import { gitApi } from '@/api/git-api'
@@ -852,8 +853,9 @@ export function KanbanColumn({
                       gitApi.branchDiffShortStat(worktree.path, resolvedBaseBranch)
                     ])
 
+                    // (A squash-merged branch has none: its changes are on base already)
                     const commitsAhead = branchStatResult.success
-                      ? branchStatResult.commitsAhead
+                      ? commitsToMerge(branchStatResult)
                       : 0
 
                     if (!branchStatResult.success) {

@@ -277,6 +277,7 @@ export class GitService {
     insertions: number
     deletions: number
     commitsAhead: number
+    contentMerged: boolean
     error?: string
   }> {
     return gitEffectService.getBranchDiffShortStat(this.repoPath, baseBranch)
@@ -400,7 +401,9 @@ export class GitService {
     return gitEffectService.deleteBranch(this.repoPath, branchName)
   }
 
-  async isBranchMerged(branch: string): Promise<{ success: boolean; isMerged: boolean }> {
+  async isBranchMerged(
+    branch: string
+  ): Promise<{ success: boolean; isMerged: boolean; contentMerged: boolean }> {
     return gitEffectService.isBranchMerged(this.repoPath, branch)
   }
 

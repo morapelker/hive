@@ -22,6 +22,7 @@ import { getImageMimeType } from '@shared/types/file-utils'
 import type { GitBranchInfo, GitFileStatus, PRReviewComment } from '@shared/types/git'
 import { extractPullRequestUrl, parsePullRequestNumber } from '@shared/git-forge'
 import { telemetryService } from '../../../main/services/telemetry-service'
+import { mergeChangesNothing } from '../../../main/services/git-content-merged'
 import { resolveRepoForge, type ForgeResolver } from '../../../main/services/git-forge-remote'
 import {
   describeGlabError,
@@ -93,6 +94,11 @@ export interface GitBranchDiffShortStatResult {
   readonly insertions: number
   readonly deletions: number
   readonly commitsAhead: number
+  /**
+   * The branch has commits the base lacks, but merging it would change nothing: its content
+   * is on the base already (squash-merged, rebase-merged, cherry-picked).
+   */
+  readonly contentMerged: boolean
   readonly error?: string
 }
 
@@ -192,7 +198,13 @@ export interface GitBranchDiffFilesResult {
 
 export interface GitBranchMergedResult {
   readonly success: boolean
+  /** Every commit of the branch is in HEAD's history. */
   readonly isMerged: boolean
+  /**
+   * Not in HEAD's history, but merging the branch would change nothing: its content is on
+   * HEAD already (squash-merged, rebase-merged, cherry-picked).
+   */
+  readonly contentMerged: boolean
 }
 
 export interface GitCreatePullRequestResult {
@@ -1026,10 +1038,13 @@ export const makeLiveGitOpsRpcService = (
               await git.raw(['diff', '--shortstat', `${baseBranch}...HEAD`])
             )
             const revList = await git.raw(['rev-list', '--count', `${baseBranch}..HEAD`])
+            const commitsAhead = parseInt(revList.trim(), 10) || 0
             return {
               success: true,
               ...stat,
-              commitsAhead: parseInt(revList.trim(), 10) || 0
+              commitsAhead,
+              contentMerged:
+                commitsAhead > 0 && (await mergeChangesNothing(worktreePath, baseBranch, 'HEAD'))
             }
           } catch (error) {
             return {
@@ -1038,6 +1053,7 @@ export const makeLiveGitOpsRpcService = (
               insertions: 0,
               deletions: 0,
               commitsAhead: 0,
+              contentMerged: false,
               error: error instanceof Error ? error.message : String(error)
             }
           }
@@ -1772,12 +1788,14 @@ export const makeLiveGitOpsRpcService = (
               '--count',
               `HEAD..${branch}`
             ])
+            const isMerged = (parseInt(result.trim(), 10) || 0) === 0
             return {
               success: true,
-              isMerged: (parseInt(result.trim(), 10) || 0) === 0
+              isMerged,
+              contentMerged: !isMerged && (await mergeChangesNothing(worktreePath, 'HEAD', branch))
             }
           } catch {
-            return { success: true, isMerged: false }
+            return { success: true, isMerged: false, contentMerged: false }
           }
         },
         catch: (cause) => cause

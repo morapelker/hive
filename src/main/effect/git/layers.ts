@@ -13,6 +13,7 @@ import { glabCreateMergeRequest } from '../../services/gitlab-cli'
 import { selectUniqueBreedName } from '../../services/breed-names'
 import { createLogger } from '../../services/logger'
 import { isSameOrAncestorPath, normalizeWorktreePath } from '../../services/path-utils'
+import { mergeChangesNothing } from '../../services/git-content-merged'
 import { classifyGitError } from './classifier'
 import { GitUnknown, type GitError } from './errors'
 import { Git } from './service'
@@ -1197,11 +1198,19 @@ const make = Effect.gen(function* () {
         ),
       isMerged: (repoPath, branch) =>
         tryGit(repoPath, `git rev-list --count HEAD..${branch}`, undefined, (git) =>
-          git.raw(['rev-list', '--count', `HEAD..${branch}`]).then((result) => ({
-            success: true as const,
-            isMerged: (parseInt(result.trim(), 10) || 0) === 0
-          }))
-        ).pipe(Effect.catchAll(() => Effect.succeed({ success: true as const, isMerged: false }))),
+          git.raw(['rev-list', '--count', `HEAD..${branch}`]).then(async (result) => {
+            const isMerged = (parseInt(result.trim(), 10) || 0) === 0
+            return {
+              success: true as const,
+              isMerged,
+              contentMerged: !isMerged && (await mergeChangesNothing(repoPath, 'HEAD', branch))
+            }
+          })
+        ).pipe(
+          Effect.catchAll(() =>
+            Effect.succeed({ success: true as const, isMerged: false, contentMerged: false })
+          )
+        ),
       info: (repoPath) =>
         tryGit(repoPath, 'git status', undefined, async (git) => {
           const status = await git.status()
@@ -1425,10 +1434,13 @@ const make = Effect.gen(function* () {
         tryGit(repoPath, `git diff --shortstat ${baseBranch}...HEAD`, undefined, async (git) => {
           const stat = parseShortStat(await git.raw(['diff', '--shortstat', `${baseBranch}...HEAD`]))
           const revList = await git.raw(['rev-list', '--count', `${baseBranch}..HEAD`])
+          const commitsAhead = parseInt(revList.trim(), 10) || 0
           return {
             success: true as const,
             ...stat,
-            commitsAhead: parseInt(revList.trim(), 10) || 0
+            commitsAhead,
+            contentMerged:
+              commitsAhead > 0 && (await mergeChangesNothing(repoPath, baseBranch, 'HEAD'))
           }
         }),
       branchDiffFiles: (repoPath, branch) =>

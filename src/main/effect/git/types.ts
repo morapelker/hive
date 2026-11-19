@@ -51,6 +51,8 @@ export type GitBranchDiffShortStatResult = {
   insertions: number
   deletions: number
   commitsAhead: number
+  /** Commits the base lacks whose content is on it already (squash-merged and the like). */
+  contentMerged: boolean
   error?: string
 }
 

@@ -186,6 +186,47 @@ describe('MergeOnDoneDialog — already-merged branch', () => {
     expect(moveTicketMock).not.toHaveBeenCalled()
   })
 
+  it('treats a squash-merged branch as merged: no merge step, straight to archive/keep', async () => {
+    // Commits the base lacks, but their content is on it: a merge would change nothing
+    gitApiMocks.branchDiffShortStat.mockResolvedValue({
+      success: true,
+      filesChanged: 12,
+      insertions: 340,
+      deletions: 25,
+      commitsAhead: 7,
+      contentMerged: true
+    })
+
+    render(<MergeOnDoneDialog />)
+
+    expect(await screen.findByText(/changes are already on main/)).toBeTruthy()
+    expect(screen.queryByText('Merge branch')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Merge' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Archive' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Keep' })).toBeTruthy()
+    expect(gitApiMocks.merge).not.toHaveBeenCalled()
+    expect(moveTicketMock).not.toHaveBeenCalled()
+  })
+
+  it('still asks to commit uncommitted changes on a squash-merged branch', async () => {
+    gitApiMocks.hasUncommittedChanges.mockImplementation(
+      async (path: string) => path === featureWorktree.path
+    )
+    gitApiMocks.branchDiffShortStat.mockResolvedValue({
+      success: true,
+      filesChanged: 12,
+      insertions: 340,
+      deletions: 25,
+      commitsAhead: 7,
+      contentMerged: true
+    })
+
+    render(<MergeOnDoneDialog />)
+
+    expect(await screen.findByText('Uncommitted changes')).toBeTruthy()
+    expect(screen.queryByText(/changes are already on main/)).toBeNull()
+  })
+
   it('Keep moves the ticket to done without archiving the worktree', async () => {
     render(<MergeOnDoneDialog />)
 

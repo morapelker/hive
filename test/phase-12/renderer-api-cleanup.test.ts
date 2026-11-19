@@ -22416,7 +22416,9 @@ describe('renderer API cleanup', () => {
     expect(selectedBranchStart).toBeGreaterThan(mergedCheckStart)
     expect(source).toContain("import { gitApi } from '@/api/git-api'")
     expect(mergedCheckSource).toContain('gitApi.isBranchMerged(worktreePath, mergeBranch)')
-    expect(mergedCheckSource).toContain('setIsBranchMerged(result.isMerged)')
+    expect(mergedCheckSource).toContain(
+      'setIsBranchMerged(result.isMerged || !!result.contentMerged)'
+    )
     expect(mergedCheckSource).toContain('mergedCheckVersion')
     expect(mergedCheckSource).not.toContain('window.gitOps.isBranchMerged')
     expect(mergedCheckSource).not.toContain('unwrapEnvelope')
@@ -23125,7 +23127,7 @@ describe('renderer API cleanup', () => {
     expect(handleCommitSource).toContain(
       "toast.warning(`Cannot verify merge status: ${statResult.error ?? 'unknown error'}`)"
     )
-    expect(handleCommitSource).toContain('if (statResult.commitsAhead > 0)')
+    expect(handleCommitSource).toContain('if (commitsToMerge(statResult) > 0)')
     expect(handleCommitSource).not.toContain('window.gitOps.branchDiffShortStat')
     expect(handleCommitSource).not.toContain(
       'unwrapEnvelope(await window.gitOps.branchDiffShortStat'
@@ -23236,7 +23238,7 @@ describe('renderer API cleanup', () => {
     expect(baseCommitSource).toContain(
       "toast.warning(`Cannot verify merge status: ${statResult.error ?? 'unknown error'}`)"
     )
-    expect(baseCommitSource).toContain('if (statResult.commitsAhead > 0)')
+    expect(baseCommitSource).toContain('if (commitsToMerge(statResult) > 0)')
     expect(baseCommitSource).not.toContain('window.gitOps.branchDiffShortStat')
     expect(baseCommitSource).not.toContain('unwrapEnvelope(await window.gitOps.branchDiffShortStat')
   })

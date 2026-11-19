@@ -2,6 +2,7 @@ import { connectionApi } from '@/api/connection-api'
 import { dbApi } from '@/api/db-api'
 import { gitApi } from '@/api/git-api'
 import { pullBaseBranches } from '@/lib/base-branch-pull'
+import { commitsToMerge } from '@shared/git-merge-status'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import type { Session, Worktree } from '../../../main/db/types'
@@ -163,7 +164,7 @@ export async function assessConnectionMembers(
         )
       }
 
-      if (hasUncommitted || branchStatResult.commitsAhead > 0) {
+      if (hasUncommitted || commitsToMerge(branchStatResult) > 0) {
         return { worktreeId: worktree.id, projectId: member.project_id }
       }
       if (opts?.includeAlreadyMerged) {

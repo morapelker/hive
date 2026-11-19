@@ -181,6 +181,30 @@ describe('buildConnectionMergeQueue', () => {
     expect(queue).toEqual([{ worktreeId: 'wt-ahead', projectId: 'proj-1' }])
   })
 
+  it('reads a squash-merged member as having nothing to merge', async () => {
+    connectionApiMocks.get.mockResolvedValue({
+      success: true,
+      connection: { id: 'conn-1', members: [{ worktree_id: 'wt-squashed', project_id: 'proj-1' }] }
+    })
+    dbApiMocks.worktree.get.mockResolvedValue(worktree({ id: 'wt-squashed' }))
+    dbApiMocks.worktree.getActiveByProject.mockResolvedValue([mainWorktree])
+    gitApiMocks.hasUncommittedChanges.mockResolvedValue(false)
+    // Commits the base lacks, their content already on it
+    gitApiMocks.branchDiffShortStat.mockResolvedValue({
+      success: true,
+      filesChanged: 2,
+      insertions: 10,
+      deletions: 1,
+      commitsAhead: 3,
+      contentMerged: true
+    })
+
+    expect(await buildConnectionMergeQueue('conn-1')).toEqual([])
+    expect(await buildConnectionMergeQueue('conn-1', { includeAlreadyMerged: true })).toEqual([
+      { worktreeId: 'wt-squashed', projectId: 'proj-1', alreadyMerged: true }
+    ])
+  })
+
   it('includeAlreadyMerged queues clean members too, but still skips on-base ones', async () => {
     connectionApiMocks.get.mockResolvedValue({
       success: true,

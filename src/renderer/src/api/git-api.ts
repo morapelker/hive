@@ -81,6 +81,12 @@ type GitBranchDiffShortStatResult = {
   insertions: number
   deletions: number
   commitsAhead: number
+  /**
+   * Commits the base lacks whose content is on it already (squash-merged and the like): a
+   * merge would change nothing. Read through `commitsToMerge`. Absent on an answer from a Mac
+   * running a version without the check.
+   */
+  contentMerged?: boolean
   error?: string
 }
 
@@ -169,7 +175,13 @@ type GitMergeResult = {
 
 type GitBranchMergedResult = {
   success: boolean
+  /** Every commit of the branch is in HEAD's history. */
   isMerged: boolean
+  /**
+   * Not in HEAD's history, but its content is on HEAD already (squash-merged and the like).
+   * Absent on an answer from a Mac running a version without the check.
+   */
+  contentMerged?: boolean
 }
 
 type GitRemoteUrlResult = {

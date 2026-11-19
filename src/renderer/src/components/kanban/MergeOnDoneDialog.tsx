@@ -25,6 +25,7 @@ import { toast } from 'sonner'
 import { Loader2, GitMerge, GitCommit, Archive, AlertTriangle } from 'lucide-react'
 import { dbApi } from '@/api/db-api'
 import { gitApi } from '@/api/git-api'
+import { commitsToMerge, type BranchMergeStat } from '@shared/git-merge-status'
 import { cn } from '@/lib/utils'
 import { trackConnectionArchives } from '@/lib/connection-archive'
 import { findCarriedRunTickets } from '@/lib/document-flow/carried-tickets'
@@ -56,6 +57,10 @@ interface BranchStats {
   filesChanged: number
   insertions: number
   deletions: number
+  /**
+   * Commits a merge would still bring: none for a branch whose content is on its base
+   * already (squash-merged and the like), whatever the commit graph says.
+   */
   commitsAhead: number
 }
 
@@ -89,6 +94,11 @@ interface ResolvedState {
   branchStats: BranchStats
   alreadyMerged: boolean
   /**
+   * Already merged by content only: the base lacks the branch's commits but has their
+   * changes (squash-merged and the like).
+   */
+  landedByContent?: boolean
+  /**
    * Document-run tickets merged before this one whose work is on its branch (it was cut from
    * the run's integration branch) but not on the base branch yet: merging brings them along.
    */
@@ -100,16 +110,13 @@ interface ResolvedState {
   members?: ResolvedMember[]
 }
 
-const toBranchStats = (stat: {
-  filesChanged: number
-  insertions: number
-  deletions: number
-  commitsAhead: number
-}): BranchStats => ({
+const toBranchStats = (
+  stat: BranchMergeStat & { filesChanged: number; insertions: number; deletions: number }
+): BranchStats => ({
   filesChanged: stat.filesChanged,
   insertions: stat.insertions,
   deletions: stat.deletions,
-  commitsAhead: stat.commitsAhead
+  commitsAhead: commitsToMerge(stat)
 })
 
 /** The worktrees an entry stands for: its instance's members, or the one worktree. */
@@ -487,16 +494,13 @@ export function MergeOnDoneDialog() {
           return
         }
 
-        const branchStats: BranchStats = {
-          filesChanged: branchStatResult.filesChanged,
-          insertions: branchStatResult.insertions,
-          deletions: branchStatResult.deletions,
-          commitsAhead: branchStatResult.commitsAhead
-        }
+        const branchStats = toBranchStats(branchStatResult)
 
-        // No diffs at all means the branch already landed on base — skip the
+        // Nothing a merge would bring means the branch already landed on base — merged, or
+        // squash-merged there (its commits are not on base, their changes are). Skip the
         // commit/merge steps but still offer the archive/keep choice
         const alreadyMerged = !hasUncommitted && branchStats.commitsAhead === 0
+        const landedByContent = alreadyMerged && branchStatResult.commitsAhead > 0
 
         // Document-run batch: a ticket branch with nothing left for the integration branch
         // needs no merge step (its archive entry at the tail takes the archive/keep step);
@@ -547,6 +551,7 @@ export function MergeOnDoneDialog() {
           baseDirty,
           branchStats,
           alreadyMerged,
+          landedByContent,
           carriedRunTickets
         })
         setCommitMessage(entryTitle)
@@ -684,19 +689,9 @@ export function MergeOnDoneDialog() {
         return
       }
 
-      if (statResult.commitsAhead > 0) {
+      if (commitsToMerge(statResult) > 0) {
         setResolved((prev) =>
-          prev
-            ? {
-                ...prev,
-                branchStats: {
-                  filesChanged: statResult.filesChanged,
-                  insertions: statResult.insertions,
-                  deletions: statResult.deletions,
-                  commitsAhead: statResult.commitsAhead
-                }
-              }
-            : prev
+          prev ? { ...prev, branchStats: toBranchStats(statResult) } : prev
         )
         setStep('merge')
       } else {
@@ -774,19 +769,9 @@ export function MergeOnDoneDialog() {
           return
         }
 
-        if (statResult.commitsAhead > 0) {
+        if (commitsToMerge(statResult) > 0) {
           setResolved((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  branchStats: {
-                    filesChanged: statResult.filesChanged,
-                    insertions: statResult.insertions,
-                    deletions: statResult.deletions,
-                    commitsAhead: statResult.commitsAhead
-                  }
-                }
-              : prev
+            prev ? { ...prev, branchStats: toBranchStats(statResult) } : prev
           )
           setStep('merge')
         } else {
@@ -1144,7 +1129,7 @@ export function MergeOnDoneDialog() {
         gitApi.hasUncommittedChanges(worktreePath),
         gitApi.branchDiffShortStat(worktreePath, baseBranch)
       ])
-      return !dirty && stat.success && stat.commitsAhead === 0
+      return !dirty && stat.success && commitsToMerge(stat) === 0
     }
     // Members that were skipped: gone already, or they picked up work since
     // the queue was built — those keep their own turn in the dialog instead
@@ -1595,9 +1580,11 @@ export function MergeOnDoneDialog() {
             <p className="text-xs text-muted-foreground">
               {isOverride
                 ? 'Commit and merge checks skipped.'
-                : resolved.alreadyMerged
-                  ? 'Branch already merged.'
-                  : 'Merge successful!'}{' '}
+                : resolved.landedByContent
+                  ? `Nothing left to merge: the branch's changes are already on ${resolved.baseBranch}.`
+                  : resolved.alreadyMerged
+                    ? 'Branch already merged.'
+                    : 'Merge successful!'}{' '}
               {resolved.members ? (
                 <>
                   Archive the {resolved.members.length} worktree

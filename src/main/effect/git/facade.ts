@@ -311,7 +311,10 @@ class GitFacade {
     return runResult(Effect.flatMap(Git, (git) => git.branch.delete(repoPath, branchName)))
   }
 
-  isBranchMerged(repoPath: string, branch: string): Promise<{ success: boolean; isMerged: boolean }> {
+  isBranchMerged(
+    repoPath: string,
+    branch: string
+  ): Promise<{ success: boolean; isMerged: boolean; contentMerged: boolean }> {
     return runResult(Effect.flatMap(Git, (git) => git.branch.isMerged(repoPath, branch)))
   }
 

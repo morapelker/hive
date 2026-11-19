@@ -197,7 +197,8 @@ export function GitPushPull({
     [setMergeBranch]
   )
 
-  // Check if the selected merge branch is already merged into HEAD
+  // Check if the selected merge branch is already merged into HEAD — its commits are in
+  // HEAD's history, or their content is (squash-merged: a merge would change nothing)
   // Re-runs when mergedCheckVersion increments (e.g. after a successful merge)
   useEffect(() => {
     if (!worktreePath || !mergeBranch) {
@@ -206,7 +207,7 @@ export function GitPushPull({
     }
     gitApi.isBranchMerged(worktreePath, mergeBranch).then((result) => {
       if (result.success) {
-        setIsBranchMerged(result.isMerged)
+        setIsBranchMerged(result.isMerged || !!result.contentMerged)
       }
     })
   }, [worktreePath, mergeBranch, mergedCheckVersion])
