@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, cleanup, act } from '@testing-library/react'
+import { render, screen, cleanup, act, fireEvent } from '@testing-library/react'
 import { resetRendererRpcClientForTests, setRendererRpcClient } from '@/api/rpc-client'
 import { TooltipProvider } from '@/components/ui/tooltip'
 
@@ -25,6 +25,7 @@ class ResizeObserverStub {
   ResizeObserverStub
 
 import { ConnectionItem } from '../ConnectionItem'
+import { ConnectionList } from '../ConnectionList'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 
 type Connection = ReturnType<typeof useConnectionStore.getState>['connections'][number]
@@ -105,6 +106,33 @@ describe('ConnectionItem — rename shortcut', () => {
 
     expect(screen.queryByDisplayValue('My feature')).not.toBeInTheDocument()
     expect(useConnectionStore.getState().pendingRenameConnectionId).toBe('conn-other')
+  })
+
+  it('expands a collapsed Connections section so the row can start renaming', () => {
+    // e.g. the connection was selected from Recent while Connections was collapsed
+    const loadConnections = useConnectionStore.getState().loadConnections
+    useConnectionStore.setState({
+      connections: [makeConnection()],
+      connectionModeActive: false,
+      loadConnections: vi.fn(async () => {})
+    } as never)
+    try {
+      render(
+        <TooltipProvider>
+          <ConnectionList />
+        </TooltipProvider>
+      )
+      fireEvent.click(screen.getByText('Connections'))
+      expect(screen.queryByTestId('connections-list-items')).not.toBeInTheDocument()
+
+      act(() => useConnectionStore.getState().requestConnectionRename('conn-1'))
+
+      expect(screen.getByTestId('connections-list-items')).toBeInTheDocument()
+      expect(screen.getByDisplayValue('My feature')).toBeInTheDocument()
+      expect(useConnectionStore.getState().pendingRenameConnectionId).toBeNull()
+    } finally {
+      useConnectionStore.setState({ connections: [], loadConnections })
+    }
   })
 
   it("leaves a connection project's base instance alone", () => {
