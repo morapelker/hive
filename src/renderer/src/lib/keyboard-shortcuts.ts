@@ -215,6 +215,13 @@ export const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
     category: 'sidebar',
     defaultBinding: { key: 'r', modifiers: ['meta', 'shift'] }
   },
+  {
+    id: 'connection:recent',
+    label: 'Recent Connections',
+    description: 'Open the Recent Connections dialog to create a connection',
+    category: 'sidebar',
+    defaultBinding: { key: 'k', modifiers: ['meta', 'shift'] }
+  },
 
   // Focus shortcuts
   {

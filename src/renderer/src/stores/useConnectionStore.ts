@@ -76,6 +76,9 @@ interface ConnectionState {
    */
   pendingRenameConnectionId: string | null
 
+  /** Whether the Recent Connections dialog is open (sidebar button or `connection:recent`). */
+  recentConnectionsDialogOpen: boolean
+
   // Actions
   loadConnections: () => Promise<void>
   createConnection: (
@@ -111,6 +114,7 @@ interface ConnectionState {
    */
   claimConnectionRename: (connectionId: string) => boolean
   clearConnectionRenameRequest: () => void
+  setRecentConnectionsDialogOpen: (open: boolean) => void
 
   // Connection Mode Actions
   enterConnectionMode: (sourceWorktreeId: string) => void
@@ -138,6 +142,7 @@ export const useConnectionStore = create<ConnectionState>()(
       connectionModeSubmitting: false,
       connectionModeName: '',
       pendingRenameConnectionId: null,
+      recentConnectionsDialogOpen: false,
 
       loadConnections: async () => {
         set({ isLoading: true, error: null })
@@ -530,6 +535,10 @@ export const useConnectionStore = create<ConnectionState>()(
 
       clearConnectionRenameRequest: () => {
         set({ pendingRenameConnectionId: null })
+      },
+
+      setRecentConnectionsDialogOpen: (open: boolean) => {
+        set({ recentConnectionsDialogOpen: open })
       },
 
       enterConnectionMode: (sourceWorktreeId: string) => {
