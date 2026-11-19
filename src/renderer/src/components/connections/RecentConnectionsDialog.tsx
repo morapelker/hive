@@ -49,6 +49,8 @@ export function RecentConnectionsDialog({
   const [filter, setFilter] = useState('')
   const [projectFilter, setProjectFilter] = useState('')
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set())
+  // Optional display name for the new connection (blank keeps the derived "A + B" name)
+  const [connectionName, setConnectionName] = useState('')
 
   // Inline note edit state
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null)
@@ -70,6 +72,7 @@ export function RecentConnectionsDialog({
     setProjectFilter('')
     setSelectedProjectIds(new Set())
     setEditingNoteId(null)
+    setConnectionName('')
 
     connectionApi
       .getRecentConnections()
@@ -199,6 +202,19 @@ export function RecentConnectionsDialog({
     }
   }, [displayEntries, selectedId, showSelectionRow])
 
+  // Picking 2+ projects pre-selects the first row (exactly that combination), so Create
+  // works without an extra click. Re-runs only when the picked projects change, so a
+  // row the user clicks afterwards stays selected.
+  const selectionKey = useMemo(
+    () => Array.from(selectedProjectIds).sort().join(','),
+    [selectedProjectIds]
+  )
+  const selectionRowId =
+    selectedProjects.length >= 2 ? (exactSelectionEntry?.id ?? SELECTED_COMBO_ID) : null
+  useEffect(() => {
+    if (selectionRowId) setSelectedId(selectionRowId)
+  }, [selectionKey, selectionRowId])
+
   // Focus the note input when it appears (deferred to run after the context menu closes)
   useEffect(() => {
     if (!editingNoteId) return
@@ -225,14 +241,17 @@ export function RecentConnectionsDialog({
 
     setIsCreating(true)
     try {
-      const id = await quickCreateConnection(projects)
+      const customName = connectionName.trim()
+      const id = customName
+        ? await quickCreateConnection(projects, { customName })
+        : await quickCreateConnection(projects)
       if (id) {
         onOpenChange(false)
       }
     } finally {
       setIsCreating(false)
     }
-  }, [entries, selectedId, selectedProjects, quickCreateConnection, onOpenChange])
+  }, [entries, selectedId, selectedProjects, connectionName, quickCreateConnection, onOpenChange])
 
   const persistNote = useCallback(async (entryId: string, raw: string | null) => {
     const normalized = raw && raw.trim() ? raw.trim() : null
@@ -563,7 +582,21 @@ export function RecentConnectionsDialog({
           </div>
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="sm:items-center">
+          <Input
+            placeholder="Connection name (optional)"
+            value={connectionName}
+            onChange={(e) => setConnectionName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && selectedId && !isCreating) {
+                e.preventDefault()
+                void handleCreate()
+              }
+            }}
+            className="sm:max-w-xs"
+            disabled={isCreating}
+            data-testid="recent-connections-name-input"
+          />
           <Button
             onClick={handleCreate}
             disabled={!selectedId || isCreating}

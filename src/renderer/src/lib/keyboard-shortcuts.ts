@@ -208,6 +208,13 @@ export const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
     category: 'sidebar',
     defaultBinding: { key: '`', modifiers: ['ctrl'] }
   },
+  {
+    id: 'connection:rename',
+    label: 'Rename Connection',
+    description: 'Rename the currently selected connection',
+    category: 'sidebar',
+    defaultBinding: { key: 'r', modifiers: ['meta', 'shift'] }
+  },
 
   // Focus shortcuts
   {

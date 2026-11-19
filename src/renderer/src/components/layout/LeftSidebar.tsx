@@ -12,6 +12,7 @@ import { ResizeHandle } from './ResizeHandle'
 import { KanbanSquare, Link, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import {
   ProjectList,
   AddProjectButton,
@@ -125,6 +126,8 @@ export function LeftSidebar(): React.JSX.Element {
   const connectionModeSubmitting = useConnectionStore((s) => s.connectionModeSubmitting)
   const exitConnectionMode = useConnectionStore((s) => s.exitConnectionMode)
   const finalizeConnection = useConnectionStore((s) => s.finalizeConnection)
+  const connectionModeName = useConnectionStore((s) => s.connectionModeName)
+  const setConnectionModeName = useConnectionStore((s) => s.setConnectionModeName)
 
   // Nav row — Pinned Board toggle (clear file/diff overlays before showing
   // the board, then toggle).
@@ -242,39 +245,60 @@ export function LeftSidebar(): React.JSX.Element {
 
         {/* Orca SidebarHeader ("Workspaces" → "Projects") */}
         {connectionModeActive ? (
-          <div className={SIDEBAR_HEADER}>
-            <div className={cn(SIDEBAR_HEADER_LEFT, SIDEBAR_HEADER_LABEL, 'gap-1.5')}>
-              <Link className="size-3.5 shrink-0" strokeWidth={SIDEBAR_HEADER_ACTION_ICON_STROKE} />
-              <span className="truncate">Select worktrees</span>
-              <span className="shrink-0 tabular-nums">({connectionModeSelectedIds.size})</span>
+          <>
+            <div className={SIDEBAR_HEADER}>
+              <div className={cn(SIDEBAR_HEADER_LEFT, SIDEBAR_HEADER_LABEL, 'gap-1.5')}>
+                <Link
+                  className="size-3.5 shrink-0"
+                  strokeWidth={SIDEBAR_HEADER_ACTION_ICON_STROKE}
+                />
+                <span className="truncate">Select worktrees</span>
+                <span className="shrink-0 tabular-nums">({connectionModeSelectedIds.size})</span>
+              </div>
+              <div className={cn(SIDEBAR_HEADER_ACTIONS, 'gap-1')}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-[12px] text-muted-foreground"
+                  onClick={exitConnectionMode}
+                  disabled={connectionModeSubmitting}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  className="h-6 px-2 text-[12px]"
+                  onClick={finalizeConnection}
+                  disabled={!canFinalize || connectionModeSubmitting}
+                >
+                  {connectionModeSubmitting ? (
+                    <>
+                      <Loader2 className="size-3 animate-spin" />
+                      Connecting...
+                    </>
+                  ) : (
+                    'Connect'
+                  )}
+                </Button>
+              </div>
             </div>
-            <div className={cn(SIDEBAR_HEADER_ACTIONS, 'gap-1')}>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 px-2 text-[12px] text-muted-foreground"
-                onClick={exitConnectionMode}
+            <div className="px-2 pb-1.5">
+              <Input
+                value={connectionModeName}
+                onChange={(e) => setConnectionModeName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && canFinalize && !connectionModeSubmitting) {
+                    e.preventDefault()
+                    void finalizeConnection()
+                  }
+                }}
+                placeholder="Connection name (optional)"
+                className="h-7 text-[12px]"
                 disabled={connectionModeSubmitting}
-              >
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                className="h-6 px-2 text-[12px]"
-                onClick={finalizeConnection}
-                disabled={!canFinalize || connectionModeSubmitting}
-              >
-                {connectionModeSubmitting ? (
-                  <>
-                    <Loader2 className="size-3 animate-spin" />
-                    Connecting...
-                  </>
-                ) : (
-                  'Connect'
-                )}
-              </Button>
+                data-testid="connection-mode-name-input"
+              />
             </div>
-          </div>
+          </>
         ) : (
           <div className={SIDEBAR_HEADER}>
             <div className={SIDEBAR_HEADER_LEFT}>

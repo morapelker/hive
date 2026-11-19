@@ -790,6 +790,54 @@ describe('useConnectionStore connection loading', () => {
     expect(toast.error).not.toHaveBeenCalled()
   })
 
+  it('applies the connection-mode name as a rename after creating the connection', async () => {
+    const baseRequest = request.getMockImplementation()!
+    request.mockImplementation(async (method: string, params?: unknown) => {
+      if (method === 'connectionOps.rename') {
+        const { connectionId, customName } = params as {
+          connectionId: string
+          customName: string | null
+        }
+        return { success: true, connection: { id: connectionId, custom_name: customName } }
+      }
+      return baseRequest(method, params)
+    })
+
+    const store = useConnectionStore.getState()
+    store.enterConnectionMode('worktree-1')
+    store.toggleConnectionModeWorktree('worktree-2')
+    store.setConnectionModeName('  Checkout flow  ')
+    await useConnectionStore.getState().finalizeConnection()
+
+    expect(request).toHaveBeenCalledWith('connectionOps.create', {
+      worktreeIds: ['worktree-1', 'worktree-2']
+    })
+    expect(request).toHaveBeenCalledWith('connectionOps.rename', {
+      connectionId: 'connection-created',
+      customName: 'Checkout flow'
+    })
+    expect(useConnectionStore.getState().connections).toEqual([
+      expect.objectContaining({ id: 'connection-created', custom_name: 'Checkout flow' })
+    ])
+    expect(toast.success).toHaveBeenCalledWith('Connection "Checkout flow" created')
+    // Leaving connection mode clears the typed name
+    expect(useConnectionStore.getState()).toMatchObject({
+      connectionModeActive: false,
+      connectionModeName: ''
+    })
+  })
+
+  it('skips the rename when no connection-mode name was typed', async () => {
+    const store = useConnectionStore.getState()
+    store.enterConnectionMode('worktree-1')
+    store.toggleConnectionModeWorktree('worktree-2')
+    await useConnectionStore.getState().finalizeConnection()
+
+    expect(request).toHaveBeenCalledWith('connectionOps.create', expect.anything())
+    expect(request).not.toHaveBeenCalledWith('connectionOps.rename', expect.anything())
+    expect(toast.success).toHaveBeenCalledWith('Connection "Created Connection" created')
+  })
+
   describe('quickCreateConnection', () => {
     const projects = [
       { id: 'project-1', path: '/tmp/project-1', name: 'Project 1' },
