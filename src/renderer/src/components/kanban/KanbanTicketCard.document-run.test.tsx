@@ -13,6 +13,7 @@ import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { useGitStore } from '@/stores/useGitStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useQuestionStore, type QuestionRequest } from '@/stores/useQuestionStore'
+import { useRunMergedChildrenStore } from '@/stores/useRunMergedChildrenStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { DOCUMENT_UPDATE_INTERRUPT_DETAIL, WAITING_PREFIX } from '@shared/document-flow/planning'
 import type { DocumentRunDetail, DocumentRunMember } from '@shared/types/document-flow'
@@ -163,6 +164,7 @@ afterEach(async () => {
   useGitStore.setState(initialGitState, true)
   useKanbanStore.setState(initialKanbanState, true)
   useQuestionStore.setState(initialQuestionState, true)
+  useRunMergedChildrenStore.setState({ target: null })
   useWorktreeStatusStore.setState(initialWorktreeStatusState, true)
 })
 
@@ -828,6 +830,39 @@ describe('the card of a document run ticket', () => {
 
     fireEvent.click(open)
     expect(useDocumentFlowStore.getState().dashboardRunId).toBe('run-live')
+  })
+
+  it('offers to move its merged tickets to Done while it runs, and opens the dialog for the run', async () => {
+    seedRuns(
+      makeDetail({ id: 'run-live', status: 'running' }, [
+        { key: 'A1', status: 'merged' },
+        { key: 'A2', status: 'running' }
+      ])
+    )
+    render(<KanbanTicketCard ticket={makeTicket()} />)
+
+    fireEvent.contextMenu(card())
+    const item = await screen.findByTestId('ctx-run-merged-children-done')
+    expect(item).toHaveTextContent('Move merged tickets to Done…')
+    expect(useRunMergedChildrenStore.getState().target).toBeNull()
+
+    fireEvent.click(item)
+
+    expect(useRunMergedChildrenStore.getState().target).toEqual({
+      runId: 'run-live',
+      ticketId: 'ticket-run',
+      projectId: 'proj-1'
+    })
+  })
+
+  it('does not offer it for a run that merged nothing yet', async () => {
+    seedRuns(makeDetail({ id: 'run-live', status: 'running' }, [{ key: 'A1', status: 'running' }]))
+    render(<KanbanTicketCard ticket={makeTicket()} />)
+
+    fireEvent.contextMenu(card())
+
+    await screen.findByTestId('ctx-open-document-run')
+    expect(screen.queryByTestId('ctx-run-merged-children-done')).toBeNull()
   })
 
   it('opens the document from the menu, from the path kept on the ticket, even when the run record is gone', async () => {

@@ -4,6 +4,7 @@ import {
   type Connection,
   type ConnectionArchiveProgress
 } from '@/stores/useConnectionStore'
+import { useSessionStore } from '@/stores/useSessionStore'
 
 /**
  * "Archiving 2/3": the member being archived out of the batch. Members that archive side by
@@ -85,6 +86,22 @@ export function trackConnectionArchives(worktreeIds: string[]): ConnectionArchiv
     end: () => {
       for (const connectionId of tracked.keys()) store.endConnectionArchive(connectionId)
       tracked.clear()
+    }
+  }
+}
+
+/**
+ * Archiving every worktree of an instance deletes the instance; its sessions (an agent's
+ * terminal, say) must be released first — they are listed per connection, not per worktree.
+ */
+export async function closeInstanceSessions(connectionId: string | undefined): Promise<void> {
+  if (!connectionId) return
+  const sessionStore = useSessionStore.getState()
+  for (const session of sessionStore.sessionsByConnection.get(connectionId) ?? []) {
+    try {
+      await sessionStore.closeSession(session.id)
+    } catch {
+      // Non-critical — the session may be gone already
     }
   }
 }

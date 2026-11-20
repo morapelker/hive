@@ -43,6 +43,7 @@ import {
   Bot,
   Star,
   Hourglass,
+  CheckCheck,
   Pencil,
   RotateCw,
   ScrollText
@@ -156,6 +157,8 @@ import {
   orchestratorLaunchRefusal
 } from '@/lib/document-flow/ticket-run-membership'
 import { TicketOrchestratorSubmenu } from './TicketOrchestratorMenu'
+import { hasMergedRunItems } from '@/lib/document-flow/run-merged-children'
+import { useRunMergedChildrenStore } from '@/stores/useRunMergedChildrenStore'
 // "New PRD → orchestrator ticket…" (lib/prd-flow): the card of the ticket whose session writes
 // the PRD and then the tasks document wears the flow's pill, with "Retry" beside it once the
 // flow stopped, and offers "Retry PRD flow" and "Cancel PRD flow" in its menu.
@@ -327,6 +330,13 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     const run = documentRunId ? s.runsById[documentRunId]?.run : null
     return !!run && run.status !== 'extracting'
   })
+  // A run that merged some of its tickets offers to move those to Done and archive
+  // their worktrees, mid-run too: its own ticket and its branch stay (RunMergedChildrenDialog)
+  const canMoveMergedChildren = useDocumentFlowStore((s) =>
+    documentRunId && !isArchived
+      ? hasMergedRunItems(s.runsById[documentRunId])
+      : false
+  )
   const documentPath =
     documentRunId && !isTicketRunTicket ? ticket.external_url || runSourcePath : null
   const documentRunPhase = documentRunView?.state?.phase ?? null
@@ -2731,6 +2741,24 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   ? 'Creating PRs…'
                   : 'Creating PR…'
                 : documentRunPRs.label}
+            </ContextMenuItem>
+          )}
+          {/* The tickets the run merged already, out of the way: to Done, worktrees archived.
+              The dialog checks every branch and asks before anything moves */}
+          {documentRunId && canMoveMergedChildren && (
+            <ContextMenuItem
+              data-testid="ctx-run-merged-children-done"
+              onClick={() =>
+                useRunMergedChildrenStore.getState().open({
+                  runId: documentRunId,
+                  ticketId: ticket.id,
+                  projectId: ticket.project_id
+                })
+              }
+              className="gap-2"
+            >
+              <CheckCheck className="h-3.5 w-3.5" />
+              Move merged tickets to Done…
             </ContextMenuItem>
           )}
           {/* A fresh copy of the run in To Do, models and settings included: how a cancelled

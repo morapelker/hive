@@ -55,17 +55,17 @@ export interface RunDoneQueue {
   alsoMoveTicketIds: string[]
 }
 
-type RunWorktree = Pick<Worktree, 'id' | 'project_id' | 'branch_name' | 'path' | 'status' | 'base_branch'> & {
+export type RunWorktree = Pick<Worktree, 'id' | 'project_id' | 'branch_name' | 'path' | 'status' | 'base_branch'> & {
   is_default: boolean
 }
 
-const itemLabel = (key: string, title: string): string => `${key} · ${title}`
+export const itemLabel = (key: string, title: string): string => `${key} · ${title}`
 
 /** The run merged this branch itself: its work is on the branch that survives. */
 const hasLanded = (item: Pick<DocumentRunItem, 'status' | 'merge_sha'>): boolean =>
   item.status === 'merged' || !!item.merge_sha
 
-type BranchVerdict =
+export type BranchVerdict =
   /** Nothing to commit or merge: the branch can be archived. */
   | { kind: 'clean' }
   /** Commits the compared branch lacks (never landed, or added since): a merge step. */
@@ -80,7 +80,7 @@ type BranchVerdict =
  * One branch against the branch it should be on. Throws when git fails on a branch whose
  * work never landed: unchecked work must never be treated as clean.
  */
-async function classifyBranch(args: {
+export async function classifyBranch(args: {
   path: string
   branch: string
   compareBranch: string
@@ -105,14 +105,14 @@ async function classifyBranch(args: {
 }
 
 /** The session's agent is at work, or stopped mid-turn for the user: not over. */
-function isSessionLive(sessionId: string | null): boolean {
+export function isSessionLive(sessionId: string | null): boolean {
   if (!sessionId) return false
   const kind = getSessionSignal(sessionId).kind
   return kind === 'working' || kind === 'blocked'
 }
 
 /** What the builders share: the run, the board rows, and the lists they fill. */
-class RunQueueDraft {
+export class RunQueueDraft {
   readonly byId: Map<string, KanbanTicket>
   readonly mergeEntries: PendingDoneMoveWorktree[] = []
   readonly archiveEntries: PendingDoneMoveWorktree[] = []
@@ -265,7 +265,7 @@ class RunQueueDraft {
   }
 }
 
-const selectedItems = (detail: DocumentRunDetail): DocumentRunItem[] =>
+export const selectedItems = (detail: DocumentRunDetail): DocumentRunItem[] =>
   [...detail.items].filter((item) => item.selected).sort((a, b) => a.position - b.position)
 
 /** The branches an item stands for in the batch's count: one per member repository. */

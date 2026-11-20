@@ -16,6 +16,7 @@ import { BoardSearchBar } from '@/components/kanban/BoardSearchBar'
 import { BoardTopRow } from '@/components/kanban/BoardTopRow'
 import { FavoriteTicketsPane } from '@/components/kanban/FavoriteTicketsPane'
 import { MergeOnDoneDialog } from './MergeOnDoneDialog'
+import { RunMergedChildrenDialog } from './RunMergedChildrenDialog'
 import { RenameTicketDialog } from './RenameTicketModal'
 import { TicketLabelDialog } from './TicketLabelDialog'
 import { ManageTicketLabelsDialog } from './ManageTicketLabelsDialog'
@@ -566,6 +567,7 @@ export function KanbanBoard({ projectId, connectionId, isPinnedMode }: KanbanBoa
             <TicketLabelDialog />
             <ManageTicketLabelsDialog />
             <MergeOnDoneDialog />
+            <RunMergedChildrenDialog />
             {/* SVG dependency lines */}
             {svgPaths.length > 0 && (
               <svg

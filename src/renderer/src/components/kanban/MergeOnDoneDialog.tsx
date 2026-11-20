@@ -11,7 +11,6 @@ import { documentFlowApi } from '@/api/document-flow-api'
 import { useGitStore } from '@/stores/useGitStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
-import { useSessionStore } from '@/stores/useSessionStore'
 import {
   Dialog,
   DialogContent,
@@ -27,7 +26,7 @@ import { dbApi } from '@/api/db-api'
 import { gitApi } from '@/api/git-api'
 import { commitsToMerge, type BranchMergeStat } from '@shared/git-merge-status'
 import { cn } from '@/lib/utils'
-import { trackConnectionArchives } from '@/lib/connection-archive'
+import { closeInstanceSessions, trackConnectionArchives } from '@/lib/connection-archive'
 import { findCarriedRunTickets } from '@/lib/document-flow/carried-tickets'
 import { runItemOfTicket } from '@/lib/document-flow/ticket-run-membership'
 import { runKindNoun } from '@/components/document-flow/document-flow-ui'
@@ -122,22 +121,6 @@ const toBranchStats = (
 /** The worktrees an entry stands for: its instance's members, or the one worktree. */
 const entryWorktreeCount = (entry: Pick<PendingDoneMoveWorktree, 'members'>): number =>
   entry.members?.length ?? 1
-
-/**
- * Archiving every worktree of an instance deletes the instance; its sessions (an agent's
- * terminal, say) must be released first — they are listed per connection, not per worktree.
- */
-async function closeInstanceSessions(connectionId: string | undefined): Promise<void> {
-  if (!connectionId) return
-  const sessionStore = useSessionStore.getState()
-  for (const session of sessionStore.sessionsByConnection.get(connectionId) ?? []) {
-    try {
-      await sessionStore.closeSession(session.id)
-    } catch {
-      // Non-critical — the session may be gone already
-    }
-  }
-}
 
 export function MergeOnDoneDialog() {
   const pendingDoneMove = useKanbanStore((s) => s.pendingDoneMove)
