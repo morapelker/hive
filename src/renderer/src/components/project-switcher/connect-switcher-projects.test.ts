@@ -16,8 +16,13 @@ vi.mock('@/lib/connection-create', () => ({ createConnectionFromProjects }))
 
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
-import { canConnectSwitcherProject, connectSwitcherProjects } from './connect-switcher-projects'
+import {
+  canConnectSwitcherProject,
+  connectSwitcherProjects,
+  switcherConnectionPullsFirst
+} from './connect-switcher-projects'
 
 const PROJECTS = [
   { id: 'seller-ios', name: 'seller-ios', path: '/Users/ana/code/seller-ios' },
@@ -39,6 +44,20 @@ describe('canConnectSwitcherProject', () => {
   })
 })
 
+describe('switcherConnectionPullsFirst', () => {
+  it('is the "auto-pull before worktree" setting', () => {
+    const before = useSettingsStore.getState().autoPullBeforeWorktree
+    try {
+      useSettingsStore.setState({ autoPullBeforeWorktree: true })
+      expect(switcherConnectionPullsFirst()).toBe(true)
+      useSettingsStore.setState({ autoPullBeforeWorktree: false })
+      expect(switcherConnectionPullsFirst()).toBe(false)
+    } finally {
+      useSettingsStore.setState({ autoPullBeforeWorktree: before })
+    }
+  })
+})
+
 describe('connectSwitcherProjects', () => {
   it('creates the connection, selects it and leaves the Pinned Board', async () => {
     createConnectionFromProjects.mockResolvedValue({
@@ -51,15 +70,35 @@ describe('connectSwitcherProjects', () => {
     const onProgress = vi.fn()
     const onError = vi.fn()
 
-    await expect(connectSwitcherProjects(PROJECTS, { onProgress, onError })).resolves.toBe('conn-1')
+    await expect(
+      connectSwitcherProjects(PROJECTS, { autoPull: true, onProgress, onError })
+    ).resolves.toBe('conn-1')
 
-    // The helper is handed the progress callback and no pull decision of its own.
-    expect(createConnectionFromProjects).toHaveBeenCalledWith(PROJECTS, { onProgress })
+    // The helper is handed the pull decision and the progress callback.
+    expect(createConnectionFromProjects).toHaveBeenCalledWith(PROJECTS, {
+      autoPull: true,
+      onProgress
+    })
     expect(useConnectionStore.getState().selectedConnectionId).toBe('conn-1')
     expect(useWorktreeStore.getState().selectedWorktreeId).toBeNull()
     expect(useKanbanStore.getState().isPinnedBoardActive).toBe(false)
     expect(toastMock.success).toHaveBeenCalledWith('Connection "seller-ios + ads-api" created')
     expect(onError).not.toHaveBeenCalled()
+  })
+
+  it('says not to pull as plainly as to pull', async () => {
+    createConnectionFromProjects.mockResolvedValue({
+      ok: true,
+      connectionId: 'conn-1',
+      connectionName: 'seller-ios + ads-api',
+      connectionPath: '/Users/ana/.hive/connections/conn-1',
+      savedProjectId: null
+    })
+
+    await connectSwitcherProjects(PROJECTS, { autoPull: false })
+
+    // Left out, the worktree create would pull on its own, out of sight.
+    expect(createConnectionFromProjects).toHaveBeenCalledWith(PROJECTS, { autoPull: false })
   })
 
   it('hands the reason to onError and changes nothing when nothing was created', async () => {
@@ -69,7 +108,9 @@ describe('connectSwitcherProjects', () => {
     })
     const onError = vi.fn()
 
-    await expect(connectSwitcherProjects(PROJECTS, { onError })).resolves.toBeNull()
+    await expect(
+      connectSwitcherProjects(PROJECTS, { autoPull: true, onError })
+    ).resolves.toBeNull()
 
     expect(onError).toHaveBeenCalledWith('Failed to create worktree in "ads-api": disk full')
     expect(toastMock.error).not.toHaveBeenCalled()
@@ -82,7 +123,9 @@ describe('connectSwitcherProjects', () => {
     createConnectionFromProjects.mockRejectedValue(new Error('socket closed'))
     const onError = vi.fn()
 
-    await expect(connectSwitcherProjects(PROJECTS, { onError })).resolves.toBeNull()
+    await expect(
+      connectSwitcherProjects(PROJECTS, { autoPull: true, onError })
+    ).resolves.toBeNull()
 
     expect(onError).toHaveBeenCalledWith('Failed to create connection: socket closed')
     expect(useConnectionStore.getState().selectedConnectionId).toBeNull()

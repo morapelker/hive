@@ -116,7 +116,7 @@ function seedStores(): void {
   useSessionStore.setState({ sessionsByWorktree: new Map(), sessionsByConnection: new Map() })
   useWorktreeStatusStore.setState({ sessionStatuses: {} })
   useCommandPaletteStore.setState({ isOpen: false })
-  useSettingsStore.setState({ vimModeEnabled: false })
+  useSettingsStore.setState({ vimModeEnabled: false, autoPullBeforeWorktree: true })
 }
 
 function openSwitcher(): HTMLInputElement {
@@ -200,8 +200,14 @@ function controllableCreate(): {
   }
 }
 
-const createTask = (projectId: string): HTMLElement =>
-  screen.getByTestId(`project-switcher-create-task-worktree-${projectId}`)
+const createTask = (projectId: string, step: 'pull' | 'worktree' = 'worktree'): HTMLElement =>
+  screen.getByTestId(`project-switcher-create-task-${step}-${projectId}`)
+
+/** The steps listed while the connection is created, top to bottom. */
+const createSteps = (): (string | null)[] =>
+  within(screen.getByTestId('project-switcher-create-progress'))
+    .getAllByRole('listitem')
+    .map((li) => li.textContent)
 
 const expectNothingOpened = (): void => {
   expect(useProjectStore.getState().selectedProjectId).toBeNull()
@@ -405,8 +411,9 @@ describe('Enter with projects picked', () => {
       member('ads-api'),
       member('ledger-core')
     ])
-    // No "pull" decision of its own: the "auto-pull before worktree" setting decides.
-    expect(create.options()).not.toHaveProperty('autoPull')
+    // The "auto-pull before worktree" setting is on: the pull is asked for outright, so it is
+    // a step of its own and not something the worktree create does out of sight.
+    expect(create.options().autoPull).toBe(true)
     // Nothing is opened as a project.
     expect(useProjectStore.getState().selectedProjectId).toBeNull()
 
@@ -421,16 +428,32 @@ describe('Enter with projects picked', () => {
     type(input, 'ads')
     press(input, 'Enter')
 
-    const progress = screen.getByTestId('project-switcher-create-progress')
-    expect(
-      within(progress)
-        .getAllByRole('listitem')
-        .map((li) => li.textContent)
-    ).toEqual(['Create worktree in seller-ios', 'Create worktree in ads-api'])
+    expect(createSteps()).toEqual([
+      'Pull seller-ios from origin',
+      'Pull ads-api from origin',
+      'Create worktree in seller-ios',
+      'Create worktree in ads-api'
+    ])
+    expect(createTask('seller-ios', 'pull')).toHaveAttribute('data-status', 'pending')
     expect(createTask('seller-ios')).toHaveAttribute('data-status', 'pending')
     expect(screen.queryAllByTestId('project-switcher-row')).toHaveLength(0)
     expect(input.placeholder).toBe('Creating the connection…')
     expect(input.value).toBe('')
+
+    // The pulls run side by side, ahead of the first worktree.
+    act(() => {
+      create.options().onProgress?.({ projectId: 'seller-ios', step: 'pull', status: 'running' })
+      create.options().onProgress?.({ projectId: 'ads-api', step: 'pull', status: 'running' })
+    })
+    expect(createTask('seller-ios', 'pull')).toHaveAttribute('data-status', 'running')
+    expect(createTask('ads-api', 'pull')).toHaveAttribute('data-status', 'running')
+    expect(createTask('seller-ios')).toHaveAttribute('data-status', 'pending')
+    act(() => {
+      create.options().onProgress?.({ projectId: 'ads-api', step: 'pull', status: 'done' })
+      create.options().onProgress?.({ projectId: 'seller-ios', step: 'pull', status: 'done' })
+    })
+    expect(createTask('seller-ios', 'pull')).toHaveAttribute('data-status', 'done')
+    expect(createTask('ads-api', 'pull')).toHaveAttribute('data-status', 'done')
 
     act(() => {
       create
@@ -448,6 +471,20 @@ describe('Enter with projects picked', () => {
 
     await create.finish('conn-1')
     expect(screen.queryByTestId('project-switcher')).toBeNull()
+  })
+
+  it('pulls nothing, and lists no pull, with the "auto-pull before worktree" setting off', async () => {
+    useSettingsStore.setState({ autoPullBeforeWorktree: false })
+    const create = controllableCreate()
+    const input = openSwitcher()
+    pick(input, 'seller-ios')
+    type(input, 'ads')
+    press(input, 'Enter')
+
+    expect(createSteps()).toEqual(['Create worktree in seller-ios', 'Create worktree in ads-api'])
+    // Said outright: left out, each worktree create would decide for itself.
+    expect(create.options().autoPull).toBe(false)
+    await create.finish('conn-1')
   })
 
   it('ignores Enter and typing while the connection is created', async () => {
@@ -576,6 +613,32 @@ describe('when the connection is not created', () => {
     expect(screen.queryByRole('alert')).toBeNull()
     await create.finish('conn-2')
     expect(screen.queryByTestId('project-switcher')).toBeNull()
+  })
+
+  it('shows which pull failed, then says why over the picker', async () => {
+    const create = controllableCreate()
+    const input = openSwitcher()
+    pick(input, 'seller-ios')
+    type(input, 'ads')
+    press(input, 'Enter')
+    const reason = 'local main has commits that origin/main does not, so it cannot be fast-forwarded'
+    act(() => {
+      create.options().onProgress?.({ projectId: 'seller-ios', step: 'pull', status: 'done' })
+      create
+        .options()
+        .onProgress?.({ projectId: 'ads-api', step: 'pull', status: 'failed', error: reason })
+    })
+    expect(createTask('seller-ios', 'pull')).toHaveAttribute('data-status', 'done')
+    expect(createTask('ads-api', 'pull')).toHaveAttribute('data-status', 'failed')
+    // No worktree was started.
+    expect(createTask('seller-ios')).toHaveAttribute('data-status', 'pending')
+    expect(createTask('ads-api')).toHaveAttribute('data-status', 'pending')
+
+    act(() => create.options().onError?.(`Could not pull "ads-api": ${reason}`))
+    await create.finish(null)
+    expect(screen.queryByTestId('project-switcher-create-progress')).toBeNull()
+    expect(screen.getByRole('alert').textContent).toContain(`Could not pull "ads-api": ${reason}`)
+    expect(pickedNames()).toEqual(['seller-ios', 'ads-api'])
   })
 
   it('drops the reason once the picked projects change', async () => {

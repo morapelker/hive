@@ -1,5 +1,6 @@
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
 import type { ConnectionCreateProgress } from '@/lib/connection-create'
 import type { SwitcherProject } from '@/lib/project-switcher'
 
@@ -12,6 +13,14 @@ export function canConnectSwitcherProject(project: Pick<SwitcherProject, 'kind'>
   return project.kind === 'git'
 }
 
+/**
+ * Whether a connection made from the switcher pulls its projects first: the "auto-pull before
+ * worktree" setting, read when the connection is asked for.
+ */
+export function switcherConnectionPullsFirst(): boolean {
+  return useSettingsStore.getState().autoPullBeforeWorktree
+}
+
 /** A member of the new connection. `path` is the project's folder as stored, not shortened. */
 export interface SwitcherConnectionProject {
   id: string
@@ -20,7 +29,13 @@ export interface SwitcherConnectionProject {
 }
 
 export interface ConnectSwitcherProjectsOptions {
-  /** Told about each step (a worktree per project) as it starts and ends. */
+  /**
+   * Whether every project's base branch is pulled from origin before the first worktree is
+   * created (`switcherConnectionPullsFirst`). Always said, never left to the worktree create:
+   * a pull made inside it is not a step of its own, so nothing would show it.
+   */
+  autoPull: boolean
+  /** Told about each step (a pull, then a worktree, per project) as it starts and ends. */
   onProgress?: (progress: ConnectionCreateProgress) => void
   /** Handed the reason when nothing was created, in place of the store's error toast. */
   onError?: (error: string) => void
@@ -34,8 +49,9 @@ export interface ConnectSwitcherProjectsOptions {
  * removed and nothing is selected.
  *
  * Unlike the dialog there is no "Pull latest from origin" switch here: the "auto-pull before
- * worktree" setting decides, per worktree and best effort, as for a worktree created from the
- * sidebar.
+ * worktree" setting stands in for it (`switcherConnectionPullsFirst`). On, it is the dialog
+ * with its switch on: every project's base branch is pulled first, each pull a step of its
+ * own, and a pull that fails stops there with nothing created. Off, nothing is pulled.
  *
  * The Pinned Board is left, as when a project is opened from the switcher, so the user ends up
  * looking at the connection.
@@ -44,7 +60,7 @@ export interface ConnectSwitcherProjectsOptions {
  */
 export async function connectSwitcherProjects(
   projects: SwitcherConnectionProject[],
-  options: ConnectSwitcherProjectsOptions = {}
+  options: ConnectSwitcherProjectsOptions
 ): Promise<string | null> {
   let connectionId: string | null
   try {

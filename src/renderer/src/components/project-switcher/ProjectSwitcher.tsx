@@ -25,7 +25,11 @@ import {
   rankSwitcherProjects,
   type SwitcherAgentState
 } from '@/lib/project-switcher'
-import { canConnectSwitcherProject, connectSwitcherProjects } from './connect-switcher-projects'
+import {
+  canConnectSwitcherProject,
+  connectSwitcherProjects,
+  switcherConnectionPullsFirst
+} from './connect-switcher-projects'
 import { openSwitcherProject } from './open-switcher-project'
 import { setSwitcherProjectPinned, switcherPinLabel } from './pin-switcher-project'
 import { useSwitcherProjects, type SwitcherItem } from './useSwitcherProjects'
@@ -51,8 +55,9 @@ import { useSwitcherProjects, type SwitcherItem } from './useSwitcherProjects'
 // on top of the list whatever is typed or scrolled, and the next one can be looked for.
 // Shift+Enter on a picked project takes it out again. Once a project is picked, plain Enter (or
 // a click) on a row ends the picking: the picked projects and that one are connected, as the
-// New Connection dialog would (connect-switcher-projects) — a new worktree in each, one
-// connection over them, selected. The list is replaced by the steps while that runs; when it
+// New Connection dialog would (connect-switcher-projects) — each one pulled from origin (with
+// the "auto-pull before worktree" setting on), a new worktree in each, one connection over
+// them, selected. The list is replaced by the steps while that runs; when it
 // fails the picker comes back, the projects still picked, with the reason above them. Only git
 // projects can be picked, so while any is, connection projects and databases are not listed.
 
@@ -468,8 +473,11 @@ function ProjectSwitcherPanel(): React.JSX.Element {
       setQuery('')
       setHighlight({ index: members.length - 1, key: members[members.length - 1].key })
       setCreateError(null)
-      setCreateTasks(planCreateTasks(projects, false))
+      // Decided once, so the steps listed are the steps taken.
+      const autoPull = switcherConnectionPullsFirst()
+      setCreateTasks(planCreateTasks(projects, autoPull))
       void connectSwitcherProjects(projects, {
+        autoPull,
         onProgress: (progress) => {
           if (mounted.current) setCreateTasks((tasks) => applyCreateProgress(tasks, progress))
         },
