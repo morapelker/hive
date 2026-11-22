@@ -4,10 +4,13 @@ import type { DocumentRunLaunchConfig } from '@shared/types/document-flow'
 import { isTicketHeldByPrdFlow } from './store-coordination'
 import {
   isPrdFlowHolding,
+  prdFlowDraftOfTicket,
   prdFlowOfTicket,
   usePrdFlowStore,
   useTicketPrdFlow,
+  useTicketPrdFlowDraft,
   type PrdFlow,
+  type PrdFlowDraft,
   type PrdFlowStage
 } from './usePrdFlowStore'
 
@@ -270,7 +273,7 @@ describe('what the next window finds', () => {
     store().openDialog('project-1')
 
     expect(stored()).toEqual({
-      state: { flows: { 'ticket-1': flow }, launchPref: LAUNCH },
+      state: { flows: { 'ticket-1': flow }, drafts: {}, launchPref: LAUNCH },
       version: 1
     })
 
@@ -618,5 +621,145 @@ describe('useTicketPrdFlow', () => {
     expect(result.current).not.toBe(flow)
     expect(result.current).toMatchObject({ stage: 'prd', sessionId: 'session-1' })
     expect(renders).toBe(rendersBefore + 1)
+  })
+})
+
+// A flow that was saved for later instead of started: the form's answers, kept by the ticket
+// that waits in To Do, written to localStorage with the flows and read back with the same
+// suspicion. A draft holds no ticket anywhere: nothing runs for it.
+describe('the drafts saved for later', () => {
+  function makeDraft(overrides: Partial<PrdFlowDraft> = {}): PrdFlowDraft {
+    return {
+      ticketId: 'ticket-1',
+      projectId: 'project-1',
+      name: 'code mode',
+      prompt: 'i want a code mode for the composer',
+      research: true,
+      clarify: false,
+      launch: LAUNCH,
+      createdAt: 1_795_000_000_000,
+      updatedAt: 1_795_000_000_000,
+      ...overrides
+    }
+  }
+
+  it('starts with none', () => {
+    expect(store().drafts).toEqual({})
+    expect(prdFlowDraftOfTicket('ticket-1')).toBeNull()
+  })
+
+  it('keeps one draft per ticket: saving it again replaces it', () => {
+    const first = makeDraft()
+    const other = makeDraft({ ticketId: 'ticket-2', name: 'checkout', launch: null })
+    store().putDraft(first)
+    store().putDraft(other)
+
+    expect(store().drafts).toEqual({ 'ticket-1': first, 'ticket-2': other })
+
+    const again = makeDraft({ prompt: 'a second thought', updatedAt: 1_795_000_060_000 })
+    store().putDraft(again)
+
+    expect(prdFlowDraftOfTicket('ticket-1')).toBe(again)
+    expect(prdFlowDraftOfTicket('ticket-2')).toBe(other)
+  })
+
+  it('forgets a draft, and tells no one about one that was never there', () => {
+    store().putDraft(makeDraft())
+    store().removeDraft('ticket-1')
+    expect(store().drafts).toEqual({})
+
+    const draftsBefore = store().drafts
+    const listener = vi.fn()
+    const unsubscribe = usePrdFlowStore.subscribe(listener)
+    store().removeDraft('never-there')
+
+    expect(store().drafts).toBe(draftsBefore)
+    expect(listener).not.toHaveBeenCalled()
+    unsubscribe()
+  })
+
+  it('gives a card its draft, and nothing once the draft is gone', () => {
+    const draft = makeDraft()
+    store().putDraft(draft)
+    const { result } = renderHook(() => useTicketPrdFlowDraft('ticket-1'))
+    expect(result.current).toBe(draft)
+
+    act(() => store().removeDraft('ticket-1'))
+    expect(result.current).toBeNull()
+  })
+
+  it('holds no ticket In Progress: a draft is not a flow', () => {
+    store().putDraft(makeDraft())
+
+    expect(isTicketHeldByPrdFlow('ticket-1')).toBe(false)
+    expect(prdFlowOfTicket('ticket-1')).toBeNull()
+  })
+
+  it('opens the form on a draft, and a new form after it', () => {
+    store().openDialog('project-1', 'ticket-1')
+    expect(store().dialog).toEqual({ open: true, projectId: 'project-1', draftTicketId: 'ticket-1' })
+
+    store().closeDialog()
+    expect(store().dialog).toEqual({
+      open: false,
+      projectId: 'project-1',
+      draftTicketId: 'ticket-1'
+    })
+
+    store().openDialog('project-1')
+    expect(store().dialog).toEqual({ open: true, projectId: 'project-1' })
+    expect(store().dialog.draftTicketId).toBeUndefined()
+  })
+
+  it('writes the drafts to localStorage and reads them back', async () => {
+    const draft = makeDraft()
+    const unwritten = makeDraft({ ticketId: 'ticket-2', name: 'checkout', prompt: '', launch: null })
+    store().putDraft(draft)
+    store().putDraft(unwritten)
+    const written = localStorage.getItem(STORAGE_KEY) as string
+
+    usePrdFlowStore.setState(initialState, true)
+    expect(store().drafts).toEqual({})
+    localStorage.setItem(STORAGE_KEY, written)
+    await usePrdFlowStore.persist.rehydrate()
+
+    expect(store().drafts).toEqual({ 'ticket-1': draft, 'ticket-2': unwritten })
+  })
+
+  it('leaves out what is stored as a draft and is not one, and keeps the others', async () => {
+    const draft = makeDraft()
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        state: {
+          flows: {},
+          drafts: {
+            'ticket-1': draft,
+            // Under another ticket's id, without a name, with a model that is no model
+            'ticket-2': makeDraft(),
+            'ticket-3': { ...makeDraft({ ticketId: 'ticket-3' }), name: undefined },
+            'ticket-4': { ...makeDraft({ ticketId: 'ticket-4' }), launch: 'opus' },
+            'ticket-5': null
+          },
+          launchPref: null
+        },
+        version: 1
+      })
+    )
+
+    await usePrdFlowStore.persist.rehydrate()
+
+    expect(store().drafts).toEqual({ 'ticket-1': draft })
+  })
+
+  it('starts with no drafts when an older build stored none', async () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ state: { flows: {}, launchPref: null }, version: 1 })
+    )
+
+    await usePrdFlowStore.persist.rehydrate()
+
+    expect(store().drafts).toEqual({})
   })
 })

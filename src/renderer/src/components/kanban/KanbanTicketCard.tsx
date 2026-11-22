@@ -165,7 +165,8 @@ import { useRunMergedChildrenStore } from '@/stores/useRunMergedChildrenStore'
 import { TicketPrdFlowMenuItems } from './TicketPrdFlowMenu'
 import { prdFlowPill } from '@/components/prd-flow/prd-flow-pill'
 import { retryPrdFlow } from '@/lib/prd-flow/actions'
-import { useTicketPrdFlow } from '@/stores/usePrdFlowStore'
+import { launchSavedPrdFlowDraft, useLivePrdFlowDraft } from '@/lib/prd-flow/draft'
+import { usePrdFlowStore, useTicketPrdFlow } from '@/stores/usePrdFlowStore'
 import { useRunCheckouts } from './useRunCheckouts'
 import { copyTicketLabelsForNewTicket, ticketLabelsOf } from '@shared/lib/ticket-labels'
 import { DocumentRunTicketBody } from '@/components/document-flow/DocumentRunTicketBody'
@@ -294,6 +295,12 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   // The ticket's PRD flow: this app keeps it on this Mac, by the ticket's id.
   const prdFlow = useTicketPrdFlow(ticket.id)
   const prdPill = prdFlowPill(prdFlow)
+  // The ticket's PRD flow that was saved for later: a draft that waits in To Do until the person
+  // launches it.
+  const ownPrdDraft = useLivePrdFlowDraft(ticket)
+  const prdDraft = isArchived ? null : ownPrdDraft
+  // Both wear the PRD look, so that the ticket reads as one from draft to orchestrator
+  const isPrdTicket = prdFlow !== null || prdDraft !== null
   const documentRunView = useDocumentRunTicket(documentRunId, ticket.column)
   const documentRunToneClass = documentRunView ? documentRunTicketToneClass(documentRunView) : null
   // The PRs from the run's integration branch(es) into their base; nothing for a remote ticket
@@ -1263,12 +1270,19 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         return
       }
 
+      // A PRD flow saved for later opens the form it was saved from, where it is edited and
+      // started: the ticket modal would launch it as an ordinary ticket
+      if (prdDraft) {
+        usePrdFlowStore.getState().openDialog(ticket.project_id, ticket.id)
+        return
+      }
+
       useKanbanStore.getState().setSelectedTicketRef({
         projectId: ticket.project_id,
         ticketId: ticket.id
       })
     },
-    [ticket.id, ticket.worktree_id, ticket.project_id, ticket.current_session_id, isPinnedMode, connectionId, connectionSession, recordBoardTelegramTarget, blockingDiagnostic, documentRunId, documentRunView?.missing, runKindLower]
+    [ticket.id, ticket.worktree_id, ticket.project_id, ticket.current_session_id, isPinnedMode, connectionId, connectionSession, recordBoardTelegramTarget, blockingDiagnostic, documentRunId, documentRunView?.missing, runKindLower, prdDraft]
   )
 
   // ── Right-button drag into In Progress — start immediately with the
@@ -1294,12 +1308,17 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         void startShellCommandTicket(ticket)
         return
       }
+      // A PRD flow saved for later starts as that flow, never as an ordinary session
+      if (prdDraft) {
+        void launchSavedPrdFlowDraft(ticket.id)
+        return
+      }
       // Connection boards have no worktree to create — start a connection
       // session instead (same defaults, mirrors the picker's connection path)
       if (connectionId) void quickLaunchTicketOnConnection(ticket, connectionId)
       else void quickLaunchTicket(ticket)
     },
-    [ticket, isBlocked, connectionId, isDocumentRunTicket, isShellCommandTicket]
+    [ticket, isBlocked, connectionId, isDocumentRunTicket, isShellCommandTicket, prdDraft]
   )
   const decorateGhostForProject = useCallback(
     (ghost: HTMLElement) => {
@@ -1366,6 +1385,8 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   const handleDelete = useCallback(async () => {
     try {
       await useKanbanStore.getState().deleteTicket(ticket.id, ticket.project_id)
+      // A PRD flow saved for later goes with its ticket
+      usePrdFlowStore.getState().removeDraft(ticket.id)
       toast.success(isDocumentRunTicket ? `${runKind} deleted` : 'Ticket deleted')
     } catch (err) {
       // The server refuses to delete the ticket of a run that is still running, and says so
@@ -1877,6 +1898,15 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   // Mode cue lives in a 2px left rail; the perimeter stays neutral
                   !hasHoverHighlight && !isError && borderState === 'blue' && 'border-border border-l-2 !border-l-blue-500/60',
                   !hasHoverHighlight && !isError && borderState === 'violet' && 'border-border border-l-2 !border-l-violet-500/60',
+                  // A PRD ticket ("New PRD → orchestrator ticket…") is teal from draft to
+                  // orchestrator: a dashed outline while it is a draft that waits to be
+                  // launched, a solid one once its flow is on. After the mode rails, whose neutral
+                  // perimeter it replaces (the rail itself stays)
+                  !hasHoverHighlight &&
+                    !isError &&
+                    isPrdTicket &&
+                    'border-teal-500/45 bg-teal-500/[0.06]',
+                  !hasHoverHighlight && !isError && prdDraft && 'border-dashed',
                   // Left accent stripe for marks
                   !isError && !isSidebarHoverHighlighted && ticket.mark === 'common' && 'border-l-2 !border-l-green-500',
                   !isError && !isSidebarHoverHighlighted && ticket.mark === 'rare' && 'border-l-2 !border-l-blue-500',
@@ -1912,6 +1942,24 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   className="mt-px inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border border-border bg-muted text-muted-foreground"
                 >
                   <TerminalIcon className="h-2.5 w-2.5" strokeWidth={2.5} />
+                </span>
+              )}
+              {/* PRD ticket: a document tile in front of the title, for the draft and the flow */}
+              {isPrdTicket && (
+                <span
+                  data-testid="ticket-prd-icon"
+                  data-prd-state={prdDraft ? 'draft' : 'flow'}
+                  title={
+                    prdDraft
+                      ? 'PRD draft — saved for later. Drag to In Progress to launch it'
+                      : 'PRD → orchestrator ticket'
+                  }
+                  className={cn(
+                    'mt-px inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border border-teal-500/40 bg-teal-500/10 text-teal-600 dark:text-teal-400',
+                    prdDraft && 'border-dashed'
+                  )}
+                >
+                  <ScrollText className="h-2.5 w-2.5" strokeWidth={2.5} />
                 </span>
               )}
               <div className="min-w-0 flex-1">
@@ -2017,7 +2065,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             )}
 
             {/* Badges + progress row */}
-            {(hasAttachments || hasNote || worktreeName || queuedBranchLabel || projectTag || connectionName || ticket.plan_ready || isError || launchStall || isInMergeQueue || rightAlignedSlot || isArchived || isBlocked || blockingDiagnostic || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram || ticket.goal_mode || ticket.auto_approve_plan || activeRemoteLaunch || showModelBadge || backgroundWork || docEditQueueTooltip || prdPill) && (
+            {(hasAttachments || hasNote || worktreeName || queuedBranchLabel || projectTag || connectionName || ticket.plan_ready || isError || launchStall || isInMergeQueue || rightAlignedSlot || isArchived || isBlocked || blockingDiagnostic || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram || ticket.goal_mode || ticket.auto_approve_plan || activeRemoteLaunch || showModelBadge || backgroundWork || docEditQueueTooltip || prdPill || prdDraft) && (
               <div className="mt-1.5 flex flex-wrap items-center gap-1">
                 {/* Archived badge */}
                 {isArchived && (
@@ -2065,6 +2113,44 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                       >
                         <RotateCw className="h-2.5 w-2.5" />
                         Retry
+                      </button>
+                    )}
+                  </>
+                )}
+                {/* PRD draft pill: saved for later, with "Launch" beside it */}
+                {prdDraft && (
+                  <>
+                    <span
+                      data-testid="ticket-prd-draft-pill"
+                      title={
+                        prdDraft.prompt
+                          ? 'A PRD flow saved for later. Click the card to edit it; nothing runs until you launch it.'
+                          : 'A PRD flow saved for later. It has no prompt yet: click the card to write it.'
+                      }
+                      className={cn(
+                        ticketPillBaseClass,
+                        'border-dashed border-teal-500/40 bg-teal-500/10 text-teal-600 dark:text-teal-400'
+                      )}
+                    >
+                      <ScrollText className="h-2.5 w-2.5" />
+                      PRD draft
+                    </span>
+                    {!launchPhase && (
+                      <button
+                        type="button"
+                        data-testid="ticket-prd-draft-launch"
+                        title="Start the PRD flow of this draft"
+                        className={cn(
+                          ticketPillClass,
+                          'hover:bg-accent hover:text-foreground transition-colors'
+                        )}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          void launchSavedPrdFlowDraft(ticket.id)
+                        }}
+                      >
+                        <Play className="h-2.5 w-2.5" />
+                        Launch
                       </button>
                     )}
                   </>
@@ -2830,8 +2916,8 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
           )}
 
           {/* PRD flow: "Retry PRD flow" once the ticket's flow stopped, "Cancel PRD flow" while
-              it has one */}
-          <TicketPrdFlowMenuItems ticket={ticket} />
+              it has one; a flow saved for later is edited, launched or made an ordinary ticket */}
+          <TicketPrdFlowMenuItems ticket={ticket} archived={isArchived} />
 
           {/* Jump to session — only for flow tickets with reachable session */}
           {isFlowTicket && !(connectionSession && !connectionName) && (
@@ -3057,7 +3143,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             {!isExternalTicket && !isMarkedShellCommandTicket && (
               <ContextMenuItem
                 data-testid="ctx-move-to-project"
-                disabled={prdFlow !== null}
+                disabled={prdFlow !== null || prdDraft !== null}
                 onSelect={() => setShowMoveToProject(true)}
                 className="gap-2"
               >
@@ -3065,6 +3151,11 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                 Move to project…
                 {prdFlow && (
                   <span className="text-muted-foreground">{' · cancel its PRD flow first'}</span>
+                )}
+                {!prdFlow && prdDraft && (
+                  <span className="text-muted-foreground">
+                    {' · launch or convert its PRD draft first'}
+                  </span>
                 )}
               </ContextMenuItem>
             )}

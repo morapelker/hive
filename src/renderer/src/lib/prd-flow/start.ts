@@ -19,7 +19,11 @@ import { useKanbanStore } from '@/stores/useKanbanStore'
 import { usePrdFlowStore, type PrdFlow } from '@/stores/usePrdFlowStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
-import { beginTicketLaunch, settleTicketLaunch } from '@/stores/useTicketLaunchStore'
+import {
+  beginTicketLaunch,
+  isTicketLaunching,
+  settleTicketLaunch
+} from '@/stores/useTicketLaunchStore'
 import { findPrdFlowTicket } from './board'
 import {
   describeExistingPrdFlowFiles,
@@ -31,7 +35,8 @@ import {
 // the board, a flow in the store, and one session in the project's root that is asked for
 // <PREFIX>_PRD.html. Everything after that first prompt is the driver's (./driver). The launch
 // is a step of its own because "Retry PRD flow" runs it again when the session could not be
-// started.
+// started. A flow that was saved for later (./draft) starts here as well: its ticket is on the
+// board already, and the flow takes it over instead of making one.
 
 export interface StartPrdFlowInput {
   projectId: string
@@ -41,6 +46,11 @@ export interface StartPrdFlowInput {
   clarify: boolean
   /** The agent and model chosen in the form; null = the app's default launch. */
   launch: DocumentRunLaunchConfig | null
+  /**
+   * The ticket of a saved draft (./draft) that is being launched: the flow becomes that
+   * ticket's, and the draft is forgotten. Absent for a new flow, which gets a new ticket.
+   */
+  ticketId?: string
 }
 
 export type StartPrdFlowResult = { ok: true; ticketId: string } | { ok: false; error: string }
@@ -75,9 +85,39 @@ function launchRefusal(launch: DocumentRunLaunchConfig): string | null {
 }
 
 /**
+ * Makes the ticket of a saved draft the ticket of the flow that is about to start: it must
+ * still wait in To Do with no session and no launch under way, and it takes the name and the
+ * prompt the flow starts with. Resolves with why it cannot be taken over, or null when it was.
+ */
+async function adoptDraftTicket(
+  projectId: string,
+  ticketId: string,
+  name: string,
+  prompt: string
+): Promise<string | null> {
+  const ticket = findPrdFlowTicket(projectId, ticketId)
+  if (!ticket) return 'The ticket of this draft is no longer on the board.'
+  if (ticket.archived_at) return 'The ticket of this draft was archived.'
+  if (usePrdFlowStore.getState().flows[ticketId]) return 'This ticket already has a PRD flow.'
+  if (ticket.current_session_id || ticket.column !== 'todo' || isTicketLaunching(ticketId)) {
+    return 'The ticket of this draft was already started.'
+  }
+  if (ticket.title === name && (ticket.description ?? '') === prompt) return null
+  try {
+    await useKanbanStore
+      .getState()
+      .updateTicket(ticketId, projectId, { title: name, description: prompt })
+    return null
+  } catch (error) {
+    console.warn('[prdFlow] could not update the ticket of a launched draft', error)
+    return 'The ticket could not be updated.'
+  }
+}
+
+/**
  * Starts a flow from the form's answers: checks them, creates the ticket (in To Do, until its
- * session exists), records the flow and starts its session without waiting for it. Never
- * rejects: whatever stops the start comes back as `ok: false` with the sentence the form shows.
+ * session exists; a saved draft's ticket is taken over instead), records the flow and starts
+ * its session without waiting for it. Never rejects: whatever stops the start comes back as `ok: false` with the sentence the form shows.
  */
 export async function startPrdFlow(input: StartPrdFlowInput): Promise<StartPrdFlowResult> {
   const name = input.name.trim()
@@ -112,17 +152,23 @@ export async function startPrdFlow(input: StartPrdFlowInput): Promise<StartPrdFl
     const refusal = launchRefusal(launch)
     if (refusal) return { ok: false, error: refusal }
     let ticketId: string
-    try {
-      const ticket = await useKanbanStore.getState().createTicket(input.projectId, {
-        project_id: input.projectId,
-        title: name,
-        description: prompt,
-        column: 'todo'
-      })
-      ticketId = ticket.id
-    } catch (error) {
-      console.warn('[prdFlow] could not create the ticket of a flow', error)
-      return { ok: false, error: 'The ticket could not be created.' }
+    if (input.ticketId) {
+      const problem = await adoptDraftTicket(input.projectId, input.ticketId, name, prompt)
+      if (problem) return { ok: false, error: problem }
+      ticketId = input.ticketId
+    } else {
+      try {
+        const ticket = await useKanbanStore.getState().createTicket(input.projectId, {
+          project_id: input.projectId,
+          title: name,
+          description: prompt,
+          column: 'todo'
+        })
+        ticketId = ticket.id
+      } catch (error) {
+        console.warn('[prdFlow] could not create the ticket of a flow', error)
+        return { ok: false, error: 'The ticket could not be created.' }
+      }
     }
 
     const now = Date.now()
@@ -158,6 +204,8 @@ export async function startPrdFlow(input: StartPrdFlowInput): Promise<StartPrdFl
     launching.add(ticketId)
     const store = usePrdFlowStore.getState()
     store.putFlow(flow)
+    // A launched draft is a flow from here on (nothing happens for a ticket that had none).
+    store.removeDraft(ticketId)
     // The next form opens on the same agent and model (null: the app's default).
     store.setLaunchPref(input.launch)
     void runLaunch(flow)

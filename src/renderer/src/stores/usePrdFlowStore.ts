@@ -9,6 +9,11 @@ import { registerPrdFlowHold } from './store-coordination'
 // the database, so it is back the moment the window is, before any session reports a status,
 // and no other window, instance or Mac drives it. lib/prd-flow/driver moves it along;
 // lib/prd-flow/start creates it; the card (KanbanTicketCard) shows it.
+//
+// The form can also be saved for later instead of started: that leaves a draft, a ticket in
+// To Do with the form's answers kept here by the ticket's id (lib/prd-flow/draft). A draft has
+// no session and nothing drives it: the person opens it again, edits it and launches it, which
+// turns it into a flow of that same ticket.
 
 /**
  * Where a flow stands:
@@ -96,21 +101,51 @@ export interface PrdFlow {
 
 export type PrdFlowPatch = Partial<Omit<PrdFlow, 'ticketId' | 'projectId' | 'createdAt'>>
 
+/**
+ * The form's answers, saved for later: the PRD flow of a ticket that waits in To Do until the
+ * person launches it. Nothing of where or how it runs is settled yet; the launch works that
+ * out from the answers as they are then.
+ */
+export interface PrdFlowDraft {
+  /** The board ticket the draft belongs to: the key of the draft. */
+  ticketId: string
+  projectId: string
+  /** The ticket's name as the person typed it. */
+  name: string
+  /** What the person wants, as far as they have written it: may be empty. */
+  prompt: string
+  /** The form's checkmarks. */
+  research: boolean
+  clarify: boolean
+  /** The agent and model chosen in the form; null = the app's default launch, as it is at the launch. */
+  launch: DocumentRunLaunchConfig | null
+  createdAt: number
+  /** When the draft was last saved (epoch ms). */
+  updatedAt: number
+}
+
 export interface PrdFlowDialogState {
   open: boolean
   /** The project the form is for; kept while it closes. */
   projectId: string | null
+  /** The ticket of the saved draft the form edits; absent for a new form. */
+  draftTicketId?: string
 }
 
 interface PrdFlowState {
   /** Every flow that is not over, by its ticket's id. */
   flows: Record<string, PrdFlow>
+  /** Every flow that was saved for later and not launched yet, by its ticket's id. */
+  drafts: Record<string, PrdFlowDraft>
   dialog: PrdFlowDialogState
   /** The agent and model last chosen in the form; null = the app's default launch. */
   launchPref: DocumentRunLaunchConfig | null
 
-  openDialog: (projectId: string) => void
+  /** Opens the form for the project: a new one, or the saved draft of `draftTicketId`. */
+  openDialog: (projectId: string, draftTicketId?: string) => void
   closeDialog: () => void
+  putDraft: (draft: PrdFlowDraft) => void
+  removeDraft: (ticketId: string) => void
   putFlow: (flow: PrdFlow) => void
   /** Present keys only. Resolves to the flow as it is now, or null when it is gone. */
   patchFlow: (ticketId: string, patch: PrdFlowPatch) => PrdFlow | null
@@ -157,6 +192,28 @@ function isStoredFlow(ticketId: string, value: unknown): value is PrdFlow {
   )
 }
 
+/** What localStorage holds under a ticket's id is a draft the form and the card can read. */
+function isStoredDraft(ticketId: string, value: unknown): value is PrdFlowDraft {
+  return (
+    isRecord(value) &&
+    value.ticketId === ticketId &&
+    (['projectId', 'name', 'prompt'] as const).every((key) => typeof value[key] === 'string') &&
+    typeof value.research === 'boolean' &&
+    typeof value.clarify === 'boolean' &&
+    (value.launch === null || isLaunchConfig(value.launch))
+  )
+}
+
+/** The drafts read back from localStorage, without the entries that are not drafts. */
+function readStoredDrafts(stored: unknown): Record<string, PrdFlowDraft> {
+  if (!isRecord(stored)) return {}
+  const drafts: Record<string, PrdFlowDraft> = {}
+  for (const [ticketId, value] of Object.entries(stored)) {
+    if (isStoredDraft(ticketId, value)) drafts[ticketId] = value
+  }
+  return drafts
+}
+
 /**
  * The flows read back from localStorage, without the entries that are not flows. The stored
  * text is not this build's to trust (an older build, a hand edit, a write cut short), and one
@@ -180,11 +237,28 @@ export const usePrdFlowStore = create<PrdFlowState>()(
   persist(
     (set, get) => ({
       flows: {},
+      drafts: {},
       dialog: { open: false, projectId: null },
       launchPref: null,
 
-      openDialog: (projectId) => set({ dialog: { open: true, projectId } }),
+      openDialog: (projectId, draftTicketId) =>
+        set({
+          dialog: draftTicketId
+            ? { open: true, projectId, draftTicketId }
+            : { open: true, projectId }
+        }),
       closeDialog: () => set((state) => ({ dialog: { ...state.dialog, open: false } })),
+
+      putDraft: (draft) =>
+        set((state) => ({ drafts: { ...state.drafts, [draft.ticketId]: draft } })),
+
+      removeDraft: (ticketId) =>
+        set((state) => {
+          if (!state.drafts[ticketId]) return state
+          const drafts = { ...state.drafts }
+          delete drafts[ticketId]
+          return { drafts }
+        }),
 
       putFlow: (flow) => set((state) => ({ flows: { ...state.flows, [flow.ticketId]: flow } })),
 
@@ -215,13 +289,18 @@ export const usePrdFlowStore = create<PrdFlowState>()(
       name: 'hive-prd-flows',
       storage: createJSONStorage(() => localStorage),
       version: 1,
-      // The flows and the remembered model persist; the form is closed in a new window.
-      partialize: (state) => ({ flows: state.flows, launchPref: state.launchPref }),
+      // The flows, the drafts and the remembered model persist; the form is closed in a new window.
+      partialize: (state) => ({
+        flows: state.flows,
+        drafts: state.drafts,
+        launchPref: state.launchPref
+      }),
       merge: (persisted, current) => {
         const saved = isRecord(persisted) ? persisted : {}
         return {
           ...current,
           flows: readStoredFlows(saved.flows),
+          drafts: readStoredDrafts(saved.drafts),
           launchPref: isLaunchConfig(saved.launchPref) ? saved.launchPref : null
         }
       }
@@ -245,6 +324,16 @@ export function prdFlowOfTicket(ticketId: string): PrdFlow | null {
 /** The flow of a ticket as the store holds it (the same object until the flow changes), or null. */
 export function useTicketPrdFlow(ticketId: string): PrdFlow | null {
   return usePrdFlowStore((state) => state.flows[ticketId] ?? null)
+}
+
+/** The saved draft of a ticket, or null. Not a hook. */
+export function prdFlowDraftOfTicket(ticketId: string): PrdFlowDraft | null {
+  return usePrdFlowStore.getState().drafts[ticketId] ?? null
+}
+
+/** The saved draft of a ticket as the store holds it (the same object until it is saved again), or null. */
+export function useTicketPrdFlowDraft(ticketId: string): PrdFlowDraft | null {
+  return usePrdFlowStore((state) => state.drafts[ticketId] ?? null)
 }
 
 // The kanban store keeps a ticket In Progress while its flow is on.

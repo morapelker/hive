@@ -1,13 +1,16 @@
 // "New PRD → orchestrator ticket": the form that starts a PRD flow (lib/prd-flow). The person
 // names the work and says what they want; "Start" hands both to startPrdFlow, which makes the
 // board ticket and starts its session, and the driver (hooks/usePrdFlowDriver) takes it from
-// there: the PRD, then the tasks document, then the orchestrator ticket made of it. The form is
-// opened through usePrdFlowStore's dialog state, by the To Do header's right-click menu, the
-// command palette and a connection row's menu.
+// there: the PRD, then the tasks document, then the orchestrator ticket made of it. "Save for
+// later" starts nothing: savePrdFlowDraft keeps the answers as a draft on a ticket in To Do,
+// and the same form opens on that draft again (from its card) to edit it, save it once more or
+// start it. The form is opened through usePrdFlowStore's dialog state, by the To Do header's
+// right-click menu, the command palette, a connection row's menu and a draft's card.
 //
 // Keyboard: focus starts in "Name"; Tab moves between the fields instead of toggling the mode
-// of the session behind the dialog; Cmd/Ctrl+Enter is "Start" from anywhere in the form; and
-// Esc or Cmd/Ctrl+W closes it, except while "Start" is in flight. Tab is not kept from the
+// of the session behind the dialog; Cmd/Ctrl+Enter is "Start" and Cmd/Ctrl+Shift+Enter "Save
+// for later" from anywhere in the form; and Esc or Cmd/Ctrl+W closes it, except while "Start"
+// or the save is in flight. Tab is not kept from the
 // session everywhere: the model picker's dropdown is drawn by the shared ModelSelector in a
 // portal outside the dialog's content, where the dialog's opt-out does not reach, so with
 // that list open Tab can still toggle the session's mode, as in every dialog that hosts
@@ -27,6 +30,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { ShortcutHint } from '@/components/ui/shortcut-hint'
 import { Textarea } from '@/components/ui/textarea'
+import { savePrdFlowDraft } from '@/lib/prd-flow/draft'
 import { startPrdFlow } from '@/lib/prd-flow/start'
 import {
   findExistingPrdFlowFiles,
@@ -36,7 +40,7 @@ import {
 import { submitShortcutLabel } from '@/lib/shortcut-labels'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
-import { usePrdFlowStore } from '@/stores/usePrdFlowStore'
+import { usePrdFlowStore, type PrdFlowDraft } from '@/stores/usePrdFlowStore'
 import { prdFlowPrefix } from '@shared/document-flow/prd-flow'
 import type { DocumentRunLaunchConfig } from '@shared/types/document-flow'
 import {
@@ -56,24 +60,30 @@ interface ExistingFiles {
 
 function PrdFlowForm({
   projectId,
+  draft,
   starting,
   onStartingChange
 }: {
   projectId: string
-  /** "Start" is in flight. Kept by the dialog, which stays open meanwhile. */
+  /** The saved draft the form edits, as it was when the form opened; null for a new form. */
+  draft: PrdFlowDraft | null
+  /** "Start" or the save is in flight. Kept by the dialog, which stays open meanwhile. */
   starting: boolean
   onStartingChange: (starting: boolean) => void
 }): React.JSX.Element {
   const closeDialog = usePrdFlowStore((s) => s.closeDialog)
-  const [name, setName] = useState('')
-  const [prompt, setPrompt] = useState('')
-  // Both checkmarks are on in every new form: they are not remembered.
-  const [research, setResearch] = useState(true)
-  const [clarify, setClarify] = useState(true)
-  // The agent and model start from the last choice made here; null is the app's default launch.
-  const [launch, setLaunch] = useState<DocumentRunLaunchConfig | null>(
-    () => usePrdFlowStore.getState().launchPref
+  const [name, setName] = useState(draft?.name ?? '')
+  const [prompt, setPrompt] = useState(draft?.prompt ?? '')
+  // Both checkmarks are on in every new form: they are not remembered. A draft keeps its own.
+  const [research, setResearch] = useState(draft?.research ?? true)
+  const [clarify, setClarify] = useState(draft?.clarify ?? true)
+  // The agent and model start from the last choice made here (a draft's: the one it was saved
+  // with); null is the app's default launch.
+  const [launch, setLaunch] = useState<DocumentRunLaunchConfig | null>(() =>
+    draft ? draft.launch : usePrdFlowStore.getState().launchPref
   )
+  // Which of the two is in flight says which button reads "…ing".
+  const [saving, setSaving] = useState(false)
   const [target, setTarget] = useState<PrdFlowTargetResult | null>(null)
   const [existing, setExisting] = useState<ExistingFiles | null>(null)
   const [startError, setStartError] = useState<string | null>(null)
@@ -140,6 +150,51 @@ function PrdFlowForm({
     prefix !== '' &&
     target?.ok !== false &&
     existingError === null
+  // A draft needs a name for its ticket and nothing more: the rest can wait until the launch.
+  const canSave = !starting && name.trim() !== '' && prefix !== '' && target?.ok !== false
+
+  const save = useCallback(async (): Promise<void> => {
+    if (!canSave || startingRef.current) return
+    startingRef.current = true
+    onStartingChange(true)
+    setSaving(true)
+    setStartError(null)
+    const title = name.trim()
+    try {
+      const result = await savePrdFlowDraft({
+        projectId,
+        name: title,
+        prompt: prompt.trim(),
+        research,
+        clarify,
+        launch,
+        ticketId: draft?.ticketId
+      })
+      if (result.ok) {
+        closeDialog()
+        toast.success(`PRD draft saved: “${title}”. It waits in To Do until you launch it.`)
+      } else {
+        setStartError(result.error)
+      }
+    } catch (cause) {
+      setStartError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      startingRef.current = false
+      setSaving(false)
+      onStartingChange(false)
+    }
+  }, [
+    canSave,
+    onStartingChange,
+    name,
+    projectId,
+    prompt,
+    research,
+    clarify,
+    launch,
+    draft?.ticketId,
+    closeDialog
+  ])
 
   const submit = useCallback(async (): Promise<void> => {
     if (!canStart || startingRef.current) return
@@ -154,7 +209,9 @@ function PrdFlowForm({
         prompt: prompt.trim(),
         research,
         clarify,
-        launch
+        launch,
+        // A draft's own ticket becomes the flow's.
+        ticketId: draft?.ticketId
       })
       if (result.ok) {
         closeDialog()
@@ -168,22 +225,36 @@ function PrdFlowForm({
       startingRef.current = false
       onStartingChange(false)
     }
-  }, [canStart, onStartingChange, name, projectId, prompt, research, clarify, launch, closeDialog])
+  }, [
+    canStart,
+    onStartingChange,
+    name,
+    projectId,
+    prompt,
+    research,
+    clarify,
+    launch,
+    draft?.ticketId,
+    closeDialog
+  ])
 
   const handleKeyDown = (event: React.KeyboardEvent): void => {
     if (event.key !== 'Enter' || !(event.metaKey || event.ctrlKey)) return
     if (event.nativeEvent.isComposing) return
     event.preventDefault()
-    void submit()
+    void (event.shiftKey ? save() : submit())
   }
 
   return (
     <div className="grid gap-4" onKeyDown={handleKeyDown}>
       <DialogHeader>
-        <DialogTitle>New PRD → orchestrator ticket</DialogTitle>
+        <DialogTitle>{draft ? 'Edit PRD draft' : 'New PRD → orchestrator ticket'}</DialogTitle>
         <DialogDescription>
           A session writes NAME_PRD.html, then NAME_TASKS.html, which becomes an orchestrator ticket
-          that waits to be launched.
+          that waits to be launched.{' '}
+          {draft
+            ? 'This draft waits in To Do: nothing runs until you start it.'
+            : 'Save it for later to keep it in To Do as a draft instead.'}
         </DialogDescription>
       </DialogHeader>
 
@@ -285,11 +356,26 @@ function PrdFlowForm({
         </Button>
         <Button
           type="button"
+          variant="outline"
+          data-testid="prd-flow-save-btn"
+          title={
+            draft
+              ? 'Keep the changes and leave the draft in To Do'
+              : 'Keep it in To Do as a draft, to edit and launch later'
+          }
+          disabled={!canSave}
+          onClick={() => void save()}
+        >
+          {saving ? 'Saving…' : draft ? 'Save' : 'Save for later'}
+          <ShortcutHint label={submitShortcutLabel({ shift: true })} />
+        </Button>
+        <Button
+          type="button"
           data-testid="prd-flow-start-btn"
           disabled={!canStart}
           onClick={() => void submit()}
         >
-          {starting ? 'Starting…' : 'Start'}
+          {starting && !saving ? 'Starting…' : 'Start'}
           <ShortcutHint label={submitShortcutLabel()} />
         </Button>
       </DialogFooter>
@@ -299,20 +385,30 @@ function PrdFlowForm({
 
 /**
  * Mount once (AppLayout). The form of "New PRD → orchestrator ticket…", for the project
- * usePrdFlowStore's dialog state names. It closes without asking, whatever was typed.
+ * usePrdFlowStore's dialog state names, and for the saved draft it names when the form was
+ * opened from a draft's card. It closes without asking, whatever was typed.
  */
 export function PrdFlowDialog(): React.JSX.Element {
   const open = usePrdFlowStore((s) => s.dialog.open)
   const projectId = usePrdFlowStore((s) => s.dialog.projectId)
+  const draftTicketId = usePrdFlowStore((s) => s.dialog.draftTicketId)
   const closeDialog = usePrdFlowStore((s) => s.closeDialog)
-  // Every opening is a new form: nothing typed before is left, and both checkmarks are on.
+  // Every opening is a new form: nothing typed before is left, and both checkmarks are on. A
+  // form opened on a saved draft starts from the draft as it is at that moment; saving it
+  // while the form is open does not write over what is being typed.
   const [opening, setOpening] = useState(0)
   const [wasOpen, setWasOpen] = useState(open)
+  const [draft, setDraft] = useState<PrdFlowDraft | null>(null)
   if (wasOpen !== open) {
     setWasOpen(open)
-    if (open) setOpening((count) => count + 1)
+    if (open) {
+      setOpening((count) => count + 1)
+      setDraft(
+        draftTicketId ? (usePrdFlowStore.getState().drafts[draftTicketId] ?? null) : null
+      )
+    }
   }
-  // Esc, the X and the overlay are ignored while "Start" is in flight: a refusal is shown in
+  // Esc, the X and the overlay are ignored while "Start" or the save is in flight: a refusal is shown in
   // the form, and the form closes itself once the flow is on.
   const [starting, setStarting] = useState(false)
 
@@ -325,6 +421,7 @@ export function PrdFlowDialog(): React.JSX.Element {
     >
       <DialogContent
         data-testid="prd-flow-dialog"
+        data-draft={draft ? draft.ticketId : undefined}
         // Tab moves between the form's fields, not the mode of the session behind it.
         data-tab-navigates=""
         // Cmd/Ctrl+W (useKeyboardShortcuts) leaves the form alone while "Start" is in flight.
@@ -335,6 +432,7 @@ export function PrdFlowDialog(): React.JSX.Element {
           <PrdFlowForm
             key={`${opening}:${projectId}`}
             projectId={projectId}
+            draft={draft}
             starting={starting}
             onStartingChange={setStarting}
           />

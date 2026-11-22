@@ -10,7 +10,12 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip
 import { KanbanTicketCard } from '@/components/kanban/KanbanTicketCard'
 import { documentRunTicketDropRefusal } from '@/components/document-flow/document-flow-ui'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
-import { usePrdFlowStore } from '@/stores/usePrdFlowStore'
+import { isPrdFlowDraftTicket, launchSavedPrdFlowDraft } from '@/lib/prd-flow/draft'
+import {
+  prdFlowDraftOfTicket,
+  prdFlowOfTicket,
+  usePrdFlowStore
+} from '@/stores/usePrdFlowStore'
 import { documentFlowApi } from '@/api/document-flow-api'
 import { TicketCreateModal } from '@/components/kanban/TicketCreateModal'
 import { registerBoardNewTicket } from '@/lib/board-new-ticket'
@@ -752,6 +757,27 @@ export function KanbanColumn({
               projectLocalDropIndex(ticketProjectId, targetIndex)
             )
             void startShellCommandTicket(shellTicket, { sortOrder })
+            return
+          }
+        }
+
+        // A PRD flow saved for later starts as that flow when its ticket enters In Progress,
+        // in simple mode too: never the picker's ordinary session, and never a plain move
+        // that would leave a draft in a column where nothing launches it. The launch moves
+        // the ticket itself once its session exists.
+        if (isInProgressColumn) {
+          const draftTicket = findTicket(ticketId, ticketProjectId)
+          if (
+            draftTicket &&
+            isPrdFlowDraftTicket(draftTicket) &&
+            prdFlowDraftOfTicket(ticketId) &&
+            !prdFlowOfTicket(ticketId)
+          ) {
+            if (!isSimpleMode && hasUnresolvedBlockers()) {
+              toast.warning('Ticket is blocked — resolve its dependencies first')
+              return
+            }
+            void launchSavedPrdFlowDraft(ticketId)
             return
           }
         }

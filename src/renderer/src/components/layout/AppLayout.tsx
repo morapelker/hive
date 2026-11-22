@@ -32,6 +32,7 @@ import { useSleepWhenIdle } from '@/hooks/useSleepWhenIdle'
 import { useAccountScheduleRunner } from '@/hooks/useAccountScheduleRunner'
 import { useDocumentFlowRunner } from '@/hooks/useDocumentFlowRunner'
 import { usePrdFlowDriver } from '@/hooks/usePrdFlowDriver'
+import { usePrdFlowDrafts } from '@/hooks/usePrdFlowDrafts'
 import { ErrorBoundary, ErrorFallback } from '@/components/error'
 import { CreatePRModal } from '@/components/pr/CreatePRModal'
 import { ConnectionPRModal } from '@/components/pr/ConnectionPRModal'
@@ -179,6 +180,8 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
   useDocumentFlowRunner()
   // Move the PRD flows of this window along: PRD, tasks document, orchestrator ticket
   usePrdFlowDriver()
+  // Forget the PRD flows saved for later whose ticket is no longer a draft's
+  usePrdFlowDrafts()
 
   // Drag-and-drop from Finder
   const activeSessionId = useSessionStore((s) => s.activeSessionId)

@@ -20,6 +20,10 @@ const toastMock = vi.hoisted(() => ({
   warning: vi.fn(),
   info: vi.fn()
 }))
+const draftActions = vi.hoisted(() => ({
+  launchSavedPrdFlowDraft: vi.fn(async () => {}),
+  discardPrdFlowDraft: vi.fn()
+}))
 const actions = vi.hoisted(() => ({
   retryPrdFlow: vi.fn(async () => {}),
   cancelPrdFlow: vi.fn(async () => {})
@@ -28,6 +32,11 @@ const actions = vi.hoisted(() => ({
 vi.mock('@/api/document-flow-api', () => ({ documentFlowApi: api }))
 vi.mock('@/lib/toast', () => ({ toast: toastMock }))
 vi.mock('@/lib/prd-flow/actions', () => actions)
+// Which tickets are drafts is the real rule; only what the card does to one is observed.
+vi.mock('@/lib/prd-flow/draft', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/prd-flow/draft')>()),
+  ...draftActions
+}))
 
 import { KanbanTicketCard } from './KanbanTicketCard'
 import { tonePillClass } from '@/components/document-flow/document-flow-ui'
@@ -36,6 +45,7 @@ import {
   usePrdFlowStore,
   type PrdFlow,
   type PrdFlowAttention,
+  type PrdFlowDraft,
   type PrdFlowStage
 } from '@/stores/usePrdFlowStore'
 import { useProjectStore } from '@/stores/useProjectStore'
@@ -428,5 +438,206 @@ describe('a ticket with a PRD flow stays on its board', () => {
 
     expect(isDisabled(moveItem())).toBe(false)
     expect(moveItem()).toHaveTextContent(/^Move to project…$/)
+  })
+})
+
+// A PRD flow that was saved for later: its ticket waits in To Do as a draft. The card says
+// so (a dashed teal outline, the PRD tile, a "PRD draft" pill with "Launch" beside it), opens
+// the form instead of the ticket, and offers the draft's three items in its menu. A flow that
+// is on keeps the tile and the teal, with a solid outline.
+describe('a PRD flow saved for later', () => {
+  const setSelectedTicketRef = vi.fn()
+  const markTicketRead = vi.fn()
+
+  function makeDraft(overrides: Partial<PrdFlowDraft> = {}): PrdFlowDraft {
+    return {
+      ticketId: TICKET,
+      projectId: PROJECT,
+      name: 'code mode',
+      prompt: 'A mode for writing code.',
+      research: true,
+      clarify: true,
+      launch: null,
+      createdAt: 1_000,
+      updatedAt: 1_000,
+      ...overrides
+    }
+  }
+
+  /** The draft's ticket as a save leaves it: in To Do, with no session. */
+  const draftTicket = (overrides: Partial<KanbanTicket> = {}): KanbanTicket =>
+    makeTicket({ column: 'todo', current_session_id: null, mode: null, ...overrides })
+
+  function seedDraft(overrides: Partial<PrdFlowDraft> = {}): void {
+    usePrdFlowStore.getState().putDraft(makeDraft(overrides))
+  }
+
+  const draftPill = (): HTMLElement | null => screen.queryByTestId('ticket-prd-draft-pill')
+  const launchButton = (): HTMLElement | null => screen.queryByTestId('ticket-prd-draft-launch')
+  const prdIcon = (): HTMLElement | null => screen.queryByTestId('ticket-prd-icon')
+  const editItem = (): HTMLElement | null => screen.queryByTestId('ctx-prd-draft-edit')
+  const launchItem = (): HTMLElement | null => screen.queryByTestId('ctx-prd-draft-launch')
+  const discardItem = (): HTMLElement | null => screen.queryByTestId('ctx-prd-draft-discard')
+
+  beforeEach(() => {
+    useKanbanStore.setState({ markTicketRead, setSelectedTicketRef } as never)
+  })
+
+  it('wears the draft look: a dashed teal outline, the PRD tile and the "PRD draft" pill', () => {
+    seedDraft()
+    render(<KanbanTicketCard ticket={draftTicket()} />)
+
+    expect(card()).toHaveClass('border-dashed', 'border-teal-500/45')
+    expect(prdIcon()).toHaveAttribute('data-prd-state', 'draft')
+    expect(draftPill()).toHaveTextContent(/^PRD draft$/)
+    expect(launchButton()).toHaveTextContent(/^Launch$/)
+    // Not a flow yet: nothing of a flow's pill
+    expect(pill()).toBeNull()
+  })
+
+  it('says in the pill that the prompt is still to be written', () => {
+    seedDraft({ prompt: '' })
+    render(<KanbanTicketCard ticket={draftTicket()} />)
+
+    expect(draftPill()).toHaveAttribute(
+      'title',
+      'A PRD flow saved for later. It has no prompt yet: click the card to write it.'
+    )
+  })
+
+  it('opens the form on the draft, not the ticket, when the card is clicked', () => {
+    seedDraft()
+    render(<KanbanTicketCard ticket={draftTicket()} />)
+
+    fireEvent.click(card())
+
+    expect(usePrdFlowStore.getState().dialog).toEqual({
+      open: true,
+      projectId: PROJECT,
+      draftTicketId: TICKET
+    })
+    expect(setSelectedTicketRef).not.toHaveBeenCalled()
+  })
+
+  it('launches the draft from "Launch", without opening anything', () => {
+    seedDraft()
+    render(<KanbanTicketCard ticket={draftTicket()} />)
+
+    fireEvent.click(launchButton()!)
+
+    expect(draftActions.launchSavedPrdFlowDraft).toHaveBeenCalledExactlyOnceWith(TICKET)
+    expect(usePrdFlowStore.getState().dialog.open).toBe(false)
+    expect(setSelectedTicketRef).not.toHaveBeenCalled()
+  })
+
+  it('offers "Edit", "Launch" and "Convert to ordinary ticket" in the menu', async () => {
+    seedDraft()
+    render(<KanbanTicketCard ticket={draftTicket()} />)
+
+    await openMenu()
+    expect(editItem()).toHaveTextContent(/^Edit PRD draft…$/)
+    expect(launchItem()).toHaveTextContent(/^Launch PRD flow$/)
+    expect(discardItem()).toHaveTextContent(/^Convert to ordinary ticket$/)
+    expect(retryItem()).toBeNull()
+    expect(cancelItem()).toBeNull()
+
+    fireEvent.click(launchItem()!)
+    expect(draftActions.launchSavedPrdFlowDraft).toHaveBeenCalledExactlyOnceWith(TICKET)
+  })
+
+  it('opens the form from "Edit PRD draft…"', async () => {
+    seedDraft()
+    render(<KanbanTicketCard ticket={draftTicket()} />)
+
+    await openMenu()
+    fireEvent.click(editItem()!)
+
+    expect(usePrdFlowStore.getState().dialog).toEqual({
+      open: true,
+      projectId: PROJECT,
+      draftTicketId: TICKET
+    })
+  })
+
+  it('forgets the draft from "Convert to ordinary ticket"', async () => {
+    seedDraft()
+    render(<KanbanTicketCard ticket={draftTicket()} />)
+
+    await openMenu()
+    fireEvent.click(discardItem()!)
+
+    expect(draftActions.discardPrdFlowDraft).toHaveBeenCalledExactlyOnceWith(TICKET)
+    expect(draftActions.launchSavedPrdFlowDraft).not.toHaveBeenCalled()
+  })
+
+  it('stays on its board, and says what to do first', async () => {
+    seedDraft()
+    render(<KanbanTicketCard ticket={draftTicket()} />)
+
+    await openMenu()
+
+    const moveItem = screen.getByTestId('ctx-move-to-project')
+    expect(isDisabled(moveItem)).toBe(true)
+    expect(moveItem).toHaveTextContent(
+      /^Move to project… · launch or convert its PRD draft first$/
+    )
+  })
+
+  it.each<[string, Partial<KanbanTicket>]>([
+    ['has a session', { current_session_id: 'session-1' }],
+    ['left To Do', { column: 'review' }],
+    ['was archived', { archived_at: now }]
+  ])('is an ordinary card once its ticket %s', (_what, overrides) => {
+    seedDraft()
+    render(<KanbanTicketCard ticket={draftTicket(overrides)} />)
+
+    expect(draftPill()).toBeNull()
+    expect(launchButton()).toBeNull()
+    expect(prdIcon()).toBeNull()
+    expect(card()).not.toHaveClass('border-dashed')
+
+    fireEvent.click(card())
+    expect(usePrdFlowStore.getState().dialog.open).toBe(false)
+  })
+
+  it('is an ordinary card on a ticket with no draft, also while another ticket has one', () => {
+    seedDraft({ ticketId: 'ticket-other' })
+    render(<KanbanTicketCard ticket={draftTicket()} />)
+
+    expect(draftPill()).toBeNull()
+    expect(prdIcon()).toBeNull()
+    fireEvent.click(card())
+    expect(setSelectedTicketRef).toHaveBeenCalledExactlyOnceWith({
+      projectId: PROJECT,
+      ticketId: TICKET
+    })
+  })
+
+  it('turns into the card of the flow once it is launched: the tile and the teal stay', () => {
+    seedDraft()
+    const { rerender } = render(<KanbanTicketCard ticket={draftTicket()} />)
+    expect(prdIcon()).toHaveAttribute('data-prd-state', 'draft')
+
+    act(() => {
+      usePrdFlowStore.getState().putFlow(makeFlow({ stage: 'launching', sessionId: null }))
+      usePrdFlowStore.getState().removeDraft(TICKET)
+    })
+    rerender(<KanbanTicketCard ticket={makeTicket()} />)
+
+    expect(draftPill()).toBeNull()
+    expect(launchButton()).toBeNull()
+    expect(pill()).toHaveTextContent('PRD flow · starting')
+    expect(prdIcon()).toHaveAttribute('data-prd-state', 'flow')
+    expect(card()).toHaveClass('border-teal-500/45')
+    expect(card()).not.toHaveClass('border-dashed')
+  })
+
+  it('shows the flow, not the draft, for a ticket that somehow has both', () => {
+    seedDraft()
+    seedFlow({ stage: 'launching', sessionId: null })
+    render(<KanbanTicketCard ticket={draftTicket()} />)
+
+    expect(draftPill()).toBeNull()
+    expect(pill()).toHaveTextContent('PRD flow · starting')
   })
 })

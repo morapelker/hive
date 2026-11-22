@@ -1315,3 +1315,143 @@ describe('discardPrdFlowLaunch', () => {
     expect(ticketOnBoard()).toMatchObject({ column: 'in_progress', current_session_id: SESSION })
   })
 })
+
+// A flow that was saved for later (./draft) starts on the ticket it has waited on: no second
+// ticket is made, the ticket takes the name and the prompt the flow starts with, and the
+// draft is forgotten the moment the flow exists.
+describe('startPrdFlow for a saved draft', () => {
+  const DRAFT = {
+    ticketId: TICKET,
+    projectId: GIT_PROJECT,
+    name: 'Code mode',
+    prompt: 'Build a code mode.',
+    research: true,
+    clarify: true,
+    launch: null,
+    createdAt: NOW - 3_600_000,
+    updatedAt: NOW - 3_600_000
+  }
+
+  /** The draft in the store, with its ticket waiting in To Do. */
+  function seedDraft(ticket: Partial<KanbanTicket> = {}): void {
+    usePrdFlowStore.getState().putDraft(DRAFT)
+    seedTickets(GIT_PROJECT, [makeTicket(ticket)])
+  }
+
+  it('takes over the ticket of the draft instead of making one, and forgets the draft', async () => {
+    seedDraft()
+
+    await expect(startPrdFlow(formInput({ ticketId: TICKET }))).resolves.toEqual({
+      ok: true,
+      ticketId: TICKET
+    })
+
+    expect(createTicket).not.toHaveBeenCalled()
+    expect(usePrdFlowStore.getState().drafts).toEqual({})
+    expect(flowInStore()).toMatchObject({
+      ticketId: TICKET,
+      name: 'Code mode',
+      prefix: 'CODE_MODE',
+      prompt: 'Build a code mode.',
+      cwd: MAIN_CHECKOUT,
+      createdAt: NOW
+    })
+
+    await launchIsOver()
+    expect(flowInStore()).toMatchObject({ stage: 'prd', sessionId: SESSION, status: 'running' })
+    expect(ticketOnBoard()).toMatchObject({
+      column: 'in_progress',
+      current_session_id: SESSION,
+      sort_order: TOP_OF_IN_PROGRESS
+    })
+    expect(mocks.launchSessionWithModel.mock.calls[0][0].prompt).toBe(
+      buildPrdPrompt({
+        prompt: 'Build a code mode.',
+        prefix: 'CODE_MODE',
+        research: true,
+        clarify: true,
+        sdk: APP_LAUNCH.sdk
+      })
+    )
+  })
+
+  it('gives the ticket the name and the prompt the flow starts with', async () => {
+    seedDraft()
+
+    await startPrdFlow(
+      formInput({ ticketId: TICKET, name: 'Code mode v2', prompt: 'Build it properly.' })
+    )
+
+    expect(updateTicket).toHaveBeenCalledWith(TICKET, GIT_PROJECT, {
+      title: 'Code mode v2',
+      description: 'Build it properly.'
+    })
+    expect(flowInStore()).toMatchObject({ name: 'Code mode v2', prefix: 'CODE_MODE_V2' })
+    await launchIsOver()
+    expect(ticketOnBoard()).toMatchObject({ title: 'Code mode v2', column: 'in_progress' })
+  })
+
+  it.each<[string, () => void, string]>([
+    [
+      'its ticket is no longer on the board',
+      () => seedTickets(GIT_PROJECT, []),
+      'The ticket of this draft is no longer on the board.'
+    ],
+    [
+      'its ticket was archived',
+      () => seedTickets(GIT_PROJECT, [makeTicket({ archived_at: '2026-11-18T09:00:00.000Z' })]),
+      'The ticket of this draft was archived.'
+    ],
+    [
+      'its ticket has a session',
+      () => seedTickets(GIT_PROJECT, [makeTicket({ current_session_id: 's-other' })]),
+      'The ticket of this draft was already started.'
+    ],
+    [
+      'its ticket left To Do',
+      () => seedTickets(GIT_PROJECT, [makeTicket({ column: 'review' })]),
+      'The ticket of this draft was already started.'
+    ]
+  ])('refuses the draft when %s, and keeps it a draft', async (_what, change, error) => {
+    seedDraft()
+    change()
+
+    await expect(startPrdFlow(formInput({ ticketId: TICKET }))).resolves.toEqual({
+      ok: false,
+      error
+    })
+
+    expect(createTicket).not.toHaveBeenCalled()
+    expect(flowInStore()).toBeUndefined()
+    expect(usePrdFlowStore.getState().drafts[TICKET]).toEqual(DRAFT)
+    expect(mocks.launchSessionWithModel).not.toHaveBeenCalled()
+  })
+
+  it('keeps the draft when its prompt is not written yet', async () => {
+    seedDraft()
+
+    await expect(startPrdFlow(formInput({ ticketId: TICKET, prompt: '' }))).resolves.toEqual({
+      ok: false,
+      error: 'Say what you want to create.'
+    })
+
+    expect(usePrdFlowStore.getState().drafts[TICKET]).toEqual(DRAFT)
+    expect(ticketOnBoard()).toMatchObject({ column: 'todo', current_session_id: null })
+  })
+
+  it('leaves a flow that needs attention, not a draft, when the session cannot be started', async () => {
+    seedDraft()
+    launchEnds(() => ({ success: false, error: 'no model', sessionId: SESSION }))
+
+    await startPrdFlow(formInput({ ticketId: TICKET }))
+    await launchIsOver()
+
+    expect(usePrdFlowStore.getState().drafts).toEqual({})
+    expect(flowInStore()).toMatchObject({
+      stage: 'launching',
+      status: 'needs_attention',
+      attention: 'launch_failed'
+    })
+    expect(ticketOnBoard()).toMatchObject({ column: 'todo', current_session_id: null })
+  })
+})
