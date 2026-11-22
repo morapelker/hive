@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
+  isLastDoneMoveEntry,
   ticketKey,
   useKanbanStore,
   type PendingDoneMoveIdentity,
@@ -27,6 +28,8 @@ import { gitApi } from '@/api/git-api'
 import { commitsToMerge, type BranchMergeStat } from '@shared/git-merge-status'
 import { cn } from '@/lib/utils'
 import { closeInstanceSessions, trackConnectionArchives } from '@/lib/connection-archive'
+import { unpinIdleProject, useUnpinOffer, type UnpinOfferScope } from '@/lib/auto-unpin'
+import type { PinnableProject } from '@/lib/project-pin'
 import { findCarriedRunTickets } from '@/lib/document-flow/carried-tickets'
 import { runItemOfTicket } from '@/lib/document-flow/ticket-run-membership'
 import { runKindNoun } from '@/components/document-flow/document-flow-ui'
@@ -172,6 +175,8 @@ export function MergeOnDoneDialog() {
   const [merging, setMerging] = useState(false)
   const [archiving, setArchiving] = useState(false)
   const [archivingAll, setArchivingAll] = useState(false)
+  // Which archive button is at work: the one that also unpins the project, or the plain one
+  const [unpinRequested, setUnpinRequested] = useState(false)
 
   // The file list / diff drill-down owns its navigation state; the dialog
   // only needs to ask it whether Escape was consumed (back / clear filter)
@@ -240,6 +245,7 @@ export function MergeOnDoneDialog() {
       setMerging(false)
       setArchiving(false)
       setArchivingAll(false)
+      setUnpinRequested(false)
 
       try {
         // Look up ticket from store
@@ -962,7 +968,8 @@ export function MergeOnDoneDialog() {
     clearPendingDoneMove
   ])
 
-  const handleArchive = useCallback(async () => {
+  // `unpin`: the project to take off the pinned board once the ticket is in Done (auto-unpin)
+  const handleArchive = useCallback(async (unpin: PinnableProject | null = null) => {
     if (!resolved) return
 
     // Connection project: every worktree of the instance; the last one removed deletes
@@ -986,14 +993,17 @@ export function MergeOnDoneDialog() {
     // loses one member here and keeps its sessions
     const connectionId = resolved.members ? runEntry?.connectionId : undefined
 
+    let moved: boolean
     try {
       setArchiving(true)
-      await completeDoneMove(pendingIdentity)
+      setUnpinRequested(!!unpin)
+      moved = await completeDoneMove(pendingIdentity)
     } catch (err) {
       setArchiving(false)
       toast.error(`Failed to move ticket: ${err instanceof Error ? err.message : String(err)}`)
       return
     }
+    if (moved && unpin) void unpinIdleProject(unpin)
 
     void (async () => {
       // A connection that goes away with these worktrees reads "Archiving x/y" in the sidebar
@@ -1065,9 +1075,40 @@ export function MergeOnDoneDialog() {
     return { instances, worktrees, repositories, isConnectionRun }
   }, [runEntry, archiveAllCandidates])
 
-  const handleArchiveAll = useCallback(async () => {
+  // Auto-unpin: what the archive action that ends the queue does. That is "Archive all" while
+  // it is offered and "Archive" on the last entry; an earlier entry's Archive only opens the
+  // next one. Nothing to offer for a move to Merged (the ticket is not done yet) or after a
+  // conflict (the ticket stays where it is).
+  const unpinScope = useMemo<UnpinOfferScope | null>(() => {
+    if (step !== 'archive' || !resolved || !pendingDoneMove) return null
+    if (pendingDoneMove.targetColumn !== 'done') return null
+    if (pendingDoneMove.conflictedWorktrees?.length) return null
+    if (archiveAllCandidates.length === 0 && !isLastDoneMoveEntry(pendingDoneMove)) return null
+    // Branches that were skipped keep their tickets where they are
+    const kept = new Set(pendingDoneMove.keptWorktrees?.map((k) => k.worktreeId))
+    const entries = [
+      ...(runEntry ? [runEntry] : []),
+      ...archiveAllCandidates.filter((w) => !kept.has(w.worktreeId))
+    ]
+    return {
+      projectId: pendingDoneMove.projectId,
+      landingTicketIds: new Set([
+        pendingDoneMove.ticketId,
+        ...(pendingDoneMove.run?.alsoMoveTicketIds ?? []),
+        ...entries.flatMap((e) => [...(e.ticketId ? [e.ticketId] : []), ...(e.alsoMoveTicketIds ?? [])])
+      ]),
+      archivedWorktreeIds: new Set([
+        ...(resolved.members?.map((m) => m.worktreeId) ?? [resolved.featureWorktreeId]),
+        ...entries.flatMap((e) => e.members?.map((m) => m.worktreeId) ?? [e.worktreeId])
+      ])
+    }
+  }, [step, resolved, pendingDoneMove, runEntry, archiveAllCandidates])
+  const unpinProject = useUnpinOffer(unpinScope)
+
+  const handleArchiveAll = useCallback(async (unpin: PinnableProject | null = null) => {
     if (!resolved || archiveAllCandidates.length === 0) return
     setArchivingAll(true)
+    setUnpinRequested(!!unpin)
 
     type ArchiveTarget = {
       worktreeId: string
@@ -1199,6 +1240,9 @@ export function MergeOnDoneDialog() {
       setArchivingAll(false)
       return
     }
+    // A member that was kept above still has its turn in the dialog: the ticket has not moved
+    // yet, so the project stays pinned and the last entry's own archive step asks again
+    if (unpin) void unpinIdleProject(unpin)
 
     const store = useWorktreeStore.getState()
     // A connection that goes away with these worktrees reads "Archiving x/y" in the sidebar
@@ -1330,6 +1374,30 @@ export function MergeOnDoneDialog() {
       </p>
     )
   ) : null
+
+  // Archive step: one of its archive buttons; `primary` is the default action
+  const archiveAllOffered = archiveAllCandidates.length > 0
+  const archiveAllLabel = `Archive all${pendingDoneMove?.run ? ` (${archiveAllScope.instances})` : ''}`
+  const archiveButton = (
+    label: string,
+    primary: boolean,
+    busy: boolean,
+    onClick: () => void
+  ): React.ReactNode => (
+    <Button
+      variant={primary ? 'default' : 'outline'}
+      size="sm"
+      onClick={onClick}
+      disabled={archiving || archivingAll}
+    >
+      {busy ? (
+        <Loader2 className="h-3 w-3 animate-spin mr-1" />
+      ) : (
+        <Archive className="h-3 w-3 mr-1" />
+      )}
+      {label}
+    </Button>
+  )
 
   const stepIcon: Record<Step, React.ReactNode> = {
     loading: <Loader2 className="h-4 w-4 animate-spin" />,
@@ -1675,7 +1743,15 @@ export function MergeOnDoneDialog() {
                 </div>
               </div>
             )}
-            <div className="flex shrink-0 items-center justify-between">
+            {unpinProject && (
+              <p className="text-xs text-muted-foreground" data-testid="archive-unpin-hint">
+                No other ticket of{' '}
+                <span className="font-medium text-foreground">{unpinProject.name}</span> is being
+                worked on. {archiveAllOffered ? 'Archive all & Unpin' : 'Archive & Unpin'} also
+                takes the project off the pinned board.
+              </p>
+            )}
+            <div className="flex shrink-0 items-center justify-between gap-2">
               <Button
                 variant="outline"
                 size="sm"
@@ -1684,31 +1760,35 @@ export function MergeOnDoneDialog() {
               >
                 Keep
               </Button>
-              <div className="flex items-center gap-2">
-                {archiveAllCandidates.length > 0 && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleArchiveAll}
-                    disabled={archiving || archivingAll}
-                  >
-                    {archivingAll ? (
-                      <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                    ) : (
-                      <Archive className="h-3 w-3 mr-1" />
+              {/* The default is the action on the right. With the unpin offer that is the
+                  archive that ends the queue, plus the unpin; the plain ones stay next to it */}
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {!unpinProject ? (
+                  <>
+                    {archiveAllOffered &&
+                      archiveButton(archiveAllLabel, false, archivingAll, () => void handleArchiveAll())}
+                    {archiveButton('Archive', true, archiving, () => void handleArchive())}
+                  </>
+                ) : archiveAllOffered ? (
+                  <>
+                    {archiveButton('Archive', false, archiving, () => void handleArchive())}
+                    {archiveButton(archiveAllLabel, false, archivingAll && !unpinRequested, () =>
+                      void handleArchiveAll()
                     )}
-                    Archive all
-                    {pendingDoneMove?.run ? ` (${archiveAllScope.instances})` : ''}
-                  </Button>
+                    {archiveButton('Archive all & Unpin', true, archivingAll && unpinRequested, () =>
+                      void handleArchiveAll(unpinProject)
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {archiveButton('Archive only', false, archiving && !unpinRequested, () =>
+                      void handleArchive()
+                    )}
+                    {archiveButton('Archive & Unpin', true, archiving && unpinRequested, () =>
+                      void handleArchive(unpinProject)
+                    )}
+                  </>
                 )}
-                <Button size="sm" onClick={handleArchive} disabled={archiving || archivingAll}>
-                  {archiving ? (
-                    <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                  ) : (
-                    <Archive className="h-3 w-3 mr-1" />
-                  )}
-                  Archive
-                </Button>
               </div>
             </div>
           </div>

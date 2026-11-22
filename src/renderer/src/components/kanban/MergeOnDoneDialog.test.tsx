@@ -6,6 +6,8 @@ import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useGitStore } from '@/stores/useGitStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
+import { usePinnedStore } from '@/stores/usePinnedStore'
+import { useProjectStore } from '@/stores/useProjectStore'
 import { makeDetail } from '@/components/document-flow/test-fixtures'
 import type { KanbanTicket } from '../../../../main/db/types'
 
@@ -53,6 +55,14 @@ const flowApiMocks = vi.hoisted(() => ({
 
 vi.mock('@/api/document-flow-api', () => ({
   documentFlowApi: flowApiMocks
+}))
+
+// Auto-unpin: the offer is decided against the real stores, the unpin itself is recorded
+const setProjectPinnedMock = vi.hoisted(() => vi.fn())
+
+vi.mock('@/lib/project-pin', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/project-pin')>()),
+  setProjectPinned: setProjectPinnedMock
 }))
 
 // diff2html and the image loaders are exercised elsewhere; here the diff view
@@ -2119,5 +2129,298 @@ describe('MergeOnDoneDialog — document-run batch on a connection project (inst
 
     expect(await screen.findByRole('button', { name: 'Merge' })).toBeTruthy()
     expect(gitApiMocks.commit.mock.calls.filter((c) => c[0] === '/web/a1')).toHaveLength(1)
+  })
+})
+
+describe('MergeOnDoneDialog — auto-unpin (the last open ticket of a pinned project)', () => {
+  const doneTicket: KanbanTicket = { ...ticket, id: 'ticket-done', column: 'done', worktree_id: null }
+  // Archived from Merged: out of the way, whatever its column says
+  const archivedTicket: KanbanTicket = {
+    ...ticket,
+    id: 'ticket-archived',
+    column: 'merged',
+    archived_at: now,
+    worktree_id: null
+  }
+  const otherTicket = (column: KanbanTicket['column']): KanbanTicket => ({
+    ...ticket,
+    id: 'ticket-other',
+    column,
+    worktree_id: null
+  })
+  const setTickets = (tickets: KanbanTicket[]): void => {
+    useKanbanStore.setState({ tickets: new Map([['project-1', tickets]]) })
+  }
+  // The store's own move: the ticket is in its new column once the move resolves
+  const landTicket = async (
+    ticketId: string,
+    projectId: string,
+    column: KanbanTicket['column']
+  ): Promise<void> => {
+    useKanbanStore.setState((state) => ({
+      tickets: new Map(state.tickets).set(
+        projectId,
+        (state.tickets.get(projectId) ?? []).map((t) => (t.id === ticketId ? { ...t, column } : t))
+      )
+    }))
+  }
+  const ledger = { id: 'project-1', name: 'ledger-worker' }
+  const expectCurrentModal = async (): Promise<void> => {
+    expect(await screen.findByRole('button', { name: 'Archive' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Archive & Unpin' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Archive only' })).toBeNull()
+    expect(screen.queryByTestId('archive-unpin-hint')).toBeNull()
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    moveTicketMock.mockImplementation(landTicket)
+    archiveWorktreeMock.mockResolvedValue({ success: true })
+    setProjectPinnedMock.mockResolvedValue(true)
+    mockAlreadyMergedBranch()
+    setupStores()
+    setTickets([ticket, doneTicket, archivedTicket])
+    useProjectStore.setState({ projects: [ledger] as never })
+    // The project is on the pinned board through its default worktree
+    useWorktreeStore.setState({
+      worktreesByProject: new Map([['project-1', [featureWorktree, baseWorktree]]]) as never
+    })
+    usePinnedStore.setState({
+      pinnedProjectIds: new Set(['project-1']),
+      pinnedWorktreeIds: new Set(['worktree-main']),
+      pinnedConnectionIds: new Set(),
+      loaded: true
+    })
+  })
+
+  afterEach(() => {
+    cleanup()
+    moveTicketMock.mockReset()
+    useKanbanStore.setState({ pendingDoneMove: null })
+    useProjectStore.setState({ projects: [] })
+    useWorktreeStore.setState({ worktreesByProject: new Map() })
+    usePinnedStore.setState({ pinnedProjectIds: new Set(), pinnedWorktreeIds: new Set() })
+  })
+
+  it('offers Archive & Unpin and Archive only in place of Archive', async () => {
+    render(<MergeOnDoneDialog />)
+
+    expect(await screen.findByRole('button', { name: 'Archive & Unpin' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Archive only' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Keep' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Archive' })).toBeNull()
+    expect(screen.getByTestId('archive-unpin-hint').textContent).toContain('ledger-worker')
+    expect(moveTicketMock).not.toHaveBeenCalled()
+    expect(setProjectPinnedMock).not.toHaveBeenCalled()
+  })
+
+  it('Archive & Unpin moves the ticket, archives the worktree and unpins the project', async () => {
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Archive & Unpin' }))
+
+    await waitFor(() =>
+      expect(setProjectPinnedMock).toHaveBeenCalledWith({ ...ledger, kind: 'git' }, false)
+    )
+    expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5)
+    await waitFor(() =>
+      expect(archiveWorktreeMock).toHaveBeenCalledWith(
+        'worktree-1',
+        '/repo/feature',
+        'feature',
+        '/repo/main'
+      )
+    )
+    expect(setProjectPinnedMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('Archive only archives as before and leaves the project pinned', async () => {
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Archive only' }))
+
+    await waitFor(() => expect(archiveWorktreeMock).toHaveBeenCalledTimes(1))
+    expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5)
+    expect(setProjectPinnedMock).not.toHaveBeenCalled()
+  })
+
+  it('Keep moves the ticket and leaves the project pinned', async () => {
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Keep' }))
+
+    await waitFor(() => expect(moveTicketMock).toHaveBeenCalledTimes(1))
+    expect(archiveWorktreeMock).not.toHaveBeenCalled()
+    expect(setProjectPinnedMock).not.toHaveBeenCalled()
+  })
+
+  it.each(['todo', 'in_progress', 'review', 'merged'] as const)(
+    'keeps the current modal while another ticket of the project is in %s',
+    async (column) => {
+      setTickets([ticket, doneTicket, otherTicket(column)])
+
+      render(<MergeOnDoneDialog />)
+
+      await expectCurrentModal()
+    }
+  )
+
+  it('keeps the current modal for a project that is not pinned', async () => {
+    usePinnedStore.setState({ pinnedProjectIds: new Set(), pinnedWorktreeIds: new Set() })
+
+    render(<MergeOnDoneDialog />)
+
+    await expectCurrentModal()
+  })
+
+  it('keeps the current modal for a move to Merged: the ticket is not done yet', async () => {
+    useKanbanStore.setState({
+      pendingDoneMove: {
+        ticketId: 'ticket-1',
+        projectId: 'project-1',
+        sortOrder: 5,
+        targetColumn: 'merged'
+      }
+    })
+
+    render(<MergeOnDoneDialog />)
+
+    await expectCurrentModal()
+  })
+
+  it('keeps the current modal when the only pin is on the worktree being archived', async () => {
+    // Archiving that worktree takes the project off the board anyway
+    usePinnedStore.setState({ pinnedWorktreeIds: new Set(['worktree-1']) })
+
+    render(<MergeOnDoneDialog />)
+
+    await expectCurrentModal()
+  })
+
+  it('goes back to the current modal when another ticket is opened meanwhile', async () => {
+    render(<MergeOnDoneDialog />)
+    expect(await screen.findByRole('button', { name: 'Archive & Unpin' })).toBeTruthy()
+
+    act(() => setTickets([ticket, doneTicket, otherTicket('todo')]))
+
+    await expectCurrentModal()
+  })
+
+  it('does not unpin when a ticket shows up while the move is in flight', async () => {
+    moveTicketMock.mockImplementation(async (ticketId, projectId, column) => {
+      await landTicket(ticketId, projectId, column)
+      setTickets([...(useKanbanStore.getState().tickets.get('project-1') ?? []), otherTicket('todo')])
+    })
+
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Archive & Unpin' }))
+
+    await waitFor(() => expect(archiveWorktreeMock).toHaveBeenCalledTimes(1))
+    expect(setProjectPinnedMock).not.toHaveBeenCalled()
+  })
+
+  describe('connection ticket (one archive step per member)', () => {
+    const stack = { id: 'project-1', name: 'checkout-stack', kind: 'connection' as const }
+    const member = (id: string, projectId: string, branch: string): typeof featureWorktree => ({
+      ...featureWorktree,
+      id,
+      project_id: projectId,
+      branch_name: branch,
+      path: `/${projectId}/${branch}`
+    })
+    const nextWorktree = member('worktree-next', 'project-2', 'feature-next')
+    const queue = (remaining: { alreadyMerged: boolean }): void => {
+      useKanbanStore.setState({
+        tickets: new Map([['project-1', [{ ...ticket, worktree_id: null }]]]),
+        pendingDoneMove: {
+          ticketId: 'ticket-1',
+          projectId: 'project-1',
+          sortOrder: 5,
+          targetColumn: 'done',
+          worktreeId: 'worktree-1',
+          worktreeProjectId: 'project-2',
+          remainingWorktrees: [
+            { worktreeId: 'worktree-next', projectId: 'project-2', ...remaining }
+          ],
+          offerArchive: true
+        }
+      })
+    }
+
+    beforeEach(() => {
+      useProjectStore.setState({ projects: [stack] as never })
+      usePinnedStore.setState({
+        pinnedWorktreeIds: new Set(),
+        pinnedConnectionIds: new Set(['connection-base'])
+      })
+      dbApiMocks.worktree.get.mockImplementation(async (id: string) =>
+        id === 'worktree-next' ? nextWorktree : featureWorktree
+      )
+    })
+
+    it('keeps the current modal on a member that is not the last of the queue', async () => {
+      queue({ alreadyMerged: false })
+
+      render(<MergeOnDoneDialog />)
+
+      await expectCurrentModal()
+      expect(screen.queryByRole('button', { name: 'Archive all' })).toBeNull()
+    })
+
+    it('offers Archive all & Unpin next to Archive all and Archive', async () => {
+      queue({ alreadyMerged: true })
+
+      render(<MergeOnDoneDialog />)
+
+      expect(await screen.findByRole('button', { name: 'Archive all & Unpin' })).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'Archive all' })).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'Archive' })).toBeTruthy()
+      expect(screen.getByTestId('archive-unpin-hint').textContent).toContain('checkout-stack')
+    })
+
+    it('Archive all & Unpin archives every member, moves the ticket and unpins the project', async () => {
+      queue({ alreadyMerged: true })
+
+      render(<MergeOnDoneDialog />)
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Archive all & Unpin' }))
+
+      await waitFor(() => expect(setProjectPinnedMock).toHaveBeenCalledWith(stack, false))
+      await waitFor(() => expect(archiveWorktreeMock).toHaveBeenCalledTimes(2))
+      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5)
+    })
+
+    it('Archive all & Unpin leaves the project pinned while a member that picked up work has its turn', async () => {
+      queue({ alreadyMerged: true })
+      gitApiMocks.branchDiffShortStat.mockImplementation(async (path: string) => ({
+        success: true,
+        filesChanged: 0,
+        insertions: 0,
+        deletions: 0,
+        commitsAhead: path === nextWorktree.path ? 1 : 0
+      }))
+
+      render(<MergeOnDoneDialog />)
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Archive all & Unpin' }))
+
+      await waitFor(() => expect(archiveWorktreeMock).toHaveBeenCalledTimes(1))
+      expect(useKanbanStore.getState().pendingDoneMove?.worktreeId).toBe('worktree-next')
+      expect(moveTicketMock).not.toHaveBeenCalled()
+      expect(setProjectPinnedMock).not.toHaveBeenCalled()
+    })
+
+    it('Archive takes one member and offers the unpin again on the last one', async () => {
+      queue({ alreadyMerged: true })
+
+      render(<MergeOnDoneDialog />)
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Archive' }))
+
+      expect(await screen.findByRole('button', { name: 'Archive & Unpin' })).toBeTruthy()
+      expect(screen.queryByRole('button', { name: 'Archive all' })).toBeNull()
+      expect(setProjectPinnedMock).not.toHaveBeenCalled()
+    })
   })
 })

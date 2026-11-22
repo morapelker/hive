@@ -594,6 +594,14 @@ function nextPendingDoneMove(
   }
 }
 
+/**
+ * Whether the entry being handled is the last one of its queue: completing it settles the move
+ * (the ticket lands in its target column) instead of opening the next worktree's steps.
+ */
+export function isLastDoneMoveEntry(pending: PendingDoneMove): boolean {
+  return nextPendingDoneMove(pending, pending.conflictedWorktrees ?? []) === null
+}
+
 function toastConflictedDoneMove(count: number, unit: 'project' | 'branch' = 'project'): void {
   toast.warning(
     `Merge conflicts in ${count} ${unit}${count !== 1 ? (unit === 'branch' ? 'es' : 's') : ''} — ticket not moved. Fix the conflicts and move it again.`
