@@ -501,6 +501,7 @@ const DOCUMENT_RUN_ITEM_PATCH_COLUMNS: Record<
   document_update_hash: 'plain',
   document_update_report: 'json',
   document_update_finished_at: 'plain',
+  worktree_cleaned_at: 'plain',
   started_at: 'plain',
   finished_at: 'plain'
 }
@@ -956,6 +957,7 @@ export class DatabaseService implements DocumentFlowDb, DataProjectsRepository {
     this.safeAddColumn('document_run_items', 'document_update_hash', 'TEXT DEFAULT NULL')
     this.safeAddColumn('document_run_items', 'document_update_report', 'TEXT DEFAULT NULL')
     this.safeAddColumn('document_run_items', 'document_update_finished_at', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('document_run_items', 'worktree_cleaned_at', 'TEXT DEFAULT NULL')
     this.safeAddColumn('document_runs', 'source_kind', "TEXT NOT NULL DEFAULT 'document'")
   }
 
@@ -1556,6 +1558,7 @@ export class DatabaseService implements DocumentFlowDb, DataProjectsRepository {
         NonNullable<DocumentRunItem['document_update_report']>
       >(row.document_update_report),
       document_update_finished_at: (row.document_update_finished_at as string | null) ?? null,
+      worktree_cleaned_at: (row.worktree_cleaned_at as string | null) ?? null,
       created_at: row.created_at as string,
       updated_at: row.updated_at as string,
       started_at: (row.started_at as string | null) ?? null,

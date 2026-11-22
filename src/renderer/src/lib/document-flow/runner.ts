@@ -1,5 +1,6 @@
 import { parseDocumentUpdateFooter } from '@shared/document-flow/document-update'
 import {
+  ALREADY_IMPLEMENTED_DETAIL,
   DOCUMENT_UPDATE_INTERRUPT_DETAIL,
   PAUSED_PREFIX,
   USER_INTERRUPT_DETAIL,
@@ -8,6 +9,7 @@ import {
   documentUpdateCandidates,
   documentUpdateLaneOwner,
   isDocumentUpdatePending,
+  isItemFinishedWith,
   isItemWaitingOnUser,
   isRunSettled,
   isRunWaitingOnUser,
@@ -140,8 +142,6 @@ const API_ERROR_PREFIX = 'API error ('
 const FIX_INTERRUPT_DETAIL = `${WAITING_PREFIX}you interrupted the fix session. Send it a message to continue.`
 const SETUP_WAIT_DETAIL = 'Waiting for the setup script to finish in the integration worktree.'
 const NO_CHANGES_DETAIL = 'The agent reported done, but its branch has no commits to merge.'
-const UNCHANGED_DETAIL =
-  'Nothing to merge: the agent reported the task done without changing anything.'
 /** `status_detail` prefix of a ticket merged although its agent's last message was not `done`. */
 const MERGED_AS_IS_PREFIX = 'Merged as it stood. The agent ended on: '
 /** `status_detail` prefix of a ready ticket whose merge waits for the one in the lane. */
@@ -452,6 +452,11 @@ export class DocumentFlowRunner {
    * catch-up and the run-end sweep (`sweepRun`) pass them over.
    */
   private readonly releasedItems = new Set<string>()
+  /**
+   * Items this runner asked the server to clean the worktree of (`cleanFinishedWorktree`):
+   * not asked again, whatever the answer was. The server keeps the lasting record.
+   */
+  private readonly cleanRequests = new Set<string>()
   /** Each run's status as the last tick saw it: a run that goes from on to over is swept. */
   private readonly runStatuses = new Map<string, DocumentRun['status']>()
   /** Ended runs whose merged tickets' sessions are still to be swept (`sweepRun`). */
@@ -599,6 +604,8 @@ export class DocumentFlowRunner {
         if (this.releasedItems.has(item.id) || !this.updateEndedSinceStart(item)) continue
         if (!(await this.releaseSession(run.project_id, item))) settled = false
       }
+      // The updates the end of the run skipped are over too: those worktrees are cleaned now.
+      for (const item of detail.items) this.cleanFinishedWorktree(run, item)
       if (settled) this.pendingSweeps.delete(run.id)
     } catch (error) {
       // Tried again on a later tick.
@@ -725,6 +732,10 @@ export class DocumentFlowRunner {
     // runs beside the merge lane, since the document is outside every worktree. The run is
     // only settled once the lane has drained.
     this.startDocumentLane(state, run, items, now)
+
+    // Tickets the run is finished with whose worktree was not cleaned as their last step ended:
+    // the ticket was not back in Merged yet, the setting was off, or the app was closed.
+    for (const item of items) this.cleanFinishedWorktree(run, item)
 
     const settled = isRunSettled(items)
     // A run made from board tickets that the server would not finalize was given a ticket
@@ -2312,11 +2323,13 @@ export class DocumentFlowRunner {
     // board tickets has none to tell).
     await this.patch(op, {
       status: 'skipped',
-      status_detail: UNCHANGED_DETAIL,
+      status_detail: ALREADY_IMPLEMENTED_DETAIL,
       finished_at: toIso(this.ports.now()),
       ...this.queueDocumentUpdate(op)
     })
-    this.event(op, 'skipped', `${op.item.key}: ${UNCHANGED_DETAIL}`)
+    this.event(op, 'skipped', `${op.item.key}: ${ALREADY_IMPLEMENTED_DETAIL}`)
+    // A run made from board tickets has no document to tell: it is finished with the ticket.
+    this.cleanWorktreeIfFinished(op)
   }
 
   /** Conflicts are resolved by the ticket's own session, on its own branch. */
@@ -2618,6 +2631,9 @@ export class DocumentFlowRunner {
         .catch((error) => this.ports.warn(`could not move ${item.key} to merged`, error))
     }
     this.event(op, 'merged', `Merged ${item.key}`)
+    // A run made from a document still has the document update to ask of the session: its
+    // worktree is cleaned once that is over (`finishDocumentUpdate`).
+    this.cleanWorktreeIfFinished(op)
   }
 
   // ── Updating the document ────────────────────────────────────────────────
@@ -3182,6 +3198,7 @@ export class DocumentFlowRunner {
     if (returnTicket) await this.returnTicketToMerged(op)
     const projectId = this.currentItem(op)?.run.project_id
     if (projectId) await this.releaseSession(projectId, op.item)
+    this.cleanWorktreeIfFinished(op)
   }
 
   private async returnTicketToMerged(op: ItemOp): Promise<void> {
@@ -3223,6 +3240,47 @@ export class DocumentFlowRunner {
       .closeTicketSession(projectId, ticketId, sessionId)
       .catch((error) => this.ports.warn(`could not close the session of ${key}`, error))
     return true
+  }
+
+  // ── Cleaning up ──────────────────────────────────────────────────────────
+
+  /**
+   * The run is finished with the ticket (`isItemFinishedWith`: merged or closed as already
+   * implemented, its document update over) and a merged ticket sits where its work is over, in
+   * Merged or Done: what git does not track in its worktree — dependencies, build output — is
+   * removed, as archiving the worktree would. A session still at work there does not hold it
+   * back. One the user took back up by hand, out of those columns, is left until it returns.
+   *
+   * Once per ticket: the server records it (`worktree_cleaned_at`) before it removes anything
+   * and never does it again, so what the user has a session rebuild there afterwards stays
+   * until the worktree is archived. Not awaited: no lane waits on a clean.
+   */
+  private cleanFinishedWorktree(run: DocumentRun, item: DocumentRunItem): void {
+    if (item.worktree_cleaned_at || this.cleanRequests.has(item.id)) return
+    if (!isItemFinishedWith(run, item) || !this.ports.cleansFinishedWorktrees()) return
+    if (item.status === 'merged') {
+      const ticket = item.ticket_id ? this.ports.getTicket(run.project_id, item.ticket_id) : null
+      if (!ticket || (ticket.column !== 'merged' && ticket.column !== 'done')) return
+    }
+    this.cleanRequests.add(item.id)
+    this.ports.api.cleanItemWorktree(run.id, item.id).then(
+      (result) => {
+        if (result.state === 'failed') {
+          this.ports.warn(`could not clean the worktree of ${item.key}: ${result.error ?? ''}`)
+        }
+      },
+      (error) => {
+        // The server never heard the request: asked again on a later tick. One it refused is not.
+        if (this.ports.isTransportError(error)) this.cleanRequests.delete(item.id)
+        else this.ports.warn(`could not clean the worktree of ${item.key}`, error)
+      }
+    )
+  }
+
+  /** The last step of a ticket just ended: clean its worktree, read as the store has it now. */
+  private cleanWorktreeIfFinished(op: ItemOp): void {
+    const current = this.currentItem(op)
+    if (current) this.cleanFinishedWorktree(current.run, current.item)
   }
 
   /**

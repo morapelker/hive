@@ -311,6 +311,16 @@ export async function cleanUntracked(cwd: string): Promise<void> {
   await gitOutput(cwd, ['clean', '-fd'], { timeoutMs: SLOW_TIMEOUT_MS })
 }
 
+/**
+ * Remove everything git does not track: untracked files and the ignored ones too (dependencies,
+ * build output), which is most of what a worktree weighs. Env files (`.env`, `.env.local`, …)
+ * stay, at any depth: they are what a checkout needs to run again without its setup. Tracked
+ * files are not touched, modified or not.
+ */
+export async function cleanUntrackedAndIgnored(cwd: string): Promise<void> {
+  await gitOutput(cwd, ['clean', '-fdxq', '-e', '.env*'], { timeoutMs: SLOW_TIMEOUT_MS })
+}
+
 export interface NameStatusEntry {
   /** `A`, `M`, `D`, `T`, … (renames are reported as a delete plus an add). */
   status: string

@@ -26,6 +26,7 @@ import type {
   DocumentSourceFile,
   DocumentSourceState,
   DocumentVerifyResult,
+  DocumentWorktreeCleanResult,
   SessionFinalMessage
 } from '@shared/types/document-flow'
 import { getRendererRpcClient } from './rpc-client'
@@ -184,6 +185,13 @@ export const documentFlowApi = {
   /** Reset the integration branch to the item's pre-merge commit. */
   rollbackMerge: (runId: string, itemId: string): Promise<DocumentSimpleResult> =>
     request('rollbackMerge', { runId, itemId }),
+
+  /**
+   * Remove what git does not track (dependencies, build output; env files stay) from the
+   * worktree of a ticket the run is finished with. Once per ticket: a second call does nothing.
+   */
+  cleanItemWorktree: (runId: string, itemId: string): Promise<DocumentWorktreeCleanResult> =>
+    request('cleanItemWorktree', { runId, itemId }),
 
   /** Build the final report and move the run to `completed` / `completed_with_issues`. */
   finalize: (runId: string): Promise<DocumentRunDetail> => request('finalize', { runId }),

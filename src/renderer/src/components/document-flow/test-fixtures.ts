@@ -107,6 +107,7 @@ export function makeItem(overrides: Partial<DocumentRunItem> = {}): DocumentRunI
     document_update_hash: null,
     document_update_report: null,
     document_update_finished_at: null,
+    worktree_cleaned_at: null,
     created_at: NOW,
     updated_at: NOW,
     started_at: null,

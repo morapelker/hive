@@ -7,6 +7,7 @@ import {
   GitCommandError,
   UnresolvedConflictsError,
   cleanUntracked,
+  cleanUntrackedAndIgnored,
   collectMigrationPaths,
   commitAll,
   commitCount,
@@ -327,6 +328,54 @@ describe('merging ticket branches into the integration branch', () => {
     expect(readFileSync(join(repo.projectPath, 'src/shared.ts'), 'utf8')).toBe(
       'export const shared = "base"\n'
     )
+  })
+})
+
+describe('cleaning a finished ticket worktree', () => {
+  it('removes untracked and ignored files, keeps env files at any depth, and leaves tracked files alone', async () => {
+    const ticket = repo.addWorktree('ticket-clean', repo.baseSha)
+    repo.write(integration, { 'node_modules/kept/index.js': 'x\n' })
+    repo.commit(ticket, 'ignore rules', {
+      '.gitignore': 'node_modules/\ndist/\n.env\n.env.*\n'
+    })
+    repo.write(ticket, {
+      // Ignored: dependencies, build output, env files.
+      'node_modules/pkg/index.js': 'x\n',
+      'node_modules/pkg/.env.example': 'kept where it sits\n',
+      'packages/api/dist/out.js': 'x\n',
+      '.env': 'SECRET=1\n',
+      'packages/api/.env.local': 'PORT=1\n',
+      // Untracked and not ignored.
+      'notes/todo.txt': 'x\n',
+      'stray.log': 'x\n',
+      // Tracked, with an uncommitted edit.
+      'src/app.ts': 'export const app = 2\n'
+    })
+
+    await cleanUntrackedAndIgnored(ticket)
+
+    for (const gone of ['node_modules/pkg/index.js', 'packages/api/dist', 'notes', 'stray.log']) {
+      expect(existsSync(join(ticket, gone)), gone).toBe(false)
+    }
+    expect(readFileSync(join(ticket, '.env'), 'utf8')).toBe('SECRET=1\n')
+    expect(readFileSync(join(ticket, 'packages/api/.env.local'), 'utf8')).toBe('PORT=1\n')
+    // An env file inside a removed tree keeps its directories; nothing else of them stays.
+    expect(existsSync(join(ticket, 'node_modules/pkg/.env.example'))).toBe(true)
+    expect(readFileSync(join(ticket, 'src/app.ts'), 'utf8')).toBe('export const app = 2\n')
+    expect(repo.git(ticket, 'status', '--porcelain')).toBe('M src/app.ts')
+    // Only this worktree: the others still have what they had.
+    expect(existsSync(join(integration, 'node_modules/kept/index.js'))).toBe(true)
+    expect(repo.git(repo.projectPath, 'status', '--porcelain')).toBe('')
+    rmSync(join(integration, 'node_modules'), { recursive: true, force: true })
+  })
+
+  it('is a no-op in a worktree that has nothing git does not track', async () => {
+    const ticket = repo.addWorktree('ticket-clean-twice', repo.baseSha)
+
+    await cleanUntrackedAndIgnored(ticket)
+
+    expect(repo.git(ticket, 'status', '--porcelain', '--ignored')).toBe('')
+    expect(existsSync(join(ticket, 'src/app.ts'))).toBe(true)
   })
 })
 

@@ -71,6 +71,7 @@ const API_METHODS = [
   'verify',
   'commitIntegration',
   'rollbackMerge',
+  'cleanItemWorktree',
   'finalize',
   'cancel',
   'startMigrations',
@@ -122,6 +123,7 @@ function makeService(overrides: Partial<DocumentFlowRpcService> = {}): DocumentF
       }),
     commitIntegration: () => Effect.succeed({ success: true, committed: false }),
     rollbackMerge: () => Effect.succeed({ success: true }),
+    cleanItemWorktree: () => Effect.succeed({ state: 'cleaned' as const }),
     finalize: () => Effect.succeed(detail),
     cancel: () => Effect.succeed(detail),
     startMigrations: () => Effect.succeed(detail),
@@ -287,6 +289,7 @@ describe('documentFlow RPC handlers', () => {
         durationMs: 0
       }),
       rollbackMerge: record('rollbackMerge', { success: true }),
+      cleanItemWorktree: record('cleanItemWorktree', { state: 'cleaned' as const }),
       finalize: record('finalize', detail),
       cancel: record('cancel', detail),
       delete: record('delete', true),
@@ -306,6 +309,7 @@ describe('documentFlow RPC handlers', () => {
     await call(service, 'merge', { runId: 'run-1', itemId: 'item-1' })
     await call(service, 'verify', { runId: 'run-1' })
     await call(service, 'rollbackMerge', { runId: 'run-1', itemId: 'item-1' })
+    await call(service, 'cleanItemWorktree', { runId: 'run-1', itemId: 'item-1' })
     await call(service, 'finalize', { runId: 'run-1' })
     await call(service, 'cancel', { runId: 'run-1' })
     await call(service, 'delete', { runId: 'run-1' })
@@ -326,6 +330,7 @@ describe('documentFlow RPC handlers', () => {
       merge: ['run-1', 'item-1'],
       verify: ['run-1'],
       rollbackMerge: ['run-1', 'item-1'],
+      cleanItemWorktree: ['run-1', 'item-1'],
       finalize: ['run-1'],
       cancel: ['run-1'],
       delete: ['run-1'],
@@ -624,6 +629,15 @@ describe('documentFlow RPC handlers', () => {
       itemId: 'i',
       patch: { pre_merge_sha: 'abc' }
     })
+    // Only the server marks a worktree as cleaned: a client that could clear the mark could
+    // have it cleaned a second time.
+    await rejectsValidation(service, 'updateItem', {
+      runId: 'r',
+      itemId: 'i',
+      patch: { worktree_cleaned_at: null }
+    })
+    await rejectsValidation(service, 'cleanItemWorktree', { runId: 'r' })
+    await rejectsValidation(service, 'cleanItemWorktree', { runId: 'r', itemId: '' })
     await rejectsValidation(service, 'updateItem', {
       runId: 'r',
       itemId: 'i',

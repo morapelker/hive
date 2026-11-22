@@ -70,10 +70,14 @@ export type DocumentRunItemCreate = DocumentRunItemDraft
  */
 export type DocumentRunItemInsert = DocumentRunItemDraft & { ticket_id?: string | null }
 
-/** Every mutable column of an item: the renderer-facing patch plus the merge bookkeeping. */
+/**
+ * Every mutable column of an item: the renderer-facing patch plus what only the server writes,
+ * the merge bookkeeping and the mark of a cleaned worktree.
+ */
 export interface DocumentRunItemRowPatch extends DocumentRunItemPatch {
   pre_merge_sha?: string | null
   merge_sha?: string | null
+  worktree_cleaned_at?: string | null
 }
 
 export interface DocumentRunEventCreate {

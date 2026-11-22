@@ -3,6 +3,8 @@ import {
   DOCUMENT_RUN_ITEM_MERGE_STATUSES,
   DOCUMENT_RUN_ITEM_STATUSES,
   DOCUMENT_RUN_ITEM_TERMINAL_STATUSES,
+  isTicketRun,
+  type DocumentRun,
   type DocumentRunItem,
   type DocumentRunItemStatus
 } from '../types/document-flow'
@@ -276,6 +278,41 @@ export function isDocumentUpdatePending(item: DocumentUpdateNode): boolean {
     item.selected &&
     (item.status === 'merged' || item.status === 'skipped') &&
     (item.document_update_status === 'queued' || item.document_update_status === 'updating')
+  )
+}
+
+/**
+ * `status_detail` of a ticket closed as already implemented: its agent reported the task done
+ * and its branch held nothing the integration branch lacks, so there was nothing to merge.
+ */
+export const ALREADY_IMPLEMENTED_DETAIL =
+  'Nothing to merge: the agent reported the task done without changing anything.'
+
+type FinishedWithNode = Pick<
+  DocumentRunItem,
+  'selected' | 'status' | 'status_detail' | 'document_update_status'
+>
+
+/**
+ * The run has nothing left to ask of the ticket: it is merged, or was closed as already
+ * implemented, and in a run made from a document its document update is over, however it ended
+ * (done, failed or skipped). A ticket the user skipped is not: its branch may hold work that
+ * never landed. This is when the ticket's worktree is cleaned of what git does not track.
+ */
+export function isItemFinishedWith(
+  run: Pick<DocumentRun, 'source_kind'>,
+  item: FinishedWithNode
+): boolean {
+  if (!item.selected || (item.status !== 'merged' && item.status !== 'skipped')) return false
+  // A run made from board tickets has no document to update: the merge is the last step.
+  if (isTicketRun(run)) {
+    return item.status === 'merged' || item.status_detail === ALREADY_IMPLEMENTED_DETAIL
+  }
+  // Only a merged or already implemented ticket ever joins the document edit lane.
+  return (
+    item.document_update_status === 'done' ||
+    item.document_update_status === 'failed' ||
+    item.document_update_status === 'skipped'
   )
 }
 

@@ -12,6 +12,7 @@ import {
   type DocumentRunVerdict,
   type DocumentSourceState,
   type DocumentVerifyResult,
+  type DocumentWorktreeCleanResult,
   type SessionFinalMessage
 } from '@shared/types/document-flow'
 import type { TicketLaunchResult, TicketLaunchSpec } from '@/lib/ticket-launch'
@@ -173,6 +174,7 @@ export function makeItem(overrides: Partial<DocumentRunItem> = {}): DocumentRunI
     document_update_hash: null,
     document_update_report: null,
     document_update_finished_at: null,
+    worktree_cleaned_at: null,
     created_at: TEST_NOW,
     updated_at: TEST_NOW,
     started_at: null,
@@ -619,6 +621,15 @@ export function createWorld(options: WorldOptions = {}) {
       if (rolledBack) setItem(rolledBack.key, { pre_merge_sha: null, merge_sha: null }, runId)
       return { success: true } as { success: boolean; error?: string }
     }),
+    // Like the server: recorded on the row, and never done twice.
+    cleanItemWorktree: vi.fn(
+      async (runId: string, itemId: string): Promise<DocumentWorktreeCleanResult> => {
+        const target = detail(runId).items.find((candidate) => candidate.id === itemId)
+        if (!target || target.worktree_cleaned_at) return { state: 'already' }
+        setItem(target.key, { worktree_cleaned_at: new Date().toISOString() }, runId)
+        return { state: 'cleaned' }
+      }
+    ),
     // The source document is not on disk unless a test puts it there (`putDocument`): the
     // document update is then skipped.
     inspectSource: vi.fn(
@@ -797,6 +808,9 @@ export function createWorld(options: WorldOptions = {}) {
     readFinalMessage: vi.fn(async (_sessionId: string): Promise<string | null> => null),
     isSessionClosed: vi.fn(async (sessionId: string) => closedSessions.has(sessionId)),
     isSessionStarted: vi.fn(async (sessionId: string) => !unstartedSessions.has(sessionId)),
+
+    // The setting's default: on.
+    cleansFinishedWorktrees: vi.fn(() => true),
 
     fireSetupScript: vi.fn((_projectId: string, _worktreeId: string, _cwd: string) => {}),
     isSetupScriptRunning: (worktreeId: string) => setupRunning.has(worktreeId),

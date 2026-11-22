@@ -95,6 +95,7 @@ export function SettingsGeneral(): React.JSX.Element {
     automaticallyCreateTicket,
     showMergedColumn,
     nestDocumentRunTickets,
+    cleanFinishedTicketWorktrees,
     vimModeEnabled,
     ticketAutocompleteEnabled,
     keepAwakeEnabled,
@@ -448,6 +449,38 @@ export function SettingsGeneral(): React.JSX.Element {
             className={cn(
               'pointer-events-none block h-4 w-4 rounded-full bg-background ring-0 transition-transform',
               nestDocumentRunTickets ? 'translate-x-4' : 'translate-x-0'
+            )}
+          />
+        </button>
+      </div>
+
+      {/* Worktrees of tickets an orchestrator is finished with */}
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <label className="text-sm font-medium">Clean up finished orchestrator tickets</label>
+          <p className="text-xs text-muted-foreground">
+            Once an orchestrator is finished with a ticket (merged, the document updated, sitting
+            in Merged), remove everything git does not track from its worktree: dependencies,
+            build output and other temporary files. Env files are kept. It happens once per
+            ticket, so what you rebuild there afterwards stays until the worktree is archived.
+          </p>
+        </div>
+        <button
+          role="switch"
+          aria-checked={cleanFinishedTicketWorktrees}
+          onClick={() =>
+            updateSetting('cleanFinishedTicketWorktrees', !cleanFinishedTicketWorktrees)
+          }
+          className={cn(
+            'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors',
+            cleanFinishedTicketWorktrees ? 'bg-primary' : 'bg-muted'
+          )}
+          data-testid="clean-finished-ticket-worktrees-toggle"
+        >
+          <span
+            className={cn(
+              'pointer-events-none block h-4 w-4 rounded-full bg-background ring-0 transition-transform',
+              cleanFinishedTicketWorktrees ? 'translate-x-4' : 'translate-x-0'
             )}
           />
         </button>

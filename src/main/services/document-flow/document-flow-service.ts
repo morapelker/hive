@@ -46,6 +46,7 @@ import {
 import {
   awaitsLaunch,
   integrationBranchHint,
+  isItemFinishedWith,
   isTerminalItemStatus,
   sanitizeDependencies,
   ticketBranchHint
@@ -122,6 +123,7 @@ import {
   type DocumentTicketRunCreateParams,
   type DocumentUpdateStatus,
   type DocumentVerifyResult,
+  type DocumentWorktreeCleanResult,
   type SessionFinalMessage
 } from '@shared/types/document-flow'
 import type {
@@ -275,6 +277,8 @@ export interface DocumentFlowWorktree {
   branch_name: string
   /** `active` or `archived`; a row without one counts as active. */
   status?: string
+  /** The project's own checkout rather than a worktree cut for a branch. */
+  is_default?: boolean
   /** The branch the worktree's work is merged into from the board. */
   base_branch?: string | null
 }
@@ -4424,6 +4428,98 @@ export class DocumentFlowService {
     }
     await this.assertIntegrationCheckout(checkout)
     return path
+  }
+
+  // ── Cleaning up a finished ticket ─────────────────────────────────────────
+
+  /**
+   * Remove what git does not track — dependencies, build output, everything but env files —
+   * from the worktree of a ticket the run is finished with (`isItemFinishedWith`); on a
+   * connection project, from every member worktree of its instance. It is what archiving the
+   * worktree throws away anyway, and the work itself is on the integration branch. Tracked
+   * files are not touched.
+   *
+   * Once per ticket: `worktree_cleaned_at` is written before anything is removed, and a ticket
+   * that has it is left alone, whether the clean worked or not. So what a session the user
+   * takes up again rebuilds there afterwards stays until the worktree is archived.
+   */
+  async cleanItemWorktree(runId: string, itemId: string): Promise<DocumentWorktreeCleanResult> {
+    const { run, item } = this.requireItem(runId, itemId)
+    if (item.worktree_cleaned_at) return { state: 'already' }
+    if (!isItemFinishedWith(run, item)) {
+      throw new Error(`The run is not finished with ${item.key}: its worktree is left as it is.`)
+    }
+    // Nothing is awaited between the read above and this write: two calls cannot both pass.
+    this.saveItem(run, item.id, { worktree_cleaned_at: this.now().toISOString() })
+
+    const worktrees = this.cleanableWorktrees(run, item)
+    if (worktrees.length === 0) return { state: 'none' }
+    const outcomes = await Promise.all(
+      worktrees.map(async ({ path }) => {
+        try {
+          if (!samePath(await this.git.topLevel(path), path)) {
+            throw new Error('it is not the root of a worktree')
+          }
+          await this.git.cleanUntrackedAndIgnored(path)
+          return { path, error: null }
+        } catch (error) {
+          return { path, error: describeError(error) }
+        }
+      })
+    )
+    const cleaned = outcomes.filter((outcome) => outcome.error === null).map(({ path }) => path)
+    const failures = outcomes.flatMap(({ path, error }) => (error ? [`${path}: ${error}`] : []))
+    if (failures.length > 0) {
+      const error = failures.join('; ')
+      this.log(
+        run,
+        'worktree_clean_failed',
+        `The worktree of ${item.key} was not cleaned: ${error}`,
+        {
+          itemId: item.id,
+          data: { cleaned, failures }
+        }
+      )
+      return { state: 'failed', error }
+    }
+    this.log(
+      run,
+      'worktree_cleaned',
+      `Cleaned the worktree of ${item.key}: removed what git does not track (dependencies, build output)`,
+      { itemId: item.id, data: { paths: cleaned } }
+    )
+    return { state: 'cleaned' }
+  }
+
+  /**
+   * The ticket's own worktrees that may be cleaned: active, on disk, and cut for the ticket.
+   * Never an integration worktree (the run's own work, and a fix session's, lives there), a
+   * project's default worktree or a project root.
+   */
+  private cleanableWorktrees(run: DocumentRun, item: DocumentRunItem): DocumentFlowWorktree[] {
+    const ids = new Set(
+      [item.worktree_id, ...(item.members ?? []).map((member) => member.worktree_id)].filter(
+        (id): id is string => !!id
+      )
+    )
+    const members = run.members ?? []
+    const integrationIds = new Set([
+      run.integration_worktree_id,
+      ...members.map((member) => member.integration_worktree_id)
+    ])
+    const keptPaths = [
+      run.integration_worktree_path,
+      this.deps.getProject(run.project_id)?.path,
+      ...members.flatMap((member) => [member.integration_worktree_path, member.project_path])
+    ].filter((path): path is string => !!path)
+    return [...ids].flatMap((id) => {
+      if (integrationIds.has(id)) return []
+      const worktree = this.deps.getWorktree(id)
+      if (!worktree || worktree.is_default || (worktree.status ?? 'active') !== 'active') return []
+      if (!existsSync(worktree.path)) return []
+      if (keptPaths.some((path) => samePath(path, worktree.path))) return []
+      return [worktree]
+    })
   }
 
   // ── End of a run ──────────────────────────────────────────────────────────

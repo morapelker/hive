@@ -6,6 +6,7 @@ import {
   type DocumentRunItemStatus
 } from '../types/document-flow'
 import {
+  ALREADY_IMPLEMENTED_DETAIL,
   DOCUMENT_UPDATE_INTERRUPT_DETAIL,
   USER_INTERRUPT_DETAIL,
   WAITING_FOR_WORK_PREFIX,
@@ -22,6 +23,7 @@ import {
   isDependencySatisfied,
   isDocumentUpdatePending,
   isDocumentUpdateWaitingOnUser,
+  isItemFinishedWith,
   isItemWaitingOnUser,
   isMergeInFlight,
   isRunSettled,
@@ -95,6 +97,7 @@ function item(
     document_update_hash: null,
     document_update_report: null,
     document_update_finished_at: null,
+    worktree_cleaned_at: null,
     created_at: '2026-10-05T10:00:00.000Z',
     updated_at: '2026-10-05T10:00:00.000Z',
     started_at: null,
@@ -860,6 +863,54 @@ describe('document edit lane', () => {
       false
     )
     expect(isDocumentUpdatePending(editing('A', { selected: false }))).toBe(false)
+  })
+
+  it('knows when a run made from a document is finished with a ticket', () => {
+    const run = { source_kind: 'document' as const }
+    for (const status of ['done', 'failed', 'skipped'] as const) {
+      expect(isItemFinishedWith(run, item('A', 'merged', { document_update_status: status }))).toBe(
+        true
+      )
+      // Closed as already implemented: the document was told, however that ended.
+      expect(
+        isItemFinishedWith(run, item('A', 'skipped', { document_update_status: status }))
+      ).toBe(true)
+    }
+    // Merged, with the document update still ahead of it or under way.
+    expect(isItemFinishedWith(run, queued('A', '2026-10-05T10:01:00.000Z'))).toBe(false)
+    expect(isItemFinishedWith(run, editing('A'))).toBe(false)
+    // A row from before the step existed, and a ticket the user skipped: no update, ever.
+    expect(isItemFinishedWith(run, item('A', 'merged'))).toBe(false)
+    expect(
+      isItemFinishedWith(run, item('A', 'skipped', { status_detail: 'Skipped by you.' }))
+    ).toBe(false)
+    expect(isItemFinishedWith(run, item('A', 'ready', { document_update_status: 'done' }))).toBe(
+      false
+    )
+    expect(
+      isItemFinishedWith(
+        run,
+        item('A', 'merged', { document_update_status: 'done', selected: false })
+      )
+    ).toBe(false)
+  })
+
+  it('knows when a run made from board tickets is finished with a ticket', () => {
+    const run = { source_kind: 'tickets' as const }
+    // No document to update: the merge is the last step.
+    expect(isItemFinishedWith(run, item('A', 'merged'))).toBe(true)
+    expect(
+      isItemFinishedWith(run, item('A', 'skipped', { status_detail: ALREADY_IMPLEMENTED_DETAIL }))
+    ).toBe(true)
+    // Skipped by the user, or when the run was finished early: its work may never have landed.
+    expect(
+      isItemFinishedWith(run, item('A', 'skipped', { status_detail: 'Skipped by you.' }))
+    ).toBe(false)
+    expect(isItemFinishedWith(run, item('A', 'skipped'))).toBe(false)
+    for (const status of ['ready', 'merging', 'verifying', 'needs_attention'] as const) {
+      expect(isItemFinishedWith(run, item('A', status))).toBe(false)
+    }
+    expect(isItemFinishedWith(run, item('A', 'merged', { selected: false }))).toBe(false)
   })
 
   it('finds the item holding the lane', () => {

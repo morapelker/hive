@@ -159,6 +159,12 @@ export interface AppSettings {
    * collapsible strip of compact rows) instead of laying each out as a card of its own.
    */
   nestDocumentRunTickets: boolean
+  /**
+   * Once an orchestrator (a run made from a document or from board tickets) is finished with a
+   * ticket — merged, the document updated, sitting in Merged — clean its worktree of what git
+   * does not track (dependencies, build output; env files stay). Once per ticket.
+   */
+  cleanFinishedTicketWorktrees: boolean
 
   // Editor
   defaultEditor: EditorOption
@@ -333,6 +339,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   automaticallyCreateTicket: false,
   showMergedColumn: false,
   nestDocumentRunTickets: false,
+  cleanFinishedTicketWorktrees: true,
   defaultEditor: 'vscode',
   customEditorCommand: '',
   defaultTerminal: 'terminal',
@@ -577,6 +584,7 @@ function extractSettings(state: SettingsState): AppSettings {
     automaticallyCreateTicket: state.automaticallyCreateTicket,
     showMergedColumn: state.showMergedColumn,
     nestDocumentRunTickets: state.nestDocumentRunTickets,
+    cleanFinishedTicketWorktrees: state.cleanFinishedTicketWorktrees,
     defaultEditor: state.defaultEditor,
     customEditorCommand: state.customEditorCommand,
     defaultTerminal: state.defaultTerminal,
@@ -1000,6 +1008,7 @@ export const useSettingsStore = create<SettingsState>()(
         automaticallyCreateTicket: state.automaticallyCreateTicket,
         showMergedColumn: state.showMergedColumn,
         nestDocumentRunTickets: state.nestDocumentRunTickets,
+        cleanFinishedTicketWorktrees: state.cleanFinishedTicketWorktrees,
         defaultEditor: state.defaultEditor,
         customEditorCommand: state.customEditorCommand,
         defaultTerminal: state.defaultTerminal,

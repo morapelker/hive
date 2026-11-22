@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 61
+export const CURRENT_SCHEMA_VERSION = 62
 
 /**
  * "Implement document" flow (v55). `document_runs` is one spec document turned into tickets
@@ -25,6 +25,8 @@ export const CURRENT_SCHEMA_VERSION = 61
  * source document; `document_update_report` is JSON. `document_runs.source_kind` (v61) says
  * where a run's tickets come from: `document` (extracted from `source_path`), or `tickets`
  * (adopted from the board, `source_path` = '', items linked to their tickets from the start).
+ * `document_run_items.worktree_cleaned_at` (v73) is when the run cleaned a finished ticket's
+ * worktree of what git does not track; set once and never cleared.
  * CREATE TABLE IF NOT EXISTS, replayed by ensureDocumentFlowTables() in database.ts.
  */
 export const DOCUMENT_FLOW_TABLES_SQL = `
@@ -115,7 +117,8 @@ export const DOCUMENT_FLOW_TABLES_SQL = `
     created_at        TEXT NOT NULL,
     updated_at        TEXT NOT NULL,
     started_at        TEXT DEFAULT NULL,
-    finished_at       TEXT DEFAULT NULL
+    finished_at       TEXT DEFAULT NULL,
+    worktree_cleaned_at TEXT DEFAULT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_document_run_items_run ON document_run_items(run_id, position);
   CREATE TABLE IF NOT EXISTS document_run_events (
@@ -1158,6 +1161,14 @@ DROP TABLE IF EXISTS diff_comments;`
     name: 'add_document_run_source_kind',
     // Orchestrators made from board tickets: document_runs.source_kind ('document' | 'tickets').
     up: `-- NOTE: ALTER TABLE for document_runs.source_kind is handled idempotently by
+         -- safeAddColumn() in database.ts to avoid "duplicate column" errors.`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 62,
+    name: 'add_document_run_item_worktree_cleaned_at',
+    // When a run cleaned a finished ticket's worktree of what git does not track (once).
+    up: `-- NOTE: ALTER TABLE for document_run_items.worktree_cleaned_at is handled idempotently by
          -- safeAddColumn() in database.ts to avoid "duplicate column" errors.`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }

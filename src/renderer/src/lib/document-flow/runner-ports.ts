@@ -55,6 +55,7 @@ export type RunnerApi = Pick<
   | 'verify'
   | 'commitIntegration'
   | 'rollbackMerge'
+  | 'cleanItemWorktree'
   | 'finalize'
   | 'logEvent'
   | 'inspectSource'
@@ -181,6 +182,13 @@ export interface RunnerPorts {
   isSessionClosed(sessionId: string): Promise<boolean>
   /** The session's agent was really started: a live PTY for a CLI, a backend session for an SDK. */
   isSessionStarted(sessionId: string): Promise<boolean>
+
+  // ── Worktrees of finished tickets ──
+  /**
+   * The user's setting: once the run is finished with a ticket, its worktree is cleaned of
+   * what git does not track. Read each time, so switching it applies from then on.
+   */
+  cleansFinishedWorktrees(): boolean
 
   // ── Setup script ──
   fireSetupScript(projectId: string, worktreeId: string, cwd: string): void
@@ -470,6 +478,8 @@ export function createLiveRunnerPorts(): RunnerPorts {
     readFinalMessage: readSdkFinalMessage,
     isSessionClosed,
     isSessionStarted,
+
+    cleansFinishedWorktrees: () => useSettingsStore.getState().cleanFinishedTicketWorktrees,
 
     fireSetupScript,
     isSetupScriptRunning: (worktreeId) =>

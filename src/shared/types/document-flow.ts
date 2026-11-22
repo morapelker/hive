@@ -598,6 +598,14 @@ export interface DocumentRunItem {
   document_update_report: DocumentUpdateReport | null
   /** When the document update finished (done, failed or skipped). */
   document_update_finished_at: string | null
+  /**
+   * When the run cleaned the ticket's worktree (on a connection project, every member worktree
+   * of its instance) of what git does not track, once it was finished with the ticket (see
+   * `isItemFinishedWith`). Written before anything is removed and never cleared: a worktree is
+   * cleaned once, so what a session the user takes up again rebuilds there stays until the
+   * worktree is archived. Null while it has not happened; only the server writes it.
+   */
+  worktree_cleaned_at: string | null
   created_at: string
   updated_at: string
   started_at: string | null
@@ -897,6 +905,18 @@ export interface DocumentVerifyResult {
 
 export interface DocumentSimpleResult {
   success: boolean
+  error?: string
+}
+
+/**
+ * How cleaning a finished ticket's worktree went (`documentFlow.cleanItemWorktree`):
+ * - `cleaned`: what git does not track was removed from every worktree of the ticket
+ * - `already`: it was cleaned before; a worktree is cleaned once, so nothing was touched
+ * - `none`: the ticket has no worktree left to clean (archived, or gone from disk)
+ * - `failed`: git could not clean at least one worktree (`error`); it is not tried again
+ */
+export interface DocumentWorktreeCleanResult {
+  state: 'cleaned' | 'already' | 'none' | 'failed'
   error?: string
 }
 

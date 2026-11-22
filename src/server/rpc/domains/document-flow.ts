@@ -34,6 +34,7 @@ import {
   type DocumentTicketRunCreateParams,
   type DocumentUpdateReport,
   type DocumentVerifyResult,
+  type DocumentWorktreeCleanResult,
   type SessionFinalMessage
 } from '../../../shared/types/document-flow'
 import { AGENT_SDK_VALUES, type HandoffAgentSdk } from '../../../shared/types/agent-sdk'
@@ -118,6 +119,8 @@ export interface DocumentFlowRpcService {
   readonly verify: (runId: string) => Rpc<DocumentVerifyResult>
   readonly commitIntegration: (runId: string, message: string) => Rpc<DocumentCommitResult>
   readonly rollbackMerge: (runId: string, itemId: string) => Rpc<DocumentSimpleResult>
+  /** Once per ticket: what git does not track leaves the worktree of a ticket the run is done with. */
+  readonly cleanItemWorktree: (runId: string, itemId: string) => Rpc<DocumentWorktreeCleanResult>
   readonly finalize: (runId: string) => Rpc<DocumentRunDetail>
   readonly cancel: (runId: string) => Rpc<DocumentRunDetail>
   readonly startMigrations: (runId: string, sessionId: string) => Rpc<DocumentRunDetail>
@@ -405,6 +408,8 @@ export const makeLiveDocumentFlowRpcService = (eventBus?: EventBus): DocumentFlo
     commitIntegration: (runId, message) =>
       call((service) => service.commitIntegration(runId, message)),
     rollbackMerge: (runId, itemId) => call((service) => service.rollbackMerge(runId, itemId)),
+    cleanItemWorktree: (runId, itemId) =>
+      call((service) => service.cleanItemWorktree(runId, itemId)),
     finalize: (runId) => call((service) => service.finalize(runId)),
     cancel: (runId) => call((service) => service.cancel(runId)),
     startMigrations: (runId, sessionId) =>
@@ -518,6 +523,10 @@ export const makeDocumentFlowRpcHandlers = (
     [
       'documentFlow.rollbackMerge',
       handle(runItemParamsSchema, ({ runId, itemId }) => service.rollbackMerge(runId, itemId))
+    ],
+    [
+      'documentFlow.cleanItemWorktree',
+      handle(runItemParamsSchema, ({ runId, itemId }) => service.cleanItemWorktree(runId, itemId))
     ],
     ['documentFlow.finalize', handle(runIdParamsSchema, ({ runId }) => service.finalize(runId))],
     ['documentFlow.cancel', handle(runIdParamsSchema, ({ runId }) => service.cancel(runId))],

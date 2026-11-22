@@ -257,6 +257,19 @@ describe('document flow schema', () => {
     )
   })
 
+  it('ships the mark of a cleaned ticket worktree as the v73 migration, a column added by the repair step', () => {
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(62)
+    const migration = MIGRATIONS.find((m) => m.version === 62)
+    expect(migration?.name).toBe('add_document_run_item_worktree_cleaned_at')
+    // Comment only: safeAddColumn() adds the column, so a replay cannot fail on a duplicate.
+    expect(migration?.up.replace(/--.*$/gm, '').trim()).toBe('')
+    expect(migration?.down.replace(/--.*$/gm, '').trim()).toBe('')
+    expect(migration?.up).toContain('document_run_items.worktree_cleaned_at')
+    expect(DOCUMENT_FLOW_TABLES_SQL).toMatch(
+      /finished_at\s+TEXT DEFAULT NULL,\s+worktree_cleaned_at TEXT DEFAULT NULL\s+\);\s+CREATE INDEX IF NOT EXISTS idx_document_run_items_run/
+    )
+  })
+
   it('ships the source kind of a run as the v61 migration, a column added by the repair step', () => {
     expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(61)
     const migration = MIGRATIONS.find((m) => m.version === 61)
@@ -442,6 +455,34 @@ describeIf('document flow tables', () => {
     expect(openDb(path).getDocumentRunItem(item.id)).toMatchObject({
       verification: ['tcu', 'playwright']
     })
+  })
+
+  it('adds the cleaned-worktree mark to an items table created by an earlier build, and keeps it', () => {
+    const path = makeDbPath()
+    const db = openDb(path)
+    const run = makeRun(db, makeProject(db), { id: 'run-old' })
+    const [item] = db.replaceDocumentRunItems(run.id, [draft('A1')])
+    db.getRawDb().exec('ALTER TABLE document_run_items DROP COLUMN worktree_cleaned_at')
+    db.setSetting('schema_version', '61')
+    db.close()
+
+    const upgraded = openDb(path)
+    expect(upgraded.getSetting('schema_version')).toBe(String(CURRENT_SCHEMA_VERSION))
+    // The ticket of the earlier build reads as one whose worktree was never cleaned.
+    expect(upgraded.getDocumentRunItem(item.id)).toEqual(item)
+    expect(upgraded.getDocumentRunItem(item.id)?.worktree_cleaned_at).toBeNull()
+
+    const cleanedAt = '2026-11-22T09:00:00.000Z'
+    expect(
+      upgraded.updateDocumentRunItem(item.id, { worktree_cleaned_at: cleanedAt })
+    ).toMatchObject({ worktree_cleaned_at: cleanedAt })
+    // A later patch that does not name it leaves it alone.
+    expect(upgraded.updateDocumentRunItem(item.id, { status: 'merged' })).toMatchObject({
+      status: 'merged',
+      worktree_cleaned_at: cleanedAt
+    })
+    upgraded.close()
+    expect(openDb(path).getDocumentRunItem(item.id)?.worktree_cleaned_at).toBe(cleanedAt)
   })
 
   it('adds the document update columns to an items table created by an earlier build', () => {
