@@ -22,7 +22,7 @@ const TIME_PRESETS = [
   { label: '4h', ms: 4 * 60 * 60_000 }
 ]
 
-const USAGE_PRESETS = [90, 95, 98]
+const USAGE_PRESETS = [90, 95, 97]
 const DEFAULT_AUTO_SWITCH_THRESHOLD = 90
 
 const presetButtonClass =
