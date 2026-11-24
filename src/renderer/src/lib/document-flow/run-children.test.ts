@@ -3,7 +3,8 @@ import {
   childColumnCounts,
   nestedRunChildIds,
   runChildrenOf,
-  spawnedRunTickets
+  spawnedRunTickets,
+  ticketsOfRun
 } from './run-children'
 import type { KanbanTicket } from '../../../../main/db/types'
 
@@ -167,5 +168,55 @@ describe('spawnedRunTickets', () => {
       items
     )
     expect(spawned).toEqual([])
+  })
+})
+
+describe('ticketsOfRun', () => {
+  const items = [
+    { ticket_id: 'task-1', fix_ticket_id: 'fix-1' },
+    { ticket_id: 'adopted', fix_ticket_id: null },
+    { ticket_id: null, fix_ticket_id: null }
+  ]
+
+  it('lists the tickets of its items and the sessions it spawned, as the rows are ordered', () => {
+    const owned = ticketsOfRun(
+      [
+        run(),
+        child('task-1', { column: 'merged' }),
+        child('fix-1', { column: 'done' }),
+        child('manual', { column: 'in_progress' }),
+        // Named by an item only: a markdown board keeps no parent link
+        ticket({ id: 'adopted', column: 'todo' }),
+        ticket({ id: 'plain' }),
+        ticket({ id: 'other-run-child', parent_ticket_id: 'other-run' })
+      ],
+      'run-ticket',
+      items
+    )
+    expect(owned.map((t) => t.id)).toEqual(['adopted', 'manual', 'task-1', 'fix-1'])
+  })
+
+  it('never lists the run ticket itself, another run ticket or an archived ticket', () => {
+    const owned = ticketsOfRun(
+      [
+        run(),
+        child('archived', { archived_at: now }),
+        child('nested-run', { external_provider: 'document-run', external_id: 'run-2' }),
+        child('kept')
+      ],
+      'run-ticket',
+      [{ ticket_id: 'run-ticket', fix_ticket_id: 'archived' }]
+    )
+    expect(owned.map((t) => t.id)).toEqual(['kept'])
+  })
+
+  it('goes by the items alone when the run has no ticket of its own', () => {
+    const owned = ticketsOfRun(
+      // No parent: these must not read as children of "no ticket"
+      [ticket({ id: 'plain' }), ticket({ id: 'task-1' })],
+      null,
+      items
+    )
+    expect(owned.map((t) => t.id)).toEqual(['task-1'])
   })
 })

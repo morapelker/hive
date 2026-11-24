@@ -70,6 +70,43 @@ export function runChildrenOf(
     .sort(compareRunChildren)
 }
 
+type RunItemTickets = Pick<DocumentRunItem, 'ticket_id' | 'fix_ticket_id'>
+
+/** The tickets the items of a run stand for: each item's own, and its fix ticket. */
+function itemTicketIdsOf(items: readonly RunItemTickets[]): Set<string> {
+  const ids = new Set<string>()
+  for (const item of items) {
+    if (item.ticket_id) ids.add(item.ticket_id)
+    if (item.fix_ticket_id) ids.add(item.fix_ticket_id)
+  }
+  return ids
+}
+
+/**
+ * Every ticket on the board that is a run's, for deleting them with it: the tickets of its
+ * items (task and fix tickets, and the board tickets an orchestrator adopted) and the tickets
+ * of the sessions started from its dashboard. A ticket counts when it points at the run's own
+ * ticket or when an item names it: a markdown board keeps no `parent_ticket_id`, and a run
+ * whose record is gone has no items. Never the run's own ticket, another run's, or an archived
+ * one (out of sight, it is left as it is). Listed as the rows of the run's card are.
+ */
+export function ticketsOfRun(
+  tickets: readonly KanbanTicket[],
+  runTicketId: string | null,
+  items: readonly RunItemTickets[]
+): KanbanTicket[] {
+  const itemTicketIds = itemTicketIdsOf(items)
+  return tickets
+    .filter(
+      (t) =>
+        t.id !== runTicketId &&
+        !t.archived_at &&
+        !isDocumentRunTicket(t) &&
+        ((runTicketId !== null && t.parent_ticket_id === runTicketId) || itemTicketIds.has(t.id))
+    )
+    .sort(compareRunChildren)
+}
+
 /**
  * The tickets of a run that stand for none of its items: the sessions started from the run's
  * dashboard once it ended (its migrations, its manual steps, a new session on its branch),
@@ -80,13 +117,9 @@ export function runChildrenOf(
 export function spawnedRunTickets(
   tickets: readonly KanbanTicket[],
   runTicketId: string,
-  items: readonly Pick<DocumentRunItem, 'ticket_id' | 'fix_ticket_id'>[]
+  items: readonly RunItemTickets[]
 ): KanbanTicket[] {
-  const itemTicketIds = new Set<string>()
-  for (const item of items) {
-    if (item.ticket_id) itemTicketIds.add(item.ticket_id)
-    if (item.fix_ticket_id) itemTicketIds.add(item.fix_ticket_id)
-  }
+  const itemTicketIds = itemTicketIdsOf(items)
   return tickets
     .filter(
       (t) => t.parent_ticket_id === runTicketId && !t.archived_at && !itemTicketIds.has(t.id)

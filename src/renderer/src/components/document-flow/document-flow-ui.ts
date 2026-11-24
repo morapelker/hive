@@ -162,6 +162,14 @@ export function describeRunDeletion(
     : 'Its spec text and figures are removed from disk as well.'
 }
 
+/**
+ * `describeRunDeletion` for a run of this Mac that has tickets on the board: the confirmation
+ * offers to delete them with the run, so it says what is being decided instead of that they stay.
+ */
+export function describeRunDeletionChoice(ticketCount: number): string {
+  return `The run's own ticket is removed from the board. Its ${pluralize(ticketCount, 'ticket')} on the board can be deleted with it or kept. Branches and worktrees are not touched either way.`
+}
+
 // ── Run kind ───────────────────────────────────────────────────────────────
 //
 // A run is made from a document or from board tickets (`DocumentRun.source_kind`, see

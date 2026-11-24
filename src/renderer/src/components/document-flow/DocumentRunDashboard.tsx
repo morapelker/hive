@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   CircleSlash,
   Copy,
@@ -40,6 +40,12 @@ import {
   DialogTitle
 } from '@/components/ui/dialog'
 import { copyTextToClipboard } from '@/lib/clipboard'
+import {
+  deleteRunWithTickets,
+  describeRunTicketsDeletion,
+  runTicketsDeleteLabels,
+  runTicketsOnBoard
+} from '@/lib/document-flow/delete-run-tickets'
 import type { LaunchedManualSteps } from '@/lib/document-flow/manual-steps'
 import { integrationCheckoutGone } from '@/lib/document-flow/ticket-run-membership'
 import {
@@ -84,6 +90,7 @@ import { useMigrationSessionWaiting } from './useDocumentRunTicket'
 import { useDocumentRunPRs } from './useDocumentRunPRs'
 import {
   describeRunDeletion,
+  describeRunDeletionChoice,
   describeRunMembers,
   documentNameFromPath,
   isActiveRunStatus,
@@ -338,6 +345,19 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
   const closeDashboard = useDocumentFlowStore((s) => s.closeDashboard)
   const openWizard = useDocumentFlowStore((s) => s.openWizard)
   const [confirm, setConfirm] = useState<ConfirmKind | null>(null)
+  // Deleting a run that has tickets on the board asks whether they are deleted too (the
+  // default, and the answer in focus). Counted as the question opens.
+  const runTicketCount = useMemo(
+    () =>
+      confirm === 'delete'
+        ? runTicketsOnBoard({ runId: run.id, ticketId: run.ticket_id, projectId: run.project_id })
+            .length
+        : 0,
+    [confirm, run.id, run.ticket_id, run.project_id]
+  )
+  const deleteAsksAboutRunTickets = confirm === 'delete' && runTicketCount > 0
+  const runTicketsDelete = runTicketsDeleteLabels('run', runTicketCount)
+  const deleteRunTicketsButtonRef = useRef<HTMLButtonElement>(null)
   const [busy, setBusy] = useState<BusyKind | null>(null)
   const [addingMember, setAddingMember] = useState(false)
   const [addingTickets, setAddingTickets] = useState(false)
@@ -410,6 +430,21 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
         'Could not change the questions setting'
       )
     }
+  }
+
+  // "Delete run and N tickets": the run first (a refusal deletes nothing), then its tickets
+  const deleteRunAndTickets = (): void => {
+    perform(
+      'delete',
+      deleteRunWithTickets(
+        { runId: run.id, ticketId: run.ticket_id, projectId: run.project_id },
+        () => deleteRun(run.id)
+      ).then((outcome) => {
+        const report = describeRunTicketsDeletion('Run', outcome)
+        toast[report.level](report.message)
+      }),
+      'Could not delete the run'
+    )
   }
 
   const copyBranch = async (): Promise<void> => {
@@ -1010,14 +1045,24 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
           if (!next) setConfirm(null)
         }}
       >
-        <AlertDialogContent data-docflow-dialog="">
+        <AlertDialogContent
+          data-docflow-dialog=""
+          onOpenAutoFocus={(event) => {
+            // Deleting the run's tickets with it is the default: Enter takes it, not Cancel
+            if (!deleteAsksAboutRunTickets) return
+            event.preventDefault()
+            deleteRunTicketsButtonRef.current?.focus()
+          }}
+        >
           {confirm && (
             <>
               <AlertDialogHeader>
                 <AlertDialogTitle>{CONFIRM_COPY[confirm].title}</AlertDialogTitle>
                 <AlertDialogDescription>
-                  {confirm === 'delete'
-                    ? `${CONFIRM_COPY.delete.description} ${describeRunDeletion(items, run)}`
+                  {deleteAsksAboutRunTickets
+                    ? `${CONFIRM_COPY.delete.description} ${describeRunDeletionChoice(runTicketCount)}`
+                    : confirm === 'delete'
+                      ? `${CONFIRM_COPY.delete.description} ${describeRunDeletion(items, run)}`
                     : confirm === 'questionsOff' || confirm === 'questionsOn'
                       ? `${CONFIRM_COPY[confirm].description} ${describeQuestionModeReach(questionModeTargets(items).length)}`
                       : confirm === 'migrations'
@@ -1029,13 +1074,34 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
                 <AlertDialogCancel data-testid="docflow-confirm-cancel">
                   {confirm === 'cancel' ? 'Keep running' : 'Cancel'}
                 </AlertDialogCancel>
-                <AlertDialogAction
-                  variant={CONFIRM_COPY[confirm].destructive ? 'destructive' : 'default'}
-                  data-testid="docflow-confirm-action"
-                  onClick={() => confirmed(confirm)}
-                >
-                  {CONFIRM_COPY[confirm].action}
-                </AlertDialogAction>
+                {deleteAsksAboutRunTickets ? (
+                  /* The run has tickets on the board: with them (the default), or alone */
+                  <>
+                    <AlertDialogAction
+                      variant="outline"
+                      data-testid="docflow-confirm-delete-run-only"
+                      onClick={() => confirmed('delete')}
+                    >
+                      {runTicketsDelete.runOnly}
+                    </AlertDialogAction>
+                    <AlertDialogAction
+                      ref={deleteRunTicketsButtonRef}
+                      variant="destructive"
+                      data-testid="docflow-confirm-delete-run-and-tickets"
+                      onClick={deleteRunAndTickets}
+                    >
+                      {runTicketsDelete.withTickets}
+                    </AlertDialogAction>
+                  </>
+                ) : (
+                  <AlertDialogAction
+                    variant={CONFIRM_COPY[confirm].destructive ? 'destructive' : 'default'}
+                    data-testid="docflow-confirm-action"
+                    onClick={() => confirmed(confirm)}
+                  >
+                    {CONFIRM_COPY[confirm].action}
+                  </AlertDialogAction>
+                )}
               </AlertDialogFooter>
             </>
           )}

@@ -1001,6 +1001,142 @@ describe('the card of a document run ticket', () => {
 
     expect(toast.error).toHaveBeenCalledWith('Cancel the run before deleting its ticket.')
   })
+
+  describe('deleted while tickets of its run are on the board', () => {
+    const boardTicket = (id: string, overrides: Partial<KanbanTicket> = {}): KanbanTicket =>
+      makeTicket({
+        id,
+        title: id,
+        external_provider: null,
+        external_id: null,
+        worktree_id: null,
+        ...overrides
+      })
+
+    // A cancelled orchestrator of two board tickets (one of them on a board that keeps no
+    // parent link), next to a ticket that is none of its own
+    function seedOrchestrator(): void {
+      seedRuns(
+        makeDetail({ id: 'run-live', status: 'cancelled', source_kind: 'tickets' }, [
+          { key: 'TD-1', status: 'merged', ticket_id: 'child-1' },
+          { key: 'TD-2', status: 'merged', ticket_id: 'child-2' }
+        ])
+      )
+      useKanbanStore.setState({
+        tickets: new Map([
+          [
+            'proj-1',
+            [
+              makeTicket({ column: 'review' }),
+              boardTicket('child-1', { parent_ticket_id: 'ticket-run' }),
+              boardTicket('child-2'),
+              boardTicket('bystander')
+            ]
+          ]
+        ])
+      })
+    }
+
+    async function openDeleteConfirm(): Promise<HTMLElement> {
+      render(<KanbanTicketCard ticket={makeTicket({ column: 'review' })} />)
+      fireEvent.contextMenu(card())
+      fireEvent.click(await screen.findByTestId('ctx-delete-ticket'))
+      return screen.findByTestId('ctx-delete-confirm-dialog')
+    }
+
+    it('asks whether its tickets go too, with deleting both as the default', async () => {
+      seedOrchestrator()
+      const deleteTicket = vi.fn().mockResolvedValue(undefined)
+      useKanbanStore.setState({ deleteTicket })
+
+      const dialog = await openDeleteConfirm()
+
+      expect(dialog).toHaveTextContent('Delete orchestrator')
+      expect(dialog).toHaveTextContent(
+        'The run has 2 tickets on the board: they can be deleted too, or kept. Branches and worktrees are kept either way.'
+      )
+      expect(dialog).not.toHaveTextContent('The run’s tickets, branches and worktrees are kept.')
+      expect(screen.getByTestId('ctx-delete-run-only-btn')).toHaveTextContent(
+        'Delete orchestrator only'
+      )
+      const both = screen.getByTestId('ctx-delete-run-and-tickets-btn')
+      expect(both).toHaveTextContent('Delete orchestrator and 2 tickets')
+      // Enter takes the default: it is the one in focus, not Cancel
+      await waitFor(() => expect(both).toHaveFocus())
+      expect(screen.queryByTestId('ctx-delete-confirm-btn')).toBeNull()
+      expect(deleteTicket).not.toHaveBeenCalled()
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('ctx-delete-cancel-btn'))
+      })
+      expect(deleteTicket).not.toHaveBeenCalled()
+    })
+
+    it('deletes the run ticket and then its tickets, and nothing else', async () => {
+      seedOrchestrator()
+      const deleteTicket = vi.fn().mockResolvedValue(undefined)
+      useKanbanStore.setState({ deleteTicket })
+      await openDeleteConfirm()
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('ctx-delete-run-and-tickets-btn'))
+      })
+
+      expect(deleteTicket.mock.calls).toEqual([
+        ['ticket-run', 'proj-1'],
+        ['child-1', 'proj-1'],
+        ['child-2', 'proj-1']
+      ])
+      expect(toast.success).toHaveBeenCalledWith('Orchestrator and 2 tickets deleted')
+    })
+
+    it('keeps its tickets on "Delete orchestrator only"', async () => {
+      seedOrchestrator()
+      const deleteTicket = vi.fn().mockResolvedValue(undefined)
+      useKanbanStore.setState({ deleteTicket })
+      await openDeleteConfirm()
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('ctx-delete-run-only-btn'))
+      })
+
+      expect(deleteTicket.mock.calls).toEqual([['ticket-run', 'proj-1']])
+      expect(toast.success).toHaveBeenCalledWith('Orchestrator deleted')
+    })
+
+    it('deletes none of its tickets when the server refuses to delete the run', async () => {
+      seedOrchestrator()
+      const deleteTicket = vi
+        .fn()
+        .mockRejectedValue(new Error('Cancel the run before deleting its ticket.'))
+      useKanbanStore.setState({ deleteTicket })
+      await openDeleteConfirm()
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('ctx-delete-run-and-tickets-btn'))
+      })
+
+      expect(deleteTicket).toHaveBeenCalledTimes(1)
+      expect(toast.error).toHaveBeenCalledWith('Cancel the run before deleting its ticket.')
+    })
+
+    it('says which of its tickets could not be deleted', async () => {
+      seedOrchestrator()
+      const deleteTicket = vi.fn(async (id: string) => {
+        if (id === 'child-2') throw new Error('offline')
+      })
+      useKanbanStore.setState({ deleteTicket })
+      await openDeleteConfirm()
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('ctx-delete-run-and-tickets-btn'))
+      })
+
+      expect(toast.warning).toHaveBeenCalledWith(
+        'Orchestrator deleted, but 1 of its 2 tickets could not be deleted.'
+      )
+    })
+  })
 })
 
 describe('an ordinary ticket', () => {

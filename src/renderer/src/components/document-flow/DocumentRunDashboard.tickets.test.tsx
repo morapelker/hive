@@ -6,10 +6,13 @@
 // tests; here they are stand-ins that say they were mounted.
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { toast } from '@/lib/toast'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
+import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import type { DocumentRun, DocumentRunDetail, DocumentRunItem } from '@shared/types/document-flow'
+import type { KanbanTicket } from '../../../../main/db/types'
 import { DocumentRunDashboard } from './DocumentRunDashboard'
 import { TEST_PROJECT, makeDetail, makeReport } from './test-fixtures'
 
@@ -53,6 +56,7 @@ vi.mock('./TicketBriefEditor', () => ({
 }))
 
 const initialFlowState = useDocumentFlowStore.getState()
+const initialKanbanState = useKanbanStore.getState()
 const initialProjectState = useProjectStore.getState()
 const initialWorktreeState = useWorktreeStore.getState()
 
@@ -142,6 +146,7 @@ afterEach(async () => {
   cleanup()
   vi.resetAllMocks()
   useDocumentFlowStore.setState(initialFlowState, true)
+  useKanbanStore.setState(initialKanbanState, true)
   useProjectStore.setState(initialProjectState, true)
   useWorktreeStore.setState(initialWorktreeState, true)
 })
@@ -242,6 +247,97 @@ describe('DocumentRunDashboard — orchestrator made from board tickets: header'
       'The board tickets stay on the board (they are only taken out of the orchestrator).'
     )
     expect(screen.getByRole('alertdialog')).not.toHaveTextContent('spec text')
+    expect(screen.queryByTestId('docflow-confirm-delete-run-and-tickets')).toBeNull()
+  })
+
+  describe('deleted while its tickets are on the board', () => {
+    const boardTicket = (id: string, overrides: Partial<KanbanTicket> = {}): KanbanTicket =>
+      ({
+        id,
+        project_id: 'project-1',
+        title: id,
+        column: 'todo',
+        sort_order: 0,
+        created_at: STARTED_AT,
+        archived_at: null,
+        external_provider: null,
+        external_id: null,
+        parent_ticket_id: null,
+        ...overrides
+      }) as KanbanTicket
+
+    // Two of the run's four tickets are still on the board, next to one that is not its own
+    async function openDeleteConfirm(deleteTicket: ReturnType<typeof vi.fn>): Promise<void> {
+      api.delete.mockResolvedValue(true)
+      useKanbanStore.setState({
+        deleteTicket,
+        tickets: new Map([
+          [
+            'project-1',
+            [
+              boardTicket('ticket-run', { external_provider: 'document-run', external_id: 'run-1' }),
+              boardTicket('t-1', { parent_ticket_id: 'ticket-run' }),
+              boardTicket('t-2', { parent_ticket_id: 'ticket-run' }),
+              boardTicket('bystander')
+            ]
+          ]
+        ])
+      })
+      await renderDashboard(makeDetail({ ...TICKETS_RUN, status: 'cancelled' }, ticketItems()))
+      await click('docflow-delete-run-btn')
+    }
+
+    it('asks whether they are deleted too, and deletes the run and them by default', async () => {
+      const deleteTicket = vi.fn().mockResolvedValue(undefined)
+      await openDeleteConfirm(deleteTicket)
+
+      const dialog = screen.getByRole('alertdialog')
+      expect(dialog).toHaveTextContent(
+        "The run's own ticket is removed from the board. Its 2 tickets on the board can be deleted with it or kept. Branches and worktrees are not touched either way."
+      )
+      expect(dialog).not.toHaveTextContent('The board tickets stay on the board')
+      expect(screen.queryByTestId('docflow-confirm-action')).toBeNull()
+      const both = screen.getByTestId('docflow-confirm-delete-run-and-tickets')
+      expect(both).toHaveTextContent('Delete run and 2 tickets')
+      // Enter takes the default: it is the one in focus, not Cancel
+      expect(both).toHaveFocus()
+
+      await click('docflow-confirm-delete-run-and-tickets')
+
+      expect(api.delete).toHaveBeenCalledWith('run-1')
+      expect(deleteTicket.mock.calls).toEqual([
+        ['t-1', 'project-1'],
+        ['t-2', 'project-1']
+      ])
+      expect(toast.success).toHaveBeenCalledWith('Run and 2 tickets deleted')
+      expect(screen.queryByTestId('docflow-dashboard')).toBeNull()
+    })
+
+    it('keeps them on "Delete run only"', async () => {
+      const deleteTicket = vi.fn().mockResolvedValue(undefined)
+      await openDeleteConfirm(deleteTicket)
+
+      expect(screen.getByTestId('docflow-confirm-delete-run-only')).toHaveTextContent(
+        'Delete run only'
+      )
+      await click('docflow-confirm-delete-run-only')
+
+      expect(api.delete).toHaveBeenCalledWith('run-1')
+      expect(deleteTicket).not.toHaveBeenCalled()
+    })
+
+    it('deletes none of them when the run could not be deleted', async () => {
+      const deleteTicket = vi.fn().mockResolvedValue(undefined)
+      await openDeleteConfirm(deleteTicket)
+      api.delete.mockRejectedValue(new Error('Cancel the run before deleting it.'))
+
+      await click('docflow-confirm-delete-run-and-tickets')
+
+      expect(deleteTicket).not.toHaveBeenCalled()
+      expect(toast.error).toHaveBeenCalledWith(
+        'Could not delete the run: Cancel the run before deleting it.'
+      )
+    })
   })
 })
 

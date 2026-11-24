@@ -168,6 +168,13 @@ import {
 } from '@/lib/document-flow/ticket-run-membership'
 import { TicketOrchestratorSubmenu } from './TicketOrchestratorMenu'
 import { hasMergedRunItems } from '@/lib/document-flow/run-merged-children'
+// Deleting the ticket of a run that has tickets on the board asks whether those go with it
+import {
+  deleteRunWithTickets,
+  describeRunTicketsDeletion,
+  runTicketsDeleteLabels,
+  runTicketsOnBoard
+} from '@/lib/document-flow/delete-run-tickets'
 import { useRunMergedChildrenStore } from '@/stores/useRunMergedChildrenStore'
 // "New PRD → orchestrator ticket…" (lib/prd-flow): the card of the ticket whose session writes
 // the PRD and then the tasks document wears the flow's pill, with "Retry" beside it once the
@@ -277,6 +284,11 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
 
   const [isDragging, setIsDragging] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  // Deleting the ticket of a run: how many tickets of the run were on the board when the
+  // confirmation opened. With any, it asks whether they are deleted too, and that answer is
+  // the one in focus
+  const [runTicketCount, setRunTicketCount] = useState(0)
+  const deleteRunTicketsButtonRef = useRef<HTMLButtonElement>(null)
   const [showWorktreePicker, setShowWorktreePicker] = useState(false)
   const [showPreAssignPicker, setShowPreAssignPicker] = useState(false)
   const [showStatusUpdate, setShowStatusUpdate] = useState(false)
@@ -1464,6 +1476,23 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     setShowDeleteConfirm(false)
   }, [ticket.id, ticket.project_id, isDocumentRunTicket, runKind])
 
+  // "Delete <run> and N tickets": the run's ticket (and with it the run) first, so that a
+  // refusal leaves everything where it is, then the run's tickets that are on the board
+  const handleDeleteRunAndTickets = useCallback(async () => {
+    setShowDeleteConfirm(false)
+    try {
+      const outcome = await deleteRunWithTickets(
+        { runId: documentRunId, ticketId: ticket.id, projectId: ticket.project_id },
+        () => useKanbanStore.getState().deleteTicket(ticket.id, ticket.project_id)
+      )
+      usePrdFlowStore.getState().removeDraft(ticket.id)
+      const report = describeRunTicketsDeletion(runKind, outcome)
+      toast[report.level](report.message)
+    } catch (err) {
+      toast.error(err instanceof Error && err.message ? err.message : 'Failed to delete ticket')
+    }
+  }, [documentRunId, ticket.id, ticket.project_id, runKind])
+
   // Deleting the ticket of a run that is still on is refused before asking to confirm
   const requestDelete = useCallback(() => {
     const run = documentRunId ? useDocumentFlowStore.getState().runsById[documentRunId]?.run : null
@@ -1475,8 +1504,20 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       toast.warning(`Stop the migrations of the ${runKindLower} before deleting its ticket.`)
       return
     }
+    setRunTicketCount(
+      documentRunId
+        ? runTicketsOnBoard({
+            runId: documentRunId,
+            ticketId: ticket.id,
+            projectId: ticket.project_id
+          }).length
+        : 0
+    )
     setShowDeleteConfirm(true)
-  }, [documentRunId, runKindLower])
+  }, [documentRunId, runKindLower, ticket.id, ticket.project_id])
+  // A run with tickets on the board: the confirmation offers to delete them too
+  const deleteAsksAboutRunTickets = isDocumentRunTicket && runTicketCount > 0
+  const runTicketsDelete = runTicketsDeleteLabels(runKindLower, runTicketCount)
 
   const handleStopRemoteSession = useCallback(async () => {
     const sessionId = ticket.current_session_id
@@ -3318,13 +3359,31 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       {/* Delete confirmation dialog (not used for done/archive tickets) */}
       {!isDone && (
         <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
-          <AlertDialogContent data-testid="ctx-delete-confirm-dialog">
+          <AlertDialogContent
+            data-testid="ctx-delete-confirm-dialog"
+            // Three answers side by side need a little more room than two
+            className={deleteAsksAboutRunTickets ? 'data-[size=default]:sm:max-w-xl' : undefined}
+            onOpenAutoFocus={(event) => {
+              // Deleting the run's tickets with it is the default: Enter takes it, not Cancel
+              if (!deleteAsksAboutRunTickets) return
+              event.preventDefault()
+              deleteRunTicketsButtonRef.current?.focus()
+            }}
+          >
             <AlertDialogHeader>
               <AlertDialogTitle>
                 {isDocumentRunTicket ? `Delete ${runKindLower}` : 'Delete ticket'}
               </AlertDialogTitle>
               <AlertDialogDescription>
-                {isDocumentRunTicket ? (
+                {deleteAsksAboutRunTickets ? (
+                  <>
+                    Are you sure you want to delete &ldquo;{ticket.title}&rdquo;? Its run record
+                    (progress, report and log) is deleted with it. The run has {runTicketCount}{' '}
+                    {runTicketCount === 1 ? 'ticket' : 'tickets'} on the board:{' '}
+                    {runTicketCount === 1 ? 'it' : 'they'} can be deleted too, or kept. Branches
+                    and worktrees are kept either way. This action cannot be undone.
+                  </>
+                ) : isDocumentRunTicket ? (
                   <>
                     Are you sure you want to delete &ldquo;{ticket.title}&rdquo;? Its run record
                     (progress, report and log) is deleted with it. The run&rsquo;s tickets,
@@ -3338,16 +3397,38 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                 )}
               </AlertDialogDescription>
             </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel data-testid="ctx-delete-cancel-btn">Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                data-testid="ctx-delete-confirm-btn"
-                variant="destructive"
-                onClick={handleDelete}
-              >
-                Delete
-              </AlertDialogAction>
-            </AlertDialogFooter>
+            {deleteAsksAboutRunTickets ? (
+              /* The run has tickets on the board: with them (the default), or the run alone */
+              <AlertDialogFooter>
+                <AlertDialogCancel data-testid="ctx-delete-cancel-btn">Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  data-testid="ctx-delete-run-only-btn"
+                  variant="outline"
+                  onClick={handleDelete}
+                >
+                  {runTicketsDelete.runOnly}
+                </AlertDialogAction>
+                <AlertDialogAction
+                  ref={deleteRunTicketsButtonRef}
+                  data-testid="ctx-delete-run-and-tickets-btn"
+                  variant="destructive"
+                  onClick={handleDeleteRunAndTickets}
+                >
+                  {runTicketsDelete.withTickets}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            ) : (
+              <AlertDialogFooter>
+                <AlertDialogCancel data-testid="ctx-delete-cancel-btn">Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  data-testid="ctx-delete-confirm-btn"
+                  variant="destructive"
+                  onClick={handleDelete}
+                >
+                  Delete
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            )}
           </AlertDialogContent>
         </AlertDialog>
       )}
