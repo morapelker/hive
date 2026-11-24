@@ -26,13 +26,16 @@ export interface SwitcherConnectionProject {
   id: string
   name: string
   path: string
+  /** Picked with Cmd+Shift+Enter: it joins on its base branch, with no new worktree. */
+  useBase?: boolean
 }
 
 export interface ConnectSwitcherProjectsOptions {
   /**
-   * Whether every project's base branch is pulled from origin before the first worktree is
-   * created (`switcherConnectionPullsFirst`). Always said, never left to the worktree create:
-   * a pull made inside it is not a step of its own, so nothing would show it.
+   * Whether the base branch of every project that gets a new worktree is pulled from origin
+   * before the first worktree is created (`switcherConnectionPullsFirst`). Always said, never
+   * left to the worktree create: a pull made inside it is not a step of its own, so nothing
+   * would show it.
    */
   autoPull: boolean
   /** Told about each step (a pull, then a worktree, per project) as it starts and ends. */
@@ -47,6 +50,9 @@ export interface ConnectSwitcherProjectsOptions {
  * worktree in every project, in the order they were picked, then one connection over those
  * worktrees, which becomes the selected one. When a step fails the worktrees made so far are
  * removed and nothing is selected.
+ *
+ * A project picked on its base branch (`useBase`) gets no worktree: its default
+ * "(no-worktree)" worktree is the member, never pulled and never removed.
  *
  * Unlike the dialog there is no "Pull latest from origin" switch here: the "auto-pull before
  * worktree" setting stands in for it (`switcherConnectionPullsFirst`). On, it is the dialog

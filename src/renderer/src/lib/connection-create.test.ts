@@ -17,14 +17,19 @@ const worktreeStoreMocks = vi.hoisted(() => ({
   addWorktreeToProject: vi.fn(),
   removeWorktreeFromProject: vi.fn(),
   createWorktree: vi.fn(),
-  fireSetupScript: vi.fn()
+  fireSetupScript: vi.fn(),
+  loadWorktrees: vi.fn(),
+  /** project id → its default "(no-worktree)" worktree, as the store holds it. */
+  defaultWorktrees: new Map<string, { id: string; is_default: true }>()
 }))
 
 vi.mock('@/stores/useWorktreeStore', () => ({
   useWorktreeStore: {
     getState: vi.fn(() => ({
       worktreesByProject: new Map(),
-      loadWorktrees: vi.fn(),
+      loadWorktrees: worktreeStoreMocks.loadWorktrees,
+      getDefaultWorktree: (projectId: string) =>
+        worktreeStoreMocks.defaultWorktrees.get(projectId) ?? null,
       addWorktreeToProject: worktreeStoreMocks.addWorktreeToProject,
       removeWorktreeFromProject: worktreeStoreMocks.removeWorktreeFromProject,
       createWorktree: worktreeStoreMocks.createWorktree
@@ -196,6 +201,8 @@ describe('createConnectionFromProjects', () => {
     worktreeStoreMocks.removeWorktreeFromProject.mockClear()
     worktreeStoreMocks.createWorktree.mockClear()
     worktreeStoreMocks.fireSetupScript.mockClear()
+    worktreeStoreMocks.loadWorktrees.mockReset()
+    worktreeStoreMocks.defaultWorktrees.clear()
   })
 
   afterEach(() => {
@@ -662,6 +669,157 @@ describe('createConnectionFromProjects', () => {
       expect(callsTo(request, 'worktreeOps.create')).toEqual([
         { projectId: 'project-1', projectPath: '/tmp/project-1', projectName: 'Project 1' },
         { projectId: 'project-2', projectPath: '/tmp/project-2', projectName: 'Project 2' }
+      ])
+    })
+  })
+
+  describe('useBase', () => {
+    const baseOf = (projectId: string): { id: string; is_default: true } => ({
+      id: `base-${projectId}`,
+      is_default: true
+    })
+    const onBase = <T extends object>(project: T): T & { useBase: true } => ({
+      ...project,
+      useBase: true
+    })
+    const gitCalls = (): unknown[] => [
+      ...callsTo(request, 'gitOps.getBranchInfo'),
+      ...callsTo(request, 'gitOps.syncBranchWithOrigin')
+    ]
+
+    beforeEach(() => {
+      worktreeStoreMocks.defaultWorktrees.set('project-1', baseOf('project-1'))
+      worktreeStoreMocks.defaultWorktrees.set('project-2', baseOf('project-2'))
+    })
+
+    it('connects the default worktrees of two projects without creating, pulling or setting up anything', async () => {
+      const result = await createConnectionFromProjects(projects.map(onBase), { autoPull: true })
+
+      expect(result).toMatchObject({ ok: true, connectionId: 'connection-created' })
+      expect(callsTo(request, 'connectionOps.create')).toEqual([
+        { worktreeIds: ['base-project-1', 'base-project-2'] }
+      ])
+      expect(callsTo(request, 'worktreeOps.create')).toEqual([])
+      expect(gitCalls()).toEqual([])
+      expect(worktreeStoreMocks.addWorktreeToProject).not.toHaveBeenCalled()
+      expect(worktreeStoreMocks.fireSetupScript).not.toHaveBeenCalled()
+      expect(worktreeStoreMocks.loadWorktrees).not.toHaveBeenCalled()
+      expect(useConnectionStore.getState().connections).toEqual([
+        expect.objectContaining({ id: 'connection-created' })
+      ])
+    })
+
+    it('mixes base branches and new worktrees, keeping the order the projects were given in', async () => {
+      const third = { id: 'project-3', path: '/tmp/project-3', name: 'Project 3' }
+      request.mockImplementation(async (method: string, params?: unknown) => {
+        if (method === 'gitOps.getBranchInfo') {
+          return { success: true, branch: { name: 'main', tracking: null, ahead: 0, behind: 0 } }
+        }
+        if (method === 'gitOps.syncBranchWithOrigin') return { success: true, updated: true }
+        return happyPath(method, params)
+      })
+
+      const result = await createConnectionFromProjects(
+        [projects[0], onBase(projects[1]), third],
+        { autoPull: true }
+      )
+
+      expect(result).toMatchObject({ ok: true })
+      expect(callsTo(request, 'connectionOps.create')).toEqual([
+        { worktreeIds: ['worktree-project-1', 'base-project-2', 'worktree-project-3'] }
+      ])
+      // Only the projects that get a worktree are pulled, created in and set up.
+      expect(callsTo(request, 'gitOps.syncBranchWithOrigin')).toEqual([
+        { worktreePath: '/tmp/project-1', branch: 'main' },
+        { worktreePath: '/tmp/project-3', branch: 'main' }
+      ])
+      expect(
+        callsTo(request, 'worktreeOps.create').map((p) => (p as { projectId: string }).projectId)
+      ).toEqual(['project-1', 'project-3'])
+      expect(
+        worktreeStoreMocks.fireSetupScript.mock.calls.map(([projectId]) => projectId)
+      ).toEqual(['project-1', 'project-3'])
+    })
+
+    it('reads the worktrees of a project the store has not loaded yet', async () => {
+      worktreeStoreMocks.defaultWorktrees.delete('project-2')
+      worktreeStoreMocks.loadWorktrees.mockImplementation(async (projectId: string) => {
+        worktreeStoreMocks.defaultWorktrees.set(projectId, baseOf(projectId))
+      })
+
+      const result = await createConnectionFromProjects(projects.map(onBase))
+
+      expect(result).toMatchObject({ ok: true })
+      expect(worktreeStoreMocks.loadWorktrees).toHaveBeenCalledTimes(1)
+      expect(worktreeStoreMocks.loadWorktrees).toHaveBeenCalledWith('project-2', { force: true })
+      expect(callsTo(request, 'connectionOps.create')).toEqual([
+        { worktreeIds: ['base-project-1', 'base-project-2'] }
+      ])
+    })
+
+    it('creates nothing when a base worktree cannot be found, and says which project', async () => {
+      worktreeStoreMocks.defaultWorktrees.delete('project-2')
+      worktreeStoreMocks.loadWorktrees.mockRejectedValue(new Error('database is locked'))
+
+      const result = await createConnectionFromProjects([projects[0], onBase(projects[1])], {
+        autoPull: true
+      })
+
+      expect(result).toEqual({
+        ok: false,
+        error: 'Could not use the base branch of "Project 2": its base worktree was not found'
+      })
+      // Found out before the first pull and the first worktree: nothing to roll back.
+      expect(request).not.toHaveBeenCalled()
+      expect(useConnectionStore.getState().connections).toEqual([])
+    })
+
+    it('never removes a base worktree when a later step fails', async () => {
+      request.mockImplementation(async (method: string, params?: unknown) => {
+        if (method === 'connectionOps.create') return { success: false, error: 'disk full' }
+        return happyPath(method, params)
+      })
+
+      const result = await createConnectionFromProjects([onBase(projects[0]), projects[1]])
+
+      expect(result).toEqual({ ok: false, error: 'Failed to create connection: disk full' })
+      // Only the worktree made here is rolled back.
+      expect(
+        callsTo(request, 'worktreeOps.delete').map((p) => (p as { worktreeId: string }).worktreeId)
+      ).toEqual(['worktree-project-2'])
+      expect(worktreeStoreMocks.removeWorktreeFromProject).toHaveBeenCalledTimes(1)
+      expect(worktreeStoreMocks.removeWorktreeFromProject).toHaveBeenCalledWith(
+        'project-2',
+        'worktree-project-2'
+      )
+    })
+
+    it('reports a base step per base project, ahead of the worktrees of the others', async () => {
+      const seen: string[] = []
+      await createConnectionFromProjects([projects[0], onBase(projects[1])], {
+        autoPull: false,
+        onProgress: ({ projectId, step, status }) => seen.push(`${step} ${projectId} ${status}`)
+      })
+
+      expect(seen).toEqual([
+        'base project-2 running',
+        'base project-2 done',
+        'worktree project-1 running',
+        'worktree project-1 done'
+      ])
+    })
+
+    it('reports the base that could not be found', async () => {
+      worktreeStoreMocks.defaultWorktrees.delete('project-1')
+      const seen: string[] = []
+      await createConnectionFromProjects(projects.map(onBase), {
+        onProgress: ({ projectId, step, status, error }) =>
+          seen.push(`${step} ${projectId} ${status}${error ? `: ${error}` : ''}`)
+      })
+
+      expect(seen).toEqual([
+        'base project-1 running',
+        'base project-1 failed: its base worktree was not found'
       ])
     })
   })

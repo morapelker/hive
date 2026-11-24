@@ -1,6 +1,8 @@
 // Picking several projects in the "Go to project" switcher: Shift+Enter (or a Shift+click)
-// picks the highlighted project instead of opening it, the picked ones stay on top, and plain
-// Enter then connects them together with the project it is pressed on. The creation itself is
+// picks the highlighted project instead of opening it, Cmd+Shift+Enter picks it on its base
+// branch (no new worktree), the picked ones stay on top, and plain Enter then connects them
+// together with the project it is pressed on; Cmd+Enter connects the picked ones alone. The
+// creation itself is
 // the store's quickCreateConnection (tested with lib/connection-create); here it is a stand-in
 // the tests drive step by step. Its glue is tested in connect-switcher-projects.test.ts.
 
@@ -20,6 +22,12 @@ const toastMock = vi.hoisted(() => ({
   info: vi.fn()
 }))
 vi.mock('@/lib/toast', () => ({ toast: toastMock, gitToast: {} }))
+
+const platform = vi.hoisted(() => ({ mac: true }))
+vi.mock('@/lib/platform', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/platform')>()),
+  isMac: () => platform.mac
+}))
 
 import { setRendererRpcClient } from '@/api/rpc-client'
 import { useProjectSwitcherStore } from '@/stores/useProjectSwitcherStore'
@@ -58,6 +66,12 @@ const member = (name: string): { id: string; name: string; path: string } => ({
   id: name,
   name,
   path: `/Users/ana/code/${name}`
+})
+
+/** A member picked on its base branch. */
+const baseMember = (name: string): ReturnType<typeof member> & { useBase: true } => ({
+  ...member(name),
+  useBase: true
 })
 
 const worktree = (id: string, projectId: string): never =>
@@ -157,7 +171,7 @@ const rowOf = (name: string): HTMLElement => {
   return row
 }
 
-const hint = (id: 'enter' | 'select' | 'pin'): string | null =>
+const hint = (id: 'enter' | 'select' | 'base' | 'connect-picked' | 'pin'): string | null =>
   screen.queryByTestId(`project-switcher-${id}-hint`)?.textContent ?? null
 
 const type = (input: HTMLInputElement, value: string): void => {
@@ -174,6 +188,17 @@ const pick = (input: HTMLInputElement, name: string): void => {
   expect(activeRowName()).toBe(name)
   press(input, 'Enter', { shiftKey: true })
 }
+
+/** Types a project's name and picks it on its base branch with Cmd+Shift+Enter. */
+const pickOnBase = (input: HTMLInputElement, name: string): void => {
+  type(input, name)
+  expect(activeRowName()).toBe(name)
+  press(input, 'Enter', { metaKey: true, shiftKey: true })
+}
+
+/** How a picked row says it joins the connection; null for a row that is not picked. */
+const pickModeOf = (name: string): string | null =>
+  within(rowOf(name)).queryByTestId('project-switcher-row-pick-mode')?.textContent ?? null
 
 /** A quickCreateConnection the test drives step by step: `finish` ends it with a result. */
 function controllableCreate(): {
@@ -200,7 +225,10 @@ function controllableCreate(): {
   }
 }
 
-const createTask = (projectId: string, step: 'pull' | 'worktree' = 'worktree'): HTMLElement =>
+const createTask = (
+  projectId: string,
+  step: 'base' | 'pull' | 'worktree' = 'worktree'
+): HTMLElement =>
   screen.getByTestId(`project-switcher-create-task-${step}-${projectId}`)
 
 /** The steps listed while the connection is created, top to bottom. */
@@ -231,6 +259,7 @@ afterEach(() => {
   act(() => useProjectSwitcherStore.getState().close())
   cleanup()
   vi.useRealTimers()
+  platform.mac = true
   useConnectionStore.setState({ quickCreateConnection: realQuickCreateConnection })
 })
 
@@ -718,8 +747,7 @@ describe('the footer hints', () => {
     pick(input, 'seller-ios')
     // On a project that is not picked yet.
     expect(hint('enter')).toBe('↵ connect 2 projects')
-    expect(hint('select')).toBe('⇧↵ add another')
-    expect(hint('pin')).toBe('⌘↵ unpin')
+    expect(hint('select')).toBe('⇧↵ add')
 
     pick(input, 'ads-api')
     expect(hint('enter')).toBe('↵ connect 3 projects')
@@ -727,5 +755,407 @@ describe('the footer hints', () => {
     // On a picked one.
     expect(hint('enter')).toBe('↵ connect 2 projects')
     expect(hint('select')).toBe('⇧↵ remove')
+  })
+
+  it('say what Cmd+Shift+Enter does on the highlighted row', () => {
+    const input = openSwitcher()
+    expect(hint('base')).toBe('⌘⇧↵ pick base branch')
+
+    pickOnBase(input, 'seller-ios')
+    // On a project that is not picked yet.
+    expect(hint('base')).toBe('⌘⇧↵ add base branch')
+
+    press(input, 'ArrowUp')
+    // On one picked on its base branch: the other key gives it a new worktree instead.
+    expect(hint('base')).toBe('⌘⇧↵ remove')
+    expect(hint('select')).toBe('⇧↵ new worktree')
+
+    press(input, 'Enter', { shiftKey: true })
+    // On one picked for a new worktree.
+    expect(hint('base')).toBe('⌘⇧↵ base branch')
+    expect(hint('select')).toBe('⇧↵ remove')
+
+    // Not a key of a connection project or a database.
+    press(input, 'Enter', { shiftKey: true })
+    type(input, 'checkout-stack')
+    expect(hint('base')).toBeNull()
+  })
+
+  it('say that Cmd+Enter connects the picked projects instead of pinning', () => {
+    const input = openSwitcher()
+    expect(hint('pin')).toBe('⌘↵ unpin')
+    expect(hint('connect-picked')).toBeNull()
+
+    pick(input, 'seller-ios')
+    // One project is not a connection: it is opened.
+    expect(hint('pin')).toBeNull()
+    expect(hint('connect-picked')).toBe('⌘↵ open picked')
+
+    pickOnBase(input, 'ads-api')
+    expect(hint('connect-picked')).toBe('⌘↵ connect 2 picked')
+    // Whatever is highlighted, and with nothing highlighted.
+    type(input, 'zzqq')
+    expect(hint('connect-picked')).toBe('⌘↵ connect 2 picked')
+
+    // Nothing picked any more: the key pins again.
+    type(input, '')
+    press(input, 'ArrowUp')
+    expect(activeRowName()).toBe('ads-api')
+    press(input, 'Enter', { metaKey: true, shiftKey: true })
+    type(input, 'zzqq')
+    type(input, '')
+    press(input, 'ArrowUp')
+    expect(activeRowName()).toBe('seller-ios')
+    press(input, 'Enter', { shiftKey: true })
+    expect(pickedNames()).toEqual([])
+    expect(hint('connect-picked')).toBeNull()
+    expect(hint('pin')).not.toBeNull()
+  })
+})
+
+describe('Cmd+Shift+Enter', () => {
+  it('picks the highlighted project on its base branch, clears the field, and opens nothing', () => {
+    const create = controllableCreate()
+    const input = openSwitcher()
+    pickOnBase(input, 'seller-ios')
+
+    expect(pickedNames()).toEqual(['seller-ios'])
+    expect(pickModeOf('seller-ios')).toBe('base branch')
+    expect(input.value).toBe('')
+    expect(input.placeholder).toBe('Add another project…')
+    expect(screen.getByTestId('project-switcher')).toBeInTheDocument()
+    expect(create.quickCreateConnection).not.toHaveBeenCalled()
+    expectNothingOpened()
+    // The rows that are not picked say nothing about how they would join.
+    expect(pickModeOf('ads-api')).toBeNull()
+  })
+
+  it('tells a project picked on its base branch from one picked for a new worktree', () => {
+    const input = openSwitcher()
+    pickOnBase(input, 'seller-ios')
+    pick(input, 'ads-api')
+
+    expect(pickedNames()).toEqual(['seller-ios', 'ads-api'])
+    expect(pickModeOf('seller-ios')).toBe('base branch')
+    expect(pickModeOf('ads-api')).toBe('new worktree')
+  })
+
+  it('connects the base branch of the projects picked with it, and a new worktree of the others', async () => {
+    const create = controllableCreate()
+    const input = openSwitcher()
+    pickOnBase(input, 'seller-ios')
+    pick(input, 'ads-api')
+    pickOnBase(input, 'pricing-api')
+    type(input, 'ledger-co')
+    press(input, 'Enter')
+
+    // The project Enter is pressed on gets a new worktree, as it always did.
+    expect(create.quickCreateConnection.mock.calls[0][0 as never]).toEqual([
+      baseMember('seller-ios'),
+      member('ads-api'),
+      baseMember('pricing-api'),
+      member('ledger-core')
+    ])
+    expect(create.quickCreateConnection.mock.calls[0][0 as never][1]).not.toHaveProperty('useBase')
+    await create.finish('conn-1')
+    expect(screen.queryByTestId('project-switcher')).toBeNull()
+  })
+
+  it('lists the base branches first, and pulls and creates a worktree only for the others', async () => {
+    const create = controllableCreate()
+    const input = openSwitcher()
+    pick(input, 'ads-api')
+    pickOnBase(input, 'seller-ios')
+    type(input, 'ledger-co')
+    press(input, 'Enter')
+
+    expect(createSteps()).toEqual([
+      'Use the base branch of seller-ios',
+      'Pull ads-api from origin',
+      'Pull ledger-core from origin',
+      'Create worktree in ads-api',
+      'Create worktree in ledger-core'
+    ])
+    expect(screen.getByTestId('project-switcher-creating-hint').textContent).toBe(
+      'Creating the worktrees, then the connection'
+    )
+    expect(createTask('seller-ios', 'base')).toHaveAttribute('data-status', 'pending')
+    act(() => {
+      create.options().onProgress?.({ projectId: 'seller-ios', step: 'base', status: 'done' })
+    })
+    expect(createTask('seller-ios', 'base')).toHaveAttribute('data-status', 'done')
+    await create.finish('conn-1')
+  })
+
+  it('takes a project picked on its base branch out again, and the highlight goes back with it', () => {
+    const input = openSwitcher()
+    pickOnBase(input, 'seller-ios')
+    pickOnBase(input, 'ads-api')
+    press(input, 'ArrowUp')
+    expect(activeRowName()).toBe('ads-api')
+
+    press(input, 'Enter', { metaKey: true, shiftKey: true })
+    expect(pickedNames()).toEqual(['seller-ios'])
+    expect(activeRowName()).toBe('ads-api')
+    expect(listNames()).toContain('ads-api')
+  })
+
+  it('changes how a picked project joins when the other key is pressed on it', async () => {
+    const create = controllableCreate()
+    const input = openSwitcher()
+    pick(input, 'seller-ios')
+    pickOnBase(input, 'ads-api')
+
+    // Shift+Enter on the one picked on its base branch: a new worktree instead.
+    press(input, 'ArrowUp')
+    expect(activeRowName()).toBe('ads-api')
+    press(input, 'Enter', { shiftKey: true })
+    expect(pickedNames()).toEqual(['seller-ios', 'ads-api'])
+    expect(pickModeOf('ads-api')).toBe('new worktree')
+    expect(activeRowName()).toBe('ads-api')
+
+    // Cmd+Shift+Enter on the one picked for a new worktree: its base branch instead.
+    press(input, 'ArrowUp')
+    expect(activeRowName()).toBe('seller-ios')
+    press(input, 'Enter', { metaKey: true, shiftKey: true })
+    expect(pickedNames()).toEqual(['seller-ios', 'ads-api'])
+    expect(pickModeOf('seller-ios')).toBe('base branch')
+
+    press(input, 'Enter')
+    expect(create.quickCreateConnection.mock.calls[0][0 as never]).toEqual([
+      baseMember('seller-ios'),
+      member('ads-api')
+    ])
+    await create.finish('conn-1')
+  })
+
+  it('does nothing on a connection project or a database, with Alt, or while the key is held', () => {
+    const input = openSwitcher()
+    for (const name of ['checkout-stack', 'fixtures-db']) {
+      type(input, name)
+      press(input, 'Enter', { metaKey: true, shiftKey: true })
+      expect(input.value).toBe(name)
+      expect(screen.queryByTestId('project-switcher-selected')).toBeNull()
+    }
+
+    type(input, '')
+    press(input, 'Enter', { metaKey: true, shiftKey: true, altKey: true })
+    press(input, 'Enter', { metaKey: true, ctrlKey: true, shiftKey: true })
+    expect(screen.queryByTestId('project-switcher-selected')).toBeNull()
+
+    // A held key picks one project, not the list from the top down.
+    press(input, 'Enter', { metaKey: true, shiftKey: true })
+    press(input, 'Enter', { metaKey: true, shiftKey: true, repeat: true })
+    press(input, 'Enter', { metaKey: true, shiftKey: true, repeat: true })
+    expect(pickedNames()).toEqual(['orders-web'])
+    expectNothingOpened()
+  })
+
+  it('is Ctrl+Shift+Enter off macOS', () => {
+    platform.mac = false
+    const input = openSwitcher()
+    expect(hint('base')).toBe('ctrl ⇧↵ pick base branch')
+
+    press(input, 'Enter', { metaKey: true, shiftKey: true })
+    expect(screen.queryByTestId('project-switcher-selected')).toBeNull()
+
+    press(input, 'Enter', { ctrlKey: true, shiftKey: true })
+    expect(pickedNames()).toEqual(['orders-web'])
+    expect(pickModeOf('orders-web')).toBe('base branch')
+  })
+
+  it('never reaches the app shortcuts', () => {
+    const seen: string[] = []
+    const appShortcuts = (event: KeyboardEvent): void => {
+      seen.push(event.key)
+    }
+    document.addEventListener('keydown', appShortcuts, true)
+    try {
+      const input = openSwitcher()
+      press(input, 'Enter', { metaKey: true, shiftKey: true })
+      expect(seen).toEqual([])
+    } finally {
+      document.removeEventListener('keydown', appShortcuts, true)
+    }
+  })
+
+  it('is a Cmd+Shift+click with the mouse', async () => {
+    const create = controllableCreate()
+    openSwitcher()
+    fireEvent.click(rowOf('seller-ios'), { shiftKey: true, metaKey: true })
+    expect(pickedNames()).toEqual(['seller-ios'])
+    expect(pickModeOf('seller-ios')).toBe('base branch')
+    expectNothingOpened()
+
+    fireEvent.click(rowOf('pricing-api'))
+    expect(create.quickCreateConnection.mock.calls[0][0 as never]).toEqual([
+      baseMember('seller-ios'),
+      member('pricing-api')
+    ])
+    await create.finish('conn-1')
+  })
+})
+
+describe('Cmd+Enter with projects picked', () => {
+  it('connects the picked projects alone, without the highlighted one', async () => {
+    const create = controllableCreate()
+    const input = openSwitcher()
+    pick(input, 'seller-ios')
+    pick(input, 'ads-api')
+    type(input, 'ledger-co')
+    expect(activeRowName()).toBe('ledger-core')
+    press(input, 'Enter', { metaKey: true })
+
+    expect(create.quickCreateConnection).toHaveBeenCalledTimes(1)
+    expect(create.quickCreateConnection.mock.calls[0][0 as never]).toEqual([
+      member('seller-ios'),
+      member('ads-api')
+    ])
+    expect(createSteps()).toEqual([
+      'Pull seller-ios from origin',
+      'Pull ads-api from origin',
+      'Create worktree in seller-ios',
+      'Create worktree in ads-api'
+    ])
+    expect(useProjectStore.getState().selectedProjectId).toBeNull()
+
+    await create.finish('conn-1')
+    expect(screen.queryByTestId('project-switcher')).toBeNull()
+  })
+
+  it('connects the base branches of two projects with no worktree and no pull', async () => {
+    const create = controllableCreate()
+    const input = openSwitcher()
+    pickOnBase(input, 'seller-ios')
+    pickOnBase(input, 'ads-api')
+    // The first project left is highlighted and stays out of the connection.
+    expect(activeRowName()).toBe('orders-web')
+    press(input, 'Enter', { metaKey: true })
+
+    expect(create.quickCreateConnection.mock.calls[0][0 as never]).toEqual([
+      baseMember('seller-ios'),
+      baseMember('ads-api')
+    ])
+    expect(createSteps()).toEqual([
+      'Use the base branch of seller-ios',
+      'Use the base branch of ads-api'
+    ])
+    expect(screen.getByTestId('project-switcher-creating-hint').textContent).toBe(
+      'Connecting the base branches'
+    )
+    await create.finish('conn-1')
+    expect(screen.queryByTestId('project-switcher')).toBeNull()
+  })
+
+  it('does not pin the highlighted project', async () => {
+    const request = vi.fn(async () => undefined)
+    setRendererRpcClient({ request: request as never, subscribe: () => () => {} })
+    const create = controllableCreate()
+    const input = openSwitcher()
+    pick(input, 'seller-ios')
+    pick(input, 'ads-api')
+    type(input, 'ledger-worker')
+    const pinnedBefore = usePinnedStore.getState().pinnedProjectIds
+    request.mockClear()
+    press(input, 'Enter', { metaKey: true })
+    await create.finish('conn-1')
+
+    expect(request).not.toHaveBeenCalled()
+    expect(usePinnedStore.getState().pinnedProjectIds).toBe(pinnedBefore)
+    expect(toastMock.success).not.toHaveBeenCalled()
+  })
+
+  it('connects them when the text typed matches no project', async () => {
+    const create = controllableCreate()
+    const input = openSwitcher()
+    pick(input, 'seller-ios')
+    pick(input, 'ads-api')
+    type(input, 'zzqq')
+    expect(activeRowName()).toBeNull()
+    press(input, 'Enter', { metaKey: true })
+
+    expect(create.quickCreateConnection.mock.calls[0][0 as never]).toEqual([
+      member('seller-ios'),
+      member('ads-api')
+    ])
+    await create.finish('conn-1')
+  })
+
+  it('opens the project when it is the only one picked', () => {
+    const create = controllableCreate()
+    const input = openSwitcher()
+    pickOnBase(input, 'seller-ios')
+    type(input, 'ads')
+    expect(activeRowName()).toBe('ads-api')
+    press(input, 'Enter', { metaKey: true })
+
+    expect(create.quickCreateConnection).not.toHaveBeenCalled()
+    expect(useProjectStore.getState().selectedProjectId).toBe('seller-ios')
+    expect(screen.queryByTestId('project-switcher')).toBeNull()
+  })
+
+  it('does nothing held since the pick before it, with Alt, or while the connection is created', async () => {
+    const create = controllableCreate()
+    const input = openSwitcher()
+    pickOnBase(input, 'seller-ios')
+    pickOnBase(input, 'ads-api')
+    // Shift let go first: the key repeats as Cmd+Enter.
+    press(input, 'Enter', { metaKey: true, repeat: true })
+    press(input, 'Enter', { metaKey: true, altKey: true })
+    press(input, 'Enter', { ctrlKey: true })
+    expect(create.quickCreateConnection).not.toHaveBeenCalled()
+    expect(pickedNames()).toEqual(['seller-ios', 'ads-api'])
+
+    press(input, 'Enter', { metaKey: true })
+    press(input, 'Enter', { metaKey: true })
+    expect(create.quickCreateConnection).toHaveBeenCalledTimes(1)
+    await create.finish('conn-1')
+  })
+
+  it('is Ctrl+Enter off macOS', async () => {
+    platform.mac = false
+    const create = controllableCreate()
+    const input = openSwitcher()
+    press(input, 'Enter', { ctrlKey: true, shiftKey: true })
+    press(input, 'Enter', { ctrlKey: true, shiftKey: true })
+    expect(pickedNames()).toEqual(['orders-web', 'checkout-api'])
+    expect(hint('connect-picked')).toBe('ctrl ↵ connect 2 picked')
+
+    press(input, 'Enter', { metaKey: true })
+    expect(create.quickCreateConnection).not.toHaveBeenCalled()
+    press(input, 'Enter', { ctrlKey: true })
+    expect(create.quickCreateConnection.mock.calls[0][0 as never]).toEqual([
+      baseMember('orders-web'),
+      baseMember('checkout-api')
+    ])
+    await create.finish('conn-1')
+  })
+
+  it('comes back with the projects picked as they were when the connection is not created', async () => {
+    const create = controllableCreate()
+    const input = openSwitcher()
+    pickOnBase(input, 'seller-ios')
+    pick(input, 'ads-api')
+    press(input, 'Enter', { metaKey: true })
+    act(() => {
+      create
+        .options()
+        .onError?.('Could not use the base branch of "seller-ios": its base worktree was not found')
+    })
+    await create.finish(null)
+
+    expect(screen.getByRole('alert').textContent).toContain(
+      'Could not use the base branch of "seller-ios"'
+    )
+    expect(pickedNames()).toEqual(['seller-ios', 'ads-api'])
+    expect(pickModeOf('seller-ios')).toBe('base branch')
+    expect(pickModeOf('ads-api')).toBe('new worktree')
+
+    press(input, 'Enter', { metaKey: true })
+    expect(create.quickCreateConnection.mock.calls[1][0 as never]).toEqual([
+      baseMember('seller-ios'),
+      member('ads-api')
+    ])
+    await create.finish('conn-2')
   })
 })

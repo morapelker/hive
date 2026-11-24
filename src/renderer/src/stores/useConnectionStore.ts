@@ -113,7 +113,7 @@ interface ConnectionState {
   removeMember: (connectionId: string, worktreeId: string) => Promise<void>
   updateConnectionMembers: (connectionId: string, desiredWorktreeIds: string[]) => Promise<boolean>
   quickCreateConnection: (
-    projects: { id: string; path: string; name: string }[],
+    projects: { id: string; path: string; name: string; useBase?: boolean }[],
     opts?: QuickCreateConnectionOptions
   ) => Promise<string | null>
   duplicateConnection: (connectionId: string) => Promise<string | null>
@@ -352,11 +352,12 @@ export const useConnectionStore = create<ConnectionState>()(
         }
       },
 
-      // The New Connection dialog's flow — a fresh worktree per project, then one connection —
-      // lives in lib/connection-create so the agent and the phone create connections the same
-      // way. This action adds the dialog's UI: select the new connection and toast.
+      // The New Connection dialog's flow — a fresh worktree per project (or, for a `useBase`
+      // project, its base branch as it is), then one connection — lives in
+      // lib/connection-create so the agent and the phone create connections the same way. This
+      // action adds the dialog's UI: select the new connection and toast.
       quickCreateConnection: async (
-        projects: { id: string; path: string; name: string }[],
+        projects: { id: string; path: string; name: string; useBase?: boolean }[],
         opts?: QuickCreateConnectionOptions
       ) => {
         if (projects.length < 2) {

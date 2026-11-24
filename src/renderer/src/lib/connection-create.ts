@@ -4,6 +4,9 @@
  * those worktrees, with best-effort rollback of the worktrees when any step fails. Asked to
  * pull, it first brings every project's base branch up to date and only then cuts a worktree.
  *
+ * A project given with `useBase` joins on its base branch instead: its default
+ * "(no-worktree)" worktree, as it is. Nothing is pulled, created, set up or rolled back for it.
+ *
  * Shared by useConnectionStore.quickCreateConnection (the dialog, Duplicate, a connection
  * project's "new instance"), the Tedooo agent's `create_connection` plan step and the phone's
  * `connection.create` relay command, so every entry point creates a connection the same way.
@@ -20,6 +23,11 @@ export interface ConnectionProjectInput {
   path: string
   name: string
   kind?: 'git' | 'connection' | null
+  /**
+   * Join the connection on the project's base branch (its default "(no-worktree)" worktree)
+   * instead of a new worktree. The "Go to project" switcher's Cmd+Shift+Enter.
+   */
+  useBase?: boolean
 }
 
 export interface CreateConnectionFromProjectsOptions {
@@ -43,17 +51,24 @@ export interface CreateConnectionFromProjectsOptions {
    * - `false`: no pull; the worktrees are cut from the local branches as they are.
    * - left out: the "auto-pull before worktree" setting decides, per worktree and best effort
    *   (a failed pull falls back to the local branch without a word).
+   *
+   * A `useBase` project is never pulled: no worktree is cut from it, and a branch that cannot
+   * be fast-forwarded is no reason not to connect it as it is.
    */
   autoPull?: boolean
   /**
    * Told about every step as it starts and ends, so a caller can show what is being done:
-   * with `autoPull: true` one `pull` step per project, then one `worktree` step per project.
+   * one `base` step per `useBase` project, then for the others, with `autoPull: true`, one
+   * `pull` step each, then one `worktree` step each.
    */
   onProgress?: (progress: ConnectionCreateProgress) => void
 }
 
-/** `pull`: the project's base branch from origin. `worktree`: its new worktree. */
-export type ConnectionCreateStep = 'pull' | 'worktree'
+/**
+ * `base`: the project's default worktree, looked up for a `useBase` project. `pull`: the
+ * project's base branch from origin. `worktree`: its new worktree.
+ */
+export type ConnectionCreateStep = 'base' | 'pull' | 'worktree'
 
 export interface ConnectionCreateProgress {
   projectId: string
@@ -190,6 +205,9 @@ export async function createConnectionFromProjects(
     project: ConnectionProjectInput
     worktree: { id: string; path: string; branch_name: string }
   }[] = []
+  // The connection's worktrees in the order the projects were given: the new ones and the
+  // default worktrees of the `useBase` projects.
+  const memberWorktreeIds: string[] = []
 
   // Best-effort rollback of every already-created worktree (per-item try/catch).
   const rollback = async (): Promise<void> => {
@@ -220,13 +238,39 @@ export async function createConnectionFromProjects(
     opts.onProgress?.({ projectId: project.id, step, status, ...(error ? { error } : {}) })
   }
 
+  // The default worktree of every `useBase` project, before anything is pulled or created: one
+  // that cannot be found is found out while there is still nothing to roll back. A project
+  // that was never expanded may not have its worktrees in the store yet.
+  const baseWorktreeIds = new Map<string, string>()
+  for (const project of projects) {
+    if (!project.useBase) continue
+    report(project, 'base', 'running')
+    let base = useWorktreeStore.getState().getDefaultWorktree(project.id)
+    if (!base) {
+      try {
+        await useWorktreeStore.getState().loadWorktrees(project.id, { force: true })
+      } catch {
+        // Reported below: there is still no base to connect.
+      }
+      base = useWorktreeStore.getState().getDefaultWorktree(project.id)
+    }
+    if (!base) {
+      const error = 'its base worktree was not found'
+      report(project, 'base', 'failed', error)
+      return { ok: false, error: `Could not use the base branch of "${project.name}": ${error}` }
+    }
+    baseWorktreeIds.set(project.id, base.id)
+    report(project, 'base', 'done')
+  }
+  const worktreeProjects = projects.filter((project) => !baseWorktreeIds.has(project.id))
+
   // Every pull before the first worktree: a branch that cannot be brought up to date is found
   // out while there is still nothing to roll back. The projects are separate repositories, so
   // they pull side by side, and each one is waited for even after another has failed, so that
   // the caller hears about all of them at once.
   if (opts.autoPull === true) {
     const pulls = await Promise.all(
-      projects.map(async (project) => {
+      worktreeProjects.map(async (project) => {
         report(project, 'pull', 'running')
         const pulled = await pullProjectBaseBranch(project)
         if (pulled.ok) report(project, 'pull', 'done')
@@ -243,6 +287,11 @@ export async function createConnectionFromProjects(
   }
 
   for (const project of projects) {
+    const baseWorktreeId = baseWorktreeIds.get(project.id)
+    if (baseWorktreeId) {
+      memberWorktreeIds.push(baseWorktreeId)
+      continue
+    }
     report(project, 'worktree', 'running')
     let result: Awaited<ReturnType<typeof worktreeApi.create>>
     try {
@@ -269,6 +318,7 @@ export async function createConnectionFromProjects(
     // the new worktree and closes open file tabs.
     useWorktreeStore.getState().addWorktreeToProject(project.id, result.worktree)
     created.push({ project, worktree: result.worktree })
+    memberWorktreeIds.push(result.worktree.id)
     report(project, 'worktree', 'done')
   }
 
@@ -282,7 +332,7 @@ export async function createConnectionFromProjects(
   let createResult: Awaited<ReturnType<typeof connectionApi.create>>
   try {
     createResult = await connectionApi.create(
-      created.map((c) => c.worktree.id),
+      memberWorktreeIds,
       opts.savedProjectId ? { savedProjectId: opts.savedProjectId } : undefined
     )
   } catch (error) {
@@ -301,7 +351,7 @@ export async function createConnectionFromProjects(
   let connection = createResult.connection
   // connectionOps.create silently skips worktrees it cannot find; a connection missing a
   // member is not the one that was asked for.
-  if ((connection.members?.length ?? 0) !== created.length) {
+  if ((connection.members?.length ?? 0) !== memberWorktreeIds.length) {
     try {
       await connectionApi.delete(connection.id)
     } catch {

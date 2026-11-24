@@ -101,6 +101,22 @@ describe('connectSwitcherProjects', () => {
     expect(createConnectionFromProjects).toHaveBeenCalledWith(PROJECTS, { autoPull: false })
   })
 
+  it('hands on which projects join on their base branch', async () => {
+    createConnectionFromProjects.mockResolvedValue({
+      ok: true,
+      connectionId: 'conn-1',
+      connectionName: 'seller-ios + ads-api',
+      connectionPath: '/Users/ana/.hive/connections/conn-1',
+      savedProjectId: null
+    })
+    const picked = [{ ...PROJECTS[0], useBase: true }, PROJECTS[1]]
+
+    await expect(connectSwitcherProjects(picked, { autoPull: true })).resolves.toBe('conn-1')
+
+    expect(createConnectionFromProjects).toHaveBeenCalledWith(picked, { autoPull: true })
+    expect(useConnectionStore.getState().selectedConnectionId).toBe('conn-1')
+  })
+
   it('hands the reason to onError and changes nothing when nothing was created', async () => {
     createConnectionFromProjects.mockResolvedValue({
       ok: false,

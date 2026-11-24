@@ -535,7 +535,6 @@ describe('Cmd+Enter', () => {
   it('does nothing with another modifier, with Ctrl on macOS, or with no result', async () => {
     const input = openSwitcher()
     type(input, 'ledger-worker')
-    press(input, 'Enter', { metaKey: true, shiftKey: true })
     press(input, 'Enter', { metaKey: true, altKey: true })
     press(input, 'Enter', { ctrlKey: true })
     type(input, 'zzqq')
