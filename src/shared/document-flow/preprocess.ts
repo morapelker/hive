@@ -52,7 +52,7 @@ export interface PreprocessedDocument {
 }
 
 /** Pre-processed text above this many characters is refused (v1 has no chunked extraction). */
-export const DOCUMENT_TEXT_LIMIT = 400_000
+export const DOCUMENT_TEXT_LIMIT = 800_000
 
 const EXTENSION_FORMATS = new Map<string, DocumentFormat>([
   ['html', 'html'],

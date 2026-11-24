@@ -741,7 +741,7 @@ describe('the extraction job', () => {
     const run = harness.service.get(runId)?.run
     expect(run?.status).toBe('extract_failed')
     expect(run?.error).toMatch(
-      /^The document is too large to turn into tickets in one pass: [\d,]+ characters of text \(the limit is 400,000\)\./
+      /^The document is too large to turn into tickets in one pass: [\d,]+ characters of text \(the limit is 800,000\)\./
     )
     expect(harness.generateCalls).toEqual([])
   })
