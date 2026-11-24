@@ -2996,7 +2996,8 @@ function ReviewModeContent({
     ticketId: string,
     projectId: string,
     column: 'todo' | 'in_progress' | 'review' | 'merged' | 'done',
-    sortOrder: number
+    sortOrder: number,
+    opts?: { interactive?: boolean }
   ) => Promise<void>
   updateTicket: (ticketId: string, projectId: string, data: KanbanTicketUpdate) => Promise<void>
   dualPane?: boolean
@@ -3426,7 +3427,7 @@ function ReviewModeContent({
       const kanbanStore = useKanbanStore.getState()
       const doneTickets = kanbanStore.getTicketsByColumn(ticket.project_id, 'done')
       const sortOrder = kanbanStore.computeSortOrder(doneTickets, doneTickets.length)
-      await moveTicket(ticket.id, ticket.project_id, 'done', sortOrder)
+      await moveTicket(ticket.id, ticket.project_id, 'done', sortOrder, { interactive: true })
       toast.success('Ticket moved to Done')
     } catch {
       toast.error('Failed to move ticket')

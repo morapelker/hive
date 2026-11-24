@@ -482,7 +482,7 @@ describe('dropping the ticket of a run that has ended', () => {
 
     await drop(makeTicket({ column: 'review' }), 'done')
 
-    await waitFor(() => expect(moveTicket).toHaveBeenCalledWith('ticket-run', 'proj-1', 'done', 0))
+    await waitFor(() => expect(moveTicket).toHaveBeenCalledWith('ticket-run', 'proj-1', 'done', 0, { interactive: true }))
     expect(toast.warning).not.toHaveBeenCalled()
     expect(setPendingDoneMove).not.toHaveBeenCalled()
   })
@@ -533,7 +533,7 @@ describe('dropping the ticket of a run that has ended', () => {
 
     await drop(makeTicket({ column: 'review', worktree_id: null }), 'done')
 
-    await waitFor(() => expect(moveTicket).toHaveBeenCalledWith('ticket-run', 'proj-1', 'done', 0))
+    await waitFor(() => expect(moveTicket).toHaveBeenCalledWith('ticket-run', 'proj-1', 'done', 0, { interactive: true }))
     expect(setPendingDoneMove).not.toHaveBeenCalled()
   })
 
@@ -739,7 +739,7 @@ describe('an ordinary ticket', () => {
       'done'
     )
 
-    await waitFor(() => expect(moveTicket).toHaveBeenCalledWith('ticket-1', 'proj-1', 'done', 0))
+    await waitFor(() => expect(moveTicket).toHaveBeenCalledWith('ticket-1', 'proj-1', 'done', 0, { interactive: true }))
     expect(toast.warning).not.toHaveBeenCalled()
   })
 })

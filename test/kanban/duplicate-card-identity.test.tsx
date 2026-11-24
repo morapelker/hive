@@ -535,7 +535,7 @@ describe('duplicate markdown card renderer identity', () => {
     fireEvent.drop(container.querySelector('[data-testid="kanban-drop-area-done"]')!)
 
     await waitFor(() => expect(moveTicket).toHaveBeenCalled())
-    expect(moveTicket).toHaveBeenCalledWith('shared', 'proj-1', 'done', 11)
+    expect(moveTicket).toHaveBeenCalledWith('shared', 'proj-1', 'done', 11, { interactive: true })
   })
 
   test('aggregate simple mode moves directly when dropping into In Progress', async () => {
@@ -565,7 +565,7 @@ describe('duplicate markdown card renderer identity', () => {
     fireEvent.drop(container.querySelector('[data-testid="kanban-drop-area-in_progress"]')!)
 
     await waitFor(() => expect(moveTicket).toHaveBeenCalled())
-    expect(moveTicket).toHaveBeenCalledWith('shared', 'proj-1', 'in_progress', 11)
+    expect(moveTicket).toHaveBeenCalledWith('shared', 'proj-1', 'in_progress', 11, { interactive: true })
   })
 
   test('aggregate flow mode opens picker instead of moving directly when dropping into In Progress', async () => {

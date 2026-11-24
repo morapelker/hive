@@ -144,7 +144,7 @@ describe('completeDoneMove — document-run batch', () => {
       ['t-a', 'proj', 'done', expect.any(Number), { skipCompletionEffects: true }],
       ['t-b', 'proj', 'done', expect.any(Number), { skipCompletionEffects: true }],
       ['t-fix', 'proj', 'done', expect.any(Number), { skipCompletionEffects: true }],
-      ['run-ticket', 'proj', 'done', 5]
+      ['run-ticket', 'proj', 'done', 5, { interactive: true }]
     ])
     expect(pending()).toBeNull()
   })
@@ -161,7 +161,9 @@ describe('completeDoneMove — document-run batch', () => {
       handledWorktreeIds: new Set(['wt-b'])
     })
 
-    expect(moveTicketMock).toHaveBeenCalledExactlyOnceWith('run-ticket', 'proj', 'done', 5)
+    expect(moveTicketMock).toHaveBeenCalledExactlyOnceWith('run-ticket', 'proj', 'done', 5, {
+      interactive: true
+    })
   })
 
   it('skipping a merge entry drops its archive twin; its ticket stays, the run’s ticket still moves', async () => {
@@ -180,7 +182,7 @@ describe('completeDoneMove — document-run batch', () => {
     expect(moveTicketMock.mock.calls).toEqual([
       ['t-b', 'proj', 'done', expect.any(Number), { skipCompletionEffects: true }],
       ['t-fix', 'proj', 'done', expect.any(Number), { skipCompletionEffects: true }],
-      ['run-ticket', 'proj', 'done', 5]
+      ['run-ticket', 'proj', 'done', 5, { interactive: true }]
     ])
     expect(pending()).toBeNull()
     expect(toastMocks.warning).toHaveBeenCalledWith(expect.stringContaining('A1 · Alpha (skipped)'))
@@ -196,7 +198,8 @@ describe('completeDoneMove — document-run batch', () => {
     await store.completeDoneMove()
     await store.completeDoneMove()
 
-    expect(moveTicketMock).not.toHaveBeenCalledWith('run-ticket', 'proj', 'done', 5)
+    // By id, whatever the options: the run's ticket is not moved at all
+    expect(moveTicketMock.mock.calls.map((call) => call[0])).not.toContain('run-ticket')
     expect(toastMocks.warning).toHaveBeenCalledWith(expect.stringContaining('1 branch'))
   })
 
@@ -208,7 +211,7 @@ describe('completeDoneMove — document-run batch', () => {
     expect(pending()).toBeNull()
     expect(moveTicketMock.mock.calls).toEqual([
       ['t-fix', 'proj', 'done', expect.any(Number), { skipCompletionEffects: true }],
-      ['run-ticket', 'proj', 'done', 5]
+      ['run-ticket', 'proj', 'done', 5, { interactive: true }]
     ])
     expect(toastMocks.warning).toHaveBeenCalledWith(
       expect.stringContaining('A2 · Beta (has new changes since the run)')

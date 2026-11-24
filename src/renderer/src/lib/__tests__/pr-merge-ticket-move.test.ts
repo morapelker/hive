@@ -128,7 +128,7 @@ describe('moveWorktreeTicketsToMerged', () => {
 
     await moveWorktreeTicketsToMerged(WORKTREE_ID, 42)
 
-    expect(moveTicket).toHaveBeenCalledWith('ticket-1', PROJECT_ID, 'merged', 5)
+    expect(moveTicket).toHaveBeenCalledWith('ticket-1', PROJECT_ID, 'merged', 5, { interactive: true })
     expect(rpcGetByProject).not.toHaveBeenCalled()
   })
 
@@ -162,7 +162,7 @@ describe('moveWorktreeTicketsToMerged', () => {
     await moveWorktreeTicketsToMerged(WORKTREE_ID, 42)
 
     expect(moveTicket).toHaveBeenCalledTimes(1)
-    expect(moveTicket).toHaveBeenCalledWith('same-pr', PROJECT_ID, 'merged', 5)
+    expect(moveTicket).toHaveBeenCalledWith('same-pr', PROJECT_ID, 'merged', 5, { interactive: true })
   })
 
   it('falls back to a DB fetch + RPC move when the project board was never loaded', async () => {
@@ -247,7 +247,7 @@ describe('moveWorktreeTicketsToMerged', () => {
       runsById: { 'run-1': makeDetail({ id: 'run-1', status: 'completed' }) }
     })
     await moveWorktreeTicketsToMerged(WORKTREE_ID, 42)
-    expect(moveTicket).toHaveBeenCalledWith('ticket-run', PROJECT_ID, 'merged', 5)
+    expect(moveTicket).toHaveBeenCalledWith('ticket-run', PROJECT_ID, 'merged', 5, { interactive: true })
 
     useDocumentFlowStore.setState({ runsById: {} })
   })
@@ -283,7 +283,7 @@ describe('moveWorktreeTicketsToMerged', () => {
     })
     await moveWorktreeTicketsToMerged(WORKTREE_ID, 42)
     expect(moveTicket).toHaveBeenCalledTimes(1)
-    expect(moveTicket).toHaveBeenCalledWith('ticket-run', PROJECT_ID, 'merged', 5)
+    expect(moveTicket).toHaveBeenCalledWith('ticket-run', PROJECT_ID, 'merged', 5, { interactive: true })
 
     useDocumentFlowStore.setState({ runsById: {} })
   })
@@ -312,7 +312,7 @@ describe('moveWorktreeTicketsToMerged', () => {
     await moveWorktreeTicketsToMerged(WORKTREE_ID, 42)
 
     expect(moveTicket).toHaveBeenCalledTimes(1)
-    expect(moveTicket).toHaveBeenCalledWith('ticket-plain', PROJECT_ID, 'merged', 5)
+    expect(moveTicket).toHaveBeenCalledWith('ticket-plain', PROJECT_ID, 'merged', 5, { interactive: true })
 
     useDocumentFlowStore.setState({ runsById: {} })
   })

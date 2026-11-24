@@ -54,7 +54,9 @@ export async function moveWorktreeTicketsToMerged(
       for (const ticket of tickets) {
         if (!shouldMove(ticket)) continue
         loadedMoves.push(
-          kanban.moveTicket(ticket.id, projectId, 'merged', ticket.sort_order).catch(() => {})
+          kanban
+            .moveTicket(ticket.id, projectId, 'merged', ticket.sort_order, { interactive: true })
+            .catch(() => {})
         )
       }
     }

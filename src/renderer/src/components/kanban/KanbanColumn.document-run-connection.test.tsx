@@ -324,7 +324,7 @@ describe('dropping the ticket of an ended connection run', () => {
     await drop(makeTicket(), 'done')
 
     await waitFor(() =>
-      expect(moveTicket).toHaveBeenCalledWith('ticket-run', 'proj-conn', 'done', 0)
+      expect(moveTicket).toHaveBeenCalledWith('ticket-run', 'proj-conn', 'done', 0, { interactive: true })
     )
     expect(setPendingDoneMove).not.toHaveBeenCalled()
     expect(toast.warning).not.toHaveBeenCalled()
@@ -393,7 +393,7 @@ describe('the ticket of a git run that lost its worktree', () => {
     await drop(makeTicket(), 'done')
 
     await waitFor(() =>
-      expect(moveTicket).toHaveBeenCalledWith('ticket-run', 'proj-conn', 'done', 0)
+      expect(moveTicket).toHaveBeenCalledWith('ticket-run', 'proj-conn', 'done', 0, { interactive: true })
     )
     expect(connectionMerge.buildConnectionMergeQueue).not.toHaveBeenCalled()
     expect(setPendingDoneMove).not.toHaveBeenCalled()

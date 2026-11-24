@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MergeOnDoneDialog } from './MergeOnDoneDialog'
+import { UnpinOnDoneDialog } from './UnpinOnDoneDialog'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useGitStore } from '@/stores/useGitStore'
@@ -9,6 +10,11 @@ import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { usePinnedStore } from '@/stores/usePinnedStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { makeDetail } from '@/components/document-flow/test-fixtures'
+import { useUnpinOnDoneStore } from '@/lib/auto-unpin'
+import {
+  emitTicketTransition,
+  resetTicketTransitionListenersForTests
+} from '@/lib/ticket-transition-events'
 import type { KanbanTicket } from '../../../../main/db/types'
 
 const dbApiMocks = vi.hoisted(() => ({
@@ -243,7 +249,7 @@ describe('MergeOnDoneDialog — already-merged branch', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Keep' }))
 
     await waitFor(() =>
-      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5)
+      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5, { interactive: true })
     )
     expect(archiveWorktreeMock).not.toHaveBeenCalled()
   })
@@ -254,7 +260,7 @@ describe('MergeOnDoneDialog — already-merged branch', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Archive' }))
 
     await waitFor(() =>
-      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5)
+      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5, { interactive: true })
     )
     await waitFor(() =>
       expect(archiveWorktreeMock).toHaveBeenCalledWith(
@@ -272,7 +278,7 @@ describe('MergeOnDoneDialog — already-merged branch', () => {
     render(<MergeOnDoneDialog />)
 
     await waitFor(() =>
-      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5)
+      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5, { interactive: true })
     )
     expect(useKanbanStore.getState().pendingDoneMove).toBeNull()
   })
@@ -283,7 +289,7 @@ describe('MergeOnDoneDialog — already-merged branch', () => {
     render(<MergeOnDoneDialog />)
 
     await waitFor(() =>
-      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5)
+      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5, { interactive: true })
     )
   })
 
@@ -446,7 +452,7 @@ describe('MergeOnDoneDialog — merge-only connection member queue (no offerArch
     render(<MergeOnDoneDialog />)
 
     await waitFor(() =>
-      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'merged', 5)
+      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'merged', 5, { interactive: true })
     )
     expect(archiveWorktreeMock).not.toHaveBeenCalled()
     expect(screen.queryByText(/Branch already merged/)).toBeNull()
@@ -548,7 +554,7 @@ describe('MergeOnDoneDialog — connection member queue (offerArchive)', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Keep' }))
 
     await waitFor(() =>
-      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5)
+      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5, { interactive: true })
     )
     expect(archiveWorktreeMock).not.toHaveBeenCalled()
   })
@@ -696,7 +702,7 @@ describe('MergeOnDoneDialog — Archive all (connection queue)', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Archive all' }))
 
     await waitFor(() =>
-      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5)
+      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5, { interactive: true })
     )
     await waitFor(() => expect(archiveWorktreeMock).toHaveBeenCalledTimes(3))
     expect(archiveWorktreeMock).toHaveBeenCalledWith(
@@ -790,7 +796,7 @@ describe('MergeOnDoneDialog — Archive all (connection queue)', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Archive all' }))
 
     await waitFor(() =>
-      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5)
+      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5, { interactive: true })
     )
     await waitFor(() => expect(archiveWorktreeMock).toHaveBeenCalledTimes(2))
     expect(archiveWorktreeMock).not.toHaveBeenCalledWith(
@@ -921,7 +927,7 @@ describe('MergeOnDoneDialog — archive override (shift-drag Merged → Done)', 
     fireEvent.click(await screen.findByRole('button', { name: 'Archive' }))
 
     await waitFor(() =>
-      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5)
+      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5, { interactive: true })
     )
     await waitFor(() =>
       expect(archiveWorktreeMock).toHaveBeenCalledWith(
@@ -942,7 +948,7 @@ describe('MergeOnDoneDialog — archive override (shift-drag Merged → Done)', 
     fireEvent.click(await screen.findByRole('button', { name: 'Keep' }))
 
     await waitFor(() =>
-      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5)
+      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5, { interactive: true })
     )
     expect(archiveWorktreeMock).not.toHaveBeenCalled()
   })
@@ -953,7 +959,7 @@ describe('MergeOnDoneDialog — archive override (shift-drag Merged → Done)', 
     render(<MergeOnDoneDialog />)
 
     await waitFor(() =>
-      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5)
+      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5, { interactive: true })
     )
     expect(archiveWorktreeMock).not.toHaveBeenCalled()
   })
@@ -977,7 +983,7 @@ describe('MergeOnDoneDialog — archive override (shift-drag Merged → Done)', 
     fireEvent.click(await screen.findByRole('button', { name: 'Archive all' }))
 
     await waitFor(() =>
-      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5)
+      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5, { interactive: true })
     )
     await waitFor(() => expect(archiveWorktreeMock).toHaveBeenCalledTimes(3))
     expect(archiveWorktreeMock).toHaveBeenCalledWith(
@@ -1684,7 +1690,7 @@ describe('MergeOnDoneDialog — document-run batch (shift-drop of the run ticket
     fireEvent.click(archiveAll)
 
     await waitFor(() =>
-      expect(moveTicketMock).toHaveBeenCalledWith('ticket-run', 'project-1', 'done', 5)
+      expect(moveTicketMock).toHaveBeenCalledWith('ticket-run', 'project-1', 'done', 5, { interactive: true })
     )
     const moved = moveTicketMock.mock.calls.map((call) => call[0])
     expect(moved).toEqual(['ticket-a', 'ticket-b', 'ticket-run'])
@@ -1724,7 +1730,7 @@ describe('MergeOnDoneDialog — document-run batch (shift-drop of the run ticket
     expect(archiveWorktreeMock).not.toHaveBeenCalled()
     // The branch and its own ticket stay as they are; the run's ticket still moves
     await waitFor(() =>
-      expect(moveTicketMock).toHaveBeenCalledExactlyOnceWith('ticket-run', 'project-1', 'done', 5)
+      expect(moveTicketMock).toHaveBeenCalledExactlyOnceWith('ticket-run', 'project-1', 'done', 5, { interactive: true })
     )
   })
 
@@ -1923,7 +1929,7 @@ describe('MergeOnDoneDialog — document-run batch on a connection project (inst
     await waitFor(() => expect(useKanbanStore.getState().pendingDoneMove).toBeNull())
     // The child ticket read as merged; the run's ticket moved once the queue ended
     expect(moveTicketMock).toHaveBeenCalledWith('ticket-a', 'proj-conn', 'merged', expect.any(Number), { skipCompletionEffects: true })
-    expect(moveTicketMock).toHaveBeenCalledWith('ticket-run', 'proj-conn', 'done', 5)
+    expect(moveTicketMock).toHaveBeenCalledWith('ticket-run', 'proj-conn', 'done', 5, { interactive: true })
   })
 
   it('keeps the whole instance when any member is not on its base at the archive step', async () => {
@@ -1952,7 +1958,7 @@ describe('MergeOnDoneDialog — document-run batch on a connection project (inst
     expect(archiveWorktreeMock.mock.calls.map((c) => c[0])).toEqual(['wt-a-web', 'wt-a-api'])
     expect(archiveWorktreeMock).toHaveBeenCalledWith('wt-a-api', '/api/a1', 'a1-alpha', '/proj-api')
     expect(moveTicketMock).toHaveBeenCalledWith('ticket-a', 'proj-conn', 'done', expect.any(Number), { skipCompletionEffects: true })
-    expect(moveTicketMock).toHaveBeenCalledWith('ticket-run', 'proj-conn', 'done', 5)
+    expect(moveTicketMock).toHaveBeenCalledWith('ticket-run', 'proj-conn', 'done', 5, { interactive: true })
   })
 
   it('Archive all counts instances, archives every worktree of each, and moves all tickets', async () => {
@@ -2222,7 +2228,7 @@ describe('MergeOnDoneDialog — auto-unpin (the last open ticket of a pinned pro
     await waitFor(() =>
       expect(setProjectPinnedMock).toHaveBeenCalledWith({ ...ledger, kind: 'git' }, false)
     )
-    expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5)
+    expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5, { interactive: true })
     await waitFor(() =>
       expect(archiveWorktreeMock).toHaveBeenCalledWith(
         'worktree-1',
@@ -2240,7 +2246,7 @@ describe('MergeOnDoneDialog — auto-unpin (the last open ticket of a pinned pro
     fireEvent.click(await screen.findByRole('button', { name: 'Archive only' }))
 
     await waitFor(() => expect(archiveWorktreeMock).toHaveBeenCalledTimes(1))
-    expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5)
+    expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5, { interactive: true })
     expect(setProjectPinnedMock).not.toHaveBeenCalled()
   })
 
@@ -2320,6 +2326,117 @@ describe('MergeOnDoneDialog — auto-unpin (the last open ticket of a pinned pro
     expect(setProjectPinnedMock).not.toHaveBeenCalled()
   })
 
+  describe('the unpin question of a move that skips the archive step', () => {
+    // The store's own move: the ticket lands, then the move is announced as the person's own
+    const landAndAnnounce = async (
+      ticketId: string,
+      projectId: string,
+      column: KanbanTicket['column']
+    ): Promise<void> => {
+      await landTicket(ticketId, projectId, column)
+      emitTicketTransition({
+        ticketId,
+        projectId,
+        from: 'review',
+        to: column,
+        ticket,
+        interactive: true
+      })
+    }
+    const renderBoth = (): void => {
+      render(
+        <>
+          <MergeOnDoneDialog />
+          <UnpinOnDoneDialog />
+        </>
+      )
+    }
+    const question = (): Promise<HTMLElement> => screen.findByTestId('unpin-on-done-dialog')
+
+    beforeEach(() => {
+      resetTicketTransitionListenersForTests()
+      useUnpinOnDoneStore.setState({ offer: null })
+      moveTicketMock.mockImplementation(landAndAnnounce)
+    })
+
+    afterEach(() => {
+      resetTicketTransitionListenersForTests()
+    })
+
+    it('asks when the worktree was archived since the drop and the move just completes', async () => {
+      dbApiMocks.worktree.get.mockResolvedValue({ ...featureWorktree, status: 'archived' })
+
+      renderBoth()
+
+      expect((await question()).textContent).toContain('ledger-worker')
+      expect(screen.queryByTestId('merge-on-done-dialog')).toBeNull()
+      expect(setProjectPinnedMock).not.toHaveBeenCalled()
+
+      fireEvent.click(within(await question()).getByRole('button', { name: 'Unpin' }))
+
+      await waitFor(() =>
+        expect(setProjectPinnedMock).toHaveBeenCalledWith({ ...ledger, kind: 'git' }, false)
+      )
+    })
+
+    it('asks after Move to Done anyway: the archive step never showed', async () => {
+      gitApiMocks.branchDiffShortStat.mockResolvedValue({
+        success: true,
+        filesChanged: 2,
+        insertions: 10,
+        deletions: 3,
+        commitsAhead: 1
+      })
+
+      renderBoth()
+      fireEvent.click(await screen.findByRole('button', { name: 'Move to Done anyway' }))
+
+      expect((await question()).textContent).toContain('My feature')
+    })
+
+    it.each(['Keep', 'Archive only', 'Archive & Unpin'])(
+      'does not ask again after %s: the archive step made the offer',
+      async (name) => {
+        renderBoth()
+
+        fireEvent.click(await screen.findByRole('button', { name }))
+
+        await waitFor(() => expect(moveTicketMock).toHaveBeenCalledTimes(1))
+        await waitFor(() => expect(screen.queryByTestId('merge-on-done-dialog')).toBeNull())
+        expect(useUnpinOnDoneStore.getState().offer).toBeNull()
+        expect(screen.queryByTestId('unpin-on-done-dialog')).toBeNull()
+      }
+    )
+
+    it('does not ask after Keep when the archive step had no unpin to offer', async () => {
+      // The only pin is on the worktree the step asks about: Keep leaves it where it is
+      usePinnedStore.setState({ pinnedWorktreeIds: new Set(['worktree-1']) })
+
+      renderBoth()
+      fireEvent.click(await screen.findByRole('button', { name: 'Keep' }))
+
+      await waitFor(() => expect(moveTicketMock).toHaveBeenCalledTimes(1))
+      expect(useUnpinOnDoneStore.getState().offer).toBeNull()
+    })
+
+    it('does not ask for a move to Merged', async () => {
+      dbApiMocks.worktree.get.mockResolvedValue({ ...featureWorktree, status: 'archived' })
+      useKanbanStore.setState({
+        pendingDoneMove: {
+          ticketId: 'ticket-1',
+          projectId: 'project-1',
+          sortOrder: 5,
+          targetColumn: 'merged'
+        }
+      })
+
+      renderBoth()
+
+      await waitFor(() => expect(moveTicketMock).toHaveBeenCalledTimes(1))
+      expect(useUnpinOnDoneStore.getState().offer).toBeNull()
+    })
+  })
+
   describe('connection ticket (one archive step per member)', () => {
     const stack = { id: 'project-1', name: 'checkout-stack', kind: 'connection' as const }
     const member = (id: string, projectId: string, branch: string): typeof featureWorktree => ({
@@ -2388,7 +2505,7 @@ describe('MergeOnDoneDialog — auto-unpin (the last open ticket of a pinned pro
 
       await waitFor(() => expect(setProjectPinnedMock).toHaveBeenCalledWith(stack, false))
       await waitFor(() => expect(archiveWorktreeMock).toHaveBeenCalledTimes(2))
-      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5)
+      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5, { interactive: true })
     })
 
     it('Archive all & Unpin leaves the project pinned while a member that picked up work has its turn', async () => {

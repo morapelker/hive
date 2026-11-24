@@ -34,6 +34,7 @@ import {
 } from '@shared/lib/ticket-labels'
 import { isClaudeCliCompletionDetected } from '@shared/types/claude-cli-stop-completion'
 import { isPlanLike } from '../lib/constants'
+import { emitTicketTransition } from '../lib/ticket-transition-events'
 import { useConnectionStore } from './useConnectionStore'
 import { usePinnedStore } from './usePinnedStore'
 import type { FollowUpTriggerColumn } from './useSettingsStore'
@@ -666,7 +667,9 @@ async function settleDoneMove(
   if (pending.run) await moveRunEntryTickets(pending, pending.run.alsoMoveTicketIds)
   await useKanbanStore
     .getState()
-    .moveTicket(pending.ticketId, pending.projectId, pending.targetColumn, pending.sortOrder)
+    .moveTicket(pending.ticketId, pending.projectId, pending.targetColumn, pending.sortOrder, {
+      interactive: true
+    })
 }
 
 /**
@@ -820,6 +823,11 @@ interface KanbanState {
        * closes the session.
        */
       keepSession?: boolean
+      /**
+       * The person at this desktop asked for this move and can answer a question about it
+       * (lib/ticket-transition-events `interactive`): announced with the transition.
+       */
+      interactive?: boolean
     }
   ) => Promise<void>
   reorderTicket: (ticketId: string, projectId: string, newSortOrder: number) => Promise<void>
@@ -1462,6 +1470,16 @@ export const useKanbanStore = create<KanbanState>()(
 
         try {
           await kanban.ticket.update(projectId, ticketId, data)
+          const before = prev.find((t) => t.id === ticketId)
+          if (before && data.column !== undefined && data.column !== before.column) {
+            emitTicketTransition({
+              ticketId,
+              projectId,
+              from: before.column,
+              to: data.column,
+              ticket: before
+            })
+          }
         } catch (err) {
           // Revert on failure
           set((state) => {
@@ -1793,7 +1811,7 @@ export const useKanbanStore = create<KanbanState>()(
         projectId: string,
         column: KanbanTicketColumn,
         sortOrder: number,
-        opts?: { skipCompletionEffects?: boolean; keepSession?: boolean }
+        opts?: { skipCompletionEffects?: boolean; keepSession?: boolean; interactive?: boolean }
       ) => {
         const prev = get().tickets.get(projectId) ?? []
         const snapshot = prev.map((t) => ({ ...t }))
@@ -1831,6 +1849,18 @@ export const useKanbanStore = create<KanbanState>()(
 
         try {
           await kanban.ticket.move(projectId, ticketId, column, sortOrder)
+          // The backend accepted the move: tell whoever watches column changes where the ticket
+          // came from and where it went.
+          if (movedTicket && movedTicket.column !== column) {
+            emitTicketTransition({
+              ticketId,
+              projectId,
+              from: movedTicket.column,
+              to: column,
+              ticket: movedTicket,
+              ...(opts?.interactive && { interactive: true })
+            })
+          }
 
           // Entering a terminal column — done or merged — ends the ticket's
           // work: close the attached session so its agent process dies now and

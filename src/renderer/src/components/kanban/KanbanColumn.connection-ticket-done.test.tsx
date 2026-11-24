@@ -251,7 +251,7 @@ describe('dropping a connection ticket of a plain project on Done', () => {
 
     await drop(makeTicket({ column: 'in_progress' }), 'done')
 
-    await waitFor(() => expect(moveTicket).toHaveBeenCalledWith('ticket-1', 'proj-web', 'done', 0))
+    await waitFor(() => expect(moveTicket).toHaveBeenCalledWith('ticket-1', 'proj-web', 'done', 0, { interactive: true }))
     expect(setPendingDoneMove).not.toHaveBeenCalled()
   })
 

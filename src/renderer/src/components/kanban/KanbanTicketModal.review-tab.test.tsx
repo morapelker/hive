@@ -388,7 +388,8 @@ describe('KanbanTicketModal review mode Move to Done', () => {
         'ticket-1',
         'project-1',
         'done',
-        expect.any(Number)
+        expect.any(Number),
+      { interactive: true }
       )
     )
     expect(useKanbanStore.getState().pendingDoneMove).toBeNull()

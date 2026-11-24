@@ -989,7 +989,7 @@ export function KanbanColumn({
           projectTicketsForColumn(ticketProjectId),
           projectLocalDropIndex(ticketProjectId, targetIndex)
         )
-        store.moveTicket(ticketId, ticketProjectId, column, sortOrder)
+        store.moveTicket(ticketId, ticketProjectId, column, sortOrder, { interactive: true })
 
         // Trigger usage refresh when simple-mode drops a ticket into In Progress
         if (column === 'in_progress') {

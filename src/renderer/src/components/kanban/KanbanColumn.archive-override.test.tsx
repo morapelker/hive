@@ -282,7 +282,7 @@ describe('shift-dragging a ticket from Merged to Done', () => {
 
     await drop(makeTicket(), 'done', { atStart: true })
 
-    await waitFor(() => expect(moveTicket).toHaveBeenCalledWith('ticket-1', 'proj-web', 'done', 0))
+    await waitFor(() => expect(moveTicket).toHaveBeenCalledWith('ticket-1', 'proj-web', 'done', 0, { interactive: true }))
     expectNoMergeChecks()
   })
 

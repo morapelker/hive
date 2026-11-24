@@ -28,7 +28,12 @@ import { gitApi } from '@/api/git-api'
 import { commitsToMerge, type BranchMergeStat } from '@shared/git-merge-status'
 import { cn } from '@/lib/utils'
 import { closeInstanceSessions, trackConnectionArchives } from '@/lib/connection-archive'
-import { unpinIdleProject, useUnpinOffer, type UnpinOfferScope } from '@/lib/auto-unpin'
+import {
+  answeredByArchiveStep,
+  unpinIdleProject,
+  useUnpinOffer,
+  type UnpinOfferScope
+} from '@/lib/auto-unpin'
 import type { PinnableProject } from '@/lib/project-pin'
 import { findCarriedRunTickets } from '@/lib/document-flow/carried-tickets'
 import { runItemOfTicket } from '@/lib/document-flow/ticket-run-membership'
@@ -968,6 +973,15 @@ export function MergeOnDoneDialog() {
     clearPendingDoneMove
   ])
 
+  // The archive step's own way out (Keep, Archive, Archive all). The step made the unpin offer
+  // whenever the project qualified, so the ticket landing in Done is not asked about again
+  // (UnpinOnDoneDialog); every other completion never showed the step, and is.
+  const completeFromArchiveStep = useCallback(
+    (opts?: { handledWorktreeIds?: ReadonlySet<string> }): Promise<boolean> =>
+      answeredByArchiveStep(pendingIdentity, () => completeDoneMove(pendingIdentity, opts)),
+    [pendingIdentity, completeDoneMove]
+  )
+
   // `unpin`: the project to take off the pinned board once the ticket is in Done (auto-unpin)
   const handleArchive = useCallback(async (unpin: PinnableProject | null = null) => {
     if (!resolved) return
@@ -997,7 +1011,7 @@ export function MergeOnDoneDialog() {
     try {
       setArchiving(true)
       setUnpinRequested(!!unpin)
-      moved = await completeDoneMove(pendingIdentity)
+      moved = await completeFromArchiveStep()
     } catch (err) {
       setArchiving(false)
       toast.error(`Failed to move ticket: ${err instanceof Error ? err.message : String(err)}`)
@@ -1033,7 +1047,7 @@ export function MergeOnDoneDialog() {
         progress.end()
       }
     })()
-  }, [resolved, runEntry, pendingIdentity, completeDoneMove])
+  }, [resolved, runEntry, completeFromArchiveStep])
 
   // Connection flow: once the members with work to merge are done, the rest
   // of the queue is archive/keep prompts only (the queue builder puts
@@ -1230,7 +1244,7 @@ export function MergeOnDoneDialog() {
     // may be archived — closing must never delete branches.
     let accepted: boolean
     try {
-      accepted = await completeDoneMove(pendingIdentity, { handledWorktreeIds: handled })
+      accepted = await completeFromArchiveStep({ handledWorktreeIds: handled })
     } catch (err) {
       setArchivingAll(false)
       toast.error(`Failed to move ticket: ${err instanceof Error ? err.message : String(err)}`)
@@ -1299,7 +1313,7 @@ export function MergeOnDoneDialog() {
       }
       for (const f of failed) toast.error(`Failed to archive ${f.branch}: ${f.error}`)
     })
-  }, [resolved, runEntry, archiveAllCandidates, pendingDoneMove, pendingIdentity, completeDoneMove])
+  }, [resolved, runEntry, archiveAllCandidates, pendingDoneMove, completeFromArchiveStep])
 
   // The dialog serves both the Done and the optional Merged column
   const targetLabel = pendingDoneMove?.targetColumn === 'merged' ? 'Merged' : 'Done'
@@ -1755,7 +1769,7 @@ export function MergeOnDoneDialog() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => completeDoneMove(pendingIdentity)}
+                onClick={() => void completeFromArchiveStep()}
                 disabled={archiving || archivingAll}
               >
                 Keep

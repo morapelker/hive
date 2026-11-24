@@ -423,7 +423,7 @@ describe('dropping a plain ticket on In Progress', () => {
     await drop(makeTicket(), 'in_progress', { columnTickets: inProgressTickets })
 
     expect(moveTicket).toHaveBeenCalledTimes(1)
-    expect(moveTicket).toHaveBeenCalledWith('ticket-plain', 'proj-1', 'in_progress', 8)
+    expect(moveTicket).toHaveBeenCalledWith('ticket-plain', 'proj-1', 'in_progress', 8, { interactive: true })
     expect(shellTicketMocks.startShellCommandTicket).not.toHaveBeenCalled()
     expect(screen.queryByTestId('worktree-picker')).toBeNull()
   })
@@ -436,7 +436,7 @@ describe('dropping a shell-command ticket on another column', () => {
       await drop(makeShellTicket(), column)
 
       expect(moveTicket).toHaveBeenCalledTimes(1)
-      expect(moveTicket).toHaveBeenCalledWith('ticket-shell', 'proj-1', column, 0)
+      expect(moveTicket).toHaveBeenCalledWith('ticket-shell', 'proj-1', column, 0, { interactive: true })
       expect(shellTicketMocks.startShellCommandTicket).not.toHaveBeenCalled()
       expect(screen.queryByTestId('worktree-picker')).toBeNull()
     }
@@ -445,7 +445,7 @@ describe('dropping a shell-command ticket on another column', () => {
   it('moves one back to To Do from Review without running anything', async () => {
     await drop(makeShellTicket({ column: 'review' }), 'todo')
 
-    expect(moveTicket).toHaveBeenCalledWith('ticket-shell', 'proj-1', 'todo', 0)
+    expect(moveTicket).toHaveBeenCalledWith('ticket-shell', 'proj-1', 'todo', 0, { interactive: true })
     expect(shellTicketMocks.startShellCommandTicket).not.toHaveBeenCalled()
   })
 

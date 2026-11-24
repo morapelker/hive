@@ -423,7 +423,7 @@ describe('shift-dropping the ticket of a run that already landed on base from Me
     fireEvent.click(await screen.findByRole('button', { name: 'Archive all (3)' }))
 
     await waitFor(() =>
-      expect(moveTicket).toHaveBeenCalledWith('ticket-run', PROJECT, 'done', expect.any(Number))
+      expect(moveTicket).toHaveBeenCalledWith('ticket-run', PROJECT, 'done', expect.any(Number), { interactive: true })
     )
     const moved = moveTicket.mock.calls.map((call) => call[0])
     expect(moved).toEqual(['t-a', 't-b', 'ticket-run'])
@@ -463,7 +463,7 @@ describe('shift-dropping the ticket of a run that already landed on base from Me
     await waitFor(() => expect(archiveWorktree).toHaveBeenCalledTimes(2))
     fireEvent.click(await screen.findByRole('button', { name: 'Archive' }))
     await waitFor(() =>
-      expect(moveTicket).toHaveBeenCalledWith('ticket-run', PROJECT, 'done', expect.any(Number))
+      expect(moveTicket).toHaveBeenCalledWith('ticket-run', PROJECT, 'done', expect.any(Number), { interactive: true })
     )
     expect(moveTicket.mock.calls.map((call) => call[0])).toEqual(['t-a', 't-b', 'ticket-run'])
     expect(useKanbanStore.getState().pendingDoneMove).toBeNull()
@@ -492,7 +492,7 @@ describe('variants of a run that already landed on base', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Archive all (3)' }))
     await waitFor(() =>
-      expect(moveTicket).toHaveBeenCalledWith('ticket-run', PROJECT, 'done', expect.any(Number))
+      expect(moveTicket).toHaveBeenCalledWith('ticket-run', PROJECT, 'done', expect.any(Number), { interactive: true })
     )
     expect(moveTicket.mock.calls.map((c) => c[0])).toEqual(['t-a', 't-b', 'ticket-run'])
   })
@@ -517,7 +517,7 @@ describe('variants of a run that already landed on base', () => {
     })
     fireEvent.click(await screen.findByRole('button', { name: 'Archive all (2)' }))
     await waitFor(() =>
-      expect(moveTicket).toHaveBeenCalledWith('ticket-run', PROJECT, 'done', expect.any(Number))
+      expect(moveTicket).toHaveBeenCalledWith('ticket-run', PROJECT, 'done', expect.any(Number), { interactive: true })
     )
     expect(moveTicket.mock.calls.map((c) => c[0])).toEqual(['t-a', 't-b', 'ticket-run'])
     expect(toast.warning).not.toHaveBeenCalled()
@@ -569,7 +569,7 @@ describe('variants of a run that already landed on base', () => {
     expect(screen.getByTestId('archive-kept-branches').textContent).toContain('still working')
     await clickArchiveAllOrArchive()
     await waitFor(() =>
-      expect(moveTicket).toHaveBeenCalledWith('ticket-run', PROJECT, 'done', expect.any(Number))
+      expect(moveTicket).toHaveBeenCalledWith('ticket-run', PROJECT, 'done', expect.any(Number), { interactive: true })
     )
     // Children stay where they are (their sessions are "working")
     expect(moveTicket.mock.calls.map((c) => c[0])).toEqual(['ticket-run'])
@@ -618,7 +618,7 @@ describe('variants of a run that already landed on base', () => {
     await waitFor(() => expect(sonnerToast.warning).toHaveBeenCalledWith('Skipping merge — no worktree for main'))
     fireEvent.click(await screen.findByRole('button', { name: 'Archive all (2)' }))
     await waitFor(() =>
-      expect(moveTicket).toHaveBeenCalledWith('ticket-run', PROJECT, 'done', expect.any(Number))
+      expect(moveTicket).toHaveBeenCalledWith('ticket-run', PROJECT, 'done', expect.any(Number), { interactive: true })
     )
     expect(moveTicket.mock.calls.map((c) => c[0])).toEqual(['t-a', 't-b', 'ticket-run'])
   })
@@ -635,7 +635,7 @@ describe('variants of a run that already landed on base', () => {
     await shiftDropRunTicketOnDone()
 
     await waitFor(() =>
-      expect(moveTicket).toHaveBeenCalledWith('ticket-run', PROJECT, 'done', expect.any(Number))
+      expect(moveTicket).toHaveBeenCalledWith('ticket-run', PROJECT, 'done', expect.any(Number), { interactive: true })
     )
     expect(setPendingDoneMove).not.toHaveBeenCalled()
     // children moved along (worktree-less now, their work landed)
@@ -654,7 +654,7 @@ describe('variants of a run that already landed on base', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Archive all (3)' }))
     await waitFor(() =>
-      expect(moveTicket).toHaveBeenCalledWith('ticket-run', PROJECT, 'done', expect.any(Number))
+      expect(moveTicket).toHaveBeenCalledWith('ticket-run', PROJECT, 'done', expect.any(Number), { interactive: true })
     )
     expect(moveTicket.mock.calls.map((c) => c[0])).toEqual(['ticket-run'])
   })

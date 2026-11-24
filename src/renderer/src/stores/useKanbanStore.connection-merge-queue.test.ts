@@ -54,7 +54,7 @@ describe('completeDoneMove — connection merge queue', () => {
     expect(moveTicketMock).not.toHaveBeenCalled()
 
     await useKanbanStore.getState().completeDoneMove() // wt-c done → move
-    expect(moveTicketMock).toHaveBeenCalledExactlyOnceWith('ticket-1', 'proj-a', 'merged', 5)
+    expect(moveTicketMock).toHaveBeenCalledExactlyOnceWith('ticket-1', 'proj-a', 'merged', 5, { interactive: true })
     expect(useKanbanStore.getState().pendingDoneMove).toBeNull()
   })
 
@@ -73,7 +73,7 @@ describe('completeDoneMove — connection merge queue', () => {
       .getState()
       .completeDoneMove(undefined, { handledWorktreeIds: new Set(['wt-b', 'wt-c']) })
 
-    expect(moveTicketMock).toHaveBeenCalledExactlyOnceWith('ticket-1', 'proj-a', 'merged', 5)
+    expect(moveTicketMock).toHaveBeenCalledExactlyOnceWith('ticket-1', 'proj-a', 'merged', 5, { interactive: true })
     expect(useKanbanStore.getState().pendingDoneMove).toBeNull()
   })
 
@@ -176,7 +176,7 @@ describe('completeDoneMove — connection merge queue', () => {
     })
 
     await useKanbanStore.getState().completeDoneMove()
-    expect(moveTicketMock).toHaveBeenCalledExactlyOnceWith('ticket-2', 'proj-x', 'done', 1)
+    expect(moveTicketMock).toHaveBeenCalledExactlyOnceWith('ticket-2', 'proj-x', 'done', 1, { interactive: true })
     expect(useKanbanStore.getState().pendingDoneMove).toBeNull()
   })
 })
