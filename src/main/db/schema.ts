@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 62
+export const CURRENT_SCHEMA_VERSION = 63
 
 /**
  * "Implement document" flow (v55). `document_runs` is one spec document turned into tickets
@@ -25,8 +25,10 @@ export const CURRENT_SCHEMA_VERSION = 62
  * source document; `document_update_report` is JSON. `document_runs.source_kind` (v61) says
  * where a run's tickets come from: `document` (extracted from `source_path`), or `tickets`
  * (adopted from the board, `source_path` = '', items linked to their tickets from the start).
- * `document_run_items.worktree_cleaned_at` (v73) is when the run cleaned a finished ticket's
+ * `document_run_items.worktree_cleaned_at` (v62) is when the run cleaned a finished ticket's
  * worktree of what git does not track; set once and never cleared.
+ * `document_run_items.worktree_clean_status` (v63) is `cleaning` while that clean is running,
+ * null otherwise.
  * CREATE TABLE IF NOT EXISTS, replayed by ensureDocumentFlowTables() in database.ts.
  */
 export const DOCUMENT_FLOW_TABLES_SQL = `
@@ -118,7 +120,8 @@ export const DOCUMENT_FLOW_TABLES_SQL = `
     updated_at        TEXT NOT NULL,
     started_at        TEXT DEFAULT NULL,
     finished_at       TEXT DEFAULT NULL,
-    worktree_cleaned_at TEXT DEFAULT NULL
+    worktree_cleaned_at TEXT DEFAULT NULL,
+    worktree_clean_status TEXT DEFAULT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_document_run_items_run ON document_run_items(run_id, position);
   CREATE TABLE IF NOT EXISTS document_run_events (
@@ -1169,6 +1172,14 @@ DROP TABLE IF EXISTS diff_comments;`
     name: 'add_document_run_item_worktree_cleaned_at',
     // When a run cleaned a finished ticket's worktree of what git does not track (once).
     up: `-- NOTE: ALTER TABLE for document_run_items.worktree_cleaned_at is handled idempotently by
+         -- safeAddColumn() in database.ts to avoid "duplicate column" errors.`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 63,
+    name: 'add_document_run_item_worktree_clean_status',
+    // `cleaning` while a finished ticket's worktree is being cleaned, for the ticket to say so.
+    up: `-- NOTE: ALTER TABLE for document_run_items.worktree_clean_status is handled idempotently by
          -- safeAddColumn() in database.ts to avoid "duplicate column" errors.`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }

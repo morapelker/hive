@@ -9,7 +9,7 @@ import {
   documentUpdateCandidates,
   documentUpdateLaneOwner,
   isDocumentUpdatePending,
-  isItemFinishedWith,
+  isWorktreeCleanDue,
   isItemWaitingOnUser,
   isRunSettled,
   isRunWaitingOnUser,
@@ -457,6 +457,12 @@ export class DocumentFlowRunner {
    * not asked again, whatever the answer was. The server keeps the lasting record.
    */
   private readonly cleanRequests = new Set<string>()
+  /**
+   * Every clean goes through this chain: one is asked for at a time, the next once the server
+   * has answered. A run found with dozens of finished tickets (an update that brings the
+   * cleaning, the setting turned on) is worked through, not deleted all at once.
+   */
+  private cleanChain: Promise<unknown> = Promise.resolve()
   /** Each run's status as the last tick saw it: a run that goes from on to over is swept. */
   private readonly runStatuses = new Map<string, DocumentRun['status']>()
   /** Ended runs whose merged tickets' sessions are still to be swept (`sweepRun`). */
@@ -3254,27 +3260,48 @@ export class DocumentFlowRunner {
    * Once per ticket: the server records it (`worktree_cleaned_at`) before it removes anything
    * and never does it again, so what the user has a session rebuild there afterwards stays
    * until the worktree is archived. Not awaited: no lane waits on a clean.
+   *
+   * One clean at a time (`cleanChain`): deleting a dependency tree is heavy on the disk, and a
+   * run can have many tickets to clean at once.
    */
   private cleanFinishedWorktree(run: DocumentRun, item: DocumentRunItem): void {
     if (item.worktree_cleaned_at || this.cleanRequests.has(item.id)) return
-    if (!isItemFinishedWith(run, item) || !this.ports.cleansFinishedWorktrees()) return
-    if (item.status === 'merged') {
-      const ticket = item.ticket_id ? this.ports.getTicket(run.project_id, item.ticket_id) : null
-      if (!ticket || (ticket.column !== 'merged' && ticket.column !== 'done')) return
-    }
+    if (!this.mayCleanWorktree(run, item)) return
     this.cleanRequests.add(item.id)
-    this.ports.api.cleanItemWorktree(run.id, item.id).then(
-      (result) => {
-        if (result.state === 'failed') {
-          this.ports.warn(`could not clean the worktree of ${item.key}: ${result.error ?? ''}`)
-        }
-      },
-      (error) => {
-        // The server never heard the request: asked again on a later tick. One it refused is not.
-        if (this.ports.isTransportError(error)) this.cleanRequests.delete(item.id)
-        else this.ports.warn(`could not clean the worktree of ${item.key}`, error)
+    const runId = run.id
+    const itemId = item.id
+    this.cleanChain = this.cleanChain.then(() => this.requestClean(runId, itemId)).catch(noop)
+  }
+
+  /** What the ticket's card reads as "Queued for cleaning" (`worktreeCleanState`): the same rule. */
+  private mayCleanWorktree(run: DocumentRun, item: DocumentRunItem): boolean {
+    if (!this.ports.cleansFinishedWorktrees()) return false
+    const ticket = item.ticket_id ? this.ports.getTicket(run.project_id, item.ticket_id) : null
+    return isWorktreeCleanDue(run, item, ticket?.column ?? null)
+  }
+
+  /**
+   * The ticket's turn has come. It may have waited behind other cleans for a while: it is read
+   * again, and left for a later tick to ask for anew when it is no longer to be cleaned as it
+   * stands (the user took it back up, or turned the setting off, or this runner was stopped).
+   */
+  private async requestClean(runId: string, itemId: string): Promise<void> {
+    const detail = this.ports.getRun(runId)
+    const item = detail?.items.find((candidate) => candidate.id === itemId)
+    if (!this.started || !detail || !item || !this.mayCleanWorktree(detail.run, item)) {
+      this.cleanRequests.delete(itemId)
+      return
+    }
+    try {
+      const result = await this.ports.api.cleanItemWorktree(runId, itemId)
+      if (result.state === 'failed') {
+        this.ports.warn(`could not clean the worktree of ${item.key}: ${result.error ?? ''}`)
       }
-    )
+    } catch (error) {
+      // The server never heard the request: asked again on a later tick. One it refused is not.
+      if (this.ports.isTransportError(error)) this.cleanRequests.delete(itemId)
+      else this.ports.warn(`could not clean the worktree of ${item.key}`, error)
+    }
   }
 
   /** The last step of a ticket just ended: clean its worktree, read as the store has it now. */

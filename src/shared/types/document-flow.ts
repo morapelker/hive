@@ -123,6 +123,9 @@ export const DOCUMENT_UPDATE_STATUSES = ['queued', 'updating', 'done', 'failed',
  */
 export type DocumentUpdateStatus = (typeof DOCUMENT_UPDATE_STATUSES)[number]
 
+/** What the server is doing to a finished ticket's worktree right now (`worktree_clean_status`). */
+export type DocumentWorktreeCleanStatus = 'cleaning'
+
 /** What the editing agent reported in its DOCUMENT footer (parsed by the runner). */
 export interface DocumentUpdateReport {
   outcome: 'updated' | 'unchanged' | 'failed'
@@ -606,6 +609,13 @@ export interface DocumentRunItem {
    * worktree is archived. Null while it has not happened; only the server writes it.
    */
   worktree_cleaned_at: string | null
+  /**
+   * `cleaning` while the server is removing what git does not track from the ticket's worktree
+   * (`git clean` runs there), null otherwise: before, once it is over, and after an app restart
+   * that cut it short. Only the server writes it. A ticket still waiting for its turn (worktrees
+   * are cleaned one at a time) has no mark of its own: see `worktreeCleanState`.
+   */
+  worktree_clean_status: DocumentWorktreeCleanStatus | null
   created_at: string
   updated_at: string
   started_at: string | null
@@ -911,7 +921,9 @@ export interface DocumentSimpleResult {
 /**
  * How cleaning a finished ticket's worktree went (`documentFlow.cleanItemWorktree`):
  * - `cleaned`: what git does not track was removed from every worktree of the ticket
- * - `already`: it was cleaned before; a worktree is cleaned once, so nothing was touched
+ * - `already`: it was cleaned before, or its clean was asked for and is waiting for its turn or
+ *   under way (worktrees are cleaned one at a time); a worktree is cleaned once, so nothing was
+ *   touched
  * - `none`: the ticket has no worktree left to clean (archived, or gone from disk)
  * - `failed`: git could not clean at least one worktree (`error`); it is not tried again
  */

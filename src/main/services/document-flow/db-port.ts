@@ -72,12 +72,13 @@ export type DocumentRunItemInsert = DocumentRunItemDraft & { ticket_id?: string 
 
 /**
  * Every mutable column of an item: the renderer-facing patch plus what only the server writes,
- * the merge bookkeeping and the mark of a cleaned worktree.
+ * the merge bookkeeping and the marks of a worktree cleaned or being cleaned.
  */
 export interface DocumentRunItemRowPatch extends DocumentRunItemPatch {
   pre_merge_sha?: string | null
   merge_sha?: string | null
   worktree_cleaned_at?: string | null
+  worktree_clean_status?: DocumentRunItem['worktree_clean_status']
 }
 
 export interface DocumentRunEventCreate {

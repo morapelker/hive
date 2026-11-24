@@ -257,7 +257,7 @@ describe('document flow schema', () => {
     )
   })
 
-  it('ships the mark of a cleaned ticket worktree as the v73 migration, a column added by the repair step', () => {
+  it('ships the mark of a cleaned ticket worktree as the v62 migration, a column added by the repair step', () => {
     expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(62)
     const migration = MIGRATIONS.find((m) => m.version === 62)
     expect(migration?.name).toBe('add_document_run_item_worktree_cleaned_at')
@@ -266,7 +266,20 @@ describe('document flow schema', () => {
     expect(migration?.down.replace(/--.*$/gm, '').trim()).toBe('')
     expect(migration?.up).toContain('document_run_items.worktree_cleaned_at')
     expect(DOCUMENT_FLOW_TABLES_SQL).toMatch(
-      /finished_at\s+TEXT DEFAULT NULL,\s+worktree_cleaned_at TEXT DEFAULT NULL\s+\);\s+CREATE INDEX IF NOT EXISTS idx_document_run_items_run/
+      /finished_at\s+TEXT DEFAULT NULL,\s+worktree_cleaned_at TEXT DEFAULT NULL,/
+    )
+  })
+
+  it('ships the mark of a worktree being cleaned as the v63 migration, a column added by the repair step', () => {
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(63)
+    const migration = MIGRATIONS.find((m) => m.version === 63)
+    expect(migration?.name).toBe('add_document_run_item_worktree_clean_status')
+    // Comment only: safeAddColumn() adds the column, so a replay cannot fail on a duplicate.
+    expect(migration?.up.replace(/--.*$/gm, '').trim()).toBe('')
+    expect(migration?.down.replace(/--.*$/gm, '').trim()).toBe('')
+    expect(migration?.up).toContain('document_run_items.worktree_clean_status')
+    expect(DOCUMENT_FLOW_TABLES_SQL).toMatch(
+      /worktree_cleaned_at TEXT DEFAULT NULL,\s+worktree_clean_status TEXT DEFAULT NULL\s+\);\s+CREATE INDEX IF NOT EXISTS idx_document_run_items_run/
     )
   })
 
@@ -483,6 +496,34 @@ describeIf('document flow tables', () => {
     })
     upgraded.close()
     expect(openDb(path).getDocumentRunItem(item.id)?.worktree_cleaned_at).toBe(cleanedAt)
+  })
+
+  it('adds the mark of a worktree being cleaned to an items table created by an earlier build', () => {
+    const path = makeDbPath()
+    const db = openDb(path)
+    const run = makeRun(db, makeProject(db), { id: 'run-old' })
+    const [item] = db.replaceDocumentRunItems(run.id, [draft('A1')])
+    db.getRawDb().exec('ALTER TABLE document_run_items DROP COLUMN worktree_clean_status')
+    db.setSetting('schema_version', '62')
+    db.close()
+
+    const upgraded = openDb(path)
+    expect(upgraded.getSetting('schema_version')).toBe(String(CURRENT_SCHEMA_VERSION))
+    expect(upgraded.getDocumentRunItem(item.id)).toEqual(item)
+    expect(upgraded.getDocumentRunItem(item.id)?.worktree_clean_status).toBeNull()
+
+    expect(
+      upgraded.updateDocumentRunItem(item.id, { worktree_clean_status: 'cleaning' })
+    ).toMatchObject({ worktree_clean_status: 'cleaning' })
+    // A later patch that does not name it leaves it alone; one that clears it does.
+    expect(upgraded.updateDocumentRunItem(item.id, { status: 'merged' })).toMatchObject({
+      status: 'merged',
+      worktree_clean_status: 'cleaning'
+    })
+    expect(upgraded.updateDocumentRunItem(item.id, { worktree_clean_status: null })).toMatchObject({
+      worktree_clean_status: null
+    })
+    upgraded.close()
   })
 
   it('adds the document update columns to an items table created by an earlier build', () => {

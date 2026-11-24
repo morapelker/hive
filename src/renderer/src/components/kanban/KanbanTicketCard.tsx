@@ -14,6 +14,7 @@ import {
   X,
   FileClock,
   FileText,
+  Eraser,
   Pin,
   PinOff,
   RefreshCw,
@@ -184,11 +185,15 @@ import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import {
   EDITING_DOCUMENT_LABEL,
   DOCUMENT_EDIT_QUEUED_LABEL,
+  WORKTREE_CLEANING_LABEL,
+  WORKTREE_CLEAN_QUEUED_LABEL,
   describeDocumentEditQueue,
+  describeWorktreeClean,
   isQueuedForDocumentUpdate,
   isQueuedForRunMerge,
   isResolvingRunConflicts,
-  runDocumentEditStatus
+  runDocumentEditStatus,
+  ticketWorktreeCleanState
 } from '@/components/document-flow/document-flow-ui'
 import { projectApi } from '@/api/project-api'
 import { terminalApi } from '@/api/terminal-api'
@@ -878,6 +883,19 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         })
   )
   const isEditingDocument = documentEdit === 'editing'
+
+  // The same ticket once its run is finished with it: its worktree is cleaned of what git does
+  // not track (dependencies, build output), one worktree at a time. The card says so while git
+  // is at it, and while it waits for its turn.
+  const cleansFinishedWorktrees = useSettingsStore((s) => s.cleanFinishedTicketWorktrees)
+  const worktreeClean = useDocumentFlowStore((s) =>
+    isDocumentRunTicket
+      ? null
+      : ticketWorktreeCleanState(s.runsById, ticket.id, {
+          ticketColumn: ticket.column,
+          cleansFinishedWorktrees
+        })
+  )
 
   // The Claude CLI session stopped without a completion message (background
   // work or a scheduled wake-up still pending): the ticket stays in progress
@@ -2065,7 +2083,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             )}
 
             {/* Badges + progress row */}
-            {(hasAttachments || hasNote || worktreeName || queuedBranchLabel || projectTag || connectionName || ticket.plan_ready || isError || launchStall || isInMergeQueue || rightAlignedSlot || isArchived || isBlocked || blockingDiagnostic || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram || ticket.goal_mode || ticket.auto_approve_plan || activeRemoteLaunch || showModelBadge || backgroundWork || docEditQueueTooltip || prdPill || prdDraft) && (
+            {(hasAttachments || hasNote || worktreeName || queuedBranchLabel || projectTag || connectionName || ticket.plan_ready || isError || launchStall || isInMergeQueue || rightAlignedSlot || isArchived || isBlocked || blockingDiagnostic || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram || ticket.goal_mode || ticket.auto_approve_plan || activeRemoteLaunch || showModelBadge || backgroundWork || docEditQueueTooltip || worktreeClean || prdPill || prdDraft) && (
               <div className="mt-1.5 flex flex-wrap items-center gap-1">
                 {/* Archived badge */}
                 {isArchived && (
@@ -2216,6 +2234,28 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                       </span>
                     </TooltipTrigger>
                     <TooltipContent>{docEditQueueTooltip}</TooltipContent>
+                  </Tooltip>
+                )}
+                {/* Run task the orchestrator is finished with: its worktree is cleaned, or waits its turn */}
+                {worktreeClean && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span
+                        data-testid="kanban-ticket-worktree-clean"
+                        data-state={worktreeClean}
+                        className={cn(ticketPillBaseClass, 'border-cyan-500/30 bg-cyan-500/10 text-cyan-500 cursor-help')}
+                      >
+                        {worktreeClean === 'cleaning' ? (
+                          <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                        ) : (
+                          <Eraser className="h-2.5 w-2.5" />
+                        )}
+                        {worktreeClean === 'cleaning'
+                          ? WORKTREE_CLEANING_LABEL
+                          : WORKTREE_CLEAN_QUEUED_LABEL}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>{describeWorktreeClean(worktreeClean)}</TooltipContent>
                   </Tooltip>
                 )}
                 {/* Running subagents in the linked claude-cli session */}

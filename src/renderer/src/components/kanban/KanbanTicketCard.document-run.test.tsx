@@ -14,6 +14,7 @@ import { useGitStore } from '@/stores/useGitStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useQuestionStore, type QuestionRequest } from '@/stores/useQuestionStore'
 import { useRunMergedChildrenStore } from '@/stores/useRunMergedChildrenStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { DOCUMENT_UPDATE_INTERRUPT_DETAIL, WAITING_PREFIX } from '@shared/document-flow/planning'
 import type { DocumentRunDetail, DocumentRunMember } from '@shared/types/document-flow'
@@ -1235,6 +1236,115 @@ describe('the card of a task ticket of a document run', () => {
     } finally {
       vi.unstubAllGlobals()
     }
+  })
+
+  describe('once the run is finished with it', () => {
+    const renderTask = (column: KanbanTicket['column'] = 'merged'): void => {
+      render(
+        <TooltipProvider>
+          <KanbanTicketCard ticket={taskTicket({ column })} />
+        </TooltipProvider>
+      )
+    }
+    const finished = { key: 'A2', status: 'merged' as const, ticket_id: 'ticket-a2' }
+    const cleanPill = (): HTMLElement | null => screen.queryByTestId('kanban-ticket-worktree-clean')
+
+    afterEach(() => {
+      useSettingsStore.setState({ cleanFinishedTicketWorktrees: true })
+    })
+
+    it('says "Queued for cleaning" while its worktree waits for its turn', async () => {
+      seedRuns(
+        makeDetail({ id: 'run-live', status: 'running', source_kind: 'tickets' }, [finished])
+      )
+      renderTask()
+
+      const pill = cleanPill()!
+      expect(pill).toHaveTextContent(/^Queued for cleaning$/)
+      expect(pill).toHaveAttribute('data-state', 'queued')
+      expect(pill.querySelector('svg')?.getAttribute('class')).not.toContain('animate-spin')
+
+      // The tooltip's popper measures itself, which jsdom cannot
+      vi.stubGlobal(
+        'ResizeObserver',
+        class {
+          observe(): void {}
+          unobserve(): void {}
+          disconnect(): void {}
+        }
+      )
+      try {
+        fireEvent.focus(pill)
+        expect(await screen.findByRole('tooltip')).toHaveTextContent(
+          'It removes what git does not track (dependencies, build output) from finished worktrees one at a time; this one is waiting for its turn.'
+        )
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    })
+
+    it('says "Running git clean", spinning, while git is at its worktree', () => {
+      seedRuns(
+        makeDetail({ id: 'run-live', status: 'running', source_kind: 'tickets' }, [
+          { ...finished, worktree_cleaned_at: now, worktree_clean_status: 'cleaning' }
+        ])
+      )
+      renderTask()
+
+      const pill = cleanPill()!
+      expect(pill).toHaveTextContent(/^Running git clean$/)
+      expect(pill).toHaveAttribute('data-state', 'cleaning')
+      expect(pill.querySelector('svg')?.getAttribute('class')).toContain('animate-spin')
+    })
+
+    it('says nothing once its worktree is cleaned', () => {
+      seedRuns(
+        makeDetail({ id: 'run-live', status: 'running', source_kind: 'tickets' }, [
+          { ...finished, worktree_cleaned_at: now }
+        ])
+      )
+      renderTask()
+
+      expect(cleanPill()).toBeNull()
+    })
+
+    it('says nothing while nothing will clean it: taken back up, the setting off, or the run paused', () => {
+      seedRuns(
+        makeDetail({ id: 'run-live', status: 'running', source_kind: 'tickets' }, [finished])
+      )
+      renderTask('in_progress')
+      expect(cleanPill()).toBeNull()
+      cleanup()
+
+      useSettingsStore.setState({ cleanFinishedTicketWorktrees: false })
+      renderTask()
+      expect(cleanPill()).toBeNull()
+      cleanup()
+      useSettingsStore.setState({ cleanFinishedTicketWorktrees: true })
+
+      seedRuns(makeDetail({ id: 'run-live', status: 'paused', source_kind: 'tickets' }, [finished]))
+      renderTask()
+      expect(cleanPill()).toBeNull()
+    })
+
+    it('waits for the document update of a run made from a document', () => {
+      seedRuns(
+        makeDetail({ id: 'run-live', status: 'running' }, [
+          { ...finished, document_update_status: 'queued' }
+        ])
+      )
+      renderTask()
+      expect(cleanPill()).toBeNull()
+      cleanup()
+
+      seedRuns(
+        makeDetail({ id: 'run-live', status: 'running' }, [
+          { ...finished, document_update_status: 'done' }
+        ])
+      )
+      renderTask()
+      expect(cleanPill()).toHaveTextContent('Queued for cleaning')
+    })
   })
 
   it('shows the pink "Editing document" bar while its session edits the document, in any column', () => {

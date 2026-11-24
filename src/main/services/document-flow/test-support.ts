@@ -116,6 +116,7 @@ export function createFakeDocumentFlowDb(): FakeDocumentFlowDb {
       document_update_report: null,
       document_update_finished_at: null,
       worktree_cleaned_at: null,
+      worktree_clean_status: null,
       created_at: now,
       updated_at: now,
       started_at: null,

@@ -150,7 +150,13 @@ describe('cleanItemWorktree', () => {
     expect(eventsOf('worktree_cleaned')).toEqual([
       expect.objectContaining({ item_id: itemByKey('A1').id, data: { paths: [path] } })
     ])
-    expect(harness.published.slice(before).map((event) => event.reason)).toEqual(['item', 'event'])
+    // Marked as being cleaned, then no longer, then logged.
+    expect(harness.published.slice(before).map((event) => event.reason)).toEqual([
+      'item',
+      'item',
+      'event'
+    ])
+    expect(itemByKey('A1').worktree_clean_status).toBeNull()
     // Nobody else's checkout was touched.
     expect(repo.git(integration, 'status', '--porcelain')).toBe('')
     expect(repo.git(repo.projectPath, 'status', '--porcelain')).toBe('')
@@ -177,6 +183,123 @@ describe('cleanItemWorktree', () => {
 
     expect(results.map((result) => result.state).sort()).toEqual(['already', 'cleaned'])
     expect(eventsOf('worktree_cleaned')).toHaveLength(1)
+  })
+
+  describe('asked for many tickets at once', () => {
+    /** Holds every `git clean` open until released, and counts how many run at the same time. */
+    function holdCleans() {
+      const real = harness.service['git'].cleanUntrackedAndIgnored
+      const started: string[] = []
+      const releases: (() => void)[] = []
+      let running = 0
+      let mostAtOnce = 0
+      const spy = vi
+        .spyOn(harness.service['git'], 'cleanUntrackedAndIgnored')
+        .mockImplementation(async (cwd: string) => {
+          started.push(cwd)
+          running += 1
+          mostAtOnce = Math.max(mostAtOnce, running)
+          await new Promise<void>((release) => releases.push(release))
+          try {
+            await real(cwd)
+          } finally {
+            running -= 1
+          }
+        })
+      return {
+        started,
+        mostAtOnce: () => mostAtOnce,
+        releaseNext: () => releases.shift()?.(),
+        restore: () => spy.mockRestore()
+      }
+    }
+
+    it('cleans one worktree at a time, and records a ticket as cleaned when its turn comes', async () => {
+      const first = ticketWorktree('A1', FINISHED)
+      const second = ticketWorktree('A2', FINISHED)
+      const cleans = holdCleans()
+
+      const results = Promise.all([clean('A1'), clean('A2')])
+      await vi.waitFor(() => expect(cleans.started).toEqual([first]))
+
+      // A2 waits for A1: nothing of it is touched or recorded, so a restart asks for it again.
+      expect(itemByKey('A1').worktree_cleaned_at).toEqual(expect.any(String))
+      expect(itemByKey('A2').worktree_cleaned_at).toBeNull()
+      // Only the ticket git is at says it is being cleaned, to whoever reads the run.
+      const cleaningNow = (): Record<string, string | null> =>
+        Object.fromEntries(
+          harness.service.get(runId)!.items.map((item) => [item.key, item.worktree_clean_status])
+        )
+      expect(cleaningNow()).toEqual({ A1: 'cleaning', A2: null })
+      expectUntouched(second)
+      // Asked again meanwhile, it is not queued a second time.
+      expect(await clean('A2')).toEqual({ state: 'already' })
+
+      cleans.releaseNext()
+      await vi.waitFor(() => expect(cleans.started).toEqual([first, second]))
+      expectCleaned(first)
+      expect(itemByKey('A2').worktree_cleaned_at).toEqual(expect.any(String))
+      expect(cleaningNow()).toEqual({ A1: null, A2: 'cleaning' })
+      cleans.releaseNext()
+
+      expect(await results).toEqual([{ state: 'cleaned' }, { state: 'cleaned' }])
+      expectCleaned(second)
+      expect(cleans.mostAtOnce()).toBe(1)
+      expect(cleans.started).toEqual([first, second])
+      expect(cleaningNow()).toEqual({ A1: null, A2: null })
+      cleans.restore()
+    })
+
+    it('leaves a ticket the run is no longer finished with when its turn comes', async () => {
+      const first = ticketWorktree('A1', FINISHED)
+      const second = ticketWorktree('A2', FINISHED)
+      const cleans = holdCleans()
+
+      const cleaningFirst = clean('A1')
+      const cleaningSecond = clean('A2')
+      await vi.waitFor(() => expect(cleans.started).toEqual([first]))
+      // While A2 waited, its document update was put back in the lane.
+      harness.db.updateDocumentRunItem(itemByKey('A2').id, { document_update_status: 'queued' })
+      cleans.releaseNext()
+
+      expect(await cleaningFirst).toEqual({ state: 'cleaned' })
+      await expect(cleaningSecond).rejects.toThrow('The run is not finished with A2')
+      expectUntouched(second)
+      expect(itemByKey('A2').worktree_cleaned_at).toBeNull()
+      expect(cleans.started).toEqual([first])
+      cleans.restore()
+    })
+
+    it('stops saying a ticket is being cleaned when the app was closed on its clean', async () => {
+      ticketWorktree('A1', FINISHED)
+      // What a clean cut short by a quit leaves in the database: nothing here is cleaning it.
+      harness.db.updateDocumentRunItem(itemByKey('A1').id, {
+        worktree_cleaned_at: new Date().toISOString(),
+        worktree_clean_status: 'cleaning'
+      })
+
+      const read = harness.service.get(runId)!.items.find((item) => item.key === 'A1')
+
+      expect(read?.worktree_clean_status).toBeNull()
+      expect(itemByKey('A1').worktree_clean_status).toBeNull()
+      // Cleaned once all the same: it is not started over.
+      expect(await clean('A1')).toEqual({ state: 'already' })
+    })
+
+    it('goes on to the next ticket after a clean that failed', async () => {
+      ticketWorktree('A1', FINISHED)
+      const second = ticketWorktree('A2', FINISHED)
+      const cleanUntrackedAndIgnored = vi
+        .spyOn(harness.service['git'], 'cleanUntrackedAndIgnored')
+        .mockRejectedValueOnce(new Error('git clean exited with code 1: Permission denied'))
+
+      const results = await Promise.all([clean('A1'), clean('A2')])
+
+      expect(results.map((result) => result.state)).toEqual(['failed', 'cleaned'])
+      expectCleaned(second)
+      expect(itemByKey('A1').worktree_clean_status).toBeNull()
+      cleanUntrackedAndIgnored.mockRestore()
+    })
   })
 
   it.each([
@@ -390,8 +513,27 @@ describe('cleanItemWorktree on a connection run', () => {
       branch_name: 'a1-task'
     })
 
+    // The member worktrees of one ticket are cleaned one after the other, never together.
+    const real = harness.service['git'].cleanUntrackedAndIgnored
+    let running = 0
+    let mostAtOnce = 0
+    const cleanUntrackedAndIgnored = vi
+      .spyOn(harness.service['git'], 'cleanUntrackedAndIgnored')
+      .mockImplementation(async (cwd: string) => {
+        running += 1
+        mostAtOnce = Math.max(mostAtOnce, running)
+        try {
+          await real(cwd)
+        } finally {
+          running -= 1
+        }
+      })
+
     expect(await harness.service.cleanItemWorktree(run.id, item.id)).toEqual({ state: 'cleaned' })
 
+    expect(cleanUntrackedAndIgnored).toHaveBeenCalledTimes(2)
+    expect(mostAtOnce).toBe(1)
+    cleanUntrackedAndIgnored.mockRestore()
     expect(paths).toHaveLength(2)
     for (const path of paths) expectCleaned(path)
     for (const member of run.members!) expectUntouched(member.integration_worktree_path)

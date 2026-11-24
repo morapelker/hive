@@ -221,6 +221,13 @@ const EXTRACTION_TIMEOUT_MS = 900_000
 const CLASSIFICATION_TIMEOUT_MS = 90_000
 /** Each classification spawns a CLI. */
 const MAX_CONCURRENT_CLASSIFICATIONS = 3
+/**
+ * Worktrees cleaned at a time, across every run and every window. A clean deletes a dependency
+ * tree: hundreds of thousands of small files. A run that already has dozens of finished tickets
+ * when cleaning is first asked for (an update that brings the feature, the setting turned on)
+ * would otherwise delete them all at once, and the whole machine stalls on the disk.
+ */
+const MAX_CONCURRENT_WORKTREE_CLEANS = 1
 /** Passing checks only need enough of the output to recognise them in the audit log. */
 const PASSED_VERIFY_EVENT_OUTPUT_CHARS = 2000
 const ERROR_MESSAGE_CHARS = 600
@@ -812,6 +819,10 @@ export class DocumentFlowService {
   /** Everything that writes to a run's integration worktree goes through here. */
   private readonly integrationLocks = new KeyedMutex()
   private readonly classifications = new ConcurrencyLimiter(MAX_CONCURRENT_CLASSIFICATIONS)
+  /** Every `git clean` of a finished ticket's worktree takes its turn here. */
+  private readonly worktreeCleans = new ConcurrencyLimiter(MAX_CONCURRENT_WORKTREE_CLEANS)
+  /** Tickets whose clean is waiting for its turn, or under way. */
+  private readonly worktreeCleansPending = new Set<string>()
   /** Per run: the last verify result and the integration commit it ran on. */
   private readonly lastVerify = new Map<string, VerifyOutcome>()
   /** The merge under way per run, so that closing the run can wait for it to land or fail. */
@@ -4442,31 +4453,74 @@ export class DocumentFlowService {
    * Once per ticket: `worktree_cleaned_at` is written before anything is removed, and a ticket
    * that has it is left alone, whether the clean worked or not. So what a session the user
    * takes up again rebuilds there afterwards stays until the worktree is archived.
+   *
+   * One worktree at a time (`MAX_CONCURRENT_WORKTREE_CLEANS`), whoever asks and for however
+   * many tickets: the others wait for their turn. A ticket that waits is not recorded as cleaned
+   * until its turn comes, so one the app is closed on is asked for again next time.
    */
   async cleanItemWorktree(runId: string, itemId: string): Promise<DocumentWorktreeCleanResult> {
+    const { run, item } = this.requireItem(runId, itemId)
+    // Nothing is awaited between these reads and the write below: two calls cannot both pass.
+    if (item.worktree_cleaned_at || this.worktreeCleansPending.has(item.id)) {
+      return { state: 'already' }
+    }
+    if (!isItemFinishedWith(run, item)) {
+      throw new Error(`The run is not finished with ${item.key}: its worktree is left as it is.`)
+    }
+    this.worktreeCleansPending.add(item.id)
+    try {
+      return await this.worktreeCleans.run(() => this.cleanItemWorktreeInTurn(runId, itemId))
+    } finally {
+      this.worktreeCleansPending.delete(item.id)
+    }
+  }
+
+  /** The clean itself, once it is the ticket's turn: the ticket is read again, it may have waited. */
+  private async cleanItemWorktreeInTurn(
+    runId: string,
+    itemId: string
+  ): Promise<DocumentWorktreeCleanResult> {
     const { run, item } = this.requireItem(runId, itemId)
     if (item.worktree_cleaned_at) return { state: 'already' }
     if (!isItemFinishedWith(run, item)) {
       throw new Error(`The run is not finished with ${item.key}: its worktree is left as it is.`)
     }
-    // Nothing is awaited between the read above and this write: two calls cannot both pass.
-    this.saveItem(run, item.id, { worktree_cleaned_at: this.now().toISOString() })
-
     const worktrees = this.cleanableWorktrees(run, item)
-    if (worktrees.length === 0) return { state: 'none' }
-    const outcomes = await Promise.all(
-      worktrees.map(async ({ path }) => {
+    const cleanedAt = this.now().toISOString()
+    if (worktrees.length === 0) {
+      this.saveItem(run, item.id, { worktree_cleaned_at: cleanedAt })
+      return { state: 'none' }
+    }
+    // The ticket says it is being cleaned for as long as git is at it (`worktree_clean_status`).
+    this.saveItem(run, item.id, {
+      worktree_cleaned_at: cleanedAt,
+      worktree_clean_status: 'cleaning'
+    })
+    // A connection ticket has a worktree per member: those are cleaned one after the other too.
+    const outcomes: { path: string; error: string | null }[] = []
+    try {
+      for (const { path } of worktrees) {
         try {
           if (!samePath(await this.git.topLevel(path), path)) {
             throw new Error('it is not the root of a worktree')
           }
           await this.git.cleanUntrackedAndIgnored(path)
-          return { path, error: null }
+          outcomes.push({ path, error: null })
         } catch (error) {
-          return { path, error: describeError(error) }
+          outcomes.push({ path, error: describeError(error) })
         }
-      })
-    )
+      }
+    } finally {
+      // Not `saveItem`: the ticket may have left the run while git was at its worktree.
+      if (this.db.updateDocumentRunItem(item.id, { worktree_clean_status: null })) {
+        this.deps.publish({
+          runId: run.id,
+          projectId: run.project_id,
+          reason: 'item',
+          itemId: item.id
+        })
+      }
+    }
     const cleaned = outcomes.filter((outcome) => outcome.error === null).map(({ path }) => path)
     const failures = outcomes.flatMap(({ path, error }) => (error ? [`${path}: ${error}`] : []))
     if (failures.length > 0) {
@@ -5448,9 +5502,23 @@ export class DocumentFlowService {
   private detail(run: DocumentRun, withEvents: boolean): DocumentRunDetail {
     return {
       run,
-      items: this.db.getDocumentRunItems(run.id),
+      items: this.db
+        .getDocumentRunItems(run.id)
+        .map((item) => this.recoverInterruptedWorktreeClean(item)),
       events: withEvents ? this.db.listDocumentRunEvents(run.id, EVENTS_IN_DETAIL) : []
     }
+  }
+
+  /**
+   * A ticket marked as being cleaned that nothing here is cleaning: the app was closed on its
+   * `git clean`. The mark is taken off, so the ticket stops saying so. The clean is not run
+   * again (`worktree_cleaned_at` is set): what was left behind goes when the worktree is archived.
+   */
+  private recoverInterruptedWorktreeClean(item: DocumentRunItem): DocumentRunItem {
+    if (item.worktree_clean_status !== 'cleaning' || this.worktreeCleansPending.has(item.id)) {
+      return item
+    }
+    return this.db.updateDocumentRunItem(item.id, { worktree_clean_status: null }) ?? item
   }
 
   private publishRun(run: DocumentRun): void {

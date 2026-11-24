@@ -17,7 +17,9 @@ import {
   mergeLaneOwner,
   summarizeItems,
   unmetDependencies,
-  type DocumentRunItemSummary
+  worktreeCleanState,
+  type DocumentRunItemSummary,
+  type WorktreeCleanState
 } from '@shared/document-flow/planning'
 import { isActiveRunStatus } from '@shared/document-flow/run-ticket'
 import { runKindLabel } from '@shared/document-flow/ticket-runs'
@@ -627,6 +629,39 @@ export function describeDocumentEditQueue(state: DocumentEditQueueState): string
   const editing = state.editingKey ? `; ${state.editingKey} is editing it now` : ''
   const done = state.merged ? 'Merged.' : 'Already implemented.'
   return `${done} The orchestrator updates ${documentNameFromPath(state.sourcePath)} one ticket at a time — #${state.position} in queue${editing}.`
+}
+
+/** A finished ticket waiting for its worktree to be cleaned, on its card. */
+export const WORKTREE_CLEAN_QUEUED_LABEL = 'Queued for cleaning'
+/** A finished ticket whose worktree is being cleaned now, on its card. */
+export const WORKTREE_CLEANING_LABEL = 'Running git clean'
+
+/**
+ * Where a board ticket stands with the cleaning of its worktree, once the orchestrator it is a
+ * task of is finished with it (see `worktreeCleanState`): `cleaning` while git removes what it
+ * does not track there, `queued` while it waits for its turn. Null for a ticket of no run, and
+ * whenever nothing is cleaning or about to clean its worktree.
+ */
+export function ticketWorktreeCleanState(
+  runsById: Record<string, DocumentRunDetail>,
+  ticketId: string | null | undefined,
+  options: { ticketColumn: string | null; cleansFinishedWorktrees: boolean }
+): WorktreeCleanState | null {
+  if (!ticketId) return null
+  for (const detail of Object.values(runsById)) {
+    const item = detail.items.find((candidate) => candidate.ticket_id === ticketId)
+    const state = item ? worktreeCleanState(detail.run, item, options) : null
+    if (state) return state
+  }
+  return null
+}
+
+/** The tooltip of a ticket's "Queued for cleaning" or "Running git clean" pill. */
+export function describeWorktreeClean(state: WorktreeCleanState): string {
+  const what = 'what git does not track (dependencies, build output)'
+  return state === 'cleaning'
+    ? `The orchestrator is finished with this ticket and is removing ${what} from its worktree. Env files and tracked files stay.`
+    : `The orchestrator is finished with this ticket. It removes ${what} from finished worktrees one at a time; this one is waiting for its turn.`
 }
 
 /**

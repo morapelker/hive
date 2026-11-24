@@ -636,6 +636,11 @@ describe('documentFlow RPC handlers', () => {
       itemId: 'i',
       patch: { worktree_cleaned_at: null }
     })
+    await rejectsValidation(service, 'updateItem', {
+      runId: 'r',
+      itemId: 'i',
+      patch: { worktree_clean_status: 'cleaning' }
+    })
     await rejectsValidation(service, 'cleanItemWorktree', { runId: 'r' })
     await rejectsValidation(service, 'cleanItemWorktree', { runId: 'r', itemId: '' })
     await rejectsValidation(service, 'updateItem', {

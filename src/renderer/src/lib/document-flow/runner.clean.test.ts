@@ -360,6 +360,104 @@ describe('DocumentFlowRunner: cleaning the worktree of a finished ticket', () =>
     })
   })
 
+  describe('a run found with many tickets to clean', () => {
+    // What an update that brings the cleaning meets: a run long under way, most of it merged.
+    const KEYS = ['A', 'B', 'C', 'D']
+    const backlog = (): RunnerWorld => {
+      const world = createWorld({
+        items: [
+          ...KEYS.map((key) => finishedItem(key)),
+          { key: 'Z', status: 'running', session_id: 's-Z', started_at: PROMPTED_AT }
+        ]
+      })
+      for (const key of KEYS) moveTicket(world, `ticket-${key}`, 'merged')
+      world.setSignal('s-Z', { kind: 'working' })
+      return world
+    }
+    /** Cleans that stay under way on the server until answered, one at a time, oldest first. */
+    const holdCleans = (world: RunnerWorld) => {
+      const answers: (() => void)[] = []
+      world.api.cleanItemWorktree.mockImplementation(async (runId, itemId) => {
+        await new Promise<void>((answer) => answers.push(answer))
+        const key = world.detail(runId).items.find((item) => item.id === itemId)!.key
+        world.setItem(key, { worktree_cleaned_at: new Date(Date.now()).toISOString() }, runId)
+        return { state: 'cleaned' }
+      })
+      return async (): Promise<void> => {
+        answers.shift()?.()
+        await advance(1000)
+      }
+    }
+    const asked = (world: RunnerWorld): string[] =>
+      world.api.cleanItemWorktree.mock.calls.map(([, itemId]) => itemId)
+
+    it('asks for one clean at a time, the next once the server has answered', async () => {
+      const world = backlog()
+      const answer = holdCleans(world)
+      start(world)
+
+      await advance(60_000)
+      expect(asked(world)).toEqual(['item-A'])
+
+      await answer()
+      expect(asked(world)).toEqual(['item-A', 'item-B'])
+      await advance(60_000)
+      expect(asked(world)).toEqual(['item-A', 'item-B'])
+
+      await answer()
+      await answer()
+      await answer()
+      expect(asked(world)).toEqual(['item-A', 'item-B', 'item-C', 'item-D'])
+      await advance(60_000)
+      expect(world.api.cleanItemWorktree).toHaveBeenCalledTimes(4)
+    })
+
+    it('leaves a waiting ticket the user took back up meanwhile, until it is in Merged again', async () => {
+      const world = backlog()
+      const answer = holdCleans(world)
+      start(world)
+      await advance(1000)
+      moveTicket(world, 'ticket-B', 'in_progress')
+
+      await answer()
+      await answer()
+      await answer()
+
+      expect(asked(world)).toEqual(['item-A', 'item-C', 'item-D'])
+      expect(world.item('B').worktree_cleaned_at).toBeNull()
+
+      moveTicket(world, 'ticket-B', 'merged')
+      await advance(30_000)
+      expect(asked(world)).toEqual(['item-A', 'item-C', 'item-D', 'item-B'])
+    })
+
+    it('stops at the clean under way when the setting is turned off', async () => {
+      const world = backlog()
+      const answer = holdCleans(world)
+      start(world)
+      await advance(1000)
+      world.ports.cleansFinishedWorktrees.mockReturnValue(false)
+
+      await answer()
+      await advance(60_000)
+      expect(asked(world)).toEqual(['item-A'])
+
+      world.ports.cleansFinishedWorktrees.mockReturnValue(true)
+      await advance(30_000)
+      expect(asked(world)).toEqual(['item-A', 'item-B'])
+    })
+
+    it('goes on to the next ticket when a clean fails', async () => {
+      const world = backlog()
+      world.api.cleanItemWorktree.mockRejectedValueOnce(new Error('The run is not finished with A'))
+      start(world)
+
+      await advance(30_000)
+
+      expect(asked(world)).toEqual(['item-A', 'item-B', 'item-C', 'item-D'])
+    })
+  })
+
   describe('when the clean does not go through', () => {
     const stillRunning = (world: RunnerWorld): void => {
       world.setSignal('s-B', { kind: 'working' })

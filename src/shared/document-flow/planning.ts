@@ -316,6 +316,44 @@ export function isItemFinishedWith(
   )
 }
 
+type WorktreeCleanNode = FinishedWithNode &
+  Pick<DocumentRunItem, 'worktree_cleaned_at' | 'worktree_clean_status'>
+
+/**
+ * The ticket's worktree is to be cleaned of what git does not track: the run is finished with
+ * the ticket (`isItemFinishedWith`), its worktree was never cleaned, and a merged ticket sits
+ * where its work is over, in Merged or Done (`ticketColumn`: where its board ticket is, null
+ * when it has none). One the user took back up, out of those columns, is left until it returns.
+ */
+export function isWorktreeCleanDue(
+  run: Pick<DocumentRun, 'source_kind'>,
+  item: WorktreeCleanNode,
+  ticketColumn: string | null
+): boolean {
+  if (item.worktree_cleaned_at || !isItemFinishedWith(run, item)) return false
+  return item.status !== 'merged' || ticketColumn === 'merged' || ticketColumn === 'done'
+}
+
+/**
+ * Where a ticket stands with the cleaning of its worktree, for its card:
+ * - `cleaning`: `git clean` is running in its worktree now
+ * - `queued`: it is due (`isWorktreeCleanDue`) and waits for its turn, worktrees being cleaned
+ *   one at a time. Only in a run that is running, with the setting on: nothing is cleaned for a
+ *   paused run, or while the setting is off.
+ * Null otherwise: not due, cleaned already, or nothing will clean it as things stand.
+ */
+export type WorktreeCleanState = 'cleaning' | 'queued'
+
+export function worktreeCleanState(
+  run: Pick<DocumentRun, 'source_kind' | 'status'>,
+  item: WorktreeCleanNode,
+  options: { ticketColumn: string | null; cleansFinishedWorktrees: boolean }
+): WorktreeCleanState | null {
+  if (item.worktree_clean_status === 'cleaning') return 'cleaning'
+  if (run.status !== 'running' || !options.cleansFinishedWorktrees) return null
+  return isWorktreeCleanDue(run, item, options.ticketColumn) ? 'queued' : null
+}
+
 /** The item whose session is updating the document now, or null when the lane is free. */
 export function documentUpdateLaneOwner<T extends DocumentRunItem>(items: readonly T[]): T | null {
   return items.find((item) => item.selected && item.document_update_status === 'updating') ?? null

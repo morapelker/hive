@@ -24,6 +24,7 @@ import {
   isDocumentUpdatePending,
   isDocumentUpdateWaitingOnUser,
   isItemFinishedWith,
+  isWorktreeCleanDue,
   isItemWaitingOnUser,
   isMergeInFlight,
   isRunSettled,
@@ -36,7 +37,8 @@ import {
   sanitizeDependencies,
   summarizeItems,
   ticketBranchHint,
-  unmetDependencies
+  unmetDependencies,
+  worktreeCleanState
 } from './planning'
 
 let nextPosition = 0
@@ -98,6 +100,7 @@ function item(
     document_update_report: null,
     document_update_finished_at: null,
     worktree_cleaned_at: null,
+    worktree_clean_status: null,
     created_at: '2026-10-05T10:00:00.000Z',
     updated_at: '2026-10-05T10:00:00.000Z',
     started_at: null,
@@ -911,6 +914,70 @@ describe('document edit lane', () => {
       expect(isItemFinishedWith(run, item('A', status))).toBe(false)
     }
     expect(isItemFinishedWith(run, item('A', 'merged', { selected: false }))).toBe(false)
+  })
+
+  it('knows when the worktree of a ticket is due for cleaning', () => {
+    const run = { source_kind: 'tickets' as const }
+    const merged = item('A', 'merged')
+    // A merged ticket, where its work is over on the board.
+    expect(isWorktreeCleanDue(run, merged, 'merged')).toBe(true)
+    expect(isWorktreeCleanDue(run, merged, 'done')).toBe(true)
+    // Taken back up by the user, or without a board ticket: left until it is in Merged again.
+    expect(isWorktreeCleanDue(run, merged, 'in_progress')).toBe(false)
+    expect(isWorktreeCleanDue(run, merged, 'review')).toBe(false)
+    expect(isWorktreeCleanDue(run, merged, null)).toBe(false)
+    // Closed as already implemented: wherever its ticket sits.
+    const implemented = item('A', 'skipped', { status_detail: ALREADY_IMPLEMENTED_DETAIL })
+    expect(isWorktreeCleanDue(run, implemented, 'review')).toBe(true)
+    expect(isWorktreeCleanDue(run, implemented, null)).toBe(true)
+    // Once only, and never before the run is finished with the ticket.
+    expect(
+      isWorktreeCleanDue(
+        run,
+        item('A', 'merged', { worktree_cleaned_at: '2026-10-05T10:00:00.000Z' }),
+        'merged'
+      )
+    ).toBe(false)
+    expect(isWorktreeCleanDue(run, item('A', 'ready'), 'merged')).toBe(false)
+    expect(
+      isWorktreeCleanDue({ source_kind: 'document' as const }, queued('A', null), 'merged')
+    ).toBe(false)
+  })
+
+  it('tells a ticket whose worktree is being cleaned from one waiting for its turn', () => {
+    const run = { source_kind: 'tickets' as const, status: 'running' as const }
+    const on = { ticketColumn: 'merged', cleansFinishedWorktrees: true }
+    const merged = item('A', 'merged')
+    expect(worktreeCleanState(run, merged, on)).toBe('queued')
+    // git is at it: recorded as cleaned from the moment it starts.
+    const cleaning = item('A', 'merged', {
+      worktree_cleaned_at: '2026-10-05T10:00:00.000Z',
+      worktree_clean_status: 'cleaning'
+    })
+    expect(worktreeCleanState(run, cleaning, on)).toBe('cleaning')
+    // Over: nothing more to say.
+    expect(
+      worktreeCleanState(
+        run,
+        item('A', 'merged', { worktree_cleaned_at: '2026-10-05T10:00:00.000Z' }),
+        on
+      )
+    ).toBeNull()
+    // Not due: nothing waits.
+    expect(worktreeCleanState(run, merged, { ...on, ticketColumn: 'in_progress' })).toBeNull()
+    expect(worktreeCleanState(run, item('A', 'ready'), on)).toBeNull()
+    // Nothing is cleaned with the setting off, or for a run that is not running: not "queued".
+    expect(worktreeCleanState(run, merged, { ...on, cleansFinishedWorktrees: false })).toBeNull()
+    for (const status of ['paused', 'completed', 'cancelled'] as const) {
+      expect(worktreeCleanState({ ...run, status }, merged, on), status).toBeNull()
+    }
+    // A clean under way is one whatever the run or the setting became meanwhile.
+    expect(
+      worktreeCleanState({ ...run, status: 'completed' }, cleaning, {
+        ticketColumn: 'in_progress',
+        cleansFinishedWorktrees: false
+      })
+    ).toBe('cleaning')
   })
 
   it('finds the item holding the lane', () => {
