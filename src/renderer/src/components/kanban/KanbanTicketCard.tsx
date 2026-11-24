@@ -112,6 +112,15 @@ import {
 } from '@/components/kanban/WorktreePickerModal'
 import { useRightButtonDrag } from '@/components/kanban/useRightButtonDrag'
 import { buildQuickLaunchGhostChip } from '@/components/kanban/quickLaunchGhostChip'
+import {
+  buildArchiveOverrideGhostChip,
+  useArchiveOverrideDrag
+} from '@/components/kanban/useArchiveOverrideDrag'
+import {
+  dropRunTicketArchiveOverride,
+  isRunArchiveOverrideColumn,
+  runArchiveOverrideTargets
+} from '@/lib/document-flow/run-archive-override'
 import { Popover, PopoverAnchor } from '@/components/ui/popover'
 import { AttachPRPopover } from '@/components/kanban/AttachPRPopover'
 import { useGitStore } from '@/stores/useGitStore'
@@ -246,6 +255,10 @@ interface KanbanTicketCardProps {
   isPinnedMode?: boolean
   /** Renderer-only identity for duplicate markdown card occurrences. */
   cardIdentityKey?: TicketKey
+}
+
+function decorateArchiveOverrideGhost(ghost: HTMLElement): void {
+  ghost.appendChild(buildArchiveOverrideGhostChip())
 }
 
 function decorateRightDragGhost(ghost: HTMLElement): void {
@@ -1031,14 +1044,46 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     return 'default'
   }, [ticket.column, ticket.mode, ticket.plan_ready, ticket.current_session_id])
 
+  // ── ⌘⇧-drag of a run's ticket to Done/Merged — the override of its shift-drop: the run's
+  // ticket and its children move and every branch of the run goes to the archive step as it
+  // is, with no branch checked or merged first (lib/document-flow/run-archive-override.ts).
+  // Its own mouse-driven gesture: a native drag cannot be dropped while ⌘ is held.
+  const handleArchiveOverrideDrop = useCallback(
+    (column: string) => {
+      if (isRunArchiveOverrideColumn(column)) void dropRunTicketArchiveOverride(ticket, column)
+    },
+    [ticket]
+  )
+  const archiveOverrideTargets = useCallback(
+    () => runArchiveOverrideTargets(ticket.column),
+    [ticket.column]
+  )
+  const { onMouseDown: archiveDragMouseDown, onDragStart: archiveDragStart } =
+    useArchiveOverrideDrag({
+      // Wherever the card itself can be dragged
+      enabled:
+        isDocumentRunTicket &&
+        !isArchived &&
+        !blockingDiagnostic &&
+        !isRunTicketHeld &&
+        !launchPhase,
+      targets: archiveOverrideTargets,
+      onDrop: handleArchiveOverrideDrop,
+      // Says what the release will do, riding along under the ghost
+      decorateGhost: decorateArchiveOverrideGhost
+    })
+
   // ── Drag handlers ──────────────────────────────────────────────
   const handleDragStart = useCallback(
     (e: React.DragEvent) => {
+      // ⌘⇧ on a run's ticket: the override gesture takes the drag over (see above)
+      if (archiveDragStart(e)) return
       // Store drag data
       // Shift held on the ticket of a document run: dropping it on Done/Merged merges
       // and archives the run's branches as one batch; on any other ticket, Merged → Done
       // skips the merge checks for the archive step (KanbanColumn.handleDrop). Shift
-      // only — see KanbanDragData.modifiers for why ⌘/⌥/⌃ cannot work here.
+      // only — see KanbanDragData.modifiers for why ⌘/⌥/⌃ cannot work here (⌘⇧ on a
+      // run's ticket never gets this far: its gesture cancelled the drag above).
       setKanbanDragData({
         projectId: ticket.project_id,
         ticketId: ticket.id,
@@ -1083,7 +1128,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         if (dragActiveRef.current) setIsDragging(true)
       }, 0)
     },
-    [ticket.project_id, ticket.id, ticket.column, index]
+    [ticket.project_id, ticket.id, ticket.column, index, archiveDragStart]
   )
 
   const handleDragEnd = useCallback(() => {
@@ -1358,6 +1403,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
       rightDragMouseDown(e)
+      archiveDragMouseDown(e)
       if (e.button !== 1) return            // only middle-click
       if (!ticket.worktree_id) return        // no-op for unassigned tickets
       if (isArchived) return                 // no-op for archived tickets
@@ -1378,7 +1424,8 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       isArchived,
       isPinnedMode,
       recordBoardTelegramTarget,
-      rightDragMouseDown
+      rightDragMouseDown,
+      archiveDragMouseDown
     ]
   )
 
@@ -1871,7 +1918,8 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   'group cursor-pointer rounded-md border bg-card px-2.5 pt-2.5 pb-2 transition-[border-color,background-color] duration-150',
                   'hover:border-muted-foreground/35',
                   // Shift-dragging the card (a document run's ticket: finish the whole run on
-                  // Done/Merged; any other: Merged → Done without the merge checks) needs the
+                  // Done/Merged, or with ⌘ as well archive it unchecked; any other: Merged →
+                  // Done without the merge checks) needs the
                   // element under the mouse itself to be draggable —
                   // see .ticket-draggable in globals.css
                   'ticket-draggable',

@@ -13,7 +13,7 @@ import type { KanbanTicket, Worktree } from '../../../main/db/types'
  * A worktree the override may offer to archive: still there, not on its way out already,
  * and never a project's default worktree (archive deletes the branch).
  */
-async function archivableWorktree(worktreeId: string): Promise<Worktree | null> {
+export async function archivableWorktree(worktreeId: string): Promise<Worktree | null> {
   if (useWorktreeStore.getState().archivingWorktreeIds.has(worktreeId)) return null
   const worktree = await dbApi.worktree.get<Worktree>(worktreeId)
   if (!worktree || worktree.status !== 'active' || worktree.is_default) return null
@@ -31,6 +31,16 @@ async function archiveOverrideTargets(ticket: KanbanTicket): Promise<PendingDone
   }
   const connectionId = await resolveTicketConnectionId(ticket.current_session_id)
   if (!connectionId) return []
+  return connectionArchiveTargets(connectionId)
+}
+
+/**
+ * Every member worktree of a connection that can be archived, unchecked, each listed once.
+ * None for a connection that is gone or archived; rejects when it cannot be read.
+ */
+export async function connectionArchiveTargets(
+  connectionId: string
+): Promise<PendingDoneMoveWorktree[]> {
   const result = await connectionApi.get(connectionId)
   if (!result.success || !result.connection) {
     if (result.error === 'Connection not found') return []

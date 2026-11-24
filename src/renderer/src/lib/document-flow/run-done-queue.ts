@@ -764,7 +764,11 @@ export async function queueDocumentRunDone(args: {
   return 'queued'
 }
 
-async function moveTicketsAlong(
+/**
+ * Move a batch's worktree-less riders to `column`, each to the top with the completion effects
+ * off. Missing, archived and already-moved tickets are left alone.
+ */
+export async function moveTicketsAlong(
   projectId: string,
   column: KanbanTicketColumn,
   ticketIds: readonly string[]

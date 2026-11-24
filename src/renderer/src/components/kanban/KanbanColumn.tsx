@@ -1180,6 +1180,10 @@ export function KanbanColumn({
         'flex w-[268px] min-w-[268px] flex-col min-h-0 rounded-lg border transition-colors duration-200',
         isInProgressColumn &&
           'data-[right-drag-over]:border-dashed data-[right-drag-over]:border-ring data-[right-drag-over]:bg-foreground/[0.02]',
+        // ⌘⇧-drag of a run's ticket (useArchiveOverrideDrag): the columns it can be released
+        // on read like drop targets of a native drag, the one under the pointer like its hover
+        (column === 'done' || column === 'merged') &&
+          'data-[archive-drag=target]:border-dashed data-[archive-drag=target]:border-ring/50 data-[archive-drag=over]:border-dashed data-[archive-drag=over]:border-ring data-[archive-drag=over]:bg-foreground/[0.02]',
         isDragOver
           ? 'border-dashed border-ring bg-foreground/[0.02]'
           : isDragging

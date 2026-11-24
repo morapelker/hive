@@ -281,6 +281,54 @@ export function MergeOnDoneDialog() {
         // Document-run batch on a connection project: the entry is a ticket's whole instance.
         // Every member worktree is checked; one that cannot go holds the whole instance.
         const instanceMembers = pending.run && entry?.members?.length ? entry.members : null
+        // The override on a run (⌘⇧-drag of its ticket): the instance goes to archive/keep as
+        // it is — every member worktree still there, none of them checked against anything
+        if (instanceMembers && pending.skipMergeChecks) {
+          const members: ResolvedMember[] = []
+          for (const member of instanceMembers) {
+            const worktree = await dbApi.worktree.get<MergeWorktree>(member.worktreeId)
+            if (cancelled) return
+            if (!worktree || worktree.status !== 'active') continue
+            const memberProject = await dbApi.project.get<MergeProject>(member.projectId)
+            if (cancelled) return
+            members.push({
+              ...member,
+              worktreePath: worktree.path,
+              branchName: worktree.branch_name,
+              projectPath: memberProject?.path ?? worktree.path,
+              baseBranch: worktree.base_branch ?? '',
+              baseWorktreeId: '',
+              baseWorktreePath: worktree.path,
+              baseDirty: false,
+              dirty: false,
+              branchStats: { filesChanged: 0, insertions: 0, deletions: 0, commitsAhead: 0 }
+            })
+          }
+          if (members.length === 0) {
+            // Archived since the drop: nothing left of the instance, its ticket just moves
+            await completeDoneMove(identity)
+            return
+          }
+          const anchor = members[0]
+          setResolved({
+            featureWorktreeId: anchor.worktreeId,
+            featureWorktreePath: anchor.worktreePath,
+            featureBranch: anchor.branchName,
+            baseWorktreeId: '',
+            baseWorktreePath: anchor.worktreePath,
+            baseBranch: anchor.baseBranch,
+            ticketTitle: entryTitle,
+            projectPath: anchor.projectPath,
+            projectName: anchor.projectName,
+            baseDirty: false,
+            branchStats: anchor.branchStats,
+            alreadyMerged: false,
+            carriedRunTickets: [],
+            members
+          })
+          setStep('archive')
+          return
+        }
         if (instanceMembers) {
           const members: ResolvedMember[] = []
           for (const member of instanceMembers) {
@@ -406,8 +454,9 @@ export function MergeOnDoneDialog() {
           return
         }
 
-        // The override (shift-drag from Merged to Done): nothing is pulled, checked,
-        // committed or merged — straight to archive/keep, whatever the branch still holds
+        // The override (shift-drag from Merged to Done, or ⌘⇧-drag of a run's ticket): nothing
+        // is pulled, checked, committed or merged — straight to archive/keep, whatever the
+        // branch still holds
         if (pending.skipMergeChecks) {
           const project = await dbApi.project.get<MergeProject>(featureWorktree.project_id)
           if (cancelled) return
@@ -1209,13 +1258,16 @@ export function MergeOnDoneDialog() {
               handled.add(candidate.worktreeId)
               return
             }
-            if (results.some((r) => typeof r === 'string')) {
+            // The override archives what is left of an instance: only a worktree that is
+            // gone already is ever missing there, and it needs nothing
+            const targets = results.filter((r): r is ArchiveTarget => typeof r !== 'string')
+            if (targets.length < results.length && !unchecked) {
               keptForMerge.push(candidate.label ?? candidate.members[0].branchName)
               return
             }
             handled.add(candidate.worktreeId)
             if (candidate.connectionId) connectionIds.add(candidate.connectionId)
-            groups.push(results as ArchiveTarget[])
+            groups.push(targets)
             return
           }
           const result = await assess(candidate.worktreeId, candidate.projectId)
@@ -1320,7 +1372,8 @@ export function MergeOnDoneDialog() {
 
   // Connection tickets run this dialog once per member worktree with changes
   const isConnectionFlow = !!pendingDoneMove?.worktreeId
-  // The override (shift-drag from Merged to Done): archive without the merge checks
+  // The override (shift-drag from Merged to Done, ⌘⇧-drag of a run's ticket): archive
+  // without the merge checks
   const isOverride = !!pendingDoneMove?.skipMergeChecks
   const remainingCount = pendingDoneMove?.remainingWorktrees?.length ?? 0
 
@@ -1678,7 +1731,28 @@ export function MergeOnDoneDialog() {
             )}
             {archiveAllCandidates.length > 0 && (
               <p className="text-xs text-muted-foreground" data-testid="archive-all-hint">
-                {isOverride ? (
+                {isOverride && pendingDoneMove?.run ? (
+                  <>
+                    Archive all does the same for{' '}
+                    {archiveAllScope.isConnectionRun ? (
+                      <>
+                        every instance of this {runNoun} ({archiveAllScope.worktrees} worktree
+                        {archiveAllScope.worktrees !== 1 ? 's' : ''} across{' '}
+                        {archiveAllScope.repositories} repositor
+                        {archiveAllScope.repositories !== 1 ? 'ies' : 'y'} in all)
+                      </>
+                    ) : (
+                      <>
+                        the{' '}
+                        {archiveAllCandidates.length === 1
+                          ? 'other branch'
+                          : `other ${archiveAllCandidates.length} branches`}{' '}
+                        of this {runNoun}
+                      </>
+                    )}{' '}
+                    and moves their tickets to {targetLabel}.
+                  </>
+                ) : isOverride ? (
                   <>
                     Archive all does the same for the{' '}
                     {archiveAllCandidates.length === 1

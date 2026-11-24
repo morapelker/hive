@@ -1718,6 +1718,141 @@ describe('MergeOnDoneDialog — document-run batch (shift-drop of the run ticket
     expect(useKanbanStore.getState().pendingDoneMove).toBeNull()
   })
 
+  describe('the override (⌘⇧-drag of the run ticket): no branch is checked', () => {
+    // What the override queues: archive entries only, none of them vouched for
+    const overrideAlpha = { ...archiveAlpha, alreadyMerged: undefined }
+    const overrideBeta = { ...archiveBeta, alreadyMerged: undefined }
+    const seedOverride = (): void =>
+      seedPending(integration, [overrideAlpha, overrideBeta] as never, {
+        skipMergeChecks: true
+      } as never)
+
+    beforeEach(() => {
+      // Every branch still has work, and git cannot even say how much
+      gitApiMocks.hasUncommittedChanges.mockResolvedValue(true)
+      gitApiMocks.branchDiffShortStat.mockResolvedValue({ success: false, error: 'boom' })
+    })
+
+    const expectNoGitChecks = (): void => {
+      expect(gitApiMocks.hasUncommittedChanges).not.toHaveBeenCalled()
+      expect(gitApiMocks.branchDiffShortStat).not.toHaveBeenCalled()
+      expect(gitApiMocks.pull).not.toHaveBeenCalled()
+      expect(gitApiMocks.merge).not.toHaveBeenCalled()
+      expect(flowApiMocks.prepareMerge).not.toHaveBeenCalled()
+    }
+
+    it('opens straight on the archive step for the whole run', async () => {
+      seedOverride()
+
+      render(<MergeOnDoneDialog />)
+
+      expect(await screen.findByText(/Commit and merge checks skipped/)).toBeTruthy()
+      expect(screen.getByTestId('run-entry-label').textContent).toContain('The run')
+      expect(screen.getByTestId('archive-override-warning').textContent).toContain('discarded')
+      expect(screen.getByRole('button', { name: 'Archive all (3)' })).toBeTruthy()
+      expect(screen.getByTestId('archive-all-hint').textContent).toContain(
+        'Archive all does the same for the other 2 branches of this document run and moves their tickets to Done.'
+      )
+      expectNoGitChecks()
+    })
+
+    it('Archive all archives every branch as it is and moves the children, the run’s ticket last', async () => {
+      seedOverride()
+      render(<MergeOnDoneDialog />)
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Archive all (3)' }))
+
+      await waitFor(() =>
+        expect(moveTicketMock).toHaveBeenCalledWith('ticket-run', 'project-1', 'done', 5, {
+          interactive: true
+        })
+      )
+      expect(moveTicketMock.mock.calls.map((call) => call[0])).toEqual([
+        'ticket-a',
+        'ticket-b',
+        'ticket-run'
+      ])
+      await waitFor(() => expect(archiveWorktreeMock).toHaveBeenCalledTimes(3))
+      expect(new Set(archiveWorktreeMock.mock.calls.map((call) => call[0]))).toEqual(
+        new Set(['worktree-int', 'worktree-1', 'worktree-b'])
+      )
+      expect(useKanbanStore.getState().pendingDoneMove).toBeNull()
+      expectNoGitChecks()
+    })
+
+    it('Archive takes one branch at a time, still unchecked, its ticket moving with it', async () => {
+      seedOverride()
+      render(<MergeOnDoneDialog />)
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Archive' }))
+
+      await waitFor(() => expect(archiveWorktreeMock).toHaveBeenCalledTimes(1))
+      expect(archiveWorktreeMock).toHaveBeenCalledWith(
+        'worktree-int',
+        '/repo/doc-run',
+        'doc-run',
+        '/project-1'
+      )
+      // On to the first ticket branch, the override still on
+      await waitFor(() =>
+        expect(screen.getByTestId('run-entry-label').textContent).toContain('A1 · Alpha')
+      )
+      expect(useKanbanStore.getState().pendingDoneMove).toMatchObject({
+        worktreeId: 'worktree-1',
+        skipMergeChecks: true,
+        entry: { kind: 'run-child-archive', ticketId: 'ticket-a' }
+      })
+
+      fireEvent.click(screen.getByRole('button', { name: 'Keep' }))
+
+      // Keep leaves the worktree and still moves its ticket
+      await waitFor(() =>
+        expect(moveTicketMock).toHaveBeenCalledWith(
+          'ticket-a',
+          'project-1',
+          'done',
+          expect.any(Number),
+          { skipCompletionEffects: true }
+        )
+      )
+      expect(archiveWorktreeMock).toHaveBeenCalledTimes(1)
+      expectNoGitChecks()
+    })
+
+    it('names what the override left where it is', async () => {
+      seedPending(integration, [overrideAlpha] as never, {
+        skipMergeChecks: true,
+        run: {
+          ...run,
+          kept: [{ label: 'A3 · Gamma', reason: 'its session is still working — stop it first' }]
+        }
+      } as never)
+
+      render(<MergeOnDoneDialog />)
+
+      expect((await screen.findByTestId('archive-kept-branches')).textContent).toContain(
+        'A3 · Gamma (its session is still working — stop it first)'
+      )
+    })
+
+    it('calls an orchestrator by its name', async () => {
+      useDocumentFlowStore.setState({
+        runsById: {
+          'run-1': makeDetail({ id: 'run-1', source_kind: 'tickets', source_path: '' }, [])
+        }
+      })
+      seedOverride()
+
+      render(<MergeOnDoneDialog />)
+
+      await screen.findByRole('button', { name: 'Archive all (3)' })
+      expect(screen.getByTestId('archive-all-hint').textContent).toContain(
+        'other 2 branches of this orchestrator'
+      )
+      useDocumentFlowStore.setState({ runsById: {} })
+    })
+  })
+
   it('leaves a ticket branch that picked up work alone instead of merging it into base', async () => {
     ahead = { '/repo/feature': { main: 2 } }
     seedPending(archiveAlpha, [])
@@ -1978,6 +2113,87 @@ describe('MergeOnDoneDialog — document-run batch on a connection project (inst
     const instanceCalls = archiveWorktreeMock.mock.calls.map((c) => c[0]).filter((id) => id.startsWith('wt-a-'))
     expect(instanceCalls).toEqual(['wt-a-web', 'wt-a-api'])
     expect(moveTicketMock.mock.calls.map((c) => c[0])).toEqual(['ticket-a', 'ticket-run'])
+  })
+
+  describe('the override (⌘⇧-drag of the run ticket): no branch is checked', () => {
+    const overrideInstance = { ...archiveInstance, alreadyMerged: undefined }
+    const overrideWeb = { ...integrationWeb, alreadyMerged: undefined }
+    const overrideApi = { ...integrationApi, alreadyMerged: undefined }
+
+    function seedOverride(current: { worktreeId: string; projectId: string }, remaining: object[] = []): void {
+      seed(current, remaining)
+      const pending = useKanbanStore.getState().pendingDoneMove
+      useKanbanStore.setState({ pendingDoneMove: pending && { ...pending, skipMergeChecks: true } })
+    }
+
+    beforeEach(() => {
+      // Work everywhere, and git cannot say how much: none of it may be asked
+      dirtyPaths = ['/web/a1', '/api/a1', '/web/int', '/api/int']
+      gitApiMocks.branchDiffShortStat.mockResolvedValue({ success: false, error: 'boom' })
+    })
+
+    const expectNoGitChecks = (): void => {
+      expect(gitApiMocks.hasUncommittedChanges).not.toHaveBeenCalled()
+      expect(gitApiMocks.branchDiffShortStat).not.toHaveBeenCalled()
+    }
+
+    it('opens a ticket instance on the archive step and archives every member as it is', async () => {
+      seedOverride(overrideInstance)
+      render(<MergeOnDoneDialog />)
+
+      expect(await screen.findByText(/Commit and merge checks skipped/)).toBeTruthy()
+      fireEvent.click(screen.getByRole('button', { name: 'Archive' }))
+
+      await waitFor(() => expect(archiveWorktreeMock).toHaveBeenCalledTimes(2))
+      expect(archiveWorktreeMock.mock.calls.map((c) => c[0])).toEqual(['wt-a-web', 'wt-a-api'])
+      expect(moveTicketMock.mock.calls.map((c) => c[0])).toEqual(['ticket-a', 'ticket-run'])
+      expectNoGitChecks()
+    })
+
+    it('Archive all takes the integration instance and every ticket instance, unchecked', async () => {
+      seedOverride(overrideWeb, [overrideApi, overrideInstance])
+      render(<MergeOnDoneDialog />)
+
+      const button = await screen.findByRole('button', { name: 'Archive all (2)' })
+      expect(screen.getByTestId('archive-all-hint').textContent).toContain(
+        'every instance of this document run (4 worktrees across 2 repositories in all) and moves their tickets to Done.'
+      )
+      fireEvent.click(button)
+
+      await waitFor(() => expect(archiveWorktreeMock).toHaveBeenCalledTimes(4))
+      expect(new Set(archiveWorktreeMock.mock.calls.map((c) => c[0]))).toEqual(
+        new Set(['wt-int-web', 'wt-int-api', 'wt-a-web', 'wt-a-api'])
+      )
+      expect(moveTicketMock.mock.calls.map((c) => c[0])).toEqual(['ticket-a', 'ticket-run'])
+      expectNoGitChecks()
+    })
+
+    it('Archive all archives what is left of an instance that lost a worktree since the drop', async () => {
+      worktrees['wt-a-web'].status = 'archived'
+      seedOverride(overrideWeb, [overrideApi, overrideInstance])
+      render(<MergeOnDoneDialog />)
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Archive all (2)' }))
+
+      await waitFor(() => expect(archiveWorktreeMock).toHaveBeenCalledTimes(3))
+      expect(new Set(archiveWorktreeMock.mock.calls.map((c) => c[0]))).toEqual(
+        new Set(['wt-int-web', 'wt-int-api', 'wt-a-api'])
+      )
+      expect(moveTicketMock.mock.calls.map((c) => c[0])).toEqual(['ticket-a', 'ticket-run'])
+    })
+
+    it('an instance archived since the drop just completes: its ticket moves, nothing is asked', async () => {
+      worktrees['wt-a-web'].status = 'archived'
+      worktrees['wt-a-api'].status = 'archived'
+      seedOverride(overrideInstance)
+      render(<MergeOnDoneDialog />)
+
+      await waitFor(() =>
+        expect(moveTicketMock.mock.calls.map((c) => c[0])).toEqual(['ticket-a', 'ticket-run'])
+      )
+      expect(archiveWorktreeMock).not.toHaveBeenCalled()
+      expect(skipDoneMoveEntryMock).not.toHaveBeenCalled()
+    })
   })
 
   it('Archive all keeps a whole instance when one of its members picked up work', async () => {

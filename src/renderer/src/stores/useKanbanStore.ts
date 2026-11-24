@@ -98,7 +98,9 @@ export interface KanbanDragData {
    * Shift is the only modifier a drag can carry on macOS: AppKit filters the drag's allowed
    * operations by the modifier held (⌘ → generic, ⌥ → copy, ⌃ → link), and a card drags
    * with `effectAllowed = 'move'` only, so a drop with any of those held is refused by the
-   * OS before the drop event ever fires.
+   * OS before the drop event ever fires. (Allowing more would not help ⌘: Chromium maps the
+   * generic operation to none.) The one gesture with ⌘ — ⌘⇧ on a run's ticket, its archive
+   * override — is therefore no drag at all: see components/kanban/useArchiveOverrideDrag.ts.
    */
   modifiers?: { shift: boolean }
 }
@@ -435,7 +437,8 @@ export interface PendingDoneMoveWorktree {
    */
   alreadyMerged?: boolean
   /**
-   * Document-run batch (shift-drop of the run's ticket): what the entry is.
+   * Document-run batch (shift-drop of the run's ticket; its ⌘⇧ override queues the two
+   * archive kinds only, unchecked — see `skipMergeChecks`): what the entry is.
    * - `run-child`: a ticket branch with work the integration branch lacks; merged INTO the
    *   integration branch through the run's own merge path. Its ticket moves to Merged on
    *   success and to the target column with its `run-child-archive` twin at the tail.
@@ -522,9 +525,12 @@ export interface PendingDoneMove {
    */
   keptWorktrees?: PendingDoneMoveKept[]
   /**
-   * The override (shift-drag of a ticket from Merged to Done, never a document run's): no
-   * commit or merge step. The dialog opens on the archive/keep step for each worktree of
-   * the ticket, unchecked: archiving discards whatever its branch still holds.
+   * The override: no commit or merge step. The dialog opens on the archive/keep step for
+   * each worktree queued, unchecked: archiving discards whatever its branch still holds.
+   * Two gestures set it: the shift-drag of a ticket from Merged to Done (its own worktrees;
+   * lib/archive-override.ts), and the ⌘⇧-drag of a document run's ticket to Done/Merged
+   * (with `run` and `entry`: every branch of the run, their tickets moving along;
+   * lib/document-flow/run-archive-override.ts).
    */
   skipMergeChecks?: boolean
 }
