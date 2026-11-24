@@ -130,7 +130,11 @@ function seedStores(): void {
   useSessionStore.setState({ sessionsByWorktree: new Map(), sessionsByConnection: new Map() })
   useWorktreeStatusStore.setState({ sessionStatuses: {} })
   useCommandPaletteStore.setState({ isOpen: false })
-  useSettingsStore.setState({ vimModeEnabled: false, autoPullBeforeWorktree: true })
+  useSettingsStore.setState({
+    vimModeEnabled: false,
+    autoPullBeforeWorktree: true,
+    pullBeforeConnection: true
+  })
 }
 
 function openSwitcher(): HTMLInputElement {
@@ -228,14 +232,16 @@ function controllableCreate(): {
 const createTask = (
   projectId: string,
   step: 'base' | 'pull' | 'worktree' = 'worktree'
-): HTMLElement =>
-  screen.getByTestId(`project-switcher-create-task-${step}-${projectId}`)
+): HTMLElement => screen.getByTestId(`project-switcher-create-task-${step}-${projectId}`)
 
 /** The steps listed while the connection is created, top to bottom. */
 const createSteps = (): (string | null)[] =>
   within(screen.getByTestId('project-switcher-create-progress'))
     .getAllByRole('listitem')
     .map((li) => li.textContent)
+
+/** The "Pull latest from origin" switch in the heading of the picked projects. */
+const pullSwitch = (): HTMLElement => screen.getByTestId('project-switcher-auto-pull-switch')
 
 const expectNothingOpened = (): void => {
   expect(useProjectStore.getState().selectedProjectId).toBeNull()
@@ -425,6 +431,110 @@ describe('Shift+Enter', () => {
   })
 })
 
+describe('the "Pull latest from origin" switch', () => {
+  it('is there once a project is picked, and gone with the last one', () => {
+    const input = openSwitcher()
+    expect(screen.queryByTestId('project-switcher-auto-pull-switch')).toBeNull()
+
+    pick(input, 'seller-ios')
+    // With the picked projects, above the list.
+    const picked = screen.getByTestId('project-switcher-selected')
+    expect(within(picked).getByTestId('project-switcher-auto-pull-switch')).toBeInTheDocument()
+    expect(picked).toHaveTextContent('Pull latest from origin')
+
+    fireEvent.click(within(rowOf('seller-ios')).getByTestId('project-switcher-row-deselect'))
+    expect(pickedNames()).toEqual([])
+    expect(screen.queryByTestId('project-switcher-auto-pull-switch')).toBeNull()
+  })
+
+  it('is there for a project picked on its base branch too', () => {
+    const input = openSwitcher()
+    pickOnBase(input, 'seller-ios')
+    expect(pullSwitch()).toBeChecked()
+  })
+
+  it('starts on', () => {
+    const input = openSwitcher()
+    pick(input, 'seller-ios')
+    expect(pullSwitch()).toBeChecked()
+  })
+
+  it('starts on with the "auto-pull before worktree" setting off', () => {
+    useSettingsStore.setState({ autoPullBeforeWorktree: false })
+    const input = openSwitcher()
+    pick(input, 'seller-ios')
+    expect(pullSwitch()).toBeChecked()
+  })
+
+  it('is switched off with a click, which is kept as the setting and picks nothing', () => {
+    const input = openSwitcher()
+    pick(input, 'seller-ios')
+    type(input, 'ads')
+
+    fireEvent.click(pullSwitch())
+
+    expect(pullSwitch()).not.toBeChecked()
+    expect(useSettingsStore.getState().pullBeforeConnection).toBe(false)
+    // The other pull setting is not this switch.
+    expect(useSettingsStore.getState().autoPullBeforeWorktree).toBe(true)
+    // Nothing else moved: the picked project, the query and the highlight are as they were.
+    expect(pickedNames()).toEqual(['seller-ios'])
+    expect(input.value).toBe('ads')
+    expect(activeRowName()).toBe('ads-api')
+    expect(screen.getByTestId('project-switcher')).toBeInTheDocument()
+
+    fireEvent.click(pullSwitch())
+    expect(pullSwitch()).toBeChecked()
+    expect(useSettingsStore.getState().pullBeforeConnection).toBe(true)
+  })
+
+  it('is still off the next time the switcher is opened', () => {
+    const input = openSwitcher()
+    pick(input, 'seller-ios')
+    fireEvent.click(pullSwitch())
+    act(() => useProjectSwitcherStore.getState().close())
+    expect(screen.queryByTestId('project-switcher')).toBeNull()
+
+    act(() => useProjectSwitcherStore.getState().open())
+    pick(screen.getByTestId('project-switcher-input') as HTMLInputElement, 'ads-api')
+    expect(input).not.toBeInTheDocument()
+    expect(pullSwitch()).not.toBeChecked()
+  })
+
+  it('is off when it was switched off in the New Connection dialog', () => {
+    useSettingsStore.setState({ pullBeforeConnection: false })
+    const input = openSwitcher()
+    pick(input, 'seller-ios')
+    expect(pullSwitch()).not.toBeChecked()
+  })
+
+  it('is not shown while the connection is created', async () => {
+    const create = controllableCreate()
+    const input = openSwitcher()
+    pick(input, 'seller-ios')
+    type(input, 'ads')
+    press(input, 'Enter')
+
+    expect(screen.queryByTestId('project-switcher-auto-pull-switch')).toBeNull()
+    await create.finish('conn-1')
+  })
+
+  it('is back, as it was left, when the creation fails', async () => {
+    const create = controllableCreate()
+    const input = openSwitcher()
+    pick(input, 'seller-ios')
+    fireEvent.click(pullSwitch())
+    type(input, 'ads')
+    press(input, 'Enter')
+
+    act(() => create.options().onError?.('Failed to create worktree in "ads-api": disk full'))
+    await create.finish(null)
+
+    expect(screen.getByTestId('project-switcher-create-error')).toBeInTheDocument()
+    expect(pullSwitch()).not.toBeChecked()
+  })
+})
+
 describe('Enter with projects picked', () => {
   it('connects the picked projects and the highlighted one, in that order', async () => {
     const create = controllableCreate()
@@ -440,8 +550,8 @@ describe('Enter with projects picked', () => {
       member('ads-api'),
       member('ledger-core')
     ])
-    // The "auto-pull before worktree" setting is on: the pull is asked for outright, so it is
-    // a step of its own and not something the worktree create does out of sight.
+    // The pull is asked for outright, so it is a step of its own and not something the
+    // worktree create does out of sight.
     expect(create.options().autoPull).toBe(true)
     // Nothing is opened as a project.
     expect(useProjectStore.getState().selectedProjectId).toBeNull()
@@ -502,11 +612,31 @@ describe('Enter with projects picked', () => {
     expect(screen.queryByTestId('project-switcher')).toBeNull()
   })
 
-  it('pulls nothing, and lists no pull, with the "auto-pull before worktree" setting off', async () => {
+  it('pulls, and lists each pull, with the "auto-pull before worktree" setting off too', async () => {
+    // That setting is about a single new worktree. Here the switch decides, as in the New
+    // Connection dialog.
     useSettingsStore.setState({ autoPullBeforeWorktree: false })
     const create = controllableCreate()
     const input = openSwitcher()
     pick(input, 'seller-ios')
+    type(input, 'ads')
+    press(input, 'Enter')
+
+    expect(createSteps()).toEqual([
+      'Pull seller-ios from origin',
+      'Pull ads-api from origin',
+      'Create worktree in seller-ios',
+      'Create worktree in ads-api'
+    ])
+    expect(create.options().autoPull).toBe(true)
+    await create.finish('conn-1')
+  })
+
+  it('pulls nothing, and lists no pull, with "Pull latest from origin" switched off', async () => {
+    const create = controllableCreate()
+    const input = openSwitcher()
+    pick(input, 'seller-ios')
+    fireEvent.click(pullSwitch())
     type(input, 'ads')
     press(input, 'Enter')
 
@@ -650,7 +780,8 @@ describe('when the connection is not created', () => {
     pick(input, 'seller-ios')
     type(input, 'ads')
     press(input, 'Enter')
-    const reason = 'local main has commits that origin/main does not, so it cannot be fast-forwarded'
+    const reason =
+      'local main has commits that origin/main does not, so it cannot be fast-forwarded'
     act(() => {
       create.options().onProgress?.({ projectId: 'seller-ios', step: 'pull', status: 'done' })
       create

@@ -21,6 +21,7 @@ import {
   ContextMenuTrigger
 } from '@/components/ui/context-menu'
 import { useConnectionStore, useProjectStore } from '@/stores'
+import { useSettingsStore } from '@/stores/useSettingsStore'
 import { connectionApi } from '@/api/connection-api'
 import { toast } from '@/lib/toast'
 import { formatRelativeTime } from '@/lib/format-utils'
@@ -61,9 +62,11 @@ export function RecentConnectionsDialog({
   const [filter, setFilter] = useState('')
   const [projectFilter, setProjectFilter] = useState('')
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set())
-  // Pull each project's base branch from origin before its worktree is cut. Always starts on;
-  // switching it off only affects the connection created from this open of the dialog.
-  const [autoPull, setAutoPull] = useState(true)
+  // Pull each project's base branch from origin before its worktree is cut. A setting, shared
+  // with the "Go to project" switcher's switch: on until switched off, then off until switched
+  // back on, here or there.
+  const autoPull = useSettingsStore((s) => s.pullBeforeConnection)
+  const updateSetting = useSettingsStore((s) => s.updateSetting)
 
   // Inline note edit state
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null)
@@ -86,7 +89,6 @@ export function RecentConnectionsDialog({
     setFilter('')
     setProjectFilter('')
     setSelectedProjectIds(new Set())
-    setAutoPull(true)
     setEditingNoteId(null)
 
     connectionApi
@@ -636,7 +638,7 @@ export function RecentConnectionsDialog({
           >
             <Switch
               checked={autoPull}
-              onCheckedChange={setAutoPull}
+              onCheckedChange={(checked) => void updateSetting('pullBeforeConnection', checked)}
               disabled={isCreating}
               data-testid="recent-connections-auto-pull-switch"
             />

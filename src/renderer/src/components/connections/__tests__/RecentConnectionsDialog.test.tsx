@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { RecentConnectionsDialog } from '../RecentConnectionsDialog'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useProjectStore } from '@/stores/useProjectStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
 import type { RecentConnectionEntry } from '@shared/types/connection'
 
 vi.mock('@/api/connection-api', () => ({
@@ -44,6 +45,12 @@ const entries = [
 function setStoreProjects(projects: (typeof alpha)[]): void {
   useProjectStore.setState({ projects } as never)
 }
+
+// The "Pull latest from origin" switch is a setting now: every test starts with it as a new
+// install has it, and with the single-worktree setting on as well.
+beforeEach(() => {
+  useSettingsStore.setState({ pullBeforeConnection: true, autoPullBeforeWorktree: true })
+})
 
 async function renderDialog(data: RecentConnectionEntry[] = entries): Promise<void> {
   vi.mocked(connectionApi.getRecentConnections).mockResolvedValue({
@@ -363,7 +370,7 @@ describe('RecentConnectionsDialog auto-pull switch', () => {
     )
   })
 
-  it('is back on the next time the dialog opens', async () => {
+  it('is kept as the setting when switched off, and is still off the next time the dialog opens', async () => {
     vi.mocked(connectionApi.getRecentConnections).mockResolvedValue({ success: true, entries })
     const { rerender } = render(<RecentConnectionsDialog open onOpenChange={() => {}} />)
     await waitFor(() =>
@@ -372,13 +379,47 @@ describe('RecentConnectionsDialog auto-pull switch', () => {
 
     await userEvent.click(screen.getByTestId('recent-connections-auto-pull-switch'))
     expect(screen.getByTestId('recent-connections-auto-pull-switch')).not.toBeChecked()
+    expect(useSettingsStore.getState().pullBeforeConnection).toBe(false)
+    // The single-worktree setting is another one.
+    expect(useSettingsStore.getState().autoPullBeforeWorktree).toBe(true)
 
     rerender(<RecentConnectionsDialog open={false} onOpenChange={() => {}} />)
     rerender(<RecentConnectionsDialog open onOpenChange={() => {}} />)
+    await waitFor(() =>
+      expect(screen.queryByTestId('recent-connections-loading')).not.toBeInTheDocument()
+    )
+
+    expect(screen.getByTestId('recent-connections-auto-pull-switch')).not.toBeChecked()
+
+    await userEvent.click(screen.getByTestId('recent-connections-auto-pull-switch'))
+    expect(screen.getByTestId('recent-connections-auto-pull-switch')).toBeChecked()
+    expect(useSettingsStore.getState().pullBeforeConnection).toBe(true)
+  })
+
+  it('starts off when it was switched off in the "Go to project" switcher', async () => {
+    useSettingsStore.setState({ pullBeforeConnection: false })
+    const quickCreateConnection = vi.fn().mockResolvedValue('conn-1')
+    useConnectionStore.setState({ quickCreateConnection } as never)
+    await renderDialog()
+
+    expect(screen.getByTestId('recent-connections-auto-pull-switch')).not.toBeChecked()
+
+    await userEvent.click(screen.getByTestId('recent-connection-row-e1'))
+    await userEvent.click(screen.getByTestId('recent-connections-create-button'))
 
     await waitFor(() =>
-      expect(screen.getByTestId('recent-connections-auto-pull-switch')).toBeChecked()
+      expect(quickCreateConnection).toHaveBeenCalledWith(
+        [alpha, beta],
+        expect.objectContaining({ autoPull: false })
+      )
     )
+  })
+
+  it('starts on with the "auto-pull before worktree" setting off', async () => {
+    useSettingsStore.setState({ autoPullBeforeWorktree: false })
+    await renderDialog()
+
+    expect(screen.getByTestId('recent-connections-auto-pull-switch')).toBeChecked()
   })
 })
 

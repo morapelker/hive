@@ -14,11 +14,19 @@ export function canConnectSwitcherProject(project: Pick<SwitcherProject, 'kind'>
 }
 
 /**
- * Whether a connection made from the switcher pulls its projects first: the "auto-pull before
- * worktree" setting, read when the connection is asked for.
+ * Whether a connection made from the switcher pulls its projects first: its "Pull latest from
+ * origin" switch, which is the New Connection dialog's (the `pullBeforeConnection` setting,
+ * on until switched off), read when the connection is asked for. The "auto-pull before
+ * worktree" setting is about a single new worktree and is not asked here: the dialog does not
+ * ask it either.
  */
 export function switcherConnectionPullsFirst(): boolean {
-  return useSettingsStore.getState().autoPullBeforeWorktree
+  return useSettingsStore.getState().pullBeforeConnection
+}
+
+/** Sets the "Pull latest from origin" switch, for the dialog as well, and keeps it. */
+export function setSwitcherConnectionPullsFirst(pull: boolean): void {
+  void useSettingsStore.getState().updateSetting('pullBeforeConnection', pull)
 }
 
 /** A member of the new connection. `path` is the project's folder as stored, not shortened. */
@@ -54,10 +62,10 @@ export interface ConnectSwitcherProjectsOptions {
  * A project picked on its base branch (`useBase`) gets no worktree: its default
  * "(no-worktree)" worktree is the member, never pulled and never removed.
  *
- * Unlike the dialog there is no "Pull latest from origin" switch here: the "auto-pull before
- * worktree" setting stands in for it (`switcherConnectionPullsFirst`). On, it is the dialog
- * with its switch on: every project's base branch is pulled first, each pull a step of its
- * own, and a pull that fails stops there with nothing created. Off, nothing is pulled.
+ * The switcher has the dialog's "Pull latest from origin" switch
+ * (`switcherConnectionPullsFirst`), whatever the "auto-pull before worktree" setting says. On,
+ * the base branch of every project that gets a new worktree is pulled first, each pull a step
+ * of its own, and a pull that fails stops there with nothing created. Off, nothing is pulled.
  *
  * The Pinned Board is left, as when a project is opened from the switcher, so the user ends up
  * looking at the connection.

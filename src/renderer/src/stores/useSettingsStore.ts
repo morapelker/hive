@@ -138,6 +138,14 @@ export interface AppSettings {
    * branch against it (at most once a minute per base branch). Off: no such pull at all.
    */
   autoPullOnTicketMove: boolean
+  /**
+   * The "Pull latest from origin" switch of the New Connection dialog and of the "Go to
+   * project" switcher (one switch, shown in both): pull each project's base branch from origin
+   * before a new connection's worktrees are cut. Starts on; switched off in either place, it
+   * stays off in both until it is switched back on. Not the "auto-pull before worktree"
+   * setting, which is about a single new worktree.
+   */
+  pullBeforeConnection: boolean
   warnBeforeQuitting: boolean
   breedType: 'dogs' | 'cats'
   vimModeEnabled: boolean
@@ -325,6 +333,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   autoPullBeforeWorktree: true,
   defaultSetupScript: '',
   autoPullOnTicketMove: true,
+  pullBeforeConnection: true,
   warnBeforeQuitting: true,
   breedType: 'dogs',
   vimModeEnabled: false,
@@ -570,6 +579,7 @@ function extractSettings(state: SettingsState): AppSettings {
     autoPullBeforeWorktree: state.autoPullBeforeWorktree,
     defaultSetupScript: state.defaultSetupScript,
     autoPullOnTicketMove: state.autoPullOnTicketMove,
+    pullBeforeConnection: state.pullBeforeConnection,
     warnBeforeQuitting: state.warnBeforeQuitting,
     breedType: state.breedType,
     vimModeEnabled: state.vimModeEnabled,
@@ -994,6 +1004,7 @@ export const useSettingsStore = create<SettingsState>()(
         autoPullBeforeWorktree: state.autoPullBeforeWorktree,
         defaultSetupScript: state.defaultSetupScript,
         autoPullOnTicketMove: state.autoPullOnTicketMove,
+        pullBeforeConnection: state.pullBeforeConnection,
         warnBeforeQuitting: state.warnBeforeQuitting,
         breedType: state.breedType,
         vimModeEnabled: state.vimModeEnabled,

@@ -7,6 +7,8 @@ import { useProjectSwitcherStore } from '@/stores/useProjectSwitcherStore'
 import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
 import { useFileSearchStore } from '@/stores/useFileSearchStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
+import { Switch } from '@/components/ui/switch'
 import { LanguageIcon } from '@/components/projects/LanguageIcon'
 import { DataProjectIcon } from '@/components/data-projects/DataProjectIcon'
 import { AgentStateDot } from '@/components/sidebar/AgentStateDot'
@@ -28,6 +30,7 @@ import {
 import {
   canConnectSwitcherProject,
   connectSwitcherProjects,
+  setSwitcherConnectionPullsFirst,
   switcherConnectionPullsFirst
 } from './connect-switcher-projects'
 import { openSwitcherProject } from './open-switcher-project'
@@ -60,13 +63,18 @@ import { useSwitcherProjects, type SwitcherItem } from './useSwitcherProjects'
 //
 // Once a project is picked, plain Enter (or a click) on a row ends the picking: the picked
 // projects and that one are connected, as the New Connection dialog would
-// (connect-switcher-projects) — each one pulled from origin (with the "auto-pull before
-// worktree" setting on), a new worktree in each, one connection over them, selected; a project
-// picked on its base branch is neither pulled nor given a worktree. Cmd+Enter ends the picking
-// too, but leaves the highlighted row out: only the picked projects are connected (it does not
-// pin while any is picked). The list is replaced by the steps while that runs; when it
-// fails the picker comes back, the projects still picked, with the reason above them. Only git
-// projects can be picked, so while any is, connection projects and databases are not listed.
+// (connect-switcher-projects) — each one pulled from origin, a new worktree in each, one
+// connection over them, selected; a project picked on its base branch is neither pulled nor
+// given a worktree. Cmd+Enter ends the picking too, but leaves the highlighted row out: only
+// the picked projects are connected (it does not pin while any is picked). The list is
+// replaced by the steps while that runs; when it fails the picker comes back, the projects
+// still picked, with the reason above them. Only git projects can be picked, so while any is,
+// connection projects and databases are not listed.
+//
+// The pull is the "Pull latest from origin" switch in the heading of the picked projects,
+// there for as long as any is picked. It is the New Connection dialog's switch (one setting,
+// `pullBeforeConnection`): on until it is switched off, in either place, and then off in both
+// until it is switched back on. The "auto-pull before worktree" setting has no say in it.
 
 type GroupId = 'pinned' | 'recent' | 'all'
 
@@ -422,6 +430,9 @@ function ProjectSwitcherPanel(): React.JSX.Element {
   const [now] = useState(() => Date.now())
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
+
+  // The "Pull latest from origin" switch, shown while any project is picked.
+  const pullFirst = useSettingsStore((s) => s.pullBeforeConnection)
 
   const searching = query.trim().length > 0
   const creating = createTasks !== null
@@ -917,11 +928,30 @@ function ProjectSwitcherPanel(): React.JSX.Element {
             >
               <div
                 role="presentation"
-                className="flex items-center gap-1.5 px-2.5 pb-1 pt-1 text-[11px] font-medium text-muted-foreground"
-                data-testid="project-switcher-group-selected"
+                className="flex items-center justify-between gap-3 px-2.5 pb-1 pt-1 text-[11px] font-medium text-muted-foreground"
               >
-                <span>New connection</span>
-                <span className="tabular-nums opacity-70">{selectedItems.length}</span>
+                <div
+                  role="presentation"
+                  className="flex items-center gap-1.5"
+                  data-testid="project-switcher-group-selected"
+                >
+                  <span>New connection</span>
+                  <span className="tabular-nums opacity-70">{selectedItems.length}</span>
+                </div>
+                <label
+                  className="flex cursor-pointer items-center gap-1.5"
+                  title="Pull each project's base branch (usually main) from origin before creating its worktree, so the connection starts up to date"
+                >
+                  <Switch
+                    size="sm"
+                    // The field keeps the focus (the panel's onMouseDown); Tab never lands here.
+                    tabIndex={-1}
+                    checked={pullFirst}
+                    onCheckedChange={setSwitcherConnectionPullsFirst}
+                    data-testid="project-switcher-auto-pull-switch"
+                  />
+                  <span>Pull latest from origin</span>
+                </label>
               </div>
               {rows.slice(0, firstResult).map((row, index) => (
                 <div key={row.item.key} role="presentation">

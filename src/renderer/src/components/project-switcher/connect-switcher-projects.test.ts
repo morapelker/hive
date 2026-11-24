@@ -1,7 +1,7 @@
 // The glue between the "Go to project" switcher and the store's quickCreateConnection, with
 // the real connection store over a stand-in for lib/connection-create.
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const toastMock = vi.hoisted(() => ({
   success: vi.fn(),
@@ -21,6 +21,7 @@ import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import {
   canConnectSwitcherProject,
   connectSwitcherProjects,
+  setSwitcherConnectionPullsFirst,
   switcherConnectionPullsFirst
 } from './connect-switcher-projects'
 
@@ -45,16 +46,45 @@ describe('canConnectSwitcherProject', () => {
 })
 
 describe('switcherConnectionPullsFirst', () => {
-  it('is the "auto-pull before worktree" setting', () => {
-    const before = useSettingsStore.getState().autoPullBeforeWorktree
-    try {
-      useSettingsStore.setState({ autoPullBeforeWorktree: true })
-      expect(switcherConnectionPullsFirst()).toBe(true)
-      useSettingsStore.setState({ autoPullBeforeWorktree: false })
-      expect(switcherConnectionPullsFirst()).toBe(false)
-    } finally {
-      useSettingsStore.setState({ autoPullBeforeWorktree: before })
-    }
+  const settings = (): { pullBeforeConnection: boolean; autoPullBeforeWorktree: boolean } => {
+    const { pullBeforeConnection, autoPullBeforeWorktree } = useSettingsStore.getState()
+    return { pullBeforeConnection, autoPullBeforeWorktree }
+  }
+  let before: ReturnType<typeof settings>
+  beforeEach(() => {
+    before = settings()
+  })
+  afterEach(() => {
+    useSettingsStore.setState(before)
+  })
+
+  it('is on until it is switched off', () => {
+    expect(switcherConnectionPullsFirst()).toBe(true)
+  })
+
+  it('is the "Pull latest from origin" switch, shared with the New Connection dialog', () => {
+    useSettingsStore.setState({ pullBeforeConnection: false })
+    expect(switcherConnectionPullsFirst()).toBe(false)
+    useSettingsStore.setState({ pullBeforeConnection: true })
+    expect(switcherConnectionPullsFirst()).toBe(true)
+  })
+
+  it('is not the "auto-pull before worktree" setting', () => {
+    useSettingsStore.setState({ pullBeforeConnection: true, autoPullBeforeWorktree: false })
+    expect(switcherConnectionPullsFirst()).toBe(true)
+    useSettingsStore.setState({ pullBeforeConnection: false, autoPullBeforeWorktree: true })
+    expect(switcherConnectionPullsFirst()).toBe(false)
+  })
+
+  it('is set, and kept, by setSwitcherConnectionPullsFirst', () => {
+    setSwitcherConnectionPullsFirst(false)
+    expect(useSettingsStore.getState().pullBeforeConnection).toBe(false)
+    expect(switcherConnectionPullsFirst()).toBe(false)
+    // The other setting is left as it was.
+    expect(useSettingsStore.getState().autoPullBeforeWorktree).toBe(before.autoPullBeforeWorktree)
+
+    setSwitcherConnectionPullsFirst(true)
+    expect(useSettingsStore.getState().pullBeforeConnection).toBe(true)
   })
 })
 
@@ -124,9 +154,7 @@ describe('connectSwitcherProjects', () => {
     })
     const onError = vi.fn()
 
-    await expect(
-      connectSwitcherProjects(PROJECTS, { autoPull: true, onError })
-    ).resolves.toBeNull()
+    await expect(connectSwitcherProjects(PROJECTS, { autoPull: true, onError })).resolves.toBeNull()
 
     expect(onError).toHaveBeenCalledWith('Failed to create worktree in "ads-api": disk full')
     expect(toastMock.error).not.toHaveBeenCalled()
@@ -139,9 +167,7 @@ describe('connectSwitcherProjects', () => {
     createConnectionFromProjects.mockRejectedValue(new Error('socket closed'))
     const onError = vi.fn()
 
-    await expect(
-      connectSwitcherProjects(PROJECTS, { autoPull: true, onError })
-    ).resolves.toBeNull()
+    await expect(connectSwitcherProjects(PROJECTS, { autoPull: true, onError })).resolves.toBeNull()
 
     expect(onError).toHaveBeenCalledWith('Failed to create connection: socket closed')
     expect(useConnectionStore.getState().selectedConnectionId).toBeNull()
