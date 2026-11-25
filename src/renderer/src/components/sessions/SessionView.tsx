@@ -3306,9 +3306,12 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
               streamingContentRef.current = content
               setStreamingContent(content)
               setIsStreaming(true)
-              restoredStreamingMessageIdRef.current = lastMsg.id.startsWith('local-')
-                ? null
-                : lastMsg.id
+              // Codex never renders the streaming overlay, so hiding the message
+              // from history there would leave it invisible.
+              restoredStreamingMessageIdRef.current =
+                isCodexSession || lastMsg.id.startsWith('local-')
+                  ? null
+                  : lastMsg.id
               setMessages((currentMessages) => {
                 const currentLast = currentMessages[currentMessages.length - 1]
                 if (

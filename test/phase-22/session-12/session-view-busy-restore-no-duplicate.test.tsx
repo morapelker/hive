@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { forwardRef } from 'react'
 
 vi.mock('@/lib/toast', () => ({
@@ -42,6 +42,7 @@ vi.mock('../../../src/renderer/src/components/sessions/VirtualizedMessageList', 
           <div
             key={message.id}
             data-testid={message.role === 'user' ? 'message-user' : 'message-assistant'}
+            data-message-id={message.id}
           >
             {message.content}
           </div>
@@ -596,9 +597,14 @@ describe('SessionView busy-session restore', () => {
     cleanup()
   })
 
-  test('does not show the last assistant reply twice when reloading a busy session', async () => {
+  function setUpBusySession(agentSdk: 'claude-code' | 'codex'): {
+    emit: (event: Record<string, unknown>) => void
+  } {
     // The turn already ended, but a background agent keeps the session busy.
     useSessionStore.setState({
+      sessionsByWorktree: new Map([
+        ['wt-1', [createSessionRecord({ mode: 'build', agent_sdk: agentSdk })]]
+      ]),
       modeBySession: new Map([['session-plan-old', 'build']]),
       pendingPlans: new Map()
     })
@@ -608,7 +614,9 @@ describe('SessionView busy-session restore', () => {
       },
       lastMessageTimeByWorktree: {}
     })
-    apiMocks.dbApi.session.get.mockResolvedValue(createSessionRecord({ mode: 'build' }))
+    apiMocks.dbApi.session.get.mockResolvedValue(
+      createSessionRecord({ mode: 'build', agent_sdk: agentSdk })
+    )
     apiMocks.opencodeApi.reconnect.mockResolvedValue({ success: true, sessionStatus: 'busy' })
     apiMocks.opencodeApi.getMessages.mockResolvedValue({
       success: true,
@@ -624,6 +632,23 @@ describe('SessionView busy-session restore', () => {
       ]
     })
 
+    const listeners: Array<(event: Record<string, unknown>) => void> = []
+    apiMocks.opencodeApi.onStream.mockImplementation(
+      (listener: (event: Record<string, unknown>) => void) => {
+        listeners.push(listener)
+        return () => {}
+      }
+    )
+    return {
+      emit: (event) => {
+        for (const listener of listeners) listener(event)
+      }
+    }
+  }
+
+  test('does not show the last assistant reply twice when reloading a busy session', async () => {
+    const stream = setUpBusySession('claude-code')
+
     render(<SessionView sessionId="session-plan-old" />)
 
     // Both the initial load and the post-reconnect reload must have run.
@@ -637,5 +662,44 @@ describe('SessionView busy-session restore', () => {
       'The background agent is running'
     )
     expect(screen.queryAllByTestId('message-assistant')).toHaveLength(0)
+
+    // When the background agent finishes, the reply moves back into the history once.
+    await act(async () => {
+      stream.emit({
+        type: 'session.status',
+        sessionId: 'session-plan-old',
+        statusPayload: { type: 'idle' }
+      })
+    })
+
+    await waitFor(() => {
+      expect(apiMocks.opencodeApi.getMessages).toHaveBeenCalledTimes(3)
+    })
+    await waitFor(() => {
+      expect(screen.queryByTestId('message-streaming')).toBeNull()
+    })
+    const assistantMessages = screen.getAllByTestId('message-assistant')
+    expect(assistantMessages).toHaveLength(1)
+    expect(assistantMessages[0]).toHaveTextContent('The background agent is running')
+    // The real transcript message, not a local stand-in rebuilt from the stream.
+    expect(assistantMessages[0]).toHaveAttribute('data-message-id', 'turn-1:assistant')
+    expect(screen.getAllByText('The background agent is running')).toHaveLength(1)
+  })
+
+  test('keeps the last reply in history for a busy Codex session', async () => {
+    setUpBusySession('codex')
+
+    render(<SessionView sessionId="session-plan-old" />)
+
+    // Codex never renders the streaming overlay, so the reply must stay in the history.
+    await waitFor(() => {
+      expect(apiMocks.opencodeApi.getMessages).toHaveBeenCalledTimes(2)
+    })
+    await waitFor(() => {
+      const assistantMessages = screen.getAllByTestId('message-assistant')
+      expect(assistantMessages).toHaveLength(1)
+      expect(assistantMessages[0]).toHaveTextContent('The background agent is running')
+    })
+    expect(screen.queryByTestId('message-streaming')).toBeNull()
   })
 })
