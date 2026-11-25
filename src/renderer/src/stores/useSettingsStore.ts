@@ -126,6 +126,11 @@ export interface CommandFilterSettings {
 export interface AppSettings {
   // General
   autoStartSession: boolean
+  /**
+   * Clicking a worktree in the sidebar that belongs to a connection opens that connection
+   * instead of the worktree (and its auto-started session tab).
+   */
+  openConnectionForConnectedWorktree: boolean
   autoPullBeforeWorktree: boolean
   /**
    * Pull a project's base branch from origin before a ticket's move to Done/Merged checks its
@@ -310,6 +315,7 @@ export interface AppSettings {
 
 const DEFAULT_SETTINGS: AppSettings = {
   autoStartSession: true,
+  openConnectionForConnectedWorktree: false,
   autoPullBeforeWorktree: true,
   autoPullOnTicketMove: true,
   warnBeforeQuitting: true,
@@ -553,6 +559,7 @@ async function loadSettingsFromDatabase(): Promise<AppSettings | null> {
 function extractSettings(state: SettingsState): AppSettings {
   return {
     autoStartSession: state.autoStartSession,
+    openConnectionForConnectedWorktree: state.openConnectionForConnectedWorktree,
     autoPullBeforeWorktree: state.autoPullBeforeWorktree,
     autoPullOnTicketMove: state.autoPullOnTicketMove,
     warnBeforeQuitting: state.warnBeforeQuitting,
@@ -975,6 +982,7 @@ export const useSettingsStore = create<SettingsState>()(
       },
       partialize: (state) => ({
         autoStartSession: state.autoStartSession,
+        openConnectionForConnectedWorktree: state.openConnectionForConnectedWorktree,
         autoPullBeforeWorktree: state.autoPullBeforeWorktree,
         autoPullOnTicketMove: state.autoPullOnTicketMove,
         warnBeforeQuitting: state.warnBeforeQuitting,

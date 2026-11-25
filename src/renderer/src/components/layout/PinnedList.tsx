@@ -121,6 +121,7 @@ import {
   renderShellCommandMenuItems,
   runShellCommandFromMenu
 } from '@/components/shell-commands/ShellCommandMenuItems'
+import { redirectWorktreeToConnection } from '@/lib/connected-worktree-redirect'
 
 type PinnedItem = { kind: 'worktree'; id: string } | { kind: 'connection'; id: string }
 type WorktreeAttachmentRow = { attachments?: string | null }
@@ -523,6 +524,10 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
   const handleClick = (): void => {
     // Replaces an open data project: its staged table edits ask before anything changes.
     leaveDataProjectThen(() => {
+      if (redirectWorktreeToConnection(worktreeId)) {
+        useWorktreeStatusStore.getState().clearWorktreeUnread(worktreeId)
+        return
+      }
       selectWorktree(worktreeId)
       selectProject(project.id)
       const expanded = useProjectStore.getState().expandedProjectIds

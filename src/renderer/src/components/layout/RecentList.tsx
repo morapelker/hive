@@ -39,6 +39,7 @@ import {
   getFlushWorktreeCardPaddingLeft,
   type AgentDotState
 } from '@/components/sidebar'
+import { redirectWorktreeToConnection } from '@/lib/connected-worktree-redirect'
 
 type RecentItem =
   | { kind: 'worktree'; id: string; timestamp: number }
@@ -162,6 +163,10 @@ function RecentWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
   const isUnread = worktreeStatus === 'unread'
 
   const handleClick = (): void => {
+    if (redirectWorktreeToConnection(worktreeId)) {
+      useWorktreeStatusStore.getState().clearWorktreeUnread(worktreeId)
+      return
+    }
     selectWorktree(worktreeId)
     selectProject(project.id)
     // Expand the parent project so it's visible in the tree below

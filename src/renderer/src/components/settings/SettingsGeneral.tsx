@@ -35,6 +35,7 @@ export function SettingsGeneral(): React.JSX.Element {
   const { setTheme } = useThemeStore()
   const {
     autoStartSession,
+    openConnectionForConnectedWorktree,
     autoPullBeforeWorktree,
     autoPullOnTicketMove,
     warnBeforeQuitting,
@@ -152,6 +153,39 @@ export function SettingsGeneral(): React.JSX.Element {
             className={cn(
               'pointer-events-none block h-4 w-4 rounded-full bg-background ring-0 transition-transform',
               !forceBoardMode && autoStartSession ? 'translate-x-4' : 'translate-x-0'
+            )}
+          />
+        </button>
+      </div>
+
+      {/* Open connection for connected worktrees */}
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <label className="text-sm font-medium">Open connection for connected worktrees</label>
+          <p className="text-xs text-muted-foreground">
+            Clicking a worktree that is part of a connection opens the connection instead of the
+            worktree and a new session tab
+          </p>
+        </div>
+        <button
+          role="switch"
+          aria-checked={openConnectionForConnectedWorktree}
+          onClick={() =>
+            updateSetting(
+              'openConnectionForConnectedWorktree',
+              !openConnectionForConnectedWorktree
+            )
+          }
+          className={cn(
+            'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors',
+            openConnectionForConnectedWorktree ? 'bg-primary' : 'bg-muted'
+          )}
+          data-testid="open-connection-for-connected-worktree-toggle"
+        >
+          <span
+            className={cn(
+              'pointer-events-none block h-4 w-4 rounded-full bg-background ring-0 transition-transform',
+              openConnectionForConnectedWorktree ? 'translate-x-4' : 'translate-x-0'
             )}
           />
         </button>

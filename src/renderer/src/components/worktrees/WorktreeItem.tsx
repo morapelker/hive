@@ -117,6 +117,7 @@ import {
   getWorktreeCardContentIndent,
   type AgentDotState
 } from '@/components/sidebar'
+import { redirectWorktreeToConnection } from '@/lib/connected-worktree-redirect'
 
 // Orca indent ladder for a worktree card directly under a project group header
 // (indentation.ts: grouped depth 0 → content indent 20px, status-lane pullback
@@ -456,9 +457,10 @@ export const WorktreeItem = memo(function WorktreeItem({
       toggleConnectionModeWorktree(worktree.id)
       return
     }
+    useWorktreeStatusStore.getState().clearWorktreeUnread(worktree.id)
+    if (redirectWorktreeToConnection(worktree.id)) return
     selectWorktree(worktree.id)
     selectProject(worktree.project_id)
-    useWorktreeStatusStore.getState().clearWorktreeUnread(worktree.id)
   }
 
   const handleOpenInTerminal = useCallback(async (): Promise<void> => {
