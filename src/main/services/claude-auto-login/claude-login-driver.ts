@@ -3,7 +3,7 @@
  * URL to the redirect back to the app's loopback callback:
  *
  *   open Chrome → type the email, submit → ask the code server for the code
- *   that email triggers → type it, submit → click "Authorize" → redirect
+ *   that email triggers → type it, submit → wait 2 s, click "Authorize" → redirect
  *
  * The loopback server in login-service.ts stays the single source of truth for
  * success: this driver never touches the OAuth code. It only moves the page
@@ -57,6 +57,8 @@ const EMAIL_SUBMIT_TIMEOUT_MS = 20_000
 const CODE_SUBMIT_TIMEOUT_MS = 20_000
 /** The Authorize button arms ~700 ms after load; allow for slow data loading. */
 const CONSENT_TIMEOUT_MS = 30_000
+/** Once Authorize is clickable, hold off this long before pressing it. */
+const AUTHORIZE_CLICK_DELAY_MS = 2_000
 /** After clicking Authorize: the redirect to the loopback callback. */
 const REDIRECT_TIMEOUT_MS = 20_000
 /** Give the probe (login_methods) time to flip the primary button to SSO before we submit. */
@@ -332,9 +334,19 @@ class DriverSession {
   private async handleConsent(): Promise<void> {
     this.stage('authorizing')
     const deadline = Date.now() + CONSENT_TIMEOUT_MS
+    await this.waitForAuthorizeArmed(deadline)
+    await sleep(AUTHORIZE_CLICK_DELAY_MS)
+    // The page can move on during the pause (a re-render, the user clicking
+    // Authorize themselves): only press a button that is still there and armed.
+    await this.waitForAuthorizeArmed(deadline)
+    await this.click({ textPattern: /^authorize$/i })
+  }
+
+  /** Resolves once the consent page shows a clickable Authorize button. */
+  private async waitForAuthorizeArmed(deadline: number): Promise<void> {
     for (;;) {
       const probe = await this.waitForKind(['consent'], Math.max(1_000, deadline - Date.now()))
-      if (probe.kind === 'consent' && probe.enabled) break
+      if (probe.kind === 'consent' && probe.enabled) return
       if (probe.detail === 'window too small') {
         throw new Error(
           'claude.ai needs a larger window to show Authorize — resize the Chrome window'
@@ -343,7 +355,6 @@ class DriverSession {
       if (Date.now() >= deadline) throw new Error('The Authorize button never became available')
       await sleep(PROBE_INTERVAL_MS)
     }
-    await this.click({ textPattern: /^authorize$/i })
   }
 
   private async waitForRedirect(): Promise<void> {
