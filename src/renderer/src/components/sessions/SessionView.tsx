@@ -993,6 +993,10 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
   // Streaming dedup refs
   const finalizedMessageIdsRef = useRef<Set<string>>(new Set())
   const hasFinalizedCurrentResponseRef = useRef(false)
+  // ID of the persisted assistant message that was moved into the streaming
+  // overlay when mounting on a busy session. While set, transcript reloads keep
+  // that message out of `messages` so it is not rendered twice.
+  const restoredStreamingMessageIdRef = useRef<string | null>(null)
   const sessionModelHydratedRef = useRef(false)
   const codexRefreshRafRef = useRef<number | null>(null)
   const codexRefreshInFlightRef = useRef(false)
@@ -1540,6 +1544,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
       rafRef.current = null
     }
     pendingTextCharsRef.current = 0
+    restoredStreamingMessageIdRef.current = null
     streamingPartsRef.current = []
     setStreamingParts([])
     streamingContentRef.current = ''
@@ -1729,8 +1734,15 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
         }
       }
 
+      // A message restored into the streaming overlay is already on screen.
+      // Keep it out of the history until the response is finalized.
+      const restoredStreamingMessageId = restoredStreamingMessageIdRef.current
+      const messagesForHistory = restoredStreamingMessageId
+        ? loadedMessages.filter((message) => message.id !== restoredStreamingMessageId)
+        : loadedMessages
+
       if (isCodexSession && loadedMessages.length > 0) {
-        setMessages(loadedMessages)
+        setMessages(messagesForHistory)
       } else if (loadedFromOpenCode) {
         // Guard: don't replace existing messages with an empty transcript.
         // This prevents a race where getMessages returns before the SDK has
@@ -1744,7 +1756,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
             ? currentMessages
             : useCache
               ? cachedMessages
-              : loadedMessages
+              : messagesForHistory
           return nextMessages
         })
       } else {
@@ -1752,7 +1764,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
           const loadedIds = new Set(loadedMessages.map((m) => m.id))
           const localOnly = currentMessages.filter((m) => !loadedIds.has(m.id))
           const nextMessages =
-            localOnly.length > 0 ? [...loadedMessages, ...localOnly] : loadedMessages
+            localOnly.length > 0 ? [...messagesForHistory, ...localOnly] : messagesForHistory
           return nextMessages
         })
       }
@@ -1772,6 +1784,10 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
         resetStreamingState()
         return
       }
+
+      // The overlay is about to be cleared, so the final reload must put the
+      // restored message back into the history.
+      restoredStreamingMessageIdRef.current = null
 
       let streamedPartsSnapshot: StreamingPart[] = []
       try {
@@ -1875,6 +1891,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
     // full remount on session change, so this always starts fresh.
     streamingPartsRef.current = []
     streamingContentRef.current = ''
+    restoredStreamingMessageIdRef.current = null
     childToSubtaskIndexRef.current = new Map()
     codexStreamingMessageIdRef.current = null
     seenCodexEventIdsRef.current = new Set()
@@ -3289,6 +3306,9 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
               streamingContentRef.current = content
               setStreamingContent(content)
               setIsStreaming(true)
+              restoredStreamingMessageIdRef.current = lastMsg.id.startsWith('local-')
+                ? null
+                : lastMsg.id
               setMessages((currentMessages) => {
                 const currentLast = currentMessages[currentMessages.length - 1]
                 if (
