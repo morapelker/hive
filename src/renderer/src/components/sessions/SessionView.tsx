@@ -118,6 +118,7 @@ import {
 } from '@/lib/session-follow-up-dispatch'
 import { shouldPreserveBlockingSessionStatus } from '@/lib/session-status-guards'
 import { extractSessionErrorMessage } from '@/lib/session-error-message'
+import { upsertChildToolPart } from '@/lib/child-tool-stream'
 import {
   recordHivePromptIdleForSession,
   recordHiveQuestionAnswerTelemetry,
@@ -2494,59 +2495,16 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
               })
               scheduleFlush()
             } else if (childPart?.type === 'tool') {
-              const state = childPart.state || childPart
-              const toolId =
-                state.toolCallId || childPart.callID || childPart.id || `tool-${Date.now()}`
               updateStreamingPartsRef((parts) => {
                 const updated = [...parts]
                 const subtask = updated[subtaskIdx]
                 if (subtask?.type === 'subtask' && subtask.subtask) {
-                  const existingIdx = subtask.subtask.parts.findIndex(
-                    (p) => p.type === 'tool_use' && p.toolUse?.id === toolId
-                  )
-                  const existing = subtask.subtask.parts[existingIdx]
-                  if (existing && existing.type === 'tool_use' && existing.toolUse) {
-                    // Update existing tool. Replace the object rather than mutating it:
-                    // ToolCard is memoized and would otherwise keep the stale tool.
-                    const statusMap: Record<string, string> = {
-                      running: 'running',
-                      completed: 'success',
-                      error: 'error'
+                  updated[subtaskIdx] = {
+                    ...subtask,
+                    subtask: {
+                      ...subtask.subtask,
+                      parts: upsertChildToolPart(subtask.subtask.parts, childPart)
                     }
-                    const nextParts = [...subtask.subtask.parts]
-                    nextParts[existingIdx] = {
-                      ...existing,
-                      toolUse: {
-                        ...existing.toolUse,
-                        // A pending tool arrives without input; fill it in once known
-                        ...(state.input ? { input: state.input } : {}),
-                        status: (statusMap[state.status] || 'running') as
-                          | 'pending'
-                          | 'running'
-                          | 'success'
-                          | 'error',
-                        ...(state.time?.end ? { endTime: state.time.end } : {}),
-                        ...(state.status === 'completed' ? { output: state.output } : {}),
-                        ...(state.status === 'error' ? { error: state.error } : {})
-                      }
-                    }
-                    subtask.subtask.parts = nextParts
-                  } else {
-                    // Add new tool
-                    subtask.subtask.parts = [
-                      ...subtask.subtask.parts,
-                      {
-                        type: 'tool_use',
-                        toolUse: {
-                          id: toolId,
-                          name: childPart.tool || state.name || 'unknown',
-                          // Pending tools have no input yet: views read fields off it
-                          input: state.input ?? {},
-                          status: 'running',
-                          startTime: state.time?.start || Date.now()
-                        }
-                      }
-                    ]
                   }
                 }
                 return updated
