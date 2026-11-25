@@ -442,6 +442,39 @@ describe('RecentConnectionsDialog keyboard flow', () => {
     expect(screen.getByTestId('recent-connections-selected-chip-proj-a')).toBeInTheDocument()
   })
 
+  it('removes the most recently picked project, not the alphabetically last one', async () => {
+    await renderDialog()
+
+    const projectFilter = screen.getByTestId('recent-connections-project-filter')
+    await userEvent.click(projectFilter)
+    await userEvent.type(projectFilter, 'gamma{Enter}alpha{Enter}')
+
+    await userEvent.keyboard('{Backspace}')
+    expect(screen.queryByTestId('recent-connections-selected-chip-proj-a')).not.toBeInTheDocument()
+    expect(screen.getByTestId('recent-connections-selected-chip-proj-c')).toBeInTheDocument()
+  })
+
+  it('selects the first match when results arrive after the query was typed', async () => {
+    const quickCreateConnection = vi.fn().mockResolvedValue('conn-1')
+    useConnectionStore.setState({ quickCreateConnection } as never)
+    let resolve!: (value: { success: boolean; entries: RecentConnectionEntry[] }) => void
+    vi.mocked(connectionApi.getRecentConnections).mockReturnValue(
+      new Promise((r) => {
+        resolve = r
+      })
+    )
+    render(<RecentConnectionsDialog open onOpenChange={() => {}} />)
+
+    await userEvent.type(screen.getByTestId('recent-connections-filter'), 'gamma')
+    resolve({ success: true, entries })
+    await waitFor(() =>
+      expect(screen.getByTestId('recent-connections-create-button')).toBeEnabled()
+    )
+
+    await userEvent.keyboard('{Enter}')
+    expect(quickCreateConnection).toHaveBeenCalledWith([alpha, gamma])
+  })
+
   it('moves the project cursor with the arrow keys', async () => {
     await renderDialog()
 

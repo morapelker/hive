@@ -232,12 +232,17 @@ export function RecentConnectionsDialog({
   }, [selectionKey, selectionRowId])
 
   // Typing in the connection filter selects the best (first) match, so Enter creates it
-  // without reaching for the mouse
+  // without reaching for the mouse. A query typed before the list loads (or one whose
+  // selection got filtered out) selects the first match once there is one; a row picked
+  // with the arrow keys afterwards stays selected.
   const firstRowId = rowIds[0] ?? null
+  const lastFilterRef = useRef(filter)
   useEffect(() => {
-    if (filter.trim()) setSelectedId(firstRowId)
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only on filter edits
-  }, [filter])
+    const filterChanged = lastFilterRef.current !== filter
+    lastFilterRef.current = filter
+    if (!filter.trim()) return
+    if (filterChanged || selectedId === null) setSelectedId(firstRowId)
+  }, [filter, firstRowId, selectedId])
 
   // Keep the project cursor on a visible row as the project filter narrows
   useEffect(() => {
@@ -331,7 +336,8 @@ export function RecentConnectionsDialog({
       setProjectFilter('')
     } else if (e.key === 'Backspace' && !projectFilter && selectedProjects.length > 0) {
       e.preventDefault()
-      toggleProject(selectedProjects[selectedProjects.length - 1].id)
+      // The Set keeps pick order (selectedProjects is alphabetical)
+      toggleProject(Array.from(selectedProjectIds).at(-1)!)
     }
   }
 
