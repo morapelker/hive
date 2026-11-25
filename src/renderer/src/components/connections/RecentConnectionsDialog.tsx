@@ -80,6 +80,8 @@ export function RecentConnectionsDialog({
     setEditingNoteId(null)
     setConnectionName('')
     setHighlightedProjectIndex(0)
+    // Closing unmounts the inputs without a blur, so the flag would survive to the next open
+    setProjectFilterFocused(false)
 
     connectionApi
       .getRecentConnections()

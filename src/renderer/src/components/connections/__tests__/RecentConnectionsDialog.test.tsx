@@ -475,6 +475,18 @@ describe('RecentConnectionsDialog keyboard flow', () => {
     expect(quickCreateConnection).toHaveBeenCalledWith([alpha, gamma])
   })
 
+  it('does not show a project highlight after reopening from the project filter', async () => {
+    vi.mocked(connectionApi.getRecentConnections).mockResolvedValue({ success: true, entries })
+    const { rerender } = render(<RecentConnectionsDialog open onOpenChange={() => {}} />)
+    await userEvent.click(await screen.findByTestId('recent-connections-project-filter'))
+    expect(document.querySelector('[data-highlighted="true"]')).not.toBeNull()
+
+    rerender(<RecentConnectionsDialog open={false} onOpenChange={() => {}} />)
+    rerender(<RecentConnectionsDialog open onOpenChange={() => {}} />)
+    await screen.findByTestId('recent-connections-filter')
+    expect(document.querySelector('[data-highlighted="true"]')).toBeNull()
+  })
+
   it('moves the project cursor with the arrow keys', async () => {
     await renderDialog()
 
