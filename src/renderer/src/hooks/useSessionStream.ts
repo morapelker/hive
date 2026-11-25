@@ -348,6 +348,8 @@ export function useSessionStream({
                       type: 'tool_use' as const,
                       toolUse: {
                         ...existingTool,
+                        // A pending tool arrives without input; fill it in once known
+                        ...(state.input ? { input: state.input } : {}),
                         status: (statusMap[state.status] || 'running') as
                           | 'pending'
                           | 'running'
@@ -368,7 +370,8 @@ export function useSessionStream({
                       toolUse: {
                         id: toolId,
                         name: childPart.tool || state.name || 'unknown',
-                        input: state.input,
+                        // Pending tools have no input yet: views read fields off it
+                        input: state.input ?? {},
                         status: 'running' as const,
                         startTime: state.time?.start || Date.now()
                       }

@@ -2501,24 +2501,36 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
                 const updated = [...parts]
                 const subtask = updated[subtaskIdx]
                 if (subtask?.type === 'subtask' && subtask.subtask) {
-                  const existing = subtask.subtask.parts.find(
+                  const existingIdx = subtask.subtask.parts.findIndex(
                     (p) => p.type === 'tool_use' && p.toolUse?.id === toolId
                   )
+                  const existing = subtask.subtask.parts[existingIdx]
                   if (existing && existing.type === 'tool_use' && existing.toolUse) {
-                    // Update existing tool
+                    // Update existing tool. Replace the object rather than mutating it:
+                    // ToolCard is memoized and would otherwise keep the stale tool.
                     const statusMap: Record<string, string> = {
                       running: 'running',
                       completed: 'success',
                       error: 'error'
                     }
-                    existing.toolUse.status = (statusMap[state.status] || 'running') as
-                      | 'pending'
-                      | 'running'
-                      | 'success'
-                      | 'error'
-                    if (state.time?.end) existing.toolUse.endTime = state.time.end
-                    if (state.status === 'completed') existing.toolUse.output = state.output
-                    if (state.status === 'error') existing.toolUse.error = state.error
+                    const nextParts = [...subtask.subtask.parts]
+                    nextParts[existingIdx] = {
+                      ...existing,
+                      toolUse: {
+                        ...existing.toolUse,
+                        // A pending tool arrives without input; fill it in once known
+                        ...(state.input ? { input: state.input } : {}),
+                        status: (statusMap[state.status] || 'running') as
+                          | 'pending'
+                          | 'running'
+                          | 'success'
+                          | 'error',
+                        ...(state.time?.end ? { endTime: state.time.end } : {}),
+                        ...(state.status === 'completed' ? { output: state.output } : {}),
+                        ...(state.status === 'error' ? { error: state.error } : {})
+                      }
+                    }
+                    subtask.subtask.parts = nextParts
                   } else {
                     // Add new tool
                     subtask.subtask.parts = [
@@ -2528,7 +2540,8 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
                         toolUse: {
                           id: toolId,
                           name: childPart.tool || state.name || 'unknown',
-                          input: state.input,
+                          // Pending tools have no input yet: views read fields off it
+                          input: state.input ?? {},
                           status: 'running',
                           startTime: state.time?.start || Date.now()
                         }
