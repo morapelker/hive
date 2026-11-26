@@ -51,6 +51,12 @@ export function RecentConnectionsDialog({
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set())
   // Optional display name for the new connection (blank keeps the derived "A + B" name)
   const [connectionName, setConnectionName] = useState('')
+  // Keyboard cursor in the project panel (index into filteredProjects), shown while the
+  // project filter input has focus
+  const [highlightedProjectIndex, setHighlightedProjectIndex] = useState(0)
+  const [projectFilterFocused, setProjectFilterFocused] = useState(false)
+  const projectListRef = useRef<HTMLDivElement>(null)
+  const connectionListRef = useRef<HTMLDivElement>(null)
 
   // Inline note edit state
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null)
@@ -73,6 +79,9 @@ export function RecentConnectionsDialog({
     setSelectedProjectIds(new Set())
     setEditingNoteId(null)
     setConnectionName('')
+    setHighlightedProjectIndex(0)
+    // Closing unmounts the inputs without a blur, so the flag would survive to the next open
+    setProjectFilterFocused(false)
 
     connectionApi
       .getRecentConnections()
@@ -189,6 +198,15 @@ export function RecentConnectionsDialog({
     ]
   }, [filteredEntries, exactSelectionEntry])
 
+  // Row ids in display order -- what ArrowUp/ArrowDown in the connection filter walk through
+  const rowIds = useMemo(
+    () => [
+      ...(showSelectionRow ? [SELECTED_COMBO_ID] : []),
+      ...displayEntries.map((entry) => entry.id)
+    ],
+    [showSelectionRow, displayEntries]
+  )
+
   // The Create handler resolves against `entries`, so a selected row hidden by
   // the filter would still be creatable invisibly -- drop the selection instead.
   useEffect(() => {
@@ -215,6 +233,37 @@ export function RecentConnectionsDialog({
     if (selectionRowId) setSelectedId(selectionRowId)
   }, [selectionKey, selectionRowId])
 
+  // Typing in the connection filter selects the best (first) match, so Enter creates it
+  // without reaching for the mouse. A query typed before the list loads (or one whose
+  // selection got filtered out) selects the first match once there is one; a row picked
+  // with the arrow keys afterwards stays selected.
+  const firstRowId = rowIds[0] ?? null
+  const lastFilterRef = useRef(filter)
+  useEffect(() => {
+    const filterChanged = lastFilterRef.current !== filter
+    lastFilterRef.current = filter
+    if (!filter.trim()) return
+    if (filterChanged || selectedId === null) setSelectedId(firstRowId)
+  }, [filter, firstRowId, selectedId])
+
+  // Keep the project cursor on a visible row as the project filter narrows
+  useEffect(() => {
+    setHighlightedProjectIndex(0)
+  }, [projectFilter])
+
+  // Keep the keyboard cursors scrolled into view
+  useEffect(() => {
+    if (!projectFilterFocused) return
+    projectListRef.current
+      ?.querySelector('[data-highlighted="true"]')
+      ?.scrollIntoView?.({ block: 'nearest' })
+  }, [highlightedProjectIndex, projectFilterFocused])
+  useEffect(() => {
+    connectionListRef.current
+      ?.querySelector('[data-selected="true"]')
+      ?.scrollIntoView?.({ block: 'nearest' })
+  }, [selectedId])
+
   // Focus the note input when it appears (deferred to run after the context menu closes)
   useEffect(() => {
     if (!editingNoteId) return
@@ -233,6 +282,7 @@ export function RecentConnectionsDialog({
   }, [])
 
   const handleCreate = useCallback(async () => {
+    if (isCreating) return
     const projects =
       selectedId === SELECTED_COMBO_ID
         ? selectedProjects
@@ -251,7 +301,63 @@ export function RecentConnectionsDialog({
     } finally {
       setIsCreating(false)
     }
-  }, [entries, selectedId, selectedProjects, connectionName, quickCreateConnection, onOpenChange])
+  }, [
+    isCreating,
+    entries,
+    selectedId,
+    selectedProjects,
+    connectionName,
+    quickCreateConnection,
+    onOpenChange
+  ])
+
+  const isModEnter = (e: React.KeyboardEvent): boolean =>
+    e.key === 'Enter' && (e.metaKey || e.ctrlKey)
+
+  // Project filter: arrows move the cursor, Enter toggles the project under it and clears
+  // the query (ready for the next project), Backspace on an empty query drops the last pick.
+  // Enter on an empty query creates, so "type, Enter, type, Enter, Enter" makes a connection.
+  const handleProjectFilterKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
+    if (e.nativeEvent.isComposing || isModEnter(e)) return
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      if (filteredProjects.length === 0) return
+      const delta = e.key === 'ArrowDown' ? 1 : -1
+      setHighlightedProjectIndex((i) =>
+        Math.min(Math.max(i + delta, 0), filteredProjects.length - 1)
+      )
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      if (!projectFilter.trim() && selectedId) {
+        void handleCreate()
+        return
+      }
+      const project = filteredProjects[highlightedProjectIndex]
+      if (!project) return
+      toggleProject(project.id)
+      setProjectFilter('')
+    } else if (e.key === 'Backspace' && !projectFilter && selectedProjects.length > 0) {
+      e.preventDefault()
+      // The Set keeps pick order (selectedProjects is alphabetical)
+      toggleProject(Array.from(selectedProjectIds).at(-1)!)
+    }
+  }
+
+  // Connection filter: arrows move the row selection, Enter creates the selected row
+  const handleConnectionFilterKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
+    if (e.nativeEvent.isComposing || isModEnter(e)) return
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      if (rowIds.length === 0) return
+      const current = selectedId ? rowIds.indexOf(selectedId) : -1
+      const next =
+        e.key === 'ArrowDown' ? Math.min(current + 1, rowIds.length - 1) : Math.max(current - 1, 0)
+      setSelectedId(rowIds[next])
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      void handleCreate()
+    }
+  }
 
   const persistNote = useCallback(async (entryId: string, raw: string | null) => {
     const normalized = raw && raw.trim() ? raw.trim() : null
@@ -348,7 +454,18 @@ export function RecentConnectionsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-3xl" data-testid="recent-connections-dialog">
+      <DialogContent
+        className="sm:max-w-3xl"
+        data-testid="recent-connections-dialog"
+        // Tab / Shift+Tab move focus here instead of toggling the session's mode
+        data-tab-navigates=""
+        onKeyDown={(e) => {
+          if (isModEnter(e)) {
+            e.preventDefault()
+            void handleCreate()
+          }
+        }}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Link className="h-4 w-4" />
@@ -357,6 +474,12 @@ export function RecentConnectionsDialog({
           <DialogDescription>
             Recreate a connection with fresh worktrees in each project.
           </DialogDescription>
+          <p
+            className="text-xs text-muted-foreground"
+            data-testid="recent-connections-keyboard-hint"
+          >
+            ↑↓ select · Enter create · Shift+Tab to pick projects (Enter adds, Backspace removes)
+          </p>
         </DialogHeader>
 
         {selectedProjects.length > 0 && (
@@ -368,6 +491,7 @@ export function RecentConnectionsDialog({
               <button
                 key={project.id}
                 onClick={() => toggleProject(project.id)}
+                tabIndex={-1}
                 className={cn(
                   'inline-flex items-center gap-1 rounded-full border border-border',
                   'bg-accent/40 px-2 py-0.5 text-xs hover:bg-accent transition-colors'
@@ -381,6 +505,7 @@ export function RecentConnectionsDialog({
             ))}
             <button
               onClick={() => setSelectedProjectIds(new Set())}
+              tabIndex={-1}
               className="text-xs text-muted-foreground hover:text-foreground transition-colors px-1"
               data-testid="recent-connections-clear-selection"
             >
@@ -400,11 +525,15 @@ export function RecentConnectionsDialog({
                 placeholder="Filter projects..."
                 value={projectFilter}
                 onChange={(e) => setProjectFilter(e.target.value)}
+                onKeyDown={handleProjectFilterKeyDown}
+                onFocus={() => setProjectFilterFocused(true)}
+                onBlur={() => setProjectFilterFocused(false)}
                 className="pl-9"
                 data-testid="recent-connections-project-filter"
               />
             </div>
             <div
+              ref={projectListRef}
               className="h-[340px] overflow-y-auto border rounded-md"
               data-testid="recent-connections-project-list"
             >
@@ -418,19 +547,24 @@ export function RecentConnectionsDialog({
                 </div>
               ) : (
                 <div className="py-1">
-                  {filteredProjects.map((project) => (
+                  {filteredProjects.map((project, index) => (
                     <label
                       key={project.id}
                       className={cn(
                         'flex items-center gap-2.5 w-full px-3 py-1.5 text-sm cursor-pointer',
                         'hover:bg-accent/50 transition-colors',
-                        selectedProjectIds.has(project.id) && 'bg-accent/30'
+                        selectedProjectIds.has(project.id) && 'bg-accent/30',
+                        projectFilterFocused &&
+                          index === highlightedProjectIndex &&
+                          'bg-accent ring-1 ring-inset ring-ring/50'
                       )}
+                      data-highlighted={projectFilterFocused && index === highlightedProjectIndex}
                       data-testid={`recent-connections-project-option-${project.id}`}
                     >
                       <Checkbox
                         checked={selectedProjectIds.has(project.id)}
                         onCheckedChange={() => toggleProject(project.id)}
+                        tabIndex={-1}
                         data-testid={`recent-connections-project-checkbox-${project.id}`}
                       />
                       <span className="truncate">{project.name}</span>
@@ -449,13 +583,14 @@ export function RecentConnectionsDialog({
                 placeholder="Filter by project or note..."
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
+                onKeyDown={handleConnectionFilterKeyDown}
                 className="pl-9"
                 autoFocus
                 data-testid="recent-connections-filter"
               />
             </div>
 
-            <div className="h-[340px] overflow-y-auto border rounded-md">
+            <div ref={connectionListRef} className="h-[340px] overflow-y-auto border rounded-md">
               {error ? (
                 <div
                   className="px-4 py-8 text-center text-sm text-destructive"
@@ -494,6 +629,9 @@ export function RecentConnectionsDialog({
                         selectedId === SELECTED_COMBO_ID && 'bg-accent'
                       )}
                       onClick={() => setSelectedId(SELECTED_COMBO_ID)}
+                      onDoubleClick={() => void handleCreate()}
+                      tabIndex={-1}
+                      data-selected={selectedId === SELECTED_COMBO_ID}
                       data-testid="recent-connection-row-selected-combo"
                     >
                       <span className="truncate">
@@ -542,6 +680,9 @@ export function RecentConnectionsDialog({
                                   : 'bg-accent/40 hover:bg-accent/60')
                             )}
                             onClick={() => setSelectedId(entry.id)}
+                            onDoubleClick={() => void handleCreate()}
+                            tabIndex={-1}
+                            data-selected={selectedId === entry.id}
                             data-testid={`recent-connection-row-${entry.id}`}
                           >
                             <span className="truncate">
@@ -588,7 +729,7 @@ export function RecentConnectionsDialog({
             value={connectionName}
             onChange={(e) => setConnectionName(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && selectedId && !isCreating) {
+              if (e.key === 'Enter' && !isModEnter(e) && selectedId && !isCreating) {
                 e.preventDefault()
                 void handleCreate()
               }
