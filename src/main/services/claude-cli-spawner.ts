@@ -78,8 +78,8 @@ export type ClaudeCliRenderer = 'fullscreen' | 'inherit'
 /**
  * The environment that puts Claude Code in its fullscreen renderer (alternate screen, repaint
  * in place) instead of the classic one, which writes the whole conversation into scrollback
- * again on every terminal resize (claude-code issue 46834). A paired Mac resizing the session
- * depends on the clean repaint, so the app always asks for fullscreen.
+ * again on every terminal resize (claude-code issue 46834). The app always asks for
+ * fullscreen.
  *
  * `CLAUDE_CODE_NO_FLICKER=1` wins over the `tui` setting the user saved (`/tui default`), in
  * any settings file, without that file being edited. `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN`

@@ -354,7 +354,7 @@ export const useConnectionStore = create<ConnectionState>()(
 
       // The New Connection dialog's flow — a fresh worktree per project (or, for a `useBase`
       // project, its base branch as it is), then one connection — lives in
-      // lib/connection-create so the agent and the phone create connections the same way. This
+      // lib/connection-create so every caller creates connections the same way. This
       // action adds the dialog's UI: select the new connection and toast.
       quickCreateConnection: async (
         projects: { id: string; path: string; name: string; useBase?: boolean }[],

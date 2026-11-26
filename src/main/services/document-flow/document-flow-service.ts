@@ -988,8 +988,8 @@ export class DocumentFlowService {
     projectId: string
     documentPath: string
     /**
-     * `documentPath` is a download kept under a name that is not the document's (a Tedooo Sync
-     * task's file in the attachment store): the run gets a copy in the project directory under
+     * `documentPath` is a download kept under a name that is not the document's (a file in the
+     * attachment store): the run gets a copy in the project directory under
      * this name instead, and the download is left to whoever made it.
      */
     documentName?: string | null

@@ -267,7 +267,7 @@ describe('createRun', () => {
   it('keeps a named download as a copy in the project directory, under that name', async () => {
     const projectPath = harness.projects.get(TEST_PROJECT_ID)!.path
     mkdirSync(projectPath, { recursive: true })
-    // A Tedooo Sync task's file as the attachment store holds it: a random name.
+    // A downloaded file as the attachment store holds it: a random name.
     const downloadPath = join(harness.scratch, '6f1c2a9e.md')
     writeFileSync(downloadPath, SPEC)
     harness.replies.push(replyFor())

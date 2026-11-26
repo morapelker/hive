@@ -44,7 +44,7 @@ export const documentFlowApi = {
    * Pre-process the document and start extracting tickets in the background. Resolves as soon
    * as the run row exists (`status: 'extracting'`); the result arrives through `onUpdated`.
    * `notes` tell the extraction model which tickets to make and how. With `documentName`, the
-   * file at `documentPath` is a download kept under another name (a Tedooo Sync task's file):
+   * file at `documentPath` is a download kept under another name (a file in the attachment store):
    * the run gets a copy in the project directory under that name, and the download stays the
    * caller's to delete.
    */

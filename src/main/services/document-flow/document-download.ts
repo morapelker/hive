@@ -5,8 +5,8 @@ import { DOCUMENT_MAX_BYTES, DocumentFileError, assertDocumentFile } from './doc
 // A document given as a link. It is downloaded once, into the project directory, before the run
 // is created; from there on the run reads the saved file like any picked document.
 //
-// A document somebody else downloaded (a Tedooo Sync task's file, which lands in the attachment
-// store under a random name) is saved the same way, under the name it has where it came from:
+// A document somebody else downloaded (a file that sits in the attachment store under a random
+// name) is saved the same way, under the name it has where it came from:
 // saveDocumentCopy.
 
 export const DOCUMENT_DOWNLOAD_TIMEOUT_MS = 60_000

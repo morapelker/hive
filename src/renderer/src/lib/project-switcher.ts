@@ -220,7 +220,7 @@ export function matchText(query: string, text: string): TextMatch | null {
 /**
  * The kinds of match the ranking tells apart, best first. Within a kind the more recently
  * opened project comes first, so the kinds are few and broad: text that starts the name and
- * text that starts a later word of it are the same kind ("pa" finds "tedooo-pa", opened today,
+ * text that starts a later word of it are the same kind ("pa" finds "studio-pa", opened today,
  * above "paste-typer", opened last month).
  */
 export const MATCH_KIND = {

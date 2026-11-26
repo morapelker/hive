@@ -124,15 +124,15 @@ describe('rankSwitcherProjects', () => {
   })
 
   it('lets recency decide between the start of the name and the start of a later word', () => {
-    // "pa" starts "paste-typer" and only a later word of "tedooo-pa", which was opened last.
+    // "pa" starts "paste-typer" and only a later word of "studio-pa", which was opened last.
     const projects = [
       project('paste-typer', 100),
       project('pa-tools', 50),
-      project('tedooo-pa', 900),
+      project('studio-pa', 900),
       project('checkoutPages', 400)
     ]
     expect(rankedNames(projects, 'pa')).toEqual([
-      'tedooo-pa',
+      'studio-pa',
       'checkoutPages',
       'paste-typer',
       'pa-tools'
