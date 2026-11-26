@@ -25,6 +25,7 @@ import {
   formatOpenedAge,
   groupSwitcherProjects,
   rankSwitcherProjects,
+  switcherKey,
   type SwitcherAgentState
 } from '@/lib/project-switcher'
 import {
@@ -579,6 +580,33 @@ function ProjectSwitcherPanel(): React.JSX.Element {
     },
     [close]
   )
+
+  // A `hive://connection/new` link: the projects are picked and connected as if Shift+Enter /
+  // Cmd+Shift+Enter had picked them here and Enter had been pressed, steps and errors included.
+  const pendingConnect = useProjectSwitcherStore((s) => s.pendingConnect)
+  useEffect(() => {
+    if (!pendingConnect || items.length === 0) return
+    const request = useProjectSwitcherStore.getState().takePendingConnect()
+    if (!request) return
+    if (createTasks !== null) {
+      toast.error('A connection is already being created')
+      return
+    }
+    const byKey = new Map(items.map((item) => [item.key, item]))
+    const members: SwitcherItem[] = []
+    const modes = new Map<string, PickMode>()
+    for (const { projectId, useBase } of request.members) {
+      const item = byKey.get(switcherKey('git', projectId))
+      if (!item || !canConnectSwitcherProject(item)) {
+        toast.error('Cannot create the connection: a project was not found')
+        return
+      }
+      members.push(item)
+      modes.set(item.key, useBase ? 'base' : 'worktree')
+    }
+    if (request.pull !== undefined) setSwitcherConnectionPullsFirst(request.pull)
+    connect(members, modes)
+  }, [pendingConnect, items, createTasks, connect])
 
   // Read through a ref so the window listener is attached once per open.
   const latest = useRef({

@@ -7,8 +7,22 @@ import { create } from 'zustand'
 // Closing puts the keyboard focus back where it was when the switcher opened, caret included,
 // unless the element is gone by then (the main pane changed).
 
+/**
+ * Projects to connect as soon as the switcher shows them, as if they had been picked there
+ * and Enter pressed (a `hive://connection/new` link). The panel takes it and clears it.
+ */
+export interface SwitcherConnectRequest {
+  members: { projectId: string; useBase: boolean }[]
+  /** Sets the "Pull latest from origin" switch first; undefined leaves it as it is. */
+  pull?: boolean
+}
+
 interface ProjectSwitcherState {
   isOpen: boolean
+  pendingConnect: SwitcherConnectRequest | null
+  /** Opens the switcher (or uses the open one) and connects the projects in it. */
+  openAndConnect: (request: SwitcherConnectRequest) => void
+  takePendingConnect: () => SwitcherConnectRequest | null
   open: () => void
   /** `restoreFocus: false` when something else takes the focus (another overlay opening). */
   close: (options?: { restoreFocus?: boolean }) => void
@@ -46,6 +60,18 @@ function restoreFocus(snapshot: FocusSnapshot | null): void {
 
 export const useProjectSwitcherStore = create<ProjectSwitcherState>()((set, get) => ({
   isOpen: false,
+  pendingConnect: null,
+
+  openAndConnect: (request) => {
+    set({ pendingConnect: request })
+    get().open()
+  },
+
+  takePendingConnect: () => {
+    const request = get().pendingConnect
+    if (request) set({ pendingConnect: null })
+    return request
+  },
 
   open: () => {
     if (get().isOpen) return
@@ -55,7 +81,7 @@ export const useProjectSwitcherStore = create<ProjectSwitcherState>()((set, get)
 
   close: (options) => {
     if (!get().isOpen) return
-    set({ isOpen: false })
+    set({ isOpen: false, pendingConnect: null })
     const snapshot = focusBeforeOpen
     focusBeforeOpen = null
     if (options?.restoreFocus !== false) restoreFocus(snapshot)

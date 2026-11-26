@@ -1,6 +1,7 @@
 import { WINDOW_FOCUSED_CHANNEL } from '@shared/app-events'
 import { EDIT_PASTE_CHANNEL } from '@shared/edit-events'
 import type { MenuActionChannel } from '@shared/menu-events'
+import { DEEP_LINK_NAVIGATE_CHANNEL, type DeepLinkNavigatePayload } from '@shared/deep-link-events'
 import {
   NOTIFICATION_NAVIGATE_CHANNEL,
   type NotificationNavigatePayload
@@ -107,6 +108,39 @@ export const systemApi = {
           projectId: payload.projectId,
           worktreeId: payload.worktreeId,
           sessionId: payload.sessionId
+        })
+      }
+    })
+  },
+  onDeepLinkNavigate: (callback: (data: DeepLinkNavigatePayload) => void): (() => void) => {
+    return getRendererRpcClient().subscribe(DEEP_LINK_NAVIGATE_CHANNEL, (event: ServerEvent) => {
+      const p = event.payload as Record<string, unknown> | null
+      if (!p || typeof p !== 'object') return
+      if (
+        p.kind === 'worktree' &&
+        typeof p.projectId === 'string' &&
+        typeof p.worktreeId === 'string'
+      ) {
+        callback({ kind: 'worktree', projectId: p.projectId, worktreeId: p.worktreeId })
+      } else if (p.kind === 'connection' && typeof p.connectionId === 'string') {
+        callback({ kind: 'connection', connectionId: p.connectionId })
+      } else if (
+        p.kind === 'new-connection' &&
+        typeof p.requestId === 'string' &&
+        Array.isArray(p.members)
+      ) {
+        const members = p.members.flatMap((m: unknown) => {
+          const member = m as Record<string, unknown> | null
+          return member && typeof member.projectId === 'string'
+            ? [{ projectId: member.projectId, useBase: member.useBase === true }]
+            : []
+        })
+        if (members.length === 0) return
+        callback({
+          kind: 'new-connection',
+          requestId: p.requestId,
+          members,
+          ...(typeof p.pull === 'boolean' ? { pull: p.pull } : {})
         })
       }
     })
