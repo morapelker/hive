@@ -1136,17 +1136,17 @@ export function SessionTabs(): React.JSX.Element | null {
     }
   }
 
-  // Handle clicking a sticky connection session tab (inline viewing in worktree mode)
-  const handleConnectionSessionTabClick = (sessionId: string) => {
-    const isAlreadyPresentedConnectionSession =
-      inlineConnectionSessionId === sessionId && activeFilePath === null
-
-    if (isAlreadyPresentedConnectionSession) {
-      return
-    }
-
+  // Handle clicking a sticky connection session tab (worktree mode): switch to the connection
+  // itself with that session open, so the sidebar, header and Changes panel follow the
+  // connection instead of still showing the worktree.
+  const handleConnectionSessionTabClick = (connectionId: string, sessionId: string) => {
     setActiveFile(null)
-    setInlineConnectionSession(sessionId)
+    setInlineConnectionSession(null)
+    useConnectionStore.getState().selectConnection(connectionId)
+    const sessionStore = useSessionStore.getState()
+    sessionStore.setActiveConnection(connectionId)
+    // setActiveConnection restores the connection's last active tab — claim the clicked one.
+    sessionStore.setActiveSession(sessionId)
     const statusStore = useWorktreeStatusStore.getState()
     if (statusStore.sessionStatuses[sessionId]?.status === 'unread') {
       statusStore.clearSessionStatus(sessionId)
@@ -1336,7 +1336,7 @@ export function SessionTabs(): React.JSX.Element | null {
                   sessionId={session.id}
                   name={session.name || 'Untitled'}
                   isActive={session.id === inlineConnectionSessionId && !isFileTabActive}
-                  onClick={() => handleConnectionSessionTabClick(session.id)}
+                  onClick={() => handleConnectionSessionTabClick(connection.id, session.id)}
                   connectionColor={connection.color}
                   connectionName={connection.name}
                 />
