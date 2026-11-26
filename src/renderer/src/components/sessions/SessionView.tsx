@@ -367,6 +367,17 @@ function asNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
+/**
+ * True when incoming assistant text is an echo of the prompt we just sent.
+ * Only a whole-prompt match counts: streamed deltas are token-sized ("I",
+ * "You"), and a prefix check would drop any reply token that happens to
+ * match the start of the prompt.
+ */
+export function isEchoOfSentPrompt(sentPrompt: string, incoming: string): boolean {
+  const echoed = incoming.trim()
+  return echoed.length > 0 && echoed === sentPrompt.trim()
+}
+
 function summarizeStreamEventForDebug(event: {
   type?: string
   sessionId?: string
@@ -2554,8 +2565,8 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
         // content (i.e. the real assistant response) we clear the ref so it
         // doesn't interfere with later messages.
         if (lastSentPromptRef.current && part.type === 'text') {
-          const incoming = (event.data?.delta || part.text || '').trimEnd()
-          if (incoming.length > 0 && lastSentPromptRef.current.startsWith(incoming)) {
+          const incoming = part.text || event.data?.delta || ''
+          if (isEchoOfSentPrompt(lastSentPromptRef.current, incoming)) {
             // Looks like an echo — skip it
             return
           }
@@ -2914,8 +2925,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
               .filter((p: { type?: string }) => p?.type === 'text')
               .map((p: { text?: string }) => p?.text || '')
               .join('')
-              .trimEnd()
-            if (textContent.length > 0 && lastSentPromptRef.current.startsWith(textContent)) {
+            if (isEchoOfSentPrompt(lastSentPromptRef.current, textContent)) {
               return // echo -- skip
             }
           }
