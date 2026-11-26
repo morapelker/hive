@@ -25,6 +25,7 @@ import {
   formatOpenedAge,
   groupSwitcherProjects,
   rankSwitcherProjects,
+  switcherKey,
   type SwitcherAgentState
 } from '@/lib/project-switcher'
 import {
@@ -579,6 +580,45 @@ function ProjectSwitcherPanel(): React.JSX.Element {
     },
     [close]
   )
+
+  // A `hive://connection/new` link: the projects are picked as if Shift+Enter /
+  // Cmd+Shift+Enter had picked them here, and the highlight is left on the last one. Nothing is
+  // created until the user presses Enter: a link from anywhere must not make worktrees, pull
+  // or run a project's worktree script on its own.
+  const pendingPicks = useProjectSwitcherStore((s) => s.pendingPicks)
+  useEffect(() => {
+    if (!pendingPicks) return
+    // Taken once every requested project is listed: items also holds databases, which load
+    // on their own, so a list that is not empty yet may still lack the git projects.
+    // (useDeepLinkNavigation loads the git projects before it opens the switcher.)
+    const byKey = new Map(items.map((item) => [item.key, item]))
+    const requested = pendingPicks.members.map(({ projectId }) =>
+      byKey.get(switcherKey('git', projectId))
+    )
+    if (requested.some((item) => item === undefined)) return
+    const request = useProjectSwitcherStore.getState().takePendingPicks()
+    if (!request) return
+    if (createTasks !== null) {
+      toast.error('A connection is already being created')
+      return
+    }
+    const linkPicks: PickedProject[] = []
+    for (const { projectId, useBase } of request.members) {
+      const item = byKey.get(switcherKey('git', projectId))
+      if (!item || !canConnectSwitcherProject(item)) {
+        toast.error('Cannot pick the projects: one is not a git project')
+        return
+      }
+      linkPicks.push({ key: item.key, mode: useBase ? 'base' : 'worktree' })
+    }
+    // Shown on the switch, so it is seen before Enter.
+    if (request.pull !== undefined) setSwitcherConnectionPullsFirst(request.pull)
+    setPicks(linkPicks)
+    setQuery('')
+    setCreateError(null)
+    const last = linkPicks[linkPicks.length - 1]
+    setHighlight({ index: linkPicks.length - 1, key: last.key })
+  }, [pendingPicks, items, createTasks])
 
   // Read through a ref so the window listener is attached once per open.
   const latest = useRef({

@@ -22,6 +22,7 @@ import { useClaudeCliStatusListener } from '@/hooks/useClaudeCliStatusListener'
 import { useShellCommandStatusListener } from '@/hooks/useShellCommandStatusListener'
 import { useClaudeLiveUsageListener } from '@/hooks/useClaudeLiveUsageListener'
 import { useNotificationNavigation } from '@/hooks/useNotificationNavigation'
+import { useDeepLinkNavigation } from '@/hooks/useDeepLinkNavigation'
 import { useWindowFocusRefresh } from '@/hooks/useWindowFocusRefresh'
 import { useWorktreeWatcher } from '@/hooks/useWorktreeWatcher'
 import { useConnectionWatcher } from '@/hooks/useConnectionWatcher'
@@ -163,6 +164,8 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
   useClaudeLiveUsageListener()
   // Navigate to session when native notification is clicked
   useNotificationNavigation()
+  // Open a worktree or connection from a hive:// link (e.g. Raycast)
+  useDeepLinkNavigation()
   // Refresh git statuses when window regains focus
   useWindowFocusRefresh()
   // Watch active worktree for filesystem + .git changes (main-process watcher)

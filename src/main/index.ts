@@ -897,7 +897,7 @@ app
     }
 
     // Backend is up — deep links can now import accounts and publish events.
-    markDeepLinksReady()
+    markDeepLinksReady(() => mainWindow)
 
     app.on('activate', function () {
       ensureDockVisible('activate')
