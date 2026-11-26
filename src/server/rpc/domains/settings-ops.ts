@@ -30,6 +30,8 @@ import {
 } from '../../../shared/session-running-state'
 import type { RunningSessionsTracker } from '../../running-sessions'
 import type { RpcHandler } from '../router'
+import { getRpcRequestContext } from '../request-context'
+import { RpcRouteError } from '../../../shared/rpc/errors'
 
 export interface SettingsOperationResult {
   readonly success: boolean
@@ -149,6 +151,18 @@ const reportRunningSessionsParamsSchema = z
     sessionIds: z.array(z.string().min(1).max(200)).max(RUNNING_SESSIONS_REPORT_MAX)
   })
   .strict()
+
+/**
+ * The dev folder is a setting of this Mac, and moving a project rewrites paths in its database
+ * and on its disk, so only this Mac's own window may ask. A call with no request context (the
+ * window on the loopback socket, a test) passes.
+ */
+const requireDesktopPrincipal = (): Effect.Effect<void, RpcRouteError> =>
+  Effect.suspend(() =>
+    getRpcRequestContext()?.principal?.kind === 'device'
+      ? Effect.fail(new RpcRouteError('FORBIDDEN', 'Not available from a remote device'))
+      : Effect.void
+  )
 
 // The dev folder modules are loaded on first use. The move service is bound to git, the file
 // system, the boards, the connections and the terminals, and most calls to this domain never
@@ -563,6 +577,7 @@ export const makeSettingsOpsRpcHandlers = (
       DEV_FOLDER_RPC.get,
       (params) =>
         Effect.gen(function* () {
+          yield* requireDesktopPrincipal()
           yield* Effect.try({
             try: () => emptyParamsSchema.parse(params),
             catch: (cause) => cause
@@ -574,6 +589,7 @@ export const makeSettingsOpsRpcHandlers = (
       DEV_FOLDER_RPC.set,
       (params) =>
         Effect.gen(function* () {
+          yield* requireDesktopPrincipal()
           const { path } = yield* Effect.try({
             try: () => setDevFolderParamsSchema.parse(params),
             catch: (cause) => cause
@@ -585,6 +601,7 @@ export const makeSettingsOpsRpcHandlers = (
       DEV_FOLDER_RPC.planMove,
       (params) =>
         Effect.gen(function* () {
+          yield* requireDesktopPrincipal()
           yield* Effect.try({
             try: () => emptyParamsSchema.parse(params),
             catch: (cause) => cause
@@ -596,6 +613,7 @@ export const makeSettingsOpsRpcHandlers = (
       DEV_FOLDER_RPC.moveProject,
       (params) =>
         Effect.gen(function* () {
+          yield* requireDesktopPrincipal()
           const { projectId, expectedToPath } = yield* Effect.try({
             try: () => moveProjectToDevFolderParamsSchema.parse(params),
             catch: (cause) => cause

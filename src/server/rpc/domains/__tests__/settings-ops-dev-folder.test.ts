@@ -15,6 +15,8 @@ import {
 import { RUNNING_SESSIONS_REPORT_RPC } from '../../../../shared/session-running-state'
 import { makeEventBus } from '../../../events/event-bus'
 import { makeRpcRouter, type RpcCallInfo, type RpcContext } from '../../router'
+import { runWithRpcRequestContext, type AuthPrincipal } from '../../request-context'
+import { RpcRouteError } from '../../../../shared/rpc/errors'
 import { makeSettingsOpsRpcHandlers, type SettingsOpsRpcService } from '../settings-ops'
 
 const state: DevFolderState = {
@@ -313,6 +315,32 @@ describe('settingsOps dev folder handlers', () => {
     const fake = makeFakeService()
     fake.getDevFolder.mockReturnValueOnce(Effect.fail(failure) as never)
     expect(await failureOf(call(fake, DEV_FOLDER_RPC.get, {}))).toBe(failure)
+  })
+})
+
+describe('settingsOps dev folder calls are for this Mac only', () => {
+  // The check reads the request context the socket server sets for each call, not the
+  // `ctx` argument of `router.handle`.
+  const asPrincipal = <T>(principal: AuthPrincipal | null, run: () => T): T =>
+    runWithRpcRequestContext({ clientId: 'client-1', principal }, run)
+  const device: AuthPrincipal = { kind: 'device', deviceId: 'd1', name: 'Phone', scope: 'viewer' }
+
+  it.each(validCalls)('refuses %s from a device', async (method, params) => {
+    const fake = makeFakeService()
+    const failure = await asPrincipal(device, () => failureOf(call(fake, method, params)))
+    expect(failure).toBeInstanceOf(RpcRouteError)
+    expect(failure).toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'Not available from a remote device'
+    })
+    expect(calledTimes(fake)).toBe(0)
+  })
+
+  it.each(validCalls)('answers %s for the desktop window and with no request context', async (method, params) => {
+    const fake = makeFakeService()
+    await asPrincipal({ kind: 'desktop' }, () => Effect.runPromise(call(fake, method, params)))
+    await Effect.runPromise(call(fake, method, params))
+    expect(calledTimes(fake)).toBe(2)
   })
 })
 
