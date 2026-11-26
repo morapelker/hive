@@ -23,7 +23,8 @@ import {
   RefreshCw,
   FileText,
   ChevronRight,
-  Database
+  Database,
+  Link
 } from 'lucide-react'
 import { KanbanIcon } from '@/components/kanban/KanbanIcon'
 import { cn } from '@/lib/utils'
@@ -51,7 +52,8 @@ const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
   RefreshCw,
   FileText,
   KanbanIcon,
-  Database
+  Database,
+  Link
 }
 
 interface CommandItemProps {
