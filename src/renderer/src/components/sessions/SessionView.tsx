@@ -118,6 +118,7 @@ import {
 } from '@/lib/session-follow-up-dispatch'
 import { shouldPreserveBlockingSessionStatus } from '@/lib/session-status-guards'
 import { extractSessionErrorMessage } from '@/lib/session-error-message'
+import { upsertChildToolPart } from '@/lib/child-tool-stream'
 import {
   recordHivePromptIdleForSession,
   recordHiveQuestionAnswerTelemetry,
@@ -2505,46 +2506,16 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
               })
               scheduleFlush()
             } else if (childPart?.type === 'tool') {
-              const state = childPart.state || childPart
-              const toolId =
-                state.toolCallId || childPart.callID || childPart.id || `tool-${Date.now()}`
               updateStreamingPartsRef((parts) => {
                 const updated = [...parts]
                 const subtask = updated[subtaskIdx]
                 if (subtask?.type === 'subtask' && subtask.subtask) {
-                  const existing = subtask.subtask.parts.find(
-                    (p) => p.type === 'tool_use' && p.toolUse?.id === toolId
-                  )
-                  if (existing && existing.type === 'tool_use' && existing.toolUse) {
-                    // Update existing tool
-                    const statusMap: Record<string, string> = {
-                      running: 'running',
-                      completed: 'success',
-                      error: 'error'
+                  updated[subtaskIdx] = {
+                    ...subtask,
+                    subtask: {
+                      ...subtask.subtask,
+                      parts: upsertChildToolPart(subtask.subtask.parts, childPart)
                     }
-                    existing.toolUse.status = (statusMap[state.status] || 'running') as
-                      | 'pending'
-                      | 'running'
-                      | 'success'
-                      | 'error'
-                    if (state.time?.end) existing.toolUse.endTime = state.time.end
-                    if (state.status === 'completed') existing.toolUse.output = state.output
-                    if (state.status === 'error') existing.toolUse.error = state.error
-                  } else {
-                    // Add new tool
-                    subtask.subtask.parts = [
-                      ...subtask.subtask.parts,
-                      {
-                        type: 'tool_use',
-                        toolUse: {
-                          id: toolId,
-                          name: childPart.tool || state.name || 'unknown',
-                          input: state.input,
-                          status: 'running',
-                          startTime: state.time?.start || Date.now()
-                        }
-                      }
-                    ]
                   }
                 }
                 return updated

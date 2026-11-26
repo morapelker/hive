@@ -682,10 +682,16 @@ interface ToolCardProps {
 }
 
 export const ToolCard = memo(function ToolCard({
-  toolUse,
+  toolUse: rawToolUse,
   cwd,
   compact = false
 }: ToolCardProps): React.JSX.Element {
+  // A tool can stream in before its input is known (e.g. a subagent's pending
+  // call). Every tool view reads fields off `input`, so never hand them undefined.
+  const toolUse = useMemo(
+    () => (rawToolUse.input ? rawToolUse : { ...rawToolUse, input: {} }),
+    [rawToolUse]
+  )
   const [isExpanded, setIsExpanded] = useState(false)
 
   const duration = useMemo(() => {
