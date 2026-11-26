@@ -90,6 +90,8 @@ function describeLink(link: NavigateDeepLink): Record<string, unknown> {
 
 function resolveNavigatePayload(link: NavigateDeepLink): DeepLinkNavigatePayload | null {
   const db = getDatabase()
+  // One per link; every re-published copy carries the same one.
+  const requestId = randomUUID()
   if (link.kind === 'new-connection') {
     // Only git projects can join a connection, as in the switcher.
     const allGit = link.members.every((member) => {
@@ -99,7 +101,7 @@ function resolveNavigatePayload(link: NavigateDeepLink): DeepLinkNavigatePayload
     if (!allGit) return null
     return {
       kind: 'new-connection',
-      requestId: randomUUID(),
+      requestId,
       members: link.members,
       ...(link.pull === undefined ? {} : { pull: link.pull })
     }
@@ -107,11 +109,11 @@ function resolveNavigatePayload(link: NavigateDeepLink): DeepLinkNavigatePayload
   if (link.kind === 'worktree') {
     const worktree = db.getWorktree(link.id)
     if (!worktree || worktree.status !== 'active') return null
-    return { kind: 'worktree', projectId: worktree.project_id, worktreeId: worktree.id }
+    return { kind: 'worktree', requestId, projectId: worktree.project_id, worktreeId: worktree.id }
   }
   const connection = db.getConnection(link.id)
   if (!connection || connection.status !== 'active') return null
-  return { kind: 'connection', connectionId: connection.id }
+  return { kind: 'connection', requestId, connectionId: connection.id }
 }
 
 function focusMainWindow(): BrowserWindow | null {

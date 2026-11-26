@@ -115,20 +115,17 @@ export const systemApi = {
   onDeepLinkNavigate: (callback: (data: DeepLinkNavigatePayload) => void): (() => void) => {
     return getRendererRpcClient().subscribe(DEEP_LINK_NAVIGATE_CHANNEL, (event: ServerEvent) => {
       const p = event.payload as Record<string, unknown> | null
-      if (!p || typeof p !== 'object') return
+      if (!p || typeof p !== 'object' || typeof p.requestId !== 'string') return
+      const requestId = p.requestId
       if (
         p.kind === 'worktree' &&
         typeof p.projectId === 'string' &&
         typeof p.worktreeId === 'string'
       ) {
-        callback({ kind: 'worktree', projectId: p.projectId, worktreeId: p.worktreeId })
+        callback({ kind: 'worktree', requestId, projectId: p.projectId, worktreeId: p.worktreeId })
       } else if (p.kind === 'connection' && typeof p.connectionId === 'string') {
-        callback({ kind: 'connection', connectionId: p.connectionId })
-      } else if (
-        p.kind === 'new-connection' &&
-        typeof p.requestId === 'string' &&
-        Array.isArray(p.members)
-      ) {
+        callback({ kind: 'connection', requestId, connectionId: p.connectionId })
+      } else if (p.kind === 'new-connection' && Array.isArray(p.members)) {
         const members = p.members.flatMap((m: unknown) => {
           const member = m as Record<string, unknown> | null
           return member && typeof member.projectId === 'string'
@@ -138,7 +135,7 @@ export const systemApi = {
         if (members.length === 0) return
         callback({
           kind: 'new-connection',
-          requestId: p.requestId,
+          requestId,
           members,
           ...(typeof p.pull === 'boolean' ? { pull: p.pull } : {})
         })

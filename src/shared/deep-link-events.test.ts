@@ -42,5 +42,7 @@ describe('parseNavigateDeepLink', () => {
     expect(parseNavigateDeepLink('hive://worktree/a/b')).toBeNull()
     expect(parseNavigateDeepLink('https://worktree/abc')).toBeNull()
     expect(parseNavigateDeepLink('not a url')).toBeNull()
+    expect(parseNavigateDeepLink('hive://worktree/%')).toBeNull()
+    expect(parseNavigateDeepLink('hive://connection/%E0%A4%A')).toBeNull()
   })
 })

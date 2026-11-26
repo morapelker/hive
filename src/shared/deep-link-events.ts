@@ -19,12 +19,21 @@ export interface DeepLinkConnectionMember {
   readonly useBase: boolean
 }
 
+/**
+ * `requestId` is one per link received. A link that arrives at startup is re-published, and
+ * the renderer acts on each request once: a later copy must not undo navigation the user did
+ * after the first one.
+ */
 export type DeepLinkNavigatePayload =
-  | { readonly kind: 'worktree'; readonly projectId: string; readonly worktreeId: string }
-  | { readonly kind: 'connection'; readonly connectionId: string }
+  | {
+      readonly kind: 'worktree'
+      readonly requestId: string
+      readonly projectId: string
+      readonly worktreeId: string
+    }
+  | { readonly kind: 'connection'; readonly requestId: string; readonly connectionId: string }
   | {
       readonly kind: 'new-connection'
-      /** One per link: a link re-published at startup must pick the projects only once. */
       readonly requestId: string
       readonly members: readonly DeepLinkConnectionMember[]
       readonly pull?: boolean
@@ -72,7 +81,13 @@ export function parseNavigateDeepLink(url: string): NavigateDeepLink | null {
 
   const segments = parsed.pathname.split('/').filter(Boolean)
   if (segments.length !== 1) return null
-  const id = decodeURIComponent(segments[0])
+  let id: string
+  try {
+    id = decodeURIComponent(segments[0])
+  } catch {
+    // A malformed escape (`hive://worktree/%`) is not a link we handle.
+    return null
+  }
   if (kind === 'connection' && id === 'new') return parseNewConnection(parsed)
   return id ? { kind, id } : null
 }

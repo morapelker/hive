@@ -587,19 +587,26 @@ function ProjectSwitcherPanel(): React.JSX.Element {
   // or run a project's worktree script on its own.
   const pendingPicks = useProjectSwitcherStore((s) => s.pendingPicks)
   useEffect(() => {
-    if (!pendingPicks || items.length === 0) return
+    if (!pendingPicks) return
+    // Taken once every requested project is listed: items also holds databases, which load
+    // on their own, so a list that is not empty yet may still lack the git projects.
+    // (useDeepLinkNavigation loads the git projects before it opens the switcher.)
+    const byKey = new Map(items.map((item) => [item.key, item]))
+    const requested = pendingPicks.members.map(({ projectId }) =>
+      byKey.get(switcherKey('git', projectId))
+    )
+    if (requested.some((item) => item === undefined)) return
     const request = useProjectSwitcherStore.getState().takePendingPicks()
     if (!request) return
     if (createTasks !== null) {
       toast.error('A connection is already being created')
       return
     }
-    const byKey = new Map(items.map((item) => [item.key, item]))
     const linkPicks: PickedProject[] = []
     for (const { projectId, useBase } of request.members) {
       const item = byKey.get(switcherKey('git', projectId))
       if (!item || !canConnectSwitcherProject(item)) {
-        toast.error('Cannot pick the projects: one was not found')
+        toast.error('Cannot pick the projects: one is not a git project')
         return
       }
       linkPicks.push({ key: item.key, mode: useBase ? 'base' : 'worktree' })
