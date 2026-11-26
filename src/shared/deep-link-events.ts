@@ -3,9 +3,10 @@
  * - `hive://worktree/<id>` and `hive://connection/<id>` open Hive on that worktree or
  *   connection.
  * - `hive://connection/new?projects=<id>[:base],<id>...[&pull=0|1]` opens the "Go to project"
- *   switcher with those projects picked, in that order, and connects them as Enter there
- *   would: a new worktree in each project, or its base branch for an `:base` one. `pull` sets
- *   the switcher's "Pull latest from origin" switch first; without it the switch stays as is.
+ *   switcher with those projects picked, in that order, as Shift+Enter there would (or
+ *   Cmd+Shift+Enter for an `:base` one, which joins on its base branch). `pull` sets the
+ *   switcher's "Pull latest from origin" switch; without it the switch stays as is. Nothing is
+ *   created until the user presses Enter in the switcher: a link can come from anywhere.
  *
  * The main process resolves the link and publishes DEEP_LINK_NAVIGATE_CHANNEL; the renderer
  * acts on it.
@@ -23,7 +24,7 @@ export type DeepLinkNavigatePayload =
   | { readonly kind: 'connection'; readonly connectionId: string }
   | {
       readonly kind: 'new-connection'
-      /** One per link: a link re-published at startup must connect the projects only once. */
+      /** One per link: a link re-published at startup must pick the projects only once. */
       readonly requestId: string
       readonly members: readonly DeepLinkConnectionMember[]
       readonly pull?: boolean

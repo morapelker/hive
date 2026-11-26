@@ -2,7 +2,7 @@
  * hive:// deep link handling. Routes:
  * - `hive://share-account?...` (see account-share-service.ts)
  * - `hive://worktree/<id>` and `hive://connection/<id>` focus Hive on that item
- * - `hive://connection/new?projects=...` connects projects through the switcher
+ * - `hive://connection/new?projects=...` picks projects in the switcher (Enter connects them)
  *   (see shared/deep-link-events.ts)
  *
  * `open-url` can fire before the app (and the local backend) is ready, so
@@ -11,10 +11,7 @@
 import { app, Notification, type BrowserWindow } from 'electron'
 import { resolve } from 'path'
 import { randomUUID } from 'crypto'
-import {
-  importAccountShareFromLink,
-  isShareAccountLink
-} from './account-share-service'
+import { importAccountShareFromLink, isShareAccountLink } from './account-share-service'
 import { publishDesktopBackendEvent } from '../desktop/backend-event-publisher'
 import { SHARED_ACCOUNT_IMPORTED_CHANNEL } from '../../shared/app-events'
 import {

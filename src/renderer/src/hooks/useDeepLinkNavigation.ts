@@ -31,14 +31,14 @@ async function openConnection(connectionId: string): Promise<void> {
   useConnectionStore.getState().selectConnection(connectionId)
 }
 
-// A link that arrives at startup is published more than once; it connects only once.
+// A link that arrives at startup is published more than once; it picks only once.
 const handledRequests = new Set<string>()
 
 function navigate(data: DeepLinkNavigatePayload): void {
   if (data.kind === 'new-connection') {
     if (handledRequests.has(data.requestId)) return
     handledRequests.add(data.requestId)
-    useProjectSwitcherStore.getState().openAndConnect({
+    useProjectSwitcherStore.getState().openWithPicks({
       members: data.members.map((m) => ({ projectId: m.projectId, useBase: m.useBase })),
       pull: data.pull
     })
@@ -54,8 +54,8 @@ function navigate(data: DeepLinkNavigatePayload): void {
 
 /**
  * Acts on hive:// links: selects the worktree or connection of a hive://worktree/… or
- * hive://connection/… link, and connects the projects of a hive://connection/new… link in
- * the "Go to project" switcher.
+ * hive://connection/… link, and picks the projects of a hive://connection/new… link in the
+ * "Go to project" switcher, where Enter creates the connection.
  */
 export function useDeepLinkNavigation(): void {
   useEffect(() => systemApi.onDeepLinkNavigate(navigate), [])

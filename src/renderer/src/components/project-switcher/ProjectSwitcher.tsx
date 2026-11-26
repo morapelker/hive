@@ -581,32 +581,37 @@ function ProjectSwitcherPanel(): React.JSX.Element {
     [close]
   )
 
-  // A `hive://connection/new` link: the projects are picked and connected as if Shift+Enter /
-  // Cmd+Shift+Enter had picked them here and Enter had been pressed, steps and errors included.
-  const pendingConnect = useProjectSwitcherStore((s) => s.pendingConnect)
+  // A `hive://connection/new` link: the projects are picked as if Shift+Enter /
+  // Cmd+Shift+Enter had picked them here, and the highlight is left on the last one. Nothing is
+  // created until the user presses Enter: a link from anywhere must not make worktrees, pull
+  // or run a project's worktree script on its own.
+  const pendingPicks = useProjectSwitcherStore((s) => s.pendingPicks)
   useEffect(() => {
-    if (!pendingConnect || items.length === 0) return
-    const request = useProjectSwitcherStore.getState().takePendingConnect()
+    if (!pendingPicks || items.length === 0) return
+    const request = useProjectSwitcherStore.getState().takePendingPicks()
     if (!request) return
     if (createTasks !== null) {
       toast.error('A connection is already being created')
       return
     }
     const byKey = new Map(items.map((item) => [item.key, item]))
-    const members: SwitcherItem[] = []
-    const modes = new Map<string, PickMode>()
+    const linkPicks: PickedProject[] = []
     for (const { projectId, useBase } of request.members) {
       const item = byKey.get(switcherKey('git', projectId))
       if (!item || !canConnectSwitcherProject(item)) {
-        toast.error('Cannot create the connection: a project was not found')
+        toast.error('Cannot pick the projects: one was not found')
         return
       }
-      members.push(item)
-      modes.set(item.key, useBase ? 'base' : 'worktree')
+      linkPicks.push({ key: item.key, mode: useBase ? 'base' : 'worktree' })
     }
+    // Shown on the switch, so it is seen before Enter.
     if (request.pull !== undefined) setSwitcherConnectionPullsFirst(request.pull)
-    connect(members, modes)
-  }, [pendingConnect, items, createTasks, connect])
+    setPicks(linkPicks)
+    setQuery('')
+    setCreateError(null)
+    const last = linkPicks[linkPicks.length - 1]
+    setHighlight({ index: linkPicks.length - 1, key: last.key })
+  }, [pendingPicks, items, createTasks])
 
   // Read through a ref so the window listener is attached once per open.
   const latest = useRef({
