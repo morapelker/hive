@@ -104,6 +104,7 @@ export function SettingsGeneral(): React.JSX.Element {
     tipsEnabled,
     breedType,
     showModelIcons,
+    showRecentProjects,
     ticketKeyDisplay,
     showModelProvider,
     usageIndicatorMode,
@@ -642,6 +643,34 @@ export function SettingsGeneral(): React.JSX.Element {
             className={cn(
               'pointer-events-none block h-4 w-4 rounded-full bg-background ring-0 transition-transform',
               tipsEnabled ? 'translate-x-4' : 'translate-x-0'
+            )}
+          />
+        </button>
+      </div>
+
+      {/* Recent projects in the sidebar */}
+      <div className="flex items-center justify-between">
+        <div>
+          <label className="text-sm font-medium">Recent projects</label>
+          <p className="text-xs text-muted-foreground">
+            Show the Recent section with your most recently opened projects at the top of the
+            sidebar
+          </p>
+        </div>
+        <button
+          role="switch"
+          aria-checked={showRecentProjects}
+          onClick={() => updateSetting('showRecentProjects', !showRecentProjects)}
+          className={cn(
+            'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors',
+            showRecentProjects ? 'bg-primary' : 'bg-muted'
+          )}
+          data-testid="show-recent-projects-toggle"
+        >
+          <span
+            className={cn(
+              'pointer-events-none block h-4 w-4 rounded-full bg-background ring-0 transition-transform',
+              showRecentProjects ? 'translate-x-4' : 'translate-x-0'
             )}
           />
         </button>
