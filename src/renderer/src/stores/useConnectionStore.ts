@@ -20,7 +20,7 @@ export type ConnectionGitView = 'connection' | 'base'
  */
 export type QuickCreateConnectionOptions = Pick<
   CreateConnectionFromProjectsOptions,
-  'savedProjectId' | 'autoPull' | 'onProgress'
+  'savedProjectId' | 'customName' | 'autoPull' | 'onProgress'
 > & {
   /**
    * Handed the reason when the connection is not created, in place of the error toast: for a
@@ -101,12 +101,23 @@ interface ConnectionState {
   connectionModeSourceWorktreeId: string | null
   connectionModeSelectedIds: Set<string>
   connectionModeSubmitting: boolean
+  /** Optional display name typed while in connection mode; applied on Connect. */
+  connectionModeName: string
+
+  /**
+   * Connection the `connection:rename` shortcut asked to rename. The first sidebar row
+   * showing it claims the request (claimConnectionRename) and starts its inline rename.
+   */
+  pendingRenameConnectionId: string | null
+
+  /** Whether the Recent Connections dialog is open (sidebar button or `connection:recent`). */
+  recentConnectionsDialogOpen: boolean
 
   // Actions
   loadConnections: () => Promise<void>
   createConnection: (
     worktreeIds: string[],
-    opts?: { savedProjectId?: string }
+    opts?: { savedProjectId?: string; customName?: string | null }
   ) => Promise<string | null>
   deleteConnection: (connectionId: string) => Promise<void>
   addMember: (connectionId: string, worktreeId: string) => Promise<void>
@@ -130,6 +141,14 @@ interface ConnectionState {
 
   // Rename
   renameConnection: (connectionId: string, customName: string | null) => Promise<void>
+  requestConnectionRename: (connectionId: string) => void
+  /**
+   * Take the pending rename request for this connection, if there is one. Returns true for
+   * exactly one caller, so a connection shown twice (Pinned + Connections) renames once.
+   */
+  claimConnectionRename: (connectionId: string) => boolean
+  clearConnectionRenameRequest: () => void
+  setRecentConnectionsDialogOpen: (open: boolean) => void
 
   // Archive progress ("Archiving x/y" on the sidebar row). No-ops for an unknown connection.
   beginConnectionArchive: (connectionId: string, total: number) => void
@@ -140,6 +159,7 @@ interface ConnectionState {
   enterConnectionMode: (sourceWorktreeId: string) => void
   exitConnectionMode: () => void
   toggleConnectionModeWorktree: (worktreeId: string) => void
+  setConnectionModeName: (name: string) => void
   finalizeConnection: () => Promise<void>
 }
 
@@ -160,6 +180,9 @@ export const useConnectionStore = create<ConnectionState>()(
       connectionModeSourceWorktreeId: null,
       connectionModeSelectedIds: new Set<string>(),
       connectionModeSubmitting: false,
+      connectionModeName: '',
+      pendingRenameConnectionId: null,
+      recentConnectionsDialogOpen: false,
 
       loadConnections: async () => {
         set({ isLoading: true, error: null })
@@ -180,9 +203,15 @@ export const useConnectionStore = create<ConnectionState>()(
         }
       },
 
-      createConnection: async (worktreeIds: string[], opts?: { savedProjectId?: string }) => {
+      createConnection: async (
+        worktreeIds: string[],
+        opts?: { savedProjectId?: string; customName?: string | null }
+      ) => {
         try {
-          const result = await connectionApi.create(worktreeIds, opts)
+          const result = await connectionApi.create(
+            worktreeIds,
+            opts?.savedProjectId ? { savedProjectId: opts.savedProjectId } : undefined
+          )
           if (!result.success || !result.connection) {
             toast.error(`Failed to create connection: ${result.error || 'Unknown error'}`)
             return null
@@ -197,7 +226,16 @@ export const useConnectionStore = create<ConnectionState>()(
           clearWorktreeSelection()
           clearDataProjectSelection()
 
-          toast.success(`Connection "${connection.name}" created`)
+          // The display name is a rename after the fact, same as lib/connection-create.
+          // renameConnection toasts on failure; the connection itself is kept either way.
+          const customName = opts?.customName?.trim()
+          if (customName) {
+            await get().renameConnection(connection.id, customName)
+          }
+          const displayName =
+            get().connections.find((c) => c.id === connection.id)?.custom_name || connection.name
+
+          toast.success(`Connection "${displayName}" created`)
           return connection.id
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
@@ -528,12 +566,31 @@ export const useConnectionStore = create<ConnectionState>()(
         }
       },
 
+      requestConnectionRename: (connectionId: string) => {
+        set({ pendingRenameConnectionId: connectionId })
+      },
+
+      claimConnectionRename: (connectionId: string) => {
+        if (get().pendingRenameConnectionId !== connectionId) return false
+        set({ pendingRenameConnectionId: null })
+        return true
+      },
+
+      clearConnectionRenameRequest: () => {
+        set({ pendingRenameConnectionId: null })
+      },
+
+      setRecentConnectionsDialogOpen: (open: boolean) => {
+        set({ recentConnectionsDialogOpen: open })
+      },
+
       enterConnectionMode: (sourceWorktreeId: string) => {
         set({
           connectionModeActive: true,
           connectionModeSourceWorktreeId: sourceWorktreeId,
           connectionModeSelectedIds: new Set([sourceWorktreeId]),
-          connectionModeSubmitting: false
+          connectionModeSubmitting: false,
+          connectionModeName: ''
         })
       },
 
@@ -542,8 +599,13 @@ export const useConnectionStore = create<ConnectionState>()(
           connectionModeActive: false,
           connectionModeSourceWorktreeId: null,
           connectionModeSelectedIds: new Set<string>(),
-          connectionModeSubmitting: false
+          connectionModeSubmitting: false,
+          connectionModeName: ''
         })
+      },
+
+      setConnectionModeName: (name: string) => {
+        set({ connectionModeName: name })
       },
 
       toggleConnectionModeWorktree: (worktreeId: string) => {
@@ -561,13 +623,15 @@ export const useConnectionStore = create<ConnectionState>()(
       },
 
       finalizeConnection: async () => {
-        const { connectionModeSelectedIds, createConnection } = get()
+        const { connectionModeSelectedIds, connectionModeName, createConnection } = get()
         if (connectionModeSelectedIds.size < 2) return
 
         set({ connectionModeSubmitting: true })
         try {
           const worktreeIds = Array.from(connectionModeSelectedIds)
-          const connectionId = await createConnection(worktreeIds)
+          const connectionId = await createConnection(worktreeIds, {
+            customName: connectionModeName
+          })
           if (connectionId) {
             get().exitConnectionMode()
           } else {

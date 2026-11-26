@@ -30,6 +30,7 @@ import { closeDevFolderMove } from '@/lib/dev-folder/move-projects'
 import { useDevFolderMoveStore } from '@/lib/dev-folder/store'
 import { isForceBoardMode } from '@/api/hive-enterprise/client'
 import { toast } from '@/lib/toast'
+import { isBaseInstance } from '@/lib/connection-project'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { systemApi } from '@/api/system-api'
 import { opencodeApi } from '@/api/opencode-api'
@@ -1092,6 +1093,55 @@ function getShortcutHandlers(
           layout.setBottomPanelTab('terminal')
           if (layout.collapsedPanel === 'bottom') layout.toggleBottomPanel()
         }
+      }
+    },
+    {
+      id: 'connection:recent',
+      binding: getEffectiveBinding('connection:recent'),
+      allowInInput: true,
+      handler: () => {
+        const { recentConnectionsDialogOpen, setRecentConnectionsDialogOpen } =
+          useConnectionStore.getState()
+        setRecentConnectionsDialogOpen(!recentConnectionsDialogOpen)
+      }
+    },
+    {
+      id: 'connection:rename',
+      binding: getEffectiveBinding('connection:rename'),
+      allowInInput: true,
+      handler: () => {
+        const { selectedConnectionId, connections, requestConnectionRename } =
+          useConnectionStore.getState()
+        const connection = connections.find((c) => c.id === selectedConnectionId)
+        if (!selectedConnectionId || !connection) {
+          toast.info('Select a connection to rename')
+          return
+        }
+        // Same rule as the sidebar menus: a connection project's base instance has no Rename
+        if (isBaseInstance(connection)) {
+          toast.info("A connection project's base instance can't be renamed")
+          return
+        }
+        // The rename is the sidebar row's own inline edit, so the row has to be on screen
+        const layout = useLayoutStore.getState()
+        if (layout.leftSidebarCollapsed) layout.setLeftSidebarCollapsed(false)
+        // A connection project's instances are listed under that project's row
+        if (connection.saved_project_id) {
+          const projects = useProjectStore.getState()
+          if (!projects.expandedProjectIds.has(connection.saved_project_id)) {
+            projects.toggleProjectExpanded(connection.saved_project_id)
+          }
+        }
+        requestConnectionRename(selectedConnectionId)
+        // A row claims the request as soon as it renders. If none did (e.g. the connection
+        // is filtered out of the sidebar), drop it so it can't fire later by surprise.
+        setTimeout(() => {
+          const store = useConnectionStore.getState()
+          if (store.pendingRenameConnectionId === selectedConnectionId) {
+            store.clearConnectionRenameRequest()
+            toast.info('The connection is not visible in the sidebar')
+          }
+        }, 500)
       }
     },
 

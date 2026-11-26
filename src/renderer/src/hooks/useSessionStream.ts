@@ -6,6 +6,7 @@ import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import type { CodexThreadGoal } from '@/stores/useSessionStore'
 import type { OpenCodeMessage, StreamingPart } from '@/components/sessions/SessionView'
+import { upsertChildToolPart } from '@/lib/child-tool-stream'
 import type { ToolUseInfo } from '@/components/sessions/ToolCard'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
@@ -324,60 +325,16 @@ export function useSessionStream({
             })
             scheduleFlush()
           } else if (childPart?.type === 'tool') {
-            const state = childPart.state || childPart
-            const toolId =
-              state.toolCallId || childPart.callID || childPart.id || `tool-${Date.now()}`
             updateStreamingPartsRef((parts) => {
               const updated = [...parts]
               const orig = updated[subtaskIdx as number]
               if (orig?.type === 'subtask' && orig.subtask) {
-                const existingIdx = orig.subtask.parts.findIndex(
-                  (p) => p.type === 'tool_use' && p.toolUse?.id === toolId
-                )
-                let newChildParts: typeof orig.subtask.parts
-                if (existingIdx >= 0) {
-                  const existingTool = orig.subtask.parts[existingIdx].toolUse!
-                  const statusMap: Record<string, string> = {
-                    running: 'running',
-                    completed: 'success',
-                    error: 'error'
-                  }
-                  newChildParts = [
-                    ...orig.subtask.parts.slice(0, existingIdx),
-                    {
-                      type: 'tool_use' as const,
-                      toolUse: {
-                        ...existingTool,
-                        status: (statusMap[state.status] || 'running') as
-                          | 'pending'
-                          | 'running'
-                          | 'success'
-                          | 'error',
-                        ...(state.time?.end ? { endTime: state.time.end } : {}),
-                        ...(state.status === 'completed' ? { output: state.output } : {}),
-                        ...(state.status === 'error' ? { error: state.error } : {})
-                      }
-                    },
-                    ...orig.subtask.parts.slice(existingIdx + 1)
-                  ]
-                } else {
-                  newChildParts = [
-                    ...orig.subtask.parts,
-                    {
-                      type: 'tool_use' as const,
-                      toolUse: {
-                        id: toolId,
-                        name: childPart.tool || state.name || 'unknown',
-                        input: state.input,
-                        status: 'running' as const,
-                        startTime: state.time?.start || Date.now()
-                      }
-                    }
-                  ]
-                }
                 updated[subtaskIdx as number] = {
                   ...orig,
-                  subtask: { ...orig.subtask, parts: newChildParts }
+                  subtask: {
+                    ...orig.subtask,
+                    parts: upsertChildToolPart(orig.subtask.parts, childPart)
+                  }
                 }
               }
               return updated

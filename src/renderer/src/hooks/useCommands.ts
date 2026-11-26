@@ -140,6 +140,19 @@ export function useCommands() {
         }
       },
       {
+        id: 'connection:recent',
+        label: 'Recent Connections',
+        description: 'Create a connection from recent or selected projects',
+        category: 'navigation',
+        icon: 'Link',
+        shortcut: getDisplayString('connection:recent'),
+        keywords: ['connection', 'connect', 'recent', 'create', 'new'],
+        action: () => {
+          closeCommandPalette()
+          useConnectionStore.getState().setRecentConnectionsDialogOpen(true)
+        }
+      },
+      {
         // Opens the "Go to project" switcher (every project on this Mac, ranked as you type)
         // instead of a nested list, so it also works with the sidebar collapsed.
         id: 'nav:switch-project',

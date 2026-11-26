@@ -1168,6 +1168,20 @@ function PinnedConnectionItem({
     setIsRenaming(true)
   }, [connection])
 
+  // The connection:rename shortcut asks for a rename; claim it and start the inline edit.
+  // Pinned renders above the Connections list, so a pinned connection renames here.
+  const renameRequested = useConnectionStore((s) => s.pendingRenameConnectionId === connectionId)
+  useEffect(() => {
+    if (
+      renameRequested &&
+      connection &&
+      !isBaseInstance(connection) &&
+      useConnectionStore.getState().claimConnectionRename(connectionId)
+    ) {
+      handleStartRename()
+    }
+  }, [renameRequested, connection, connectionId, handleStartRename])
+
   const handleSaveRename = useCallback(async (): Promise<void> => {
     intentionalCloseRef.current = true
     if (blurTimerRef.current) clearTimeout(blurTimerRef.current)

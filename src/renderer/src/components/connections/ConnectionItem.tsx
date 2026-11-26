@@ -325,6 +325,18 @@ export function ConnectionItem({
     setIsRenaming(true)
   }, [connection.custom_name])
 
+  // The connection:rename shortcut asks for a rename; claim it and start the inline edit
+  const renameRequested = useConnectionStore((s) => s.pendingRenameConnectionId === connection.id)
+  useEffect(() => {
+    if (
+      renameRequested &&
+      !isBase &&
+      useConnectionStore.getState().claimConnectionRename(connection.id)
+    ) {
+      handleStartRename()
+    }
+  }, [renameRequested, isBase, connection.id, handleStartRename])
+
   const handleSaveRename = useCallback(async (): Promise<void> => {
     intentionalCloseRef.current = true
     if (blurTimerRef.current) clearTimeout(blurTimerRef.current)

@@ -119,6 +119,7 @@ import {
 } from '@/lib/session-follow-up-dispatch'
 import { shouldPreserveBlockingSessionStatus } from '@/lib/session-status-guards'
 import { extractSessionErrorMessage } from '@/lib/session-error-message'
+import { upsertChildToolPart } from '@/lib/child-tool-stream'
 import {
   recordHivePromptIdleForSession,
   recordHiveQuestionAnswerTelemetry,
@@ -366,6 +367,17 @@ function asString(value: unknown): string | undefined {
 
 function asNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+/**
+ * True when incoming assistant text is an echo of the prompt we just sent.
+ * Only a whole-prompt match counts: streamed deltas are token-sized ("I",
+ * "You"), and a prefix check would drop any reply token that happens to
+ * match the start of the prompt.
+ */
+export function isEchoOfSentPrompt(sentPrompt: string, incoming: string): boolean {
+  const echoed = incoming.trim()
+  return echoed.length > 0 && echoed === sentPrompt.trim()
 }
 
 function summarizeStreamEventForDebug(event: {
@@ -994,6 +1006,10 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
   // Streaming dedup refs
   const finalizedMessageIdsRef = useRef<Set<string>>(new Set())
   const hasFinalizedCurrentResponseRef = useRef(false)
+  // ID of the persisted assistant message that was moved into the streaming
+  // overlay when mounting on a busy session. While set, transcript reloads keep
+  // that message out of `messages` so it is not rendered twice.
+  const restoredStreamingMessageIdRef = useRef<string | null>(null)
   const sessionModelHydratedRef = useRef(false)
   const codexRefreshRafRef = useRef<number | null>(null)
   const codexRefreshInFlightRef = useRef(false)
@@ -1541,6 +1557,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
       rafRef.current = null
     }
     pendingTextCharsRef.current = 0
+    restoredStreamingMessageIdRef.current = null
     streamingPartsRef.current = []
     setStreamingParts([])
     streamingContentRef.current = ''
@@ -1730,8 +1747,15 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
         }
       }
 
+      // A message restored into the streaming overlay is already on screen.
+      // Keep it out of the history until the response is finalized.
+      const restoredStreamingMessageId = restoredStreamingMessageIdRef.current
+      const messagesForHistory = restoredStreamingMessageId
+        ? loadedMessages.filter((message) => message.id !== restoredStreamingMessageId)
+        : loadedMessages
+
       if (isCodexSession && loadedMessages.length > 0) {
-        setMessages(loadedMessages)
+        setMessages(messagesForHistory)
       } else if (loadedFromOpenCode) {
         // Guard: don't replace existing messages with an empty transcript.
         // This prevents a race where getMessages returns before the SDK has
@@ -1745,7 +1769,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
             ? currentMessages
             : useCache
               ? cachedMessages
-              : loadedMessages
+              : messagesForHistory
           return nextMessages
         })
       } else {
@@ -1753,7 +1777,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
           const loadedIds = new Set(loadedMessages.map((m) => m.id))
           const localOnly = currentMessages.filter((m) => !loadedIds.has(m.id))
           const nextMessages =
-            localOnly.length > 0 ? [...loadedMessages, ...localOnly] : loadedMessages
+            localOnly.length > 0 ? [...messagesForHistory, ...localOnly] : messagesForHistory
           return nextMessages
         })
       }
@@ -1773,6 +1797,10 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
         resetStreamingState()
         return
       }
+
+      // The overlay is about to be cleared, so the final reload must put the
+      // restored message back into the history.
+      restoredStreamingMessageIdRef.current = null
 
       let streamedPartsSnapshot: StreamingPart[] = []
       try {
@@ -1876,6 +1904,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
     // full remount on session change, so this always starts fresh.
     streamingPartsRef.current = []
     streamingContentRef.current = ''
+    restoredStreamingMessageIdRef.current = null
     childToSubtaskIndexRef.current = new Map()
     codexStreamingMessageIdRef.current = null
     seenCodexEventIdsRef.current = new Set()
@@ -2478,46 +2507,16 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
               })
               scheduleFlush()
             } else if (childPart?.type === 'tool') {
-              const state = childPart.state || childPart
-              const toolId =
-                state.toolCallId || childPart.callID || childPart.id || `tool-${Date.now()}`
               updateStreamingPartsRef((parts) => {
                 const updated = [...parts]
                 const subtask = updated[subtaskIdx]
                 if (subtask?.type === 'subtask' && subtask.subtask) {
-                  const existing = subtask.subtask.parts.find(
-                    (p) => p.type === 'tool_use' && p.toolUse?.id === toolId
-                  )
-                  if (existing && existing.type === 'tool_use' && existing.toolUse) {
-                    // Update existing tool
-                    const statusMap: Record<string, string> = {
-                      running: 'running',
-                      completed: 'success',
-                      error: 'error'
+                  updated[subtaskIdx] = {
+                    ...subtask,
+                    subtask: {
+                      ...subtask.subtask,
+                      parts: upsertChildToolPart(subtask.subtask.parts, childPart)
                     }
-                    existing.toolUse.status = (statusMap[state.status] || 'running') as
-                      | 'pending'
-                      | 'running'
-                      | 'success'
-                      | 'error'
-                    if (state.time?.end) existing.toolUse.endTime = state.time.end
-                    if (state.status === 'completed') existing.toolUse.output = state.output
-                    if (state.status === 'error') existing.toolUse.error = state.error
-                  } else {
-                    // Add new tool
-                    subtask.subtask.parts = [
-                      ...subtask.subtask.parts,
-                      {
-                        type: 'tool_use',
-                        toolUse: {
-                          id: toolId,
-                          name: childPart.tool || state.name || 'unknown',
-                          input: state.input,
-                          status: 'running',
-                          startTime: state.time?.start || Date.now()
-                        }
-                      }
-                    ]
                   }
                 }
                 return updated
@@ -2538,8 +2537,8 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
         // content (i.e. the real assistant response) we clear the ref so it
         // doesn't interfere with later messages.
         if (lastSentPromptRef.current && part.type === 'text') {
-          const incoming = (event.data?.delta || part.text || '').trimEnd()
-          if (incoming.length > 0 && lastSentPromptRef.current.startsWith(incoming)) {
+          const incoming = part.text || event.data?.delta || ''
+          if (isEchoOfSentPrompt(lastSentPromptRef.current, incoming)) {
             // Looks like an echo — skip it
             return
           }
@@ -2898,8 +2897,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
               .filter((p: { type?: string }) => p?.type === 'text')
               .map((p: { text?: string }) => p?.text || '')
               .join('')
-              .trimEnd()
-            if (textContent.length > 0 && lastSentPromptRef.current.startsWith(textContent)) {
+            if (isEchoOfSentPrompt(lastSentPromptRef.current, textContent)) {
               return // echo -- skip
             }
           }
@@ -3290,6 +3288,12 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
               streamingContentRef.current = content
               setStreamingContent(content)
               setIsStreaming(true)
+              // Codex never renders the streaming overlay, so hiding the message
+              // from history there would leave it invisible.
+              restoredStreamingMessageIdRef.current =
+                isCodexSession || lastMsg.id.startsWith('local-')
+                  ? null
+                  : lastMsg.id
               setMessages((currentMessages) => {
                 const currentLast = currentMessages[currentMessages.length - 1]
                 if (

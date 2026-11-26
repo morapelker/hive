@@ -70,6 +70,20 @@ export function ConnectionList(): React.JSX.Element | null {
     projectSpaceMap
   ])
 
+  // The connection:rename shortcut renames through a row's inline edit. When the request is
+  // for a connection in this (collapsed) section and no other row took it -- e.g. it was
+  // selected from Recent -- expand so its row mounts and claims the request.
+  const pendingRenameConnectionId = useConnectionStore((s) => s.pendingRenameConnectionId)
+  useEffect(() => {
+    if (!isCollapsed || !pendingRenameConnectionId) return
+    // Read fresh: a Pinned row earlier in the sidebar may already have claimed it
+    if (useConnectionStore.getState().pendingRenameConnectionId !== pendingRenameConnectionId)
+      return
+    if (visibleConnections.some((c) => c.id === pendingRenameConnectionId)) {
+      setIsCollapsed(false)
+    }
+  }, [isCollapsed, pendingRenameConnectionId, visibleConnections])
+
   if (visibleConnections.length === 0 || connectionModeActive) {
     return null
   }
