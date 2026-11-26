@@ -241,6 +241,9 @@ export interface AppSettings {
   // Model provider
   showModelProvider: boolean
 
+  /** Show the Recent section (recently opened projects) at the top of the sidebar. */
+  showRecentProjects: boolean
+
   // Usage indicator
   usageIndicatorMode: 'current-agent' | 'specific-providers'
   usageIndicatorProviders: UsageProvider[]
@@ -376,6 +379,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   showModelIcons: false,
   ticketKeyDisplay: 'always',
   showModelProvider: false,
+  showRecentProjects: true,
   usageIndicatorMode: 'current-agent',
   usageIndicatorProviders: [],
   ignoreFableForAutoSwitch: false,
@@ -623,6 +627,7 @@ function extractSettings(state: SettingsState): AppSettings {
     showModelIcons: state.showModelIcons,
     ticketKeyDisplay: state.ticketKeyDisplay,
     showModelProvider: state.showModelProvider,
+    showRecentProjects: state.showRecentProjects,
     usageIndicatorMode: state.usageIndicatorMode,
     usageIndicatorProviders: state.usageIndicatorProviders,
     ignoreFableForAutoSwitch: state.ignoreFableForAutoSwitch,
@@ -1049,6 +1054,7 @@ export const useSettingsStore = create<SettingsState>()(
         showModelIcons: state.showModelIcons,
         ticketKeyDisplay: state.ticketKeyDisplay,
         showModelProvider: state.showModelProvider,
+        showRecentProjects: state.showRecentProjects,
         usageIndicatorMode: state.usageIndicatorMode,
         usageIndicatorProviders: state.usageIndicatorProviders,
         ignoreFableForAutoSwitch: state.ignoreFableForAutoSwitch,

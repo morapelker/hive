@@ -2,6 +2,7 @@ import { useEffect, useMemo } from 'react'
 import { History } from 'lucide-react'
 import { useFilterStore, usePinnedStore, useProjectStore } from '@/stores'
 import { useDataProjectStore } from '@/stores/useDataProjectStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
 import { pickRecentProjects } from '@/lib/recent-projects'
 import { ProjectItem } from '@/components/projects/ProjectItem'
 import { RecentDataProjectItem } from '@/components/data-projects/DataProjectItem'
@@ -12,7 +13,7 @@ const LEGACY_TOGGLE_STORAGE_KEY = 'hive-recent-visible'
 
 /**
  * The sidebar's Recent section: the five projects opened most recently that are not pinned,
- * newest first. Always on. Every kind of project counts, from every Space; the section hides
+ * newest first. Shown unless turned off in Settings → General (showRecentProjects). Every kind of project counts, from every Space; the section hides
  * when it has no rows and while a sidebar filter is active.
  *
  * A row is one line (RecentProjectRow). Git and connection projects render through ProjectItem
@@ -26,6 +27,7 @@ export function RecentList(): React.JSX.Element | null {
   const pinnedProjectIds = usePinnedStore((s) => s.pinnedProjectIds)
   // Until the pins are known a pinned project would show here for a moment.
   const pinsLoaded = usePinnedStore((s) => s.loaded)
+  const showRecent = useSettingsStore((s) => s.showRecentProjects)
   const filtering = useFilterStore(
     (s) => s.filterQuery.trim().length > 0 || s.activeLanguages.length > 0
   )
@@ -43,7 +45,7 @@ export function RecentList(): React.JSX.Element | null {
     }
   }, [])
 
-  if (!pinsLoaded || filtering || entries.length === 0) return null
+  if (!showRecent || !pinsLoaded || filtering || entries.length === 0) return null
 
   return (
     // Orca virtual-row rhythm, as the Pinned section: the trailing pb-2.5 gives the next

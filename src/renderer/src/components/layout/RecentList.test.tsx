@@ -1,4 +1,4 @@
-// The sidebar's Recent section: always on, the five most recently opened projects that are not
+// The sidebar's Recent section: on unless turned off in Settings, the five most recently opened projects that are not
 // pinned (every kind, every Space), each a one-line row with an age, an agent indicator, a pin
 // button and the project's own right-click menu. Hidden when empty and while filtering.
 
@@ -116,7 +116,7 @@ beforeEach(() => {
     }) as never,
     subscribe: () => () => {}
   })
-  useSettingsStore.setState({ tipsEnabled: false })
+  useSettingsStore.setState({ tipsEnabled: false, showRecentProjects: true })
   useDataProjectStore.getState().reset()
   useProjectStore.setState({
     projects: SEVEN,
@@ -270,6 +270,21 @@ describe('Recent section: what it shows', () => {
     })
 
     expect(screen.queryByTestId('recent-list')).not.toBeInTheDocument()
+  })
+
+  it('hides when Recent projects is turned off in Settings and returns when turned on', async () => {
+    await renderList()
+    expect(screen.getByTestId('recent-list')).toBeInTheDocument()
+
+    act(() => {
+      useSettingsStore.getState().updateSetting('showRecentProjects', false)
+    })
+    expect(screen.queryByTestId('recent-list')).not.toBeInTheDocument()
+
+    act(() => {
+      useSettingsStore.getState().updateSetting('showRecentProjects', true)
+    })
+    expect(rowIds()).toEqual(['p-10', 'p-20', 'p-30', 'p-40', 'p-50'])
   })
 })
 
