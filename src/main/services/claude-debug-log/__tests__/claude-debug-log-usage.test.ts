@@ -58,7 +58,6 @@ const publisherMocks = vi.hoisted(() => ({
   publishDesktopBackendEvent: vi.fn(async () => true)
 }))
 
-
 vi.mock('../../../db', async () => {
   const types = await vi.importActual<typeof import('../../../db/types')>('../../../db/types')
   return {
